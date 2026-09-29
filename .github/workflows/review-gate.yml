@@ -1,11 +1,15 @@
 # Publishes the `review-approved` check the PR drainer requires, and removes a
 # stale `reviewed:approve` when a push changes this pull request's own files.
 # Copied from coghex/kanban's .github/workflows/review-gate.yml at commit
-# d6d1653, with one local fix: approval survives a push only if the push
-# touches none of the files the pull request changed before OR after it, so
-# reverting a reviewed file cannot pass as a base-branch update. Upstream
-# checks only the files after the push. tools/test_review_gate.py runs this
-# step. Otherwise keep it in step with upstream rather than editing it here.
+# d6d1653, with two local fixes to the stale-approval step, which upstream
+# still lacks:
+#   - approval survives a push only if the push touches none of the files the
+#     pull request changed before OR after it, so reverting a reviewed file
+#     cannot pass as a base-branch update;
+#   - every file list comes from `git diff` with the same options, instead of
+#     comparing git's escaped names with `gh pr diff`'s literal ones.
+# tools/test_review_gate.py runs this step. Otherwise keep it in step with
+# upstream rather than editing it here.
 name: Review gate
 
 on:
@@ -120,8 +124,19 @@ jobs:
             strip
             exit 0
           fi
-          if ! pr_files=$(gh pr diff "$PR_NUMBER" --repo "$REPO" --name-only); then
-            echo "couldn't fetch this PR's own file list -- can't confirm, stripping"
+          # Every file list below comes from the same `git diff` options, so a
+          # path is spelled identically in each: git escapes unusual names
+          # (non-ASCII, quotes, control characters), and mixing its lists with
+          # `gh pr diff`, which prints names literally, lets such a file slip
+          # past the comparison. The pull request's file lists are three-dot
+          # diffs from the base branch, the same comparison GitHub shows.
+          if ! git rev-parse --verify --quiet "origin/$BASE_REF^{commit}" > /dev/null; then
+            echo "base branch origin/$BASE_REF not in this checkout -- can't confirm, stripping"
+            strip
+            exit 0
+          fi
+          if ! pr_files=$(git diff --no-renames --name-only "origin/$BASE_REF...$AFTER"); then
+            echo "couldn't list this PR's own files -- can't confirm, stripping"
             strip
             exit 0
           fi
@@ -132,13 +147,8 @@ jobs:
           fi
           # The files the pull request changed BEFORE this push, i.e. the ones
           # the approval covered. A push that reverts a reviewed file drops it
-          # from the current diff, so the current list alone would misread that
-          # revert as a base-branch update.
-          if ! git rev-parse --verify --quiet "origin/$BASE_REF^{commit}" > /dev/null; then
-            echo "base branch origin/$BASE_REF not in this checkout -- can't confirm, stripping"
-            strip
-            exit 0
-          fi
+          # from the current list, so that list alone would misread the revert
+          # as a base-branch update.
           if ! approved_files=$(git diff --no-renames --name-only "origin/$BASE_REF...$BEFORE"); then
             echo "couldn't list this PR's files before the push -- can't confirm, stripping"
             strip

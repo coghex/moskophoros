@@ -19,15 +19,17 @@ ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = ROOT / ".github" / "workflows" / "review-gate.yml"
 STEP_NAME = "- name: Remove approval unless this push touches no PR-owned file"
 
-# Answers the three `gh` calls the step makes: `pr edit --remove-label`,
-# `pr view --json labels`, and `pr diff --name-only`.
+# Answers `gh pr edit --remove-label` and `gh pr view --json labels`, which
+# the step uses, and `gh pr diff --name-only` the way GitHub does, with
+# literal (unescaped) file names, in case a version of the step relies on it.
+# Any other call fails the test.
 FAKE_GH = """\
 #!/usr/bin/env bash
 set -euo pipefail
 case "$1 $2" in
   "pr edit") : > "$GATE_LABELS" ;;
   "pr view") cat "$GATE_LABELS" ;;
-  "pr diff") git -C "$GATE_REPO" diff --no-renames --name-only "origin/master...$GATE_AFTER" ;;
+  "pr diff") git -C "$GATE_REPO" -c core.quotePath=false diff --no-renames --name-only "origin/master...$GATE_AFTER" ;;
   *) echo "unexpected gh call: $*" >&2; exit 2 ;;
 esac
 """
@@ -146,6 +148,20 @@ class StaleApprovalTest(unittest.TestCase):
         before = self.repo.commit(
             {"new.txt": "added\n", "tests.txt": "pr tests\n"}, "pr")
         after = self.repo.commit({"new.txt": None}, "drop new file")
+        self.assertFalse(self.run_gate(before, after))
+
+    def test_adding_a_non_ascii_file_removes_approval(self):
+        # Git escapes non-ASCII paths in its name lists; the step must compare
+        # names from one source so an escaped name still matches itself.
+        self.branch_from_base()
+        before = self.repo.commit({"impl.txt": "pr impl\n"}, "pr")
+        after = self.repo.commit({"caf\u00e9.txt": "new\n"}, "add caf\u00e9")
+        self.assertFalse(self.run_gate(before, after))
+
+    def test_editing_a_reviewed_non_ascii_file_removes_approval(self):
+        self.branch_from_base()
+        before = self.repo.commit({"caf\u00e9.txt": "pr\n"}, "pr")
+        after = self.repo.commit({"caf\u00e9.txt": "pr, edited\n"}, "edit")
         self.assertFalse(self.run_gate(before, after))
 
     def test_missing_before_removes_approval(self):
