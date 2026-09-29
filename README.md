@@ -25,4 +25,9 @@ This writes `outfile.png` and `outfile.json` beside it.
 ## Requirements
 
 - Python 3 with numpy and Pillow
-- Blender, run headless for rendering
+- Blender, run headless for rendering. The supported version is recorded in
+  [docs/design.md](docs/design.md#supported-blender-version).
+
+## License
+
+MIT. See [LICENSE](LICENSE).
