@@ -325,10 +325,28 @@ can be added without changing it.
 
 **Finding Blender:** `--blender`, then `$MOSKOPHOROS_BLENDER`, then `blender`
 on `PATH`, then `/Applications/Blender.app/Contents/MacOS/Blender` on macOS.
-The version comes from `blender --version`. The supported major.minor version
-is pinned when the backend is first implemented (see [Deferred](#deferred)).
-A mismatch is a backend error unless `--any-blender` is given; the actual
-version is always recorded.
+The version comes from `blender --version`. A mismatch in major.minor version
+is a backend error unless `--any-blender` is given; the actual version is
+always recorded.
+
+### Supported Blender version
+
+**Blender 5.2 LTS**, tested with **5.2.2** (pinned 2026-09-29). 5.2.2 was the
+latest stable release, and 5.2 is a long-term-support series with two years
+of fixes. Any 5.2.x release is accepted. On macOS it is installed with
+`brew install --cask blender`; Homebrew follows the latest stable release, so
+check the installed version after upgrading.
+
+Observed on this release: `blender --version` prints `Blender 5.2.2 LTS` on
+its first line, so the version parser must allow a suffix after the number.
+Blender bundles its own Python (3.13.13 in 5.2.2), which is the interpreter
+`blender_script.py` runs under. It must stay compatible with that Python,
+independent of the tool's own Python.
+
+This section is the single record of the supported version. The backend's
+version check in `capture/blender.py` must match it. Moving to a new series is
+an owner decision recorded here, after the Blender integration tests pass on
+it.
 
 ### Stylize (slice 1: plain)
 
@@ -497,7 +515,6 @@ Decided later, each when its trigger arrives:
 
 | Item | Trigger |
 |---|---|
-| Supported Blender version | First backend implementation: pin the latest stable release on that date and record it here. |
 | Auxiliary capture buffers (depth, normal, base color, material ID) | The first style pass that needs them. |
 | Style passes and their configuration | The owner starts style work. |
 | Per-stage caching | Iteration speed becomes a problem. |
