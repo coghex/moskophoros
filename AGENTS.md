@@ -90,13 +90,20 @@ python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 ## Delivery
 
 - **Tracker:** GitHub `coghex/moskophoros`, default branch `master`. The
-  primary checkout is `~/moskophoros`. The Kanban plugin lives in
+  primary checkout is `~/work/moskophoros`. The Kanban plugin lives in
   `~/work/kanban`; that repository is never this project's tracker.
 - **Keep the primary checkout clean.** It only fast-forwards to `master`.
   Implement in an isolated worktree on a branch, and deliver by pull request.
 - **One issue, one pull request, one worktree.** Code, tests, the
   documentation the change requires and any evidence go together. Use
   `Closes #N` when the pull request completes the issue.
+- **Mark every pull request's origin.** Its body must end with exactly one
+  origin marker as its final line: `<!-- pr-origin:claude -->` or
+  `<!-- pr-origin:codex -->`, naming the agent that wrote it. Put any
+  attribution line above it. Review is routed to the other agent; a pull
+  request without a valid marker counts as unknown origin and is reviewed by
+  both. The `kanban:solve` workflow adds the marker; add it yourself when
+  opening a pull request any other way.
 - **Standalone documentation** (no code change) is written in the `docs-wip`
   worktree, found by branch rather than by path:
 
@@ -107,8 +114,12 @@ python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
   It lands on `master` only when the owner asks, through `tools/docs_land.sh`
   (the `kanban:push-docs` skill). Dry-run first and stop on any warning or
   refusal. Never use this lane for documentation a code change needs.
-- **Merging.** Never merge or approve your own work, and never merge on your
-  own initiative. A label alone is not proof of a fresh approval.
+- **Merging.** The PR drainer merges a pull request once it carries
+  `reviewed:approve` and its `build-test` and `review-approved` checks pass. A
+  push that changes the pull request's own files removes the approval, so it
+  needs a fresh review. Never merge or approve your own work, never merge on
+  your own initiative, and never add review labels by hand. A label alone is
+  not proof of a fresh approval.
 - Never reset, clean or rebase another agent's worktree. Stop only processes
   you started.
 
