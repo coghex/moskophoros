@@ -22,3 +22,6 @@ jobs:
         run: |
           bash -n tools/docs_land.sh
           python3 -m py_compile tools/docs_land_paths.py
+
+      - name: Test the review gate's stale-approval step
+        run: python3 tools/test_review_gate.py

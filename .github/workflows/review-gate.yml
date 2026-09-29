@@ -1,8 +1,11 @@
 # Publishes the `review-approved` check the PR drainer requires, and removes a
 # stale `reviewed:approve` when a push changes this pull request's own files.
-# Copied verbatim below this header from coghex/kanban's
-# .github/workflows/review-gate.yml at commit d6d1653; keep it in step with
-# upstream rather than editing it locally.
+# Copied from coghex/kanban's .github/workflows/review-gate.yml at commit
+# d6d1653, with one local fix: approval survives a push only if the push
+# touches none of the files the pull request changed before OR after it, so
+# reverting a reviewed file cannot pass as a base-branch update. Upstream
+# checks only the files after the push. tools/test_review_gate.py runs this
+# step. Otherwise keep it in step with upstream rather than editing it here.
 name: Review gate
 
 on:
@@ -62,6 +65,7 @@ jobs:
           AFTER: ${{ github.event.after }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
           strip() {
             # A suppressed removal failure would be the whole bug back again:
@@ -106,7 +110,7 @@ jobs:
             strip
             exit 0
           fi
-          if ! drifted_files=$(git diff --name-only "$BEFORE" "$AFTER"); then
+          if ! drifted_files=$(git diff --no-renames --name-only "$BEFORE" "$AFTER"); then
             echo "couldn't diff 'before'..'after' -- can't confirm, stripping"
             strip
             exit 0
@@ -126,7 +130,22 @@ jobs:
             strip
             exit 0
           fi
-          overlap=$(comm -12 <(printf '%s\n' "$pr_files" | sort -u) <(printf '%s\n' "$drifted_files" | sort -u))
+          # The files the pull request changed BEFORE this push, i.e. the ones
+          # the approval covered. A push that reverts a reviewed file drops it
+          # from the current diff, so the current list alone would misread that
+          # revert as a base-branch update.
+          if ! git rev-parse --verify --quiet "origin/$BASE_REF^{commit}" > /dev/null; then
+            echo "base branch origin/$BASE_REF not in this checkout -- can't confirm, stripping"
+            strip
+            exit 0
+          fi
+          if ! approved_files=$(git diff --no-renames --name-only "origin/$BASE_REF...$BEFORE"); then
+            echo "couldn't list this PR's files before the push -- can't confirm, stripping"
+            strip
+            exit 0
+          fi
+          owned_files=$(printf '%s\n%s\n' "$pr_files" "$approved_files" | sed '/^$/d' | sort -u)
+          overlap=$(comm -12 <(printf '%s\n' "$owned_files") <(printf '%s\n' "$drifted_files" | sort -u))
           if [ -n "$overlap" ]; then
             echo "push touched PR-owned file(s): $overlap -- stripping"
             strip
