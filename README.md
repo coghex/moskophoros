@@ -1,0 +1,27 @@
+# Moskophoros
+
+Moskophoros turns animated 3D models into pixel-art sprite sheets that stay
+consistent in every direction. You animate a model in Blender, export it as
+binary glTF (`.glb`), and Moskophoros renders every animation from every camera
+direction into a single sheet, with a JSON file describing each frame.
+
+It is a general tool for game art, not tied to any one game. Views are
+configurable: top-down, side or isometric, with 1, 2, 4 or 8 directions.
+
+## Status
+
+Early design. Nothing is implemented yet. The goals and design guardrails are
+in [docs/vision.md](docs/vision.md).
+
+## Planned usage
+
+```
+moskophoros [options] <infile.glb> <outfile.png>
+```
+
+This writes `outfile.png` and `outfile.json` beside it.
+
+## Requirements
+
+- Python 3 with numpy and Pillow
+- Blender, run headless for rendering
