@@ -1,0 +1,27 @@
+# Publishes the `build-test` check the PR drainer requires. It checks
+# everything the repository currently contains; the first implementation pull
+# request adds the package's install and tests (AGENTS.md, Build and test).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check the docs-landing helper
+        run: |
+          bash -n tools/docs_land.sh
+          python3 -m py_compile tools/docs_land_paths.py
+
+      - name: Test the review gate's stale-approval step
+        run: python3 tools/test_review_gate.py
