@@ -514,8 +514,9 @@ src/moskophoros/
 tests/
 ```
 
-- Python 3.12 or newer. Runtime dependencies are numpy and Pillow; pytest is a
-  development dependency.
+- Python 3.13 or newer, matching the Python Blender 5.2 bundles (owner
+  decision 2026-09-29, CI foundation design D-5). Runtime dependencies are
+  numpy and Pillow; pytest and ruff are development dependencies.
 - `pyproject.toml` states minimum versions; `requirements.lock` pins the
   versions that were tested.
 

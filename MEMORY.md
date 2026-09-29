@@ -69,21 +69,20 @@ The path from the accepted design to code, agreed 2026-09-29:
 
 1. **Blender capture experiment:** done 2026-09-29. Design §Capture holds on
    Blender 5.2; its findings are recorded under §Supported Blender version.
-2. **`/design-epic`** writes the slice 1 plan to `docs/designs/`, linking
-   design.md. Draft slices:
-   1. package skeleton and CLI validation
-   2. `.glb` reading and input errors
-   3. camera and sampling maths
-   4. scale and fit
-   5. Blender measure pass
-   6. render, stylize and export
-   7. previews, settings reuse and determinism
-   8. owner acceptance
-
-   Settle there: test fixtures (recommended a pure-Python `.glb` writer) and
-   Blender tests (recommended local-only, reported in the PR).
-3. **`/process-design-doc`** creates the epic and child issues; **`/solve`**
-   each. The owner finalizes by hand while the drainer is stopped.
+2. **Two design epics, in order**, written with `/design-epic` into
+   `docs/designs/`:
+   1. **CI foundation:** [ready for issue processing](docs/designs/ci_foundation_design.md)
+      since 2026-09-29. Four slices: the pytest/ruff harness, the catalog and
+      planner, the CI image, and wiring into GitHub. Its decisions include
+      Python 3.13, pytest used the Hspec way, ruff, and local-only Blender
+      tests with a required, fresh report in each PR.
+   2. **Slice 1:** not yet written. Draft slices: skeleton and CLI validation;
+      `.glb` reading (a pure-Python writer builds test models); camera and
+      sampling; scale and fit; Blender measure; render, stylize and export;
+      previews and reuse; owner acceptance.
+3. **`/process-design-doc`** on the CI foundation design next: it files the
+   epic, then one child issue per run. **`/solve`** each child; the owner
+   finalizes by hand while the drainer is stopped.
 4. **Owner:** a real character `.glb` (one looping, one one-shot clip) for the
    final slice; tests use generated fixtures until then.
 
