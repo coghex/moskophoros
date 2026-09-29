@@ -65,10 +65,32 @@ Set up on 2026-09-29; `kanban --doctor` reports every action ready.
 
 ## Next steps
 
-1. Turn slice 1 into tracker issues (design-epic or issue workflow).
-2. **Owner:** provide a real animated character `.glb` with one looping clip
-   and one one-shot clip, for slice 1 acceptance. Tests use generated fixtures
-   until then.
+The path from the accepted design to code, agreed 2026-09-29:
+
+1. **Blender capture experiment:** done 2026-09-29. Design §Capture holds on
+   Blender 5.2; its findings are recorded under §Supported Blender version.
+2. **`/design-epic`** writes the slice 1 plan to `docs/designs/`, linking
+   design.md. Draft slices:
+   1. package skeleton and CLI validation
+   2. `.glb` reading and input errors
+   3. camera and sampling maths
+   4. scale and fit
+   5. Blender measure pass
+   6. render, stylize and export
+   7. previews, settings reuse and determinism
+   8. owner acceptance
+
+   Settle there: test fixtures (recommended a pure-Python `.glb` writer) and
+   Blender tests (recommended local-only, reported in the PR).
+3. **`/process-design-doc`** creates the epic and child issues; **`/solve`**
+   each. The owner finalizes by hand while the drainer is stopped.
+4. **Owner:** a real character `.glb` (one looping, one one-shot clip) for the
+   final slice; tests use generated fixtures until then.
+
+**Don't land docs while pull requests are open.** Branches must be up to date,
+and `/finalize` cannot carry approval across a branch update, so each open PR
+would need `/fix` and a fresh review. Alternatively, configure moskophoros
+`coordination_paths` in the Kanban config.
 
 ## Owner preferences
 

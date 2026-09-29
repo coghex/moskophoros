@@ -310,6 +310,17 @@ Blender writes a manifest JSON listing each frame's address and file.
 only module that imports `bpy`. It is never imported by the rest of the
 package.
 
+**What is rendered:** only the mesh objects created from the glTF scene.
+Everything else, including objects the importer adds itself (such as bone
+display shapes), is explicitly excluded from rendering, whether or not it
+happens to be hidden.
+
+**Clip isolation:** before sampling a clip, the backend disables every
+animation layer (NLA), makes that clip the only active action on each object
+it animates, and resets every pose to rest. Nothing from a previously sampled
+clip may carry into the next one. This implements the rule in
+[Clips and sampling](#clips-and-sampling).
+
 **Render settings:**
 - Workbench engine, with studio lighting fixed in view space (Workbench's
   default, which keeps lighting fixed to the camera). The studio light's name
@@ -319,7 +330,9 @@ package.
 - Film transparent. View transform `Standard`, look `None`, exposure 0, gamma 1.
 
 **Capture output:** one 8-bit sRGB RGBA PNG per frame, straight alpha, holding
-Workbench's antialiased coverage. Slice 1 captures only this color buffer. The
+Workbench's antialiased coverage. Every `use_stamp_*` render setting is off,
+so Blender writes no date or render-time metadata and identical frames are
+identical files. Slice 1 captures only this color buffer. The
 manifest format lists buffers by name, so depth, normal and base-color buffers
 can be added without changing it.
 
@@ -342,6 +355,32 @@ its first line, so the version parser must allow a suffix after the number.
 Blender bundles its own Python (3.13.13 in 5.2.2), which is the interpreter
 `blender_script.py` runs under. It must stay compatible with that Python,
 independent of the tool's own Python.
+
+Observed in the capture experiment (2026-09-29), which confirmed this
+section's settings on 5.2.2:
+
+- **The importer adds objects that are not in the file:** a bone display shape
+  (`Icosphere`) in a hidden `glTF_not_exported` collection. See "What is
+  rendered" above.
+- **Each glTF animation becomes an action with the clip's name**, plus a muted
+  NLA track per clip, and the importer leaves the last clip as the rig's active
+  action. See "Clip isolation" above.
+- **glTF time *t* maps to frame *t* × fps**, and sub-frame evaluation
+  (`frame_set` with a `subframe`) samples exact times. Clips exported from
+  Blender start at *t* = 1/fps, because Blender's frame 1 is exported at that
+  time; clip ranges come from the file, so this needs no handling.
+- **Rotation between keyframes differs slightly from glTF's.** Blender
+  interpolates quaternion channels separately rather than by glTF's spherical
+  interpolation: a 30° linear keyframe span read 5.967° where glTF gives 6°.
+  Keyframe values are exact. The error is far below a pixel at sprite scale and
+  is accepted.
+- **Render settings behave as specified.** The studio light is `Default` with
+  world-space lighting off, `TEXTURE` color falls back to the material color,
+  and the `Standard` view transform reproduces a material's sRGB color exactly
+  under flat light. Renders are pixel-identical across separate Blender
+  processes; files are byte-identical only with stamping off.
+- **Cost:** about 1 s to start Blender, about 1 s for the first render while
+  shaders compile, then 10–120 ms per frame at 384×384.
 
 This section is the single record of the supported version. The backend's
 version check in `capture/blender.py` must match it. Moving to a new series is
