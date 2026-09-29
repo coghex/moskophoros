@@ -23,15 +23,16 @@ anything newer than the date below.
   were accepted by the owner on 2026-09-29.
 - **Next milestone:** slice 1, the plain 3D-to-sheet pipeline. Its acceptance
   is in design §Slice 1 acceptance.
-- **Implementation:** no package, tests or CI yet.
+- **Implementation:** no package yet. CI exists but only checks the
+  repository tooling (see below).
 
 ## Environment
 
 - **Repository:** `coghex/moskophoros` on GitHub (public), default branch
   `master`, MIT license.
 - **Checkouts:**
-  - primary checkout: `~/moskophoros`
-  - docs worktree: `~/moskophoros/.worktrees/docs` on `docs-wip`
+  - primary checkout: `~/work/moskophoros`
+  - docs worktree: `~/work/moskophoros/.worktrees/docs` on `docs-wip`
   - pull request worktrees: under `~/worktrees/coghex/moskophoros/` (the Kanban
     default)
 - **Blender:** 5.2.2 LTS, installed through Homebrew at
@@ -41,25 +42,31 @@ anything newer than the date below.
 - **Docs landing:** `tools/docs_land.sh`, vendored from Kanban. Provenance is in
   [tools/README.md](tools/README.md).
 
-## Not set up yet
+## Kanban pull-request flow
 
-The Kanban pull-request flow needs these before the first implementation pull
-request can go through review and merge:
+Set up on 2026-09-29; `kanban --doctor` reports every action ready.
 
-- tracker labels (review states, `epic`, `needs-decision`, `wip`, `blocked`,
-  origin markers)
-- a CI workflow providing the checks the drainer requires
-- the review gate
-- the approval service and PR drainer, installed with the scripts in
-  `~/work/kanban/tools/` and checked with `kanban --doctor`
-
-Until then, nothing merges without the owner's explicit request.
+- **Labels:** the eight workflow labels exist (review states, `epic`,
+  `needs-decision`, `wip`, `blocked`, `hotfix`).
+- **Required checks:** `build-test` (CI) and `review-approved` (the review
+  gate), enforced on `master` by a ruleset. Repository admins bypass it, which
+  is what lets `tools/docs_land.sh` push documentation directly.
+- **CI:** `build-test` checks the docs-landing helper and runs
+  `tools/test_review_gate.py`. The first implementation pull request adds the
+  package's tests to it.
+- **Review gate:** Kanban's own gate, with two local fixes to its
+  stale-approval step that upstream Kanban still lacks. Provenance is in the
+  workflow's header.
+- **PR drainer:** installed as `com.coghex.drain-prs.coghex.moskophoros` and
+  currently **stopped** by the owner; control it with `kanban:drain-prs`.
+- **Not installed:** the optional issue approval service (Hetoimasia has one).
+- **Merged branches:** GitHub does not delete them automatically here; delete
+  them after merging.
 
 ## Next steps
 
-1. Set up the Kanban flow above.
-2. Turn slice 1 into tracker issues (design-epic or issue workflow).
-3. **Owner:** provide a real animated character `.glb` with one looping clip
+1. Turn slice 1 into tracker issues (design-epic or issue workflow).
+2. **Owner:** provide a real animated character `.glb` with one looping clip
    and one one-shot clip, for slice 1 acceptance. Tests use generated fixtures
    until then.
 
