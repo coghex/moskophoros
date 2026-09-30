@@ -1,8 +1,9 @@
 # Publishes the `build-test` check the PR drainer requires. The planner
 # (tools/validation/plan.py) decides which catalog groups a change needs; each
 # selected group that runs on GitHub runs its catalog command inside the image
-# the committed descriptor names by digest; and `build-test` passes only when
-# the plan, every group, the descriptor and the pull request body all hold.
+# the committed descriptor names by digest, once the plan has confirmed that
+# image; and `build-test` passes only when the plan, every group, the image
+# check and the pull request body all hold.
 # `build-test` starts with the run and waits for the other jobs itself, so its
 # check appears at once and an earlier run's result never speaks for this one.
 # Local-only groups never run here. The logic lives in tools/validation/ci.py,
@@ -56,7 +57,11 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Plan the tested revision
+      # Planning also pulls and runs the descriptor's image by digest, with no
+      # registry credentials, to confirm it records the descriptor's
+      # fingerprint and versions and the lock's pins. It writes the `image`
+      # output only for a confirmed image, so no group starts in any other.
+      - name: Plan the tested revision and confirm its image
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
