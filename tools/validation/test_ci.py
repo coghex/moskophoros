@@ -4,7 +4,7 @@ Each case builds a history in a temporary repository, with GitHub's merge
 commit for a pull request made the way GitHub makes it, and runs ci.py's
 ``plan``, ``run-group`` and ``conclude`` as separate processes, exactly as the
 workflow's jobs do. A stub ``gh`` serves the pull request body and the run's
-jobs. The waiting tests drive `build-test`'s waits with a controlled clock and
+jobs, and a fake registry transport answers the plan's image inspection. The waiting tests drive `build-test`'s waits with a controlled clock and
 scripted job lists, never real time. The last tests check the workflow file
 wires those jobs together as documented.
 """
@@ -52,6 +52,42 @@ try:
 except OSError as error:
     sys.exit(f"HTTP 502: {error}")
 print(json.dumps({"number": 7, "body": body}))
+"""
+
+
+# The registry transport image.py inspects an image through. It logs each
+# request to $FAKE_INSPECTED and answers `inspect REFERENCE@DIGEST` as
+# registry.py does, from the recorded values $FAKE_IMAGES holds for it; an
+# image it does not hold cannot be pulled, and one recorded as "garbage"
+# answers with something that is not JSON.
+FAKE_REGISTRY = """\
+#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ["FAKE_INSPECTED"], "a", encoding="utf-8") as log:
+    log.write(" ".join(sys.argv[1:]) + "\\n")
+command, *arguments = sys.argv[1:]
+images = json.load(open(os.environ["FAKE_IMAGES"], encoding="utf-8"))
+if command != "inspect" or arguments[0] not in images:
+    sys.exit(f"error: manifest unknown: {' '.join(sys.argv[1:])}")
+values = images[arguments[0]]
+if values == "garbage":
+    print("Error response from daemon")
+    sys.exit(0)
+print(json.dumps({
+    "embedded": values,
+    "python": values["python"],
+    "python_path": "/opt/moskophoros/venv/bin/python3",
+    "pytest": "pytest " + values["pytest"],
+    "ruff": "ruff " + values["ruff"],
+    "git": "git version 2.47.3",
+    "bash": "5.2.37(1)-release",
+    "blender": None,
+    "moskophoros": False,
+    "labels": {
+        "org.moskophoros.ci-image." + key.replace("_", "-"): value
+        for key, value in values.items()
+    },
+}))
 """
 
 
@@ -127,7 +163,7 @@ class Repo:
         return self.git("rev-parse", "HEAD")
 
 
-def descriptor(fingerprint: str) -> str:
+def descriptor(fingerprint: str, **overrides) -> str:
     return json.dumps(
         {
             "schema_version": 1,
@@ -137,8 +173,17 @@ def descriptor(fingerprint: str) -> str:
             "python": "3.13.9",
             "pytest": "9.1.1",
             "ruff": "0.16.9",
+            **overrides,
         }
     )
+
+
+def recorded(document: dict) -> dict:
+    """The values an image records, as the descriptor `document` states them."""
+    return {
+        name: document[name]
+        for name in ("recipe_fingerprint", "python", "pytest", "ruff")
+    }
 
 
 @pytest.fixture
@@ -148,7 +193,7 @@ def repo(tmp_path):
         {
             "tools/validation/catalog.json": json.dumps(catalog()),
             "tools/ci-image/Dockerfile": "FROM scratch\n",
-            "requirements.lock": "pytest==9.1.1\n",
+            "requirements.lock": "pytest==9.1.1\nruff==0.16.9\n",
             "src/app.py": "app\n",
             "docs/guide.md": "guide\n",
         },
@@ -171,19 +216,28 @@ class Run:
         self.log = tmp_path / "commands.log"
         self.body = tmp_path / "body.md"
         self.jobs = tmp_path / "jobs.jsonl"
+        self.images_file = tmp_path / "images.json"
+        self.inspected_log = tmp_path / "inspected.log"
         bindir = tmp_path / "bin"
         bindir.mkdir()
-        gh = bindir / "gh"
-        gh.write_text(FAKE_GH, encoding="utf-8")
-        gh.chmod(gh.stat().st_mode | stat.S_IEXEC)
+        for name, text in (("gh", FAKE_GH), ("registry", FAKE_REGISTRY)):
+            executable = bindir / name
+            executable.write_text(text, encoding="utf-8")
+            executable.chmod(executable.stat().st_mode | stat.S_IEXEC)
+        self.registry = bindir / "registry"
         self.env = dict(
             os.environ,
             PATH=f"{bindir}{os.pathsep}{os.environ['PATH']}",
             FAKE_BODY=str(self.body),
             FAKE_JOBS=str(self.jobs),
+            FAKE_IMAGES=str(self.images_file),
+            FAKE_INSPECTED=str(self.inspected_log),
             CI_TEST_LOG=str(self.log),
         )
         self.run_arguments: list[str] = []
+        # The images the registry holds, by reference@digest. None holds
+        # exactly the image the tested revision's descriptor describes.
+        self.images: dict | None = None
 
     def ci(self, repo: Repo | None, *args: str) -> subprocess.CompletedProcess:
         where = ["--repo", str(repo.path)] if repo else []
@@ -195,7 +249,24 @@ class Run:
             env=self.env,
         )
 
+    def published(self, repo: Repo, revision: str) -> dict:
+        if self.images is not None:
+            return self.images
+        try:
+            document = json.loads(
+                repo.git("show", f"{revision}:tools/ci-image/descriptor.json")
+            )
+        except (subprocess.CalledProcessError, json.JSONDecodeError):
+            return {}
+        return {f"{document['reference']}@{document['digest']}": recorded(document)}
+
+    def inspected(self) -> list[str]:
+        if not self.inspected_log.exists():
+            return []
+        return self.inspected_log.read_text().splitlines()
+
     def plan(self, repo: Repo, revision: str, before: str | None = None):
+        self.images_file.write_text(json.dumps(self.published(repo, revision)))
         if before is None:
             event = ["--event", "pull_request", "--repository", "owner/name"]
             event += ["--pull-request", "7"]
@@ -212,6 +283,8 @@ class Run:
             str(self.plan_dir),
             "--github-output",
             str(self.github_output),
+            "--registry",
+            str(self.registry),
             *self.run_arguments,
         )
         outputs = dict(
@@ -271,10 +344,10 @@ class Run:
         return self.log.read_text().split() if self.log.exists() else []
 
     def whole(self, repo: Repo, revision: str, before: str | None = None, **options):
+        """Plan, run the groups when ci.yml's `groups` job would start, and conclude."""
         self.plan(repo, revision, before)
-        groups_job = (
-            self.run_groups(repo, revision, **options) if self.groups else "skipped"
-        )
+        starts = self.plan_job == "success" and self.image and self.groups
+        groups_job = self.run_groups(repo, revision, **options) if starts else "skipped"
         return self.conclude(groups_job)
 
 
@@ -434,14 +507,189 @@ def test_a_selected_group_with_no_result_is_missing_and_fails(repo, run):
     assert "test.app missing: no result was recorded" in run.text
 
 
-def test_a_stale_descriptor_fails(repo, run):
-    repo.commit({"requirements.lock": "pytest==9.1.2\n"})
+def test_a_stale_descriptor_fails_the_plan_and_runs_no_group(repo, run):
+    repo.commit({"requirements.lock": "pytest==9.1.2\nruff==0.16.9\n"})
     _, merge = pull_request(repo, {"docs/guide.md": "better\n"})
     run.body.write_text("Docs.\n")
     process = run.whole(repo, merge)
+    assert run.planned.returncode == 1
+    assert run.image == ""
+    assert run.ran() == [] and run.inspected() == []
     assert process.returncode == 1
-    assert "the CI image descriptor is stale" in run.text
+    assert "the CI image descriptor is stale, so no group ran" in run.text
     assert "commit the descriptor it reports" in run.text
+    assert "the plan job concluded" not in run.text
+
+
+# --------------------------------------------------------------------------
+# The image the descriptor names is confirmed before any group runs in it
+
+ZERO_DIGEST = "sha256:" + "0" * 64
+
+
+def change(repo: Repo, run: Run, event: str, files: dict) -> tuple[str, str | None]:
+    """Commit `files` as a pull request or a push; return the tested revision and before."""
+    if event == "push":
+        before = repo.git("rev-parse", "HEAD")
+        return repo.commit(files), before
+    run.body.write_text("Body.\n")
+    return pull_request(repo, files)[1], None
+
+
+def image_values(fingerprint: str, **overrides) -> dict:
+    return {
+        "recipe_fingerprint": fingerprint,
+        "python": "3.13.9",
+        "pytest": "9.1.1",
+        "ruff": "0.16.9",
+        **overrides,
+    }
+
+
+@pytest.mark.parametrize("event", ["pull_request", "push"])
+def test_the_plan_confirms_the_image_and_groups_run_in_that_image(repo, run, event):
+    revision, before = change(repo, run, event, {"docs/guide.md": "better\n"})
+    process = run.whole(repo, revision, before)
+    assert process.returncode == 0, run.text
+    assert run.inspected() == [f"inspect {IMAGE}"]
+    assert run.image == IMAGE
+    assert "check.static" in run.ran()
+    record = json.loads(
+        (run.results_dir / "group-check.static" / "check.static.json").read_text()
+    )
+    assert record["image"] == IMAGE
+    confirmation = (
+        f"confirmed {IMAGE}: it records the tested revision's recipe fingerprint "
+        f"{repo.fingerprint()} and python 3.13.9, pytest 9.1.1, ruff 0.16.9"
+    )
+    assert confirmation in run.planned.stdout
+    assert confirmation in run.text
+
+
+@pytest.mark.parametrize("event", ["pull_request", "push"])
+@pytest.mark.parametrize(
+    ("descriptor_overrides", "image", "diagnostic"),
+    [
+        pytest.param(
+            {"digest": ZERO_DIGEST},
+            {},
+            f"registry inspect {IMAGE_REFERENCE}@{ZERO_DIGEST} failed",
+            id="wrong-digest",
+        ),
+        pytest.param(
+            {"python": "3.13.1"},
+            {},
+            "it records python '3.13.9', but tools/ci-image/descriptor.json at ",
+            id="descriptor-python",
+        ),
+        pytest.param(
+            {"pytest": "9.1.0"},
+            {},
+            "it records pytest '9.1.1', but tools/ci-image/descriptor.json at ",
+            id="descriptor-pytest",
+        ),
+        pytest.param(
+            {"ruff": "0.1.0"},
+            {},
+            "it records ruff '0.16.9', but tools/ci-image/descriptor.json at ",
+            id="descriptor-ruff",
+        ),
+        pytest.param(
+            {"pytest": "9.2.0", "ruff": "0.17.0"},
+            {"pytest": "9.2.0", "ruff": "0.17.0"},
+            "the embedded pytest is '9.2.0', but the lock pins 9.1.1; "
+            "the embedded ruff is '0.17.0', but the lock pins 0.16.9",
+            id="lock-pins",
+        ),
+        pytest.param(
+            {},
+            {"recipe_fingerprint": "f" * 64},
+            f"the embedded recipe fingerprint is '{'f' * 64}', not ",
+            id="image-fingerprint",
+        ),
+        pytest.param(
+            {},
+            "garbage",
+            f"the inspection of {IMAGE} did not answer with JSON",
+            id="uninspectable",
+        ),
+    ],
+)
+def test_an_image_that_is_not_confirmed_fails_the_plan_and_runs_no_group(
+    repo, run, event, descriptor_overrides, image, diagnostic
+):
+    fingerprint = repo.fingerprint()
+    run.images = {
+        IMAGE: image if image == "garbage" else image_values(fingerprint, **image)
+    }
+    named = f"{IMAGE_REFERENCE}@{descriptor_overrides.get('digest', IMAGE_DIGEST)}"
+    files = {"docs/guide.md": "better\n"}
+    if descriptor_overrides:
+        files["tools/ci-image/descriptor.json"] = descriptor(
+            fingerprint, **descriptor_overrides
+        )
+    revision, before = change(repo, run, event, files)
+    process = run.whole(repo, revision, before)
+    assert run.inspected() == [f"inspect {named}"]
+    assert run.planned.returncode == 1
+    assert diagnostic in run.planned.stderr
+    assert run.image == "" and run.ran() == []
+    assert process.returncode == 1
+    assert "## build-test: failed" in run.text
+    assert (
+        "the image the CI image descriptor names is not confirmed, so no group ran in it"
+        in run.text
+    )
+    assert diagnostic in run.text
+    assert "the plan job concluded" not in run.text
+
+
+def test_the_guide_reviews_probe_fails_the_plan_naming_the_digest(repo, run):
+    """A descriptor naming the all-zero digest and ruff 0.1.0, fingerprint intact."""
+    run.images = {IMAGE: image_values(repo.fingerprint())}
+    _, merge = pull_request(
+        repo,
+        {
+            "tools/ci-image/descriptor.json": descriptor(
+                repo.fingerprint(), digest=ZERO_DIGEST, ruff="0.1.0"
+            )
+        },
+    )
+    run.body.write_text("Body.\n")
+    process = run.whole(repo, merge)
+    assert run.planned.returncode == 1
+    assert ZERO_DIGEST in run.planned.stderr
+    assert process.returncode == 1 and ZERO_DIGEST in run.text
+    assert run.ran() == []
+
+
+def test_a_descriptor_only_change_is_checked_like_any_other(repo, run):
+    other = "sha256:" + "a" * 64
+    fingerprint = repo.fingerprint()
+    run.images = {
+        IMAGE: image_values(fingerprint),
+        f"{IMAGE_REFERENCE}@{other}": image_values(fingerprint),
+    }
+    head, merge = pull_request(
+        repo, {"tools/ci-image/descriptor.json": descriptor(fingerprint, digest=other)}
+    )
+    run.body.write_text("Body.\n")
+    assert run.whole(repo, merge).returncode == 0, run.text
+    assert run.image == f"{IMAGE_REFERENCE}@{other}"
+
+    unknown = "sha256:" + "b" * 64
+    (run.tmp / "unknown").mkdir()
+    rerun = Run(run.tmp / "unknown")
+    rerun.images = run.images
+    repo.git("checkout", "-q", "pr")
+    repo.commit(
+        {"tools/ci-image/descriptor.json": descriptor(fingerprint, digest=unknown)}
+    )
+    merge = repo.merge_commit("pr")
+    rerun.body.write_text("Body.\n")
+    process = rerun.whole(repo, merge)
+    assert process.returncode == 1 and rerun.ran() == []
+    assert f"registry inspect {IMAGE_REFERENCE}@{unknown} failed" in rerun.text
 
 
 def test_a_body_changed_since_planning_fails(repo, run):
@@ -897,6 +1145,8 @@ def test_the_workflow_holds_no_write_permission():
         ("pull-requests", "read"),
     ]
     assert "write-all" not in text and "read-all" not in text
+    # The plan inspects the image as an anonymous, read-only pull.
+    assert "docker login" not in text and "REGISTRY_TOKEN" not in text
 
 
 def test_build_test_is_the_one_aggregate_and_starts_with_the_run():

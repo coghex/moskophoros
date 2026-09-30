@@ -469,12 +469,13 @@ Every job reads one revision, the **tested revision**:
 The run has three jobs:
 
 1. **plan** checks out the tested revision with its full history, runs the
-   planner, and checks the [descriptor](#the-descriptor) the tested revision
-   commits against its recipe fingerprint.
+   planner, and [confirms the image](#confirming-the-image) the tested
+   revision's [descriptor](#the-descriptor) names. It fails when the image is
+   not confirmed, and then no group job starts.
 2. **One job per group** selected to run on GitHub: every selected `floor`,
-   `affected` and requested non-local-only group. Each job pulls the image the
-   descriptor names, by digest, and runs the group's catalog commands inside
-   it, unchanged, at the tested revision. The log names the group, the
+   `affected` and requested non-local-only group. Each job pulls the confirmed
+   image, by the descriptor's digest, and runs the group's catalog commands
+   inside it, unchanged, at the tested revision. The log names the group, the
    revision and the image. Before the commands, `.venv` is pointed at the
    image's environment and the package is installed into it, as
    [AGENTS.md](../AGENTS.md#build-and-test) does. A local-only group never runs
@@ -482,6 +483,32 @@ The run has three jobs:
 3. **`build-test`** is the aggregate, and the only job with that name. It
    [starts with the run](#when-build-test-appears) and waits for the others
    itself, so it concludes even when they failed or were skipped.
+
+### Confirming the image
+
+Before any group runs, the plan job checks the descriptor committed at the
+tested revision and the image it names, in this order:
+
+1. The descriptor is valid and records the tested revision's recipe
+   fingerprint ([the descriptor check](#the-descriptor)).
+2. The image exists at the descriptor's exact `reference@digest`: the plan job
+   pulls it by that digest and runs it, through the same inspection as
+   `image.py check-image`.
+3. The image records the descriptor's recipe fingerprint, and its Python,
+   pytest and ruff versions are the descriptor's. Its pytest and ruff are also
+   the versions `requirements.lock` pins, and its Python is a 3.13 release.
+   The lock pins no Python; the Dockerfile pins the Python base image by
+   digest.
+
+The pull is anonymous, with the workflow's read-only permissions, so the
+package must be public. A pull request that changes only the descriptor is
+checked the same way: one naming an image that holds what it says passes, and
+one naming any other digest fails.
+
+Only a confirmed image is passed to the group jobs, so no group runs in an
+image that was not confirmed. When the image is confirmed, the plan job's log
+and `build-test`'s summary say so, naming the image by digest with the
+fingerprint and versions it records.
 
 ### When `build-test` appears
 
@@ -531,7 +558,7 @@ It passes only when all of these hold, and fails otherwise:
 | Local-only obligations (pull requests only) | a selected local-only group has no report, or a report that is malformed, stale, `failed` or `not-run` ([Local-only reports](#local-only-reports)). |
 | Every selected group ran and passed | a group failed, timed out (15 minutes per group), was skipped, was cancelled, or recorded no result; ran at another revision, in another image, or in another run or attempt; or ran without being selected. |
 | This run finished in time | the plan job or a group job did not finish, or never appeared, within [`build-test`'s waits](#when-build-test-appears), or the run's jobs could not be read. |
-| The descriptor is current | the descriptor's recipe fingerprint is not the tested revision's, or the descriptor is missing or malformed. |
+| The image is confirmed | the descriptor is missing or malformed; its recipe fingerprint is not the tested revision's; or the image it names cannot be pulled or inspected, or records a fingerprint or version that differs from the descriptor, or a pytest or ruff version that differs from the lock ([Confirming the image](#confirming-the-image)). No group runs, and the diagnostic names the field that differs or says why the image could not be checked. |
 | The body did not change (pull requests only) | the body read just before concluding differs from the one planned from, or cannot be read. A body that cannot be read is a failure, never an empty body. |
 
 For a push, local-only groups are not checked: the summary lists them as
@@ -547,8 +574,8 @@ local-only obligation is added (D-19).
 line for each failure. Then:
 
 - the tested revision (for a pull request, the merge commit with its base and
-  head), the image by digest, the descriptor check, and a digest of the body
-  it planned from;
+  head), the confirmed image by digest (`none` when it was not confirmed), the
+  image check's result, and a digest of the body it planned from;
 - each group run on GitHub, with its result;
 - each local-only group: its obligation met or failed, or omitted with its
   reason, such as "verified on the pull request";
@@ -564,6 +591,8 @@ line for each failure. Then:
 | A group failed or timed out | Open its job's log, reproduce it locally with the command the plan shows, fix it, and push. |
 | A group was skipped, cancelled or recorded no result | Read the plan job's log, or the group job's, for the cause. Rerun the workflow if a runner failed. |
 | The descriptor is stale | Follow [Updating the image](#updating-the-image): commit the descriptor the `ci-image` workflow reports for this revision as `tools/ci-image/descriptor.json`. |
+| The image does not match the descriptor or the lock | The descriptor names an image other than this recipe's. Commit, unedited, the descriptor the `ci-image` workflow reports for this revision, as in [Updating the image](#updating-the-image). Never edit a digest or version by hand. |
+| The image could not be checked | Read the plan job's log for the registry's or Docker's error. A digest the registry does not hold means the descriptor is wrong: commit the one the `ci-image` workflow reports. If the package is not public, the owner makes it public. Otherwise rerun the workflow, since the registry was unavailable. |
 | The body changed since planning | Nothing: the run the edit started replaces this one. |
 | The body could not be read | Rerun the workflow; the GitHub API was unavailable. |
 | A wait ran out, or the run's jobs could not be read | Open the job named in the summary to see why it stalled, then rerun all jobs. |

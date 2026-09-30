@@ -4,7 +4,8 @@
 One subcommand for each job of .github/workflows/ci.yml:
 
 - ``plan`` reads the pull request body from the API, plans the tested revision
-  with plan.py, checks the CI image descriptor, and records all of it;
+  with plan.py, checks the CI image descriptor and inspects the image it names,
+  and records all of it;
 - ``run-group`` runs one catalog group's commands exactly as the catalog states
   them, and records the outcome;
 - ``await-plan`` and ``await-groups`` run in `build-test`, which starts with
@@ -58,6 +59,7 @@ def load(name: str, path: Path):
 
 planner = load("plan", HERE / "plan.py")
 image_tool = load("image", ROOT / "tools" / "ci-image" / "image.py")
+REGISTRY = str(ROOT / "tools" / "ci-image" / "registry.py")
 
 
 class CIError(Exception):
@@ -143,27 +145,39 @@ def run_planner(
     return process.returncode, None, process.stderr.strip()
 
 
-def check_image(repo: Path, revision: str) -> tuple[dict, str | None, str | None]:
-    """Check the descriptor at `revision`, and return the image it names."""
+def check_image(repo: Path, revision: str, registry: str) -> tuple[dict, str | None]:
+    """Check the descriptor at `revision` and the image it names.
+
+    Returns the check's status and message, and the image only when it is
+    confirmed: the descriptor records the revision's recipe fingerprint, and
+    image.py's `check-image` inspection, through the `registry` transport,
+    finds the image at the descriptor's exact digest recording that
+    fingerprint and the descriptor's versions, which equal the lock's pins.
+    """
     root = str(repo)
     try:
         document, _ = image_tool.read_descriptor(root, revision, None)
-    except image_tool.ImageError as error:
-        return {"status": "error", "message": str(error)}, None, str(error)
-    image = f"{document['reference']}@{document['digest']}"
-    try:
         value = image_tool.check_descriptor(root, revision, None)
     except image_tool.Mismatch as error:
-        return {"status": "stale", "message": str(error)}, image, None
+        return {"status": "stale", "message": str(error)}, None
     except image_tool.ImageError as error:
-        return {"status": "error", "message": str(error)}, image, None
+        return {"status": "error", "message": str(error)}, None
+    named = f"{document['reference']}@{document['digest']}"
+    try:
+        confirmed = image_tool.check_image(root, revision, None, registry)
+    except image_tool.ImageError as error:
+        return {"status": "unconfirmed", "message": str(error)}, None
+    versions = ", ".join(f"{name} {confirmed[name]}" for name in image_tool.VERSIONED)
     return (
         {
             "status": "current",
-            "message": f"the descriptor records the tested revision's recipe fingerprint {value}",
+            "message": (
+                f"confirmed {named}: it records the tested revision's recipe "
+                f"fingerprint {value} and {versions}, as the descriptor says and "
+                "the lock pins"
+            ),
         },
-        image,
-        None,
+        confirmed["reference"],
     )
 
 
@@ -177,8 +191,13 @@ def make_plan(
     number: int | None = None,
     before: str | None = None,
     run: dict | None = None,
+    registry: str = REGISTRY,
 ) -> dict:
-    """Plan the tested revision and record everything `conclude` needs."""
+    """Plan the tested revision and record everything `conclude` needs.
+
+    `image` is recorded only once the image is confirmed, so no group job
+    starts in an image that is not.
+    """
     output.mkdir(parents=True, exist_ok=True)
     revision = git(repo, "rev-parse", "--verify", f"{revision}^{{commit}}")
     catalog = repo / CATALOG_PATH
@@ -236,11 +255,7 @@ def make_plan(
                 if group["selected"] and not group["local"]
             ]
 
-    descriptor, image, problem = check_image(repo, revision)
-    state["descriptor"] = descriptor
-    state["image"] = image
-    if problem:
-        state["image_error"] = problem
+    state["descriptor"], state["image"] = check_image(repo, revision, registry)
     (output / STATE_FILE).write_text(
         json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -547,7 +562,12 @@ def decide(
             f"the plan was recorded by {describe_run(state.get('run'))}, not by "
             f"this one, {describe_run(run)}"
         )
-    if plan_job != "success" and not state["errors"]:
+    descriptor = state["descriptor"]
+    if (
+        plan_job != "success"
+        and not state["errors"]
+        and descriptor["status"] == "current"
+    ):
         failures.append(f"the plan job concluded {plan_job}")
     plan = state["plan"]
     if state["event"] == "pull_request" and plan is not None:
@@ -559,12 +579,18 @@ def decide(
                     + "; ".join(obligation["problems"])
                 )
 
-    descriptor = state["descriptor"]
     if descriptor["status"] == "stale":
-        failures.append(f"the CI image descriptor is stale: {descriptor['message']}")
+        failures.append(
+            f"the CI image descriptor is stale, so no group ran: {descriptor['message']}"
+        )
+    elif descriptor["status"] == "unconfirmed":
+        failures.append(
+            "the image the CI image descriptor names is not confirmed, so no group "
+            f"ran in it: {descriptor['message']}"
+        )
     elif descriptor["status"] != "current":
         failures.append(
-            f"the CI image descriptor cannot be checked: {descriptor['message']}"
+            f"the CI image descriptor cannot be checked, so no group ran: {descriptor['message']}"
         )
 
     selected = state["github_groups"]
@@ -784,6 +810,11 @@ def main(argv: list[str] | None = None) -> int:
     planning.add_argument("--before", help="a push's before revision")
     planning.add_argument("--output", type=Path, required=True)
     planning.add_argument("--github-output", type=Path)
+    planning.add_argument(
+        "--registry",
+        default=REGISTRY,
+        help="the registry transport that inspects the image (default: registry.py)",
+    )
     add_run_arguments(planning, required=False)
 
     running = commands.add_parser("run-group", help="run one group's commands")
@@ -836,6 +867,7 @@ def main(argv: list[str] | None = None) -> int:
                 number=arguments.pull_request,
                 before=arguments.before,
                 run=run_of(arguments),
+                registry=arguments.registry,
             )
             write_output(
                 arguments.github_output,
@@ -846,10 +878,18 @@ def main(argv: list[str] | None = None) -> int:
             )
             if state["plan"] is not None:
                 print(planner.render(state["plan"]))
-            for problem in [*state["errors"], state.get("image_error")]:
-                if problem:
-                    print(f"ci.py: {problem}", file=sys.stderr)
-            return 1 if state["errors"] else 0
+            descriptor = state["descriptor"]
+            if descriptor["status"] == "current":
+                print(f"The CI image check {descriptor['message']}.")
+            for problem in state["errors"]:
+                print(f"ci.py: {problem}", file=sys.stderr)
+            if descriptor["status"] != "current":
+                print(
+                    f"ci.py: the CI image check failed ({descriptor['status']}), so no "
+                    f"group runs: {descriptor['message']}",
+                    file=sys.stderr,
+                )
+            return 1 if state["errors"] or state["image"] is None else 0
         if arguments.command == "run-group":
             record = run_group(
                 repo,
