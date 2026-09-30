@@ -1,0 +1,202 @@
+# Resolve the CI image for one recipe fingerprint, publish it only on a
+# confirmed miss, and report the descriptor the author commits.
+#
+# It starts by manual dispatch, or from a same-repository pull request that
+# changes a recipe input. GitHub matches these paths against the pull request's
+# whole change, so one that changes only the descriptor starts nothing, while
+# pushing the descriptor to a recipe-changing pull request runs it again and
+# finds the image already published. Every job reads one revision: the pull
+# request's head, or the dispatched revision. Only the publish job holds
+# package write permission. See docs/validation.md, The CI image.
+name: ci-image
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    paths:
+      - 'tools/ci-image/**'
+      - 'requirements.lock'
+      - '.github/workflows/ci-image.yml'
+      - '!tools/ci-image/descriptor.json'
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/coghex/moskophoros-ci
+  REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  resolve:
+    # A fork's pull request may never start publication.
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      recipe-fingerprint: ${{ steps.fingerprint.outputs.recipe-fingerprint }}
+      status: ${{ steps.lookup.outputs.status }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.REVISION }}
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Fingerprint the recipe
+        id: fingerprint
+        run: |
+          set -euo pipefail
+          fingerprint="$(python3 tools/ci-image/image.py fingerprint --revision "$REVISION")"
+          echo "recipe-fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+          echo "revision $REVISION has recipe fingerprint $fingerprint"
+
+      - name: Look up the published image
+        id: lookup
+        env:
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/ci-image/image.py resolve --revision "$REVISION" \
+            --image "$IMAGE" --registry tools/ci-image/registry.py \
+            --github-output "$GITHUB_OUTPUT"
+
+  publish:
+    needs: resolve
+    if: needs.resolve.outputs.status == 'miss'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    # Publication for one fingerprint is serialized, and `publish` looks the
+    # tag up again once it holds the group, so an image another run published
+    # meanwhile is returned rather than rebuilt or overwritten.
+    concurrency:
+      group: ci-image-publish-${{ needs.resolve.outputs.recipe-fingerprint }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.REVISION }}
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Sign in to the registry
+        env:
+          ACTOR: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
+
+      - name: Publish once
+        env:
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/ci-image/image.py publish --revision "$REVISION" \
+            --image "$IMAGE" --registry tools/ci-image/registry.py \
+            --context "$RUNNER_TEMP/context"
+
+      - name: Sign out of the registry
+        if: always()
+        run: docker logout ghcr.io
+
+  descriptor:
+    needs: [resolve, publish]
+    if: always() && needs.resolve.result == 'success' && (needs.publish.result == 'success' || needs.publish.result == 'skipped')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.REVISION }}
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      # Hit or miss, the descriptor is read back from the published image, so
+      # it always describes what the registry holds.
+      - name: Write the descriptor
+        env:
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 tools/ci-image/image.py resolve --revision "$REVISION" \
+            --image "$IMAGE" --registry tools/ci-image/registry.py \
+            --require-hit --descriptor-output "$RUNNER_TEMP/descriptor.json"
+          python3 tools/ci-image/image.py check-descriptor --revision "$REVISION" \
+            --descriptor "$RUNNER_TEMP/descriptor.json"
+          {
+            echo "## CI image descriptor"
+            echo
+            echo "For revision \`$REVISION\`. Commit this as \`tools/ci-image/descriptor.json\`:"
+            echo
+            echo '```json'
+            cat "$RUNNER_TEMP/descriptor.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ci-image-descriptor
+          path: ${{ runner.temp }}/descriptor.json
+          if-no-files-found: error
+
+  anonymous-pull:
+    needs: descriptor
+    if: always() && needs.descriptor.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # No package grant, and Docker is never signed in: the image must be public
+    # for this pull to succeed.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.REVISION }}
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: ci-image-descriptor
+          path: ${{ runner.temp }}/descriptor
+
+      - name: Pull the image by digest without credentials and check it
+        run: |
+          set -euo pipefail
+          export DOCKER_CONFIG="$RUNNER_TEMP/anonymous-docker"
+          mkdir -p "$DOCKER_CONFIG"
+          descriptor="$RUNNER_TEMP/descriptor/descriptor.json"
+          reference="$(python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); print(d["reference"] + "@" + d["digest"])' "$descriptor")"
+          docker pull --platform linux/amd64 "$reference"
+          python3 tools/ci-image/image.py check-image --revision "$REVISION" \
+            --descriptor "$descriptor" --registry tools/ci-image/registry.py | tee "$RUNNER_TEMP/report.json"
+          {
+            echo "## Anonymous pull"
+            echo
+            echo "Pulled \`$reference\` with no registry credentials. It reports:"
+            echo
+            echo '```json'
+            cat "$RUNNER_TEMP/report.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

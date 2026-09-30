@@ -15,7 +15,7 @@
     },
     {
       "id": "test.workflow",
-      "description": "pytest over tools/: the review-gate test and the planner's own tests.",
+      "description": "pytest over tools/: the review-gate test, the planner's own tests and the CI image tests.",
       "category": "affected",
       "commands": [
         [".venv/bin/pytest", "tools"]
