@@ -5,17 +5,13 @@ Covered beyond the boundary: none
 
 ## Next
 
-Solve #12 (GUIDE-1's Blender smoke test) before slice 1's first package pull
-request, then process GUIDE-2, the next merge-safety finding.
+Every finding of the first review is dispositioned: #12 (merged in PR #13),
+#14 to #18 filed, GUIDE-7 closed as fixed. Solve #14 to #18, then run a full
+`/guide`, which reviews PR #13 and everything merged after it.
 
 ## Open findings
 
-- 2026-09-30T043336Z-fe94bd6/GUIDE-2 — a body edit leaves the previous `build-test` pass standing for minutes — unprocessed
-- 2026-09-30T043336Z-fe94bd6/GUIDE-3 — the descriptor check ignores the digest and versions — unprocessed
-- 2026-09-30T043336Z-fe94bd6/GUIDE-4 — catalog group IDs can create checks with required names — unprocessed
-- 2026-09-30T043336Z-fe94bd6/GUIDE-5 — `.gitattributes` can change the image build context unfingerprinted — unprocessed
-- 2026-09-30T043336Z-fe94bd6/GUIDE-6 — planner tests miss three-dot and text reasons; text mode crashes on non-UTF-8 paths — unprocessed
-- 2026-09-30T043336Z-fe94bd6/GUIDE-7 — `AGENTS.md:74` and `docs/validation.md:414` overclaim — unprocessed
+- none
 
 ## Pending handoff
 
