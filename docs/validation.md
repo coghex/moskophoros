@@ -415,7 +415,9 @@ revision: the pull request's head, or the dispatched revision.
 
 ### Updating the image
 
-1. Change the recipe: a file under `tools/ci-image/`, or `requirements.lock`.
+1. Change the recipe: a file under `tools/ci-image/`, `requirements.lock`, or
+   `.github/workflows/ci-image.yml`. Any change to these, even a comment,
+   gives a new fingerprint and needs a new image.
 2. Push it to a pull request from this repository. The workflow publishes the
    image for the new fingerprint, or finds the one already published.
 3. Copy the descriptor from the workflow's summary into
