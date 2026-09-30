@@ -71,8 +71,9 @@ python3 -m venv .venv
 .venv/bin/pip install --no-deps -e .
 .venv/bin/ruff check .
 .venv/bin/ruff format --check .
-.venv/bin/pytest                    # everything; Blender tests skip if absent
+.venv/bin/pytest                    # everything, including the Blender tests
 .venv/bin/pytest -m "not blender"   # fast: no Blender needed
+.venv/bin/pytest -m blender         # needs Blender, and fails without it
 .venv/bin/python tools/validation/plan.py --base origin/master --head HEAD
                                     # which test groups this change needs, and why
 ```
