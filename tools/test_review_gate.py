@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Run the review gate's stale-approval step against real Git histories.
 
 The step body is read from .github/workflows/review-gate.yml and executed
@@ -11,7 +10,6 @@ import stat
 import subprocess
 import sys
 import tempfile
-import textwrap
 import unittest
 from pathlib import Path
 
@@ -59,7 +57,9 @@ class Repo:
     def git(self, *args: str) -> str:
         return subprocess.run(
             ["git", "-C", str(self.path), *args],
-            check=True, capture_output=True, text=True,
+            check=True,
+            capture_output=True,
+            text=True,
         ).stdout.strip()
 
     def commit(self, files: dict, message: str) -> str:
@@ -82,8 +82,11 @@ class StaleApprovalTest(unittest.TestCase):
         (self.tmp / "repo").mkdir()
         self.repo = Repo(self.tmp / "repo")
         self.base = self.repo.commit(
-            {"impl.txt": "base impl\n", "tests.txt": "base tests\n",
-             "other.txt": "base other\n"},
+            {
+                "impl.txt": "base impl\n",
+                "tests.txt": "base tests\n",
+                "other.txt": "base other\n",
+            },
             "base",
         )
         bindir = self.tmp / "bin"
@@ -106,14 +109,23 @@ class StaleApprovalTest(unittest.TestCase):
         env = dict(
             os.environ,
             PATH=f"{self.bindir}{os.pathsep}{os.environ['PATH']}",
-            GH_TOKEN="unused", BEFORE=before, AFTER=after, PR_NUMBER="1",
-            REPO="owner/name", BASE_REF="master",
-            GATE_LABELS=str(self.labels), GATE_REPO=str(self.repo.path),
+            GH_TOKEN="unused",
+            BEFORE=before,
+            AFTER=after,
+            PR_NUMBER="1",
+            REPO="owner/name",
+            BASE_REF="master",
+            GATE_LABELS=str(self.labels),
+            GATE_REPO=str(self.repo.path),
             GATE_AFTER=after,
         )
         result = subprocess.run(
-            ["bash", "-e", str(self.script)], cwd=self.repo.path, env=env,
-            capture_output=True, text=True,
+            ["bash", "-e", str(self.script)],
+            cwd=self.repo.path,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return "reviewed:approve" in self.labels.read_text(encoding="utf-8")
@@ -139,14 +151,16 @@ class StaleApprovalTest(unittest.TestCase):
         # set shows the push touched reviewed content.
         self.branch_from_base()
         before = self.repo.commit(
-            {"impl.txt": "pr impl\n", "tests.txt": "pr tests\n"}, "pr")
+            {"impl.txt": "pr impl\n", "tests.txt": "pr tests\n"}, "pr"
+        )
         after = self.repo.commit({"impl.txt": "base impl\n"}, "revert impl")
         self.assertFalse(self.run_gate(before, after))
 
     def test_deleting_a_file_the_pr_added_removes_approval(self):
         self.branch_from_base()
         before = self.repo.commit(
-            {"new.txt": "added\n", "tests.txt": "pr tests\n"}, "pr")
+            {"new.txt": "added\n", "tests.txt": "pr tests\n"}, "pr"
+        )
         after = self.repo.commit({"new.txt": None}, "drop new file")
         self.assertFalse(self.run_gate(before, after))
 

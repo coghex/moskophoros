@@ -1,6 +1,6 @@
-# Publishes the `build-test` check the PR drainer requires. It checks
-# everything the repository currently contains; the first implementation pull
-# request adds the package's install and tests (AGENTS.md, Build and test).
+# Publishes the `build-test` check the PR drainer requires. It installs the
+# locked development dependencies on Python 3.13 and runs the same commands as
+# AGENTS.md, Build and test. The categorized CI later replaces this job.
 name: CI
 
 on:
@@ -18,10 +18,28 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install the locked dependencies and the package
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install -r requirements.lock
+          .venv/bin/pip install --no-deps -e .
+          .venv/bin/python --version
+          .venv/bin/pip list
+
+      - name: Lint
+        run: .venv/bin/ruff check .
+
+      - name: Check formatting
+        run: .venv/bin/ruff format --check .
+
+      - name: Test
+        run: .venv/bin/pytest -m "not blender"
+
       - name: Check the docs-landing helper
         run: |
           bash -n tools/docs_land.sh
-          python3 -m py_compile tools/docs_land_paths.py
-
-      - name: Test the review gate's stale-approval step
-        run: python3 tools/test_review_gate.py
+          .venv/bin/python -m py_compile tools/docs_land_paths.py
