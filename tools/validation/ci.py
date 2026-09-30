@@ -7,6 +7,9 @@ One subcommand for each job of .github/workflows/ci.yml:
   with plan.py, checks the CI image descriptor, and records all of it;
 - ``run-group`` runs one catalog group's commands exactly as the catalog states
   them, and records the outcome;
+- ``await-plan`` and ``await-groups`` run in `build-test`, which starts with
+  the run: they poll the run's own jobs until the plan job, then every group
+  job it selected, has finished, within a bounded wait;
 - ``conclude`` reads the pull request body again, collects every record, and
   decides `build-test`, writing the job summary.
 
@@ -34,6 +37,16 @@ BODY_FILE = "body.md"
 STATE_SCHEMA = 1
 JOB_RESULTS = ("success", "failure", "cancelled", "skipped")
 DEFAULT_TIMEOUT = 15 * 60
+PLAN_JOB = "plan"
+AGGREGATE_JOB = "build-test"
+# The waits `build-test` allows, in seconds. The plan job has 10 minutes and
+# each group job 20 in ci.yml, so these cover queueing as well, and together
+# stay well inside build-test's own timeout-minutes.
+PLAN_WAIT = 15 * 60
+GROUPS_WAIT = 30 * 60
+DISCOVERY_WAIT = 5 * 60
+POLL_INTERVAL = 15
+API_TIMEOUT = 30
 
 
 def load(name: str, path: Path):
@@ -163,6 +176,7 @@ def make_plan(
     repository: str | None = None,
     number: int | None = None,
     before: str | None = None,
+    run: dict | None = None,
 ) -> dict:
     """Plan the tested revision and record everything `conclude` needs."""
     output.mkdir(parents=True, exist_ok=True)
@@ -172,6 +186,7 @@ def make_plan(
         "schema": STATE_SCHEMA,
         "event": event,
         "revision": revision,
+        "run": run,
         "pull_request": number,
         "range": None,
         "body": None,
@@ -243,11 +258,13 @@ def run_group(
     image: str,
     output: Path,
     timeout: float = DEFAULT_TIMEOUT,
+    run: dict | None = None,
 ) -> dict:
     """Run one group's catalog commands in order, and record what happened."""
     record = {
         "group": group_id,
         "revision": revision,
+        "run": run,
         "image": image,
         "outcome": "failed",
         "commands": [],
@@ -308,6 +325,174 @@ def run_group(
 
 
 # --------------------------------------------------------------------------
+# await-plan and await-groups
+
+
+def describe_run(run: dict | None) -> str:
+    if not isinstance(run, dict):
+        return "an unidentified run"
+    return f"run {run.get('id')} attempt {run.get('attempt')}"
+
+
+def fetch_jobs(repository: str, run: dict, timeout: float) -> list[dict]:
+    """Every job of this run's attempt, as GitHub reports it now."""
+    endpoint = (
+        f"repos/{repository}/actions/runs/{run['id']}/attempts/{run['attempt']}"
+        "/jobs?per_page=100"
+    )
+    try:
+        result = subprocess.run(
+            ["gh", "api", "--paginate", endpoint, "--jq", ".jobs[]"],
+            capture_output=True,
+            text=True,
+            timeout=max(timeout, 1),
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        raise CIError(f"gh api did not answer within {timeout:g} seconds") from None
+    if result.returncode != 0:
+        detail = result.stderr.strip() or f"exit status {result.returncode}"
+        raise CIError(f"gh api failed: {detail}")
+    jobs = []
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        try:
+            job = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise CIError(f"gh api returned a malformed job: {error}") from None
+        if not isinstance(job, dict) or not isinstance(job.get("name"), str):
+            raise CIError(f"gh api returned a job without a name: {line[:200]}")
+        jobs.append(job)
+    return jobs
+
+
+def job_result(conclusions: list[str | None]) -> str:
+    """Combine finished jobs' conclusions the way `needs.<job>.result` does."""
+    if not conclusions or all(value == "skipped" for value in conclusions):
+        return "skipped"
+    if all(value == "success" for value in conclusions):
+        return "success"
+    if any(value == "cancelled" for value in conclusions):
+        return "cancelled"
+    return "failure"
+
+
+def await_jobs(
+    names: list[str],
+    read_jobs,
+    *,
+    budget: float,
+    discovery: float = DISCOVERY_WAIT,
+    interval: float = POLL_INTERVAL,
+    clock=time.monotonic,
+    sleep=time.sleep,
+) -> dict[str, str | None]:
+    """Wait until every job in `names` has finished; return each conclusion.
+
+    `read_jobs(timeout)` returns the run's jobs or raises CIError. A job that
+    has not appeared within `discovery` seconds, or has not finished within
+    `budget`, raises CIError naming it; so does a name two jobs share. A read
+    that fails is retried until the budget runs out, and no call is given more
+    time than remains.
+    """
+    start = clock()
+    deadline = start + budget
+    last_error = None
+    missing, pending = list(names), []
+    while True:
+        remaining = deadline - clock()
+        try:
+            jobs = read_jobs(min(API_TIMEOUT, max(remaining, 0)))
+        except CIError as error:
+            last_error = str(error)
+        else:
+            last_error = None
+            found = {}
+            for job in jobs:
+                found.setdefault(job["name"], []).append(job)
+            shared = [name for name in names if len(found.get(name, [])) > 1]
+            if shared:
+                raise CIError(
+                    "more than one job of this run is named "
+                    + ", ".join(shared)
+                    + ", so which one decides is unclear"
+                )
+            missing = [name for name in names if name not in found]
+            pending = [
+                name
+                for name in names
+                if name in found and found[name][0].get("status") != "completed"
+            ]
+            if not missing and not pending:
+                return {name: found[name][0].get("conclusion") for name in names}
+            if missing and clock() - start >= discovery:
+                raise CIError(
+                    "no job of this run is named "
+                    + ", ".join(missing)
+                    + f" after {discovery:g} seconds"
+                )
+        remaining = deadline - clock()
+        if remaining <= 0:
+            waiting = [name for name in names if name in missing or name in pending]
+            problem = f"gave up after {budget:g} seconds waiting for " + (
+                ", ".join(waiting) if waiting else "the run's jobs"
+            )
+            if last_error:
+                problem += f"; the last read of the run's jobs failed: {last_error}"
+            raise CIError(problem)
+        sleep(min(interval, remaining))
+
+
+def expected_groups(state: dict | None, plan_job: str) -> list[str]:
+    """The group jobs ci.yml starts: its `groups` job's condition, restated."""
+    if plan_job != "success" or state is None or not state.get("image"):
+        return []
+    return list(state.get("github_groups") or [])
+
+
+def read_state(plan_dir: Path | None) -> tuple[dict | None, list[str]]:
+    """The plan record under `plan_dir`, and a problem if it cannot be used."""
+    state_path = plan_dir / STATE_FILE if plan_dir else None
+    if state_path is None or not state_path.is_file():
+        return None, []
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        return None, [f"the plan record cannot be read: {error}"]
+    if not isinstance(state, dict) or state.get("schema") != STATE_SCHEMA:
+        return None, ["the plan record is not a record this tool wrote"]
+    return state, []
+
+
+def await_plan(read_jobs, budget: float = PLAN_WAIT, **options) -> str:
+    """Wait for this run's plan job; return its result."""
+    conclusions = await_jobs([PLAN_JOB], read_jobs, budget=budget, **options)
+    return job_result([conclusions[PLAN_JOB]])
+
+
+def await_groups(
+    state: dict | None,
+    plan_job: str,
+    read_jobs,
+    budget: float = GROUPS_WAIT,
+    **options,
+) -> str:
+    """Wait for every group job the plan started; return their combined result."""
+    names = expected_groups(state, plan_job)
+    if not names:
+        return "skipped"
+    reserved = {PLAN_JOB, AGGREGATE_JOB} & set(names)
+    if reserved:
+        raise CIError(
+            "the plan selected a group named like one of this run's own jobs: "
+            + ", ".join(sorted(reserved))
+        )
+    conclusions = await_jobs(names, read_jobs, budget=budget, **options)
+    return job_result(list(conclusions.values()))
+
+
+# --------------------------------------------------------------------------
 # conclude
 
 
@@ -337,12 +522,14 @@ def decide(
     final_body: str | None = None,
     final_body_error: str | None = None,
     record_problems: list[str] | None = None,
+    run: dict | None = None,
 ) -> dict:
     """Decide `build-test`: every failure, and each selected group's status.
 
     `final_body` is the pull request body read just before concluding, or
-    None with `final_body_error` saying why it could not be read. Anything
-    absent, skipped or unreadable is a failure, never a pass.
+    None with `final_body_error` saying why it could not be read. `run`, when
+    given, is this run's ID and attempt, and every record must carry it.
+    Anything absent, skipped or unreadable is a failure, never a pass.
     """
     failures = list(record_problems or [])
     statuses = {}
@@ -355,6 +542,11 @@ def decide(
         return {"passed": False, "failures": failures, "statuses": statuses}
 
     failures.extend(state["errors"])
+    if run is not None and state.get("run") != run:
+        failures.append(
+            f"the plan was recorded by {describe_run(state.get('run'))}, not by "
+            f"this one, {describe_run(run)}"
+        )
     if plan_job != "success" and not state["errors"]:
         failures.append(f"the plan job concluded {plan_job}")
     plan = state["plan"]
@@ -410,6 +602,12 @@ def decide(
             failures.append(
                 f"{group_id} ran at {record.get('revision')}, not the tested "
                 f"revision {state['revision']}"
+            )
+            group_failed = True
+        if run is not None and record.get("run") != run:
+            failures.append(
+                f"{group_id} was recorded by {describe_run(record.get('run'))}, "
+                f"not by this one, {describe_run(run)}"
             )
             group_failed = True
         if record.get("image") != state["image"]:
@@ -506,19 +704,9 @@ def conclude(
     plan_job: str,
     groups_job: str,
     repository: str | None,
+    run: dict | None = None,
 ) -> tuple[dict | None, dict]:
-    state = None
-    problems = []
-    state_path = plan_dir / STATE_FILE if plan_dir else None
-    if state_path is not None and state_path.is_file():
-        try:
-            state = json.loads(state_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-            problems.append(f"the plan record cannot be read: {error}")
-        else:
-            if not isinstance(state, dict) or state.get("schema") != STATE_SCHEMA:
-                problems.append("the plan record is not a record this tool wrote")
-                state = None
+    state, problems = read_state(plan_dir)
     records, record_problems = read_records(results_dir)
     final_body = final_body_error = None
     if state is not None and state["event"] == "pull_request":
@@ -534,6 +722,7 @@ def conclude(
         final_body,
         final_body_error,
         problems + record_problems,
+        run,
     )
     return state, verdict
 
@@ -548,6 +737,33 @@ def write_output(path: Path | None, values: dict[str, str]) -> None:
     with path.open("a", encoding="utf-8") as handle:
         for name, value in values.items():
             handle.write(f"{name}={value}\n")
+
+
+def add_run_arguments(parser: argparse.ArgumentParser, required: bool) -> None:
+    parser.add_argument(
+        "--run-id", type=int, required=required, help="this workflow run's ID"
+    )
+    parser.add_argument(
+        "--run-attempt", type=int, required=required, help="its attempt number"
+    )
+
+
+def run_of(arguments: argparse.Namespace) -> dict | None:
+    if arguments.run_id is None and arguments.run_attempt is None:
+        return None
+    if arguments.run_id is None or arguments.run_attempt is None:
+        raise CIError("--run-id and --run-attempt go together")
+    return {"id": arguments.run_id, "attempt": arguments.run_attempt}
+
+
+def fail_waiting(summary_path: Path | None, problem: str) -> int:
+    """Report a wait that could not finish as `build-test`'s failure."""
+    text = f"## build-test: failed\n\n### Failures\n\n- {problem}\n"
+    print(text)
+    if summary_path is not None:
+        with summary_path.open("a", encoding="utf-8") as handle:
+            handle.write(text)
+    return 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -568,6 +784,7 @@ def main(argv: list[str] | None = None) -> int:
     planning.add_argument("--before", help="a push's before revision")
     planning.add_argument("--output", type=Path, required=True)
     planning.add_argument("--github-output", type=Path)
+    add_run_arguments(planning, required=False)
 
     running = commands.add_parser("run-group", help="run one group's commands")
     running.add_argument("--group", required=True)
@@ -575,6 +792,21 @@ def main(argv: list[str] | None = None) -> int:
     running.add_argument("--image", required=True)
     running.add_argument("--output", type=Path, required=True)
     running.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
+    add_run_arguments(running, required=False)
+
+    for name, budget, what in (
+        ("await-plan", PLAN_WAIT, "wait for this run's plan job"),
+        ("await-groups", GROUPS_WAIT, "wait for the group jobs the plan started"),
+    ):
+        waiting = commands.add_parser(name, help=what)
+        waiting.add_argument("--repository", required=True, help="owner/name")
+        add_run_arguments(waiting, required=True)
+        waiting.add_argument("--budget", type=float, default=budget)
+        waiting.add_argument("--github-output", type=Path)
+        waiting.add_argument("--summary", type=Path)
+        if name == "await-groups":
+            waiting.add_argument("--plan-dir", type=Path)
+            waiting.add_argument("--plan-job", choices=JOB_RESULTS, required=True)
 
     concluding = commands.add_parser("conclude", help="decide build-test")
     concluding.add_argument("--plan-dir", type=Path)
@@ -583,6 +815,7 @@ def main(argv: list[str] | None = None) -> int:
     concluding.add_argument("--groups-job", choices=JOB_RESULTS, required=True)
     concluding.add_argument("--repository", help="owner/name, for a pull request")
     concluding.add_argument("--summary", type=Path)
+    add_run_arguments(concluding, required=False)
 
     arguments = parser.parse_args(argv)
     repo = arguments.repo.resolve()
@@ -602,6 +835,7 @@ def main(argv: list[str] | None = None) -> int:
                 repository=arguments.repository,
                 number=arguments.pull_request,
                 before=arguments.before,
+                run=run_of(arguments),
             )
             write_output(
                 arguments.github_output,
@@ -624,17 +858,40 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.image,
                 arguments.output,
                 arguments.timeout,
+                run_of(arguments),
             )
             print(f"{record['group']}: {record['outcome']}")
             if record["detail"]:
                 print(record["detail"], file=sys.stderr)
             return 0 if record["outcome"] == "passed" else 1
+        if arguments.command in ("await-plan", "await-groups"):
+            run = run_of(arguments)
+
+            def read_jobs(timeout: float) -> list[dict]:
+                return fetch_jobs(arguments.repository, run, timeout)
+
+            try:
+                if arguments.command == "await-plan":
+                    name = "plan_job"
+                    result = await_plan(read_jobs, arguments.budget)
+                else:
+                    name = "groups_job"
+                    state, _ = read_state(arguments.plan_dir)
+                    result = await_groups(
+                        state, arguments.plan_job, read_jobs, arguments.budget
+                    )
+            except CIError as error:
+                return fail_waiting(arguments.summary, str(error))
+            print(f"{name}: {result}")
+            write_output(arguments.github_output, {name: result})
+            return 0
         state, verdict = conclude(
             arguments.plan_dir,
             arguments.results_dir,
             arguments.plan_job,
             arguments.groups_job,
             arguments.repository,
+            run_of(arguments),
         )
         text = summary(state, verdict)
         print(text)

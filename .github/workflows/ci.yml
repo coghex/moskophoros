@@ -3,6 +3,8 @@
 # selected group that runs on GitHub runs its catalog command inside the image
 # the committed descriptor names by digest; and `build-test` passes only when
 # the plan, every group, the descriptor and the pull request body all hold.
+# `build-test` starts with the run and waits for the other jobs itself, so its
+# check appears at once and an earlier run's result never speaks for this one.
 # Local-only groups never run here. The logic lives in tools/validation/ci.py,
 # which tools/validation/test_ci.py tests. See docs/validation.md, On GitHub.
 name: CI
@@ -15,11 +17,13 @@ on:
   push:
     branches: [master]
 
-# Read-only: no job holds a write permission.
+# Read-only: no job holds a write permission. `actions: read` lets
+# `build-test` read this run's own jobs.
 permissions:
   contents: read
   pull-requests: read
   packages: read
+  actions: read
 
 # A newer run for the same pull request cancels one still in progress, so an
 # older run cannot finish after it. Each push to master keeps its own run.
@@ -32,7 +36,9 @@ defaults:
     shell: bash
 
 # Every job reads one revision, `github.sha`: GitHub's merge commit for a pull
-# request, or the pushed revision.
+# request, or the pushed revision. Every record carries the run's ID and
+# attempt, and artifact names carry the attempt, so no other run's or earlier
+# attempt's result is ever read.
 jobs:
   plan:
     runs-on: ubuntu-24.04
@@ -59,9 +65,12 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           PULL_REQUEST: ${{ github.event.pull_request.number }}
           BEFORE: ${{ github.event.before }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
           arguments=(--event "$EVENT" --revision "$REVISION" \
+            --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT" \
             --output "$RUNNER_TEMP/plan" --github-output "$GITHUB_OUTPUT")
           if [ "$EVENT" = pull_request ]; then
             arguments+=(--repository "$REPOSITORY" --pull-request "$PULL_REQUEST")
@@ -73,7 +82,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: plan
+          name: plan-${{ github.run_attempt }}
           path: ${{ runner.temp }}/plan
           if-no-files-found: ignore
 
@@ -101,11 +110,14 @@ jobs:
           GROUP: ${{ matrix.group }}
           IMAGE: ${{ needs.plan.outputs.image }}
           REVISION: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
           echo "running $GROUP at $REVISION in $IMAGE"
           docker pull "$IMAGE"
           docker run --rm --volume "$GITHUB_WORKSPACE:/work" --workdir /work \
+            --env RUN_ID --env RUN_ATTEMPT \
             --env GROUP --env IMAGE --env REVISION "$IMAGE" \
             bash -euo pipefail -c '
               git config --global --add safe.directory /work
@@ -114,24 +126,31 @@ jobs:
                 install --quiet --no-deps -e .
               exec .venv/bin/python tools/validation/ci.py run-group \
                 --group "$GROUP" --revision "$REVISION" --image "$IMAGE" \
+                --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT" \
                 --output "/work/.ci-results/$GROUP.json"'
 
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: group-${{ matrix.group }}
+          name: group-${{ github.run_attempt }}-${{ matrix.group }}
           path: ${{ github.workspace }}/.ci-results
           if-no-files-found: ignore
           include-hidden-files: true
 
   # The aggregate the ruleset requires, and the only job with this name. It
-  # runs whether the jobs before it passed, failed or were skipped, and treats
-  # anything it cannot confirm as a failure.
+  # needs no other job, so GitHub creates its check as soon as the run starts,
+  # in progress, and from then on it is the newest `build-test` on the tested
+  # revision. It waits for this run's plan job, then for every group job the
+  # plan started, each wait bounded, and treats anything it cannot confirm as
+  # a failure. Cancelling the run cancels it too; it is never skipped.
   build-test:
-    needs: [plan, groups]
-    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 55
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      RUN_ID: ${{ github.run_id }}
+      RUN_ATTEMPT: ${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -141,26 +160,42 @@ jobs:
         with:
           python-version: "3.13"
 
-      - uses: actions/download-artifact@v7
-        continue-on-error: true
-        with:
-          name: plan
-          path: ${{ runner.temp }}/plan
+      - name: Wait for the plan job
+        id: plan
+        run: |
+          python3 tools/validation/ci.py await-plan --repository "$REPOSITORY" \
+            --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT" \
+            --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/download-artifact@v7
         continue-on-error: true
         with:
-          pattern: group-*
+          name: plan-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/plan
+
+      - name: Wait for the group jobs
+        id: groups
+        env:
+          PLAN_JOB: ${{ steps.plan.outputs.plan_job }}
+        run: |
+          python3 tools/validation/ci.py await-groups --repository "$REPOSITORY" \
+            --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT" \
+            --plan-dir "$RUNNER_TEMP/plan" --plan-job "$PLAN_JOB" \
+            --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          pattern: group-${{ github.run_attempt }}-*
           path: ${{ runner.temp }}/results
 
       - name: Decide build-test
         env:
-          GH_TOKEN: ${{ github.token }}
-          PLAN_JOB: ${{ needs.plan.result }}
-          GROUPS_JOB: ${{ needs.groups.result }}
-          REPOSITORY: ${{ github.repository }}
+          PLAN_JOB: ${{ steps.plan.outputs.plan_job }}
+          GROUPS_JOB: ${{ steps.groups.outputs.groups_job }}
         run: |
           python3 tools/validation/ci.py conclude \
             --plan-dir "$RUNNER_TEMP/plan" --results-dir "$RUNNER_TEMP/results" \
             --plan-job "$PLAN_JOB" --groups-job "$GROUPS_JOB" \
+            --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT" \
             --repository "$REPOSITORY" --summary "$GITHUB_STEP_SUMMARY"
