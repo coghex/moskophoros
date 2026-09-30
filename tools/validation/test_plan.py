@@ -811,6 +811,9 @@ def test_text_names_the_paths_a_push_verifies_on_the_pull_request(repo, catalog)
         ("src/a, b.py", '"src/a, b.py"'),
         ("src/a.py; requested", '"src/a.py; requested"'),
         ("src/a\nb.py", '"src/a\\nb.py"'),
+        ("src/a\x07.py", '"src/a\\u0007.py"'),
+        ("src/\x80.py", '"src/\\u0080.py"'),
+        ("src/\udc80.py", '"src/\\x80.py"'),
     ],
 )
 def test_a_path_is_shown_plainly_or_quoted_and_escaped(path, text):
@@ -882,6 +885,36 @@ def test_text_names_a_stale_path_that_is_not_utf8(repo, catalog, tmp_path):
         f"FAILED: the report is stale: its paths changed since {reported}: "
         '"src/caf\\xe9.py"\n'
     ) in stdout
+
+
+def test_a_plan_read_back_from_json_renders_as_the_text_form_does(
+    repo, catalog, tmp_path
+):
+    reported = repo.commit({"src/app.py": "changed\n"})
+    repo.commit_raw(b"src/caf\xe9.py", b"app\n")
+    repo.commit_raw(b"caf\xe9.md", b"notes\n")
+    body = tmp_path / "body.md"
+    body.write_text(report(reported), encoding="utf-8")
+    as_json = loaded(pr_plan(repo, catalog, report(reported)), code=1)
+    assert as_json["fail_wide"] == ["changed paths no group claims: caf\udce9.md"]
+    code, stdout, stderr = strict_text_plan(
+        repo, catalog, "--base", "master", "--head", "HEAD", "--request-file", body
+    )
+    assert code == 1, stdout + stderr
+    rendered = plan.render(as_json)
+    assert rendered.encode("utf-8").decode("utf-8") + "\n" == stdout
+    assert '  - changed paths no group claims: "caf\\xe9.md"\n' in stdout
+    assert text_sections(stdout)["test.tools"] == (
+        "Selected, runs on GitHub:",
+        'failing wide: changed paths no group claims: "caf\\xe9.md"',
+    )
+    assert (
+        f"FAILED: the report is stale: its paths changed since {reported}: "
+        '"src/caf\\xe9.py"\n'
+    ) in stdout
+    assert plan.shown_problems(obligation(as_json)) == [
+        f'the report is stale: its paths changed since {reported}: "src/caf\\xe9.py"'
+    ]
 
 
 def test_text_shows_a_push_path_that_is_not_utf8(repo, catalog):

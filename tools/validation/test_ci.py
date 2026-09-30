@@ -823,6 +823,61 @@ def test_an_upstream_job_that_did_not_succeed_cannot_pass(repo, run, job, result
     assert process.returncode == 1
 
 
+def test_a_path_that_is_not_utf8_reaches_the_summary_quoted(tmp_path):
+    repository = Repo(tmp_path / "repo")
+    stale = repository.commit({"src/app.py": "app\n"})
+    for name in (b"src/caf\xe9.py", b"caf\xe9.md"):
+        blob = (
+            subprocess.run(
+                ["git", "-C", str(repository.path), "hash-object", "-w", "--stdin"],
+                input=b"x\n",
+                check=True,
+                capture_output=True,
+            )
+            .stdout.decode()
+            .strip()
+        )
+        subprocess.run(
+            ["git", "-C", str(repository.path), "update-index", "--add", "--cacheinfo"]
+            + [b"100644," + blob.encode() + b"," + name],
+            check=True,
+        )
+        repository.git("commit", "-q", "-m", "raw name")
+    body = tmp_path / "body.md"
+    body.write_text(report(stale), encoding="utf-8")
+    catalog_path = tmp_path / "catalog.json"
+    catalog_path.write_text(json.dumps(catalog()), encoding="utf-8")
+    code, plan, detail = ci.run_planner(
+        repository.path,
+        ["--base", stale, "--head", "HEAD", "--request-file", str(body)],
+        catalog_path,
+    )
+    assert code == 1, detail
+    state = {
+        **PLANNED,
+        "event": "pull_request",
+        "pull_request": 7,
+        "range": None,
+        "body": None,
+        "errors": [],
+        "plan": plan,
+        "descriptor": {"status": "current", "message": "matches"},
+        "github_groups": [],
+    }
+    verdict = ci.decide(state, [], "success", "skipped")
+    text = ci.summary(state, verdict)
+    assert text.encode("utf-8").decode("utf-8") == text
+    stale_text = (
+        f'the report is stale: its paths changed since {stale}: "src/caf\\xe9.py"'
+    )
+    assert (
+        f"the local-only group test.local has no fresh passing report: {stale_text}"
+        in verdict["failures"]
+    )
+    assert f"- `test.local`: obligation FAILED: {stale_text}\n" in text
+    assert '  - changed paths no group claims: "caf\\xe9.md"\n' in text
+
+
 def test_decide_never_passes_without_a_plan():
     verdict = ci.decide(None, [], "success", "success")
     assert not verdict["passed"]
