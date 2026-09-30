@@ -18,14 +18,16 @@ concrete precondition
 
 ## Processing status
 
-- [ ] EPIC. Establish categorized, explainable CI with a prebuilt image
-- [ ] CIF-1. Set up the pytest and ruff harness and run it in CI
-- [ ] CIF-2. Declare test groups in a catalog and explain which ones a change needs
-- [ ] CIF-3. Build and publish the CI image once per recipe, addressed by digest
-- [ ] CIF-4. Run the planned groups on GitHub behind an honest `build-test`
+- [x] EPIC. Establish categorized, explainable CI with a prebuilt image — [#3]
+- [x] CIF-1. Set up the pytest and ruff harness and run it in CI — [#4]
+- [x] CIF-2. Declare test groups in a catalog and explain which ones a change needs — [#5]
+- [x] CIF-3. Build and publish the CI image once per recipe, addressed by digest — [#6]
+- [x] CIF-4. Run the planned groups on GitHub behind an honest `build-test` — [#7]
 
 The owner approved every decision and marked this design ready for issue
-processing on 2026-09-29.
+processing on 2026-09-29. D-19 to D-21 were added the same day while processing
+CIF-2; the owner re-confirmed the design ready for issue processing the same
+day.
 
 ## Epic contract
 
@@ -125,9 +127,11 @@ What it compares:
   renamed file affects the groups of its old path and its new path.
 - **Fail wide, never narrow.** A `before` revision that is all zeros, not an
   ancestor of `after` (a force push), or missing from history, and any
-  comparison that cannot be computed, select every non-optional group, with
-  that reason in the plan. So do paths no group claims. Nothing is ever
-  treated as "no change".
+  comparison that cannot be computed, select every non-optional group that
+  runs on GitHub, with that reason in the plan. So do paths no group claims.
+  Nothing is ever treated as "no change". Failing wide never adds a local-only
+  obligation: a local-only group is selected only by its own affected paths or
+  by a request (D-19).
 
 ### P-4. A prebuilt image, published once per recipe (D-14)
 
@@ -162,7 +166,10 @@ Following D-9, the first catalog:
 | `check.static` | mandatory floor | ruff lint and format check; the catalog's validity check; syntax checks of the vendored helpers (`bash -n tools/docs_land.sh`, Python compilation of `tools/docs_land_paths.py`) | every candidate |
 | `test.workflow` | affected | pytest over `tools/`: the review-gate test and the planner's own tests | `tools/`, `.github/` |
 | `test.package` | affected | pytest over the package's tests, excluding the `blender` marker | `src/`, `tests/`, `pyproject.toml`, the lock file |
-| `test.blender` | local-only | pytest over the `blender` marker, on the owner's machine | `src/`, the Blender tests, `pyproject.toml`, the lock file |
+| `test.blender` | local-only | pytest over the `blender` marker, on the owner's machine | `src/`, `tests/blender/`, `pyproject.toml`, the lock file |
+
+Every Blender-marked test lives under `tests/blender/` (D-20), so changing an
+ordinary test does not create a Blender obligation.
 
 `test.blender` covers the whole package because capture, sampling, fitting,
 stylizing and output encoding all live in it, and `AGENTS.md` requires the
@@ -346,6 +353,34 @@ each slice; slice 1 adds the package's contents, the command and
 `moskophoros --help`. This rewords D-8's consequence. Rejected: option B, a
 harness with no package and two initial groups, which would have changed D-9.
 
+### D-19. Failing wide selects GitHub groups only
+
+Owner decision 2026-09-29, raised while processing CIF-2. When the planner
+fails wide (a path no group claims, or history it cannot compare), it selects
+every non-optional group that runs on GitHub, but never adds a local-only
+obligation. A local-only group is selected only by its own affected paths or by
+a request, so a README or docs-only pull request never needs a Blender run,
+while any change under `src/` still does. Rejected: counting local-only groups
+as non-optional, which would demand a Blender report for any unclaimed path;
+and a separate catalog category for inert prose paths.
+
+### D-20. Blender tests live under `tests/blender/`
+
+Owner decision 2026-09-29, raised while processing CIF-2. Every test with the
+`blender` marker lives under `tests/blender/`. `test.blender` is affected by
+`src/`, `tests/blender/`, `pyproject.toml` and the lock file. Rejected: Blender
+tests anywhere under `tests/`, which would make every test change a Blender
+obligation.
+
+### D-21. Only a passing local run satisfies a local-only group
+
+Owner decision 2026-09-29, raised while processing CIF-2; it refines D-7. A
+local-only report entry satisfies its group only when it says the group ran and
+passed at a fresh commit (D-17). An entry saying the group ran and failed, or
+was not run for any reason, fails `build-test`, in the spirit of "a skipped
+test is not a passing test". Rejected: letting "not run" pass with a visible
+reason, and treating reports as informational.
+
 ## Open questions
 
 ### Q-1. Which Python version do CI and the package target?
@@ -426,12 +461,14 @@ Approved by the owner 2026-09-29.
 - **Phase:** 1
 - **Depends on:** CIF-1
 - **Ordering:** critical path
-- **Relevant decisions:** D-1, D-3, D-6, D-7, D-9, D-10, D-11, D-13, D-15, D-17
+- **Relevant decisions:** D-1, D-3, D-6, D-7, D-9, D-10, D-11, D-13, D-15, D-17,
+  D-19, D-20, D-21
 - **Acceptance signals:** the planner's explanations match hand-built fixture
   histories for every selection reason, including a rename out of a group's
   paths, a force push and missing history; an invalid catalog, an unknown
-  requested group, a missing or incomplete local-only report and a stale
-  report are each errors with a diagnostic.
+  requested group, a missing or incomplete local-only report, a stale report,
+  and a report of a failed or skipped run are each errors with a diagnostic; a
+  docs-only change selects no local-only group.
 - **Out of scope:** running anything on GitHub; the image.
 - **Open questions:** None
 
