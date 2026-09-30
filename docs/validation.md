@@ -1,14 +1,17 @@
 # Validation
 
-How moskophoros decides which checks a change needs. Test groups are declared
-once in a catalog, and a planner compares two revisions and explains, for every
-group, whether the change selects it and why. The decisions behind this are in
-the [CI foundation design](designs/ci_foundation_design.md) (D-10, D-11, D-13,
-D-15, D-17, D-19 to D-21).
+How moskophoros decides which checks a change needs, and the image they are
+to run in. Test groups are declared once in a catalog, and a planner compares
+two revisions and explains, for every group, whether the change selects it and
+why. The decisions behind this are in the
+[CI foundation design](designs/ci_foundation_design.md) (D-4 to D-6, D-10,
+D-11, D-13 to D-15, D-17, D-19 to D-21).
 
-This describes what exists now: the catalog, the planner and its checks. CI
-runs only the catalog's validity check so far. Running the planned groups on
-GitHub, reading the pull request body there and the aggregate `build-test`
+This describes what exists now: the catalog, the planner and its checks, and
+the [CI image](#the-ci-image) with its descriptor. CI runs only the catalog's
+validity check so far, and it does not run in the image yet. Running the
+planned groups on GitHub inside the image, reading the pull request body there,
+failing `build-test` on a stale descriptor and the aggregate `build-test`
 verdict are planned work (CIF-4 in the design), not current behavior.
 
 ## The catalog
@@ -61,7 +64,7 @@ commands assume the virtual environment described in
 | Group | Category | Runs | Affected by |
 |---|---|---|---|
 | `check.static` | `floor` | `ruff check .`, `ruff format --check .`, the catalog validity check, `bash -n tools/docs_land.sh`, and compiling `tools/docs_land_paths.py` | every change |
-| `test.workflow` | `affected` | `pytest tools`: the review-gate test and the planner's tests | `tools/`, `.github/` |
+| `test.workflow` | `affected` | `pytest tools`: the review-gate test, the planner's tests and the CI image tests | `tools/`, `.github/` |
 | `test.package` | `affected` | `pytest tests -m "not blender"` | `src/`, `tests/`, `pyproject.toml`, `requirements.lock` |
 | `test.blender` | `local-only` | `pytest -m blender`, on the owner's machine | `src/`, `tests/blender/`, `pyproject.toml`, `requirements.lock` |
 
@@ -290,3 +293,137 @@ the comparison failed), `unclaimed_paths`, `fail_wide`, `requested`, `groups`
 | 0 | A valid plan, with every obligation met, or a valid catalog. Failing wide still exits 0. |
 | 1 | The plan was computed, but at least one local obligation failed. The plan says which and why. |
 | 2 | An error: an invalid catalog, a malformed or ambiguous request or report block, an unknown requested ID, an unreadable file, or bad arguments. Nothing is planned. |
+
+## The CI image
+
+`ghcr.io/coghex/moskophoros-ci` is a prebuilt `linux/amd64` image for running
+the groups. It holds:
+
+- Python 3.13, from a base image named by digest;
+- exactly the development dependencies `requirements.lock` pins, in an
+  environment at `/opt/moskophoros/venv` that is first on `PATH` and has no pip
+  of its own;
+- `git` and `bash`.
+
+It holds no Blender, no project source and no project build output. The image
+records its own recipe fingerprint and its Python, pytest and ruff versions,
+both in `/opt/moskophoros/image.json` and in labels named
+`org.moskophoros.ci-image.*`.
+
+### The recipe and its fingerprint
+
+The recipe is [`tools/ci-image/`](../tools/ci-image/):
+
+| File | Role |
+|---|---|
+| `Dockerfile` | The image: its base, packages and environment. |
+| `stamp.py` | Runs during the build. Refuses an environment that is not exactly the lock's, then writes `image.json`. |
+| `image.py` | The fingerprint, the descriptor check, and publication. |
+| `registry.py` | How `image.py` reaches the GitHub Container Registry and Docker. |
+| `descriptor.json` | The published image to use (below). |
+
+The **recipe fingerprint** is a SHA-256 digest over exactly these inputs, read
+from one commit's tree:
+
+- every file under `tools/ci-image/` except `tools/ci-image/descriptor.json`;
+- `requirements.lock`;
+- `.github/workflows/ci-image.yml`.
+
+Each input contributes its path, file mode, object type and Git object ID, so
+editing, adding, removing, renaming or making an input executable changes the
+fingerprint. Nothing else does: not other files, not the descriptor, and not
+uncommitted or untracked changes. The same revision gives the same fingerprint
+on any machine.
+
+```sh
+python3 tools/ci-image/image.py fingerprint --revision HEAD
+```
+
+The build context is staged from the same revision and holds exactly the
+fingerprint's inputs, so nothing else can reach the build. `stage` refuses an
+output directory that is not empty:
+
+```sh
+python3 tools/ci-image/image.py stage --revision HEAD --output /tmp/context
+```
+
+`image.py` uses only the Python standard library.
+
+### The descriptor
+
+[`tools/ci-image/descriptor.json`](../tools/ci-image/descriptor.json) names the
+image to use. Its fields:
+
+| Field | Meaning |
+|---|---|
+| `schema_version` | `1`. |
+| `reference` | The image repository, `ghcr.io/coghex/moskophoros-ci`. |
+| `digest` | The image's `sha256:` digest, the one to pull. |
+| `recipe_fingerprint` | The recipe fingerprint the image was built from. |
+| `python` | The Python version the image contains, a 3.13 release. |
+| `pytest` | The pytest version it contains. |
+| `ruff` | The ruff version it contains. |
+
+The versions are read back from the published image, never supplied to the
+build. The descriptor is not a fingerprint input, so committing it leaves the
+fingerprint unchanged.
+
+The **descriptor check** compares a descriptor's fingerprint with a revision's:
+
+```sh
+python3 tools/ci-image/image.py check-descriptor --revision HEAD
+python3 tools/ci-image/image.py check-descriptor --revision HEAD --descriptor FILE
+```
+
+Without `--descriptor` it reads the descriptor committed at that revision. It
+exits 0 on a match, 1 on a mismatch, with an error naming both fingerprints,
+and 2 on any other error, such as a malformed or missing descriptor.
+
+### Publishing once per fingerprint
+
+[`.github/workflows/ci-image.yml`](../.github/workflows/ci-image.yml) runs on
+manual dispatch, and for a pull request from this repository that changes a
+fingerprint input. A pull request that changes only the descriptor does not
+start it, and neither does a pull request from a fork. Every job reads one
+revision: the pull request's head, or the dispatched revision.
+
+1. **resolve** computes the fingerprint and looks up the tag
+   `fp-<fingerprint>`. An existing image is used only if its labels record
+   this fingerprint, a Python 3.13 release and the lock's pytest and ruff
+   versions; its log then says the fingerprint's image already exists, and
+   nothing is built. Only a registry answer that the tag or repository is
+   unknown counts as absent. Any other failure, such as an authentication
+   error, stops the workflow without publishing.
+2. **publish** runs only when the tag is absent, and is the only job with
+   package write permission. Runs for one fingerprint wait for each other, and
+   each looks the tag up again first, so an image another run published
+   meanwhile is used rather than rebuilt. Otherwise it builds the image from
+   the staged context, runs it to check that it records the expected
+   fingerprint and versions, that `pytest --version` and `ruff --version`
+   agree, and that it has `git` and `bash` and no Blender or project package,
+   then pushes it once and reads it back. A published tag is never
+   overwritten: a tag that exists but does not describe this recipe stops the
+   workflow, and replacing it means deleting that package version by hand.
+3. **descriptor** reads the published image's descriptor back from the
+   registry, checks it against the revision, and reports it in the job summary
+   and as the `ci-image-descriptor` artifact.
+4. **anonymous-pull** pulls the descriptor's digest with no registry
+   credentials, runs it, and checks that it reports the descriptor's
+   fingerprint and versions and the lock's pytest and ruff pins. It fails if
+   the package is not public.
+
+### Updating the image
+
+1. Change the recipe: a file under `tools/ci-image/`, or `requirements.lock`.
+2. Push it to a pull request from this repository. The workflow publishes the
+   image for the new fingerprint, or finds the one already published.
+3. Copy the descriptor from the workflow's summary into
+   `tools/ci-image/descriptor.json`, and push it to the same pull request.
+4. Check it:
+
+   ```sh
+   python3 tools/ci-image/image.py check-descriptor --revision HEAD
+   ```
+
+The package must be public. A new package can start private; only the owner
+can change its visibility, in the package's settings on GitHub.
