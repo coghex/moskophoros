@@ -35,7 +35,7 @@ every group once:
 
 | Field | Meaning |
 |---|---|
-| `id` | Stable, unique ID: dot-separated lower-case words, such as `test.package`. Requests and reports name groups by it. |
+| `id` | Stable, unique ID: dot-separated lower-case words, such as `test.package`. Requests and reports name groups by it. `build-test` and `review-approved`, the checks the `master` ruleset requires, are reserved. |
 | `description` | One sentence saying what the group checks. |
 | `category` | Exactly one of `floor`, `affected`, `optional`, `local-only` (below). |
 | `commands` | The group's command: a non-empty list of steps, each an argument list, run in order from the repository root. The group passes when every step passes. |
@@ -118,8 +118,10 @@ nothing unless it declares patterns.
 `plan.py --catalog-check` validates the catalog and exits 0 if it is valid, or
 2 with one diagnostic per problem. It rejects malformed JSON (including a
 duplicate key), a wrong `schema_version`, unknown keys, a duplicate or
-malformed ID, a missing description, an unknown category, a missing command,
-missing patterns on a group other than `floor`, and an invalid pattern. A
+malformed ID, a reserved ID (`build-test` or `review-approved`, the names of
+the required checks), a missing description, an unknown category, a missing
+command, missing patterns on a group other than `floor`, and an invalid
+pattern. Planning rejects an invalid catalog the same way. A
 diagnostic names the group by its ID when it has one, by its position
 (`groups[3]`) when it does not, and names the catalog file with the line and
 column for malformed JSON.
@@ -475,8 +477,14 @@ The run has three jobs:
 2. **One job per group** selected to run on GitHub: every selected `floor`,
    `affected` and requested non-local-only group. Each job pulls the confirmed
    image, by the descriptor's digest, and runs the group's catalog commands
-   inside it, unchanged, at the tested revision. The log names the group, the
-   revision and the image. Before the commands, `.venv` is pointed at the
+   inside it, unchanged, at the tested revision. The job, and so its check,
+   is named `group/` followed by the group's ID, such as
+   `group/check.static`. The fixed prefix means no group's check can take the
+   name of a required check, `build-test` or `review-approved`, or of the
+   run's other jobs, whatever the catalog holds; the catalog also
+   [reserves](#the-validity-check) those two names as IDs. Requests, reports
+   and records still name the group by its ID alone. The log names the group,
+   the revision and the image. Before the commands, `.venv` is pointed at the
    image's environment and the package is installed into it, as
    [AGENTS.md](../AGENTS.md#build-and-test) does. A local-only group never runs
    on GitHub.

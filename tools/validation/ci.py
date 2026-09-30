@@ -40,6 +40,10 @@ JOB_RESULTS = ("success", "failure", "cancelled", "skipped")
 DEFAULT_TIMEOUT = 15 * 60
 PLAN_JOB = "plan"
 AGGREGATE_JOB = "build-test"
+# Every group job, and so its check, is named this prefix and the group's ID,
+# as ci.yml's `groups` job states. The prefix keeps a group's check from ever
+# taking the name of a check the ruleset requires, or of this run's own jobs.
+GROUP_JOB_PREFIX = "group/"
 # The waits `build-test` allows, in seconds. The plan job has 10 minutes and
 # each group job 20 in ci.yml, so these cover queueing as well, and together
 # stay well inside build-test's own timeout-minutes.
@@ -459,6 +463,11 @@ def await_jobs(
         sleep(min(interval, remaining))
 
 
+def group_job(group: str) -> str:
+    """The name of the job, and so of the check, that runs `group`."""
+    return GROUP_JOB_PREFIX + group
+
+
 def expected_groups(state: dict | None, plan_job: str) -> list[str]:
     """The group jobs ci.yml starts: its `groups` job's condition, restated."""
     if plan_job != "success" or state is None or not state.get("image"):
@@ -494,15 +503,9 @@ def await_groups(
     **options,
 ) -> str:
     """Wait for every group job the plan started; return their combined result."""
-    names = expected_groups(state, plan_job)
+    names = [group_job(group) for group in expected_groups(state, plan_job)]
     if not names:
         return "skipped"
-    reserved = {PLAN_JOB, AGGREGATE_JOB} & set(names)
-    if reserved:
-        raise CIError(
-            "the plan selected a group named like one of this run's own jobs: "
-            + ", ".join(sorted(reserved))
-        )
     conclusions = await_jobs(names, read_jobs, budget=budget, **options)
     return job_result(list(conclusions.values()))
 

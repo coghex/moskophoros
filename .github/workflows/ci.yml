@@ -94,7 +94,9 @@ jobs:
   groups:
     needs: plan
     if: needs.plan.result == 'success' && needs.plan.outputs.image != '' && needs.plan.outputs.groups != '[]'
-    name: ${{ matrix.group }}
+    # The fixed prefix is ci.py's GROUP_JOB_PREFIX. It keeps a group's check
+    # from taking the name of a required check, whatever the catalog holds.
+    name: group/${{ matrix.group }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:

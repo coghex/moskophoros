@@ -970,9 +970,13 @@ def test_group_jobs_that_appear_late_are_awaited_until_they_finish():
         clock,
         [job("plan")],
         [job("plan")],
-        [job("plan"), job("check.static", "queued", None)],
-        [job("plan"), job("check.static"), job("test.app", "in_progress", None)],
-        [job("plan"), job("check.static"), job("test.app")],
+        [job("plan"), job("group/check.static", "queued", None)],
+        [
+            job("plan"),
+            job("group/check.static"),
+            job("group/test.app", "in_progress", None),
+        ],
+        [job("plan"), job("group/check.static"), job("group/test.app")],
     )
     assert ci.await_groups(PLANNED, "success", jobs, 600, **waits(clock)) == "success"
     assert clock.now == 40
@@ -980,8 +984,8 @@ def test_group_jobs_that_appear_late_are_awaited_until_they_finish():
 
 def test_a_selected_group_job_that_never_appears_fails_the_wait():
     clock = Clock()
-    jobs = Jobs(clock, [job("plan"), job("check.static")])
-    with pytest.raises(ci.CIError, match="no job of this run is named test.app"):
+    jobs = Jobs(clock, [job("plan"), job("group/check.static")])
+    with pytest.raises(ci.CIError, match="no job of this run is named group/test.app"):
         ci.await_groups(PLANNED, "success", jobs, 600, **waits(clock, discovery=60))
     assert clock.now == 60
 
@@ -1001,8 +1005,8 @@ def test_group_jobs_combine_like_a_needs_result(conclusions, result):
     jobs = Jobs(
         clock,
         [
-            job("check.static", conclusion=conclusions[0]),
-            job("test.app", conclusion=conclusions[1]),
+            job("group/check.static", conclusion=conclusions[0]),
+            job("group/test.app", conclusion=conclusions[1]),
         ],
     )
     assert ci.await_groups(PLANNED, "success", jobs, 600, **waits(clock)) == result
@@ -1010,10 +1014,12 @@ def test_group_jobs_combine_like_a_needs_result(conclusions, result):
 
 def test_a_group_that_never_finishes_fails_within_the_budget():
     clock = Clock()
-    jobs = Jobs(clock, [job("check.static"), job("test.app", "in_progress", None)])
+    jobs = Jobs(
+        clock, [job("group/check.static"), job("group/test.app", "in_progress", None)]
+    )
     with pytest.raises(ci.CIError) as caught:
         ci.await_groups(PLANNED, "success", jobs, 95, **waits(clock))
-    assert str(caught.value) == "gave up after 95 seconds waiting for test.app"
+    assert str(caught.value) == "gave up after 95 seconds waiting for group/test.app"
     assert clock.now == 95
     assert all(at + timeout <= 95 for at, timeout in jobs.timeouts)
 
@@ -1040,17 +1046,29 @@ def test_a_status_read_that_fails_once_is_retried():
 
 def test_two_jobs_sharing_a_selected_name_fail_the_wait():
     clock = Clock()
-    jobs = Jobs(clock, [job("check.static"), job("check.static"), job("test.app")])
-    with pytest.raises(ci.CIError, match="more than one job .* check.static"):
+    jobs = Jobs(
+        clock,
+        [job("group/check.static"), job("group/check.static"), job("group/test.app")],
+    )
+    with pytest.raises(ci.CIError, match="more than one job .* group/check.static"):
         ci.await_groups(PLANNED, "success", jobs, 600, **waits(clock))
 
 
-def test_a_group_named_like_a_run_job_is_refused():
+@pytest.mark.parametrize("group", ["plan", "build-test", "review-approved"])
+def test_a_group_named_like_another_check_waits_only_for_its_own_job(group):
     clock = Clock()
-    jobs = Jobs(clock, [job("plan")])
-    state = {**PLANNED, "github_groups": ["plan"]}
-    with pytest.raises(ci.CIError, match="named like one of this run's own jobs"):
-        ci.await_groups(state, "success", jobs, 600, **waits(clock))
+    jobs = Jobs(
+        clock,
+        [job("plan"), job("build-test", "in_progress", None), job("review-approved")],
+        [
+            job("plan"),
+            job("review-approved"),
+            job(f"group/{group}", conclusion="failure"),
+        ],
+    )
+    state = {**PLANNED, "github_groups": [group]}
+    assert ci.await_groups(state, "success", jobs, 600, **waits(clock)) == "failure"
+    assert clock.now == 10
 
 
 def lines(*jobs) -> str:
@@ -1077,7 +1095,9 @@ def test_await_groups_that_run_out_of_time_fail_build_test_with_a_diagnostic(rep
     _, merge = pull_request(repo, {"docs/guide.md": "better\n"})
     run.body.write_text("Docs.\n")
     run.plan(repo, merge)
-    run.jobs.write_text(lines(job("plan"), job("check.static", "in_progress", None)))
+    run.jobs.write_text(
+        lines(job("plan"), job("group/check.static", "in_progress", None))
+    )
     summary = run.tmp / "summary.md"
     process = run.ci(
         None,
@@ -1097,7 +1117,8 @@ def test_await_groups_that_run_out_of_time_fail_build_test_with_a_diagnostic(rep
     assert process.returncode == 1
     assert summary.read_text() == (
         "## build-test: failed\n\n### Failures\n\n"
-        "- gave up after 0 seconds waiting for check.static, test.app, test.tools\n"
+        "- gave up after 0 seconds waiting for group/check.static, group/test.app, "
+        "group/test.tools\n"
     )
 
 
@@ -1172,6 +1193,16 @@ def test_build_test_is_the_one_aggregate_and_starts_with_the_run():
     assert '--plan-job "$PLAN_JOB" --groups-job "$GROUPS_JOB"' in aggregate
     assert aggregate.count('--run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT"') == 3
     assert "RUN_ATTEMPT: ${{ github.run_attempt }}" in aggregate
+
+
+def test_no_group_check_can_take_a_required_checks_name():
+    groups = workflow_jobs()["groups"]
+    names = re.findall(r"^    name: (.*)$", groups, re.M)
+    # A fixed prefix, then the group's ID: every value starts with the prefix.
+    assert names == [ci.GROUP_JOB_PREFIX + "${{ matrix.group }}"]
+    assert ci.group_job("review-approved") == "group/review-approved"
+    for name in (*ci.planner.RESERVED_IDS, ci.PLAN_JOB, ci.AGGREGATE_JOB):
+        assert not name.startswith(ci.GROUP_JOB_PREFIX)
 
 
 def test_build_test_outlasts_its_waits_so_it_can_report_them():
