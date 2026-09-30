@@ -1,0 +1,9 @@
+{
+  "digest": "sha256:4eca4152bae71511f28f858ff78dbdbfc9a9db3abf02303b545ce52012c701ad",
+  "pytest": "9.1.1",
+  "python": "3.13.15",
+  "recipe_fingerprint": "6ad1e8a732d3907df6e0aba1afd1f68bb15c156c4766589d00d260b88edbae68",
+  "reference": "ghcr.io/coghex/moskophoros-ci",
+  "ruff": "0.16.9",
+  "schema_version": 1
+}
