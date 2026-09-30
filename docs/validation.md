@@ -4,15 +4,12 @@ How moskophoros decides which checks a change needs, and the image they are
 to run in. Test groups are declared once in a catalog, and a planner compares
 two revisions and explains, for every group, whether the change selects it and
 why. The decisions behind this are in the
-[CI foundation design](designs/ci_foundation_design.md) (D-4 to D-6, D-10,
-D-11, D-13 to D-15, D-17, D-19 to D-21).
+[CI foundation design](designs/ci_foundation_design.md) (D-3 to D-7, D-10 to
+D-17, D-19 to D-21).
 
-This describes what exists now: the catalog, the planner and its checks, and
-the [CI image](#the-ci-image) with its descriptor. CI runs only the catalog's
-validity check so far, and it does not run in the image yet. Running the
-planned groups on GitHub inside the image, reading the pull request body there,
-failing `build-test` on a stale descriptor and the aggregate `build-test`
-verdict are planned work (CIF-4 in the design), not current behavior.
+This describes the catalog, the planner and its checks, the
+[CI image](#the-ci-image) with its descriptor, and how GitHub runs the plan
+behind the required `build-test` check ([On GitHub](#on-github)).
 
 ## The catalog
 
@@ -430,3 +427,102 @@ revision: the pull request's head, or the dispatched revision.
 
 The package must be public. A new package can start private; only the owner
 can change its visibility, in the package's settings on GitHub.
+
+## On GitHub
+
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs the plan and
+publishes `build-test`, one of the two checks the `master` ruleset requires.
+Its logic is in [`tools/validation/ci.py`](../tools/validation/ci.py), which
+`tools/validation/test_ci.py` tests. Every group reruns on every run; no result
+is reused (D-12).
+
+### Triggers
+
+- A pull request is **opened**, **reopened** or **synchronized** (pushed to),
+  or its body is **edited**.
+- A push to `master`.
+
+Runs for the same pull request share a concurrency group: a new run cancels
+one still in progress, so an older run never finishes after a newer one. Each
+push to `master` keeps its own run.
+
+### What a run tests
+
+Every job reads one revision, the **tested revision**:
+
+- for a pull request, GitHub's merge commit of its head into its base branch.
+  The planner compares that commit's two parents, the base and the head, in the
+  [pull request range](#selection-rules), and reads the body from the GitHub
+  API as it is when the run starts, never from the event;
+- for a push, the pushed revision. The planner compares the push's `before`
+  and `after` in the push range.
+
+The run has three jobs:
+
+1. **plan** checks out the tested revision with its full history, runs the
+   planner, and checks the [descriptor](#the-descriptor) the tested revision
+   commits against its recipe fingerprint.
+2. **One job per group** selected to run on GitHub: every selected `floor`,
+   `affected` and requested non-local-only group. Each job pulls the image the
+   descriptor names, by digest, and runs the group's catalog commands inside
+   it, unchanged, at the tested revision. The log names the group, the
+   revision and the image. Before the commands, `.venv` is pointed at the
+   image's environment and the package is installed into it, as
+   [AGENTS.md](../AGENTS.md#build-and-test) does. A local-only group never runs
+   on GitHub.
+3. **`build-test`** is the aggregate, and the only job with that name. It runs
+   even when the jobs before it failed or were skipped.
+
+### Replanning on a body edit
+
+Requests and local-only reports live in the pull request body, so editing the
+body starts a new run, which cancels any run in progress and plans from the
+new body. `build-test` reads the body again just before it concludes, and fails
+if it changed since its run planned: the run the edit started decides. Adding
+or removing a `validation-request` block, or adding a `local-validation`
+report, needs no new commit.
+
+### What `build-test` checks
+
+It passes only when all of these hold, and fails otherwise:
+
+| Check | Fails when |
+|---|---|
+| The plan was produced | the plan job left no record; the body could not be read from the API before planning; or the planner stopped with an error, such as a malformed request or an unknown group. |
+| Local-only obligations (pull requests only) | a selected local-only group has no report, or a report that is malformed, stale, `failed` or `not-run` ([Local-only reports](#local-only-reports)). |
+| Every selected group ran and passed | a group failed, timed out (15 minutes per group), was skipped, was cancelled, or recorded no result; ran at another revision or in another image; or ran without being selected. |
+| The descriptor is current | the descriptor's recipe fingerprint is not the tested revision's, or the descriptor is missing or malformed. |
+| The body did not change (pull requests only) | the body read just before concluding differs from the one planned from, or cannot be read. A body that cannot be read is a failure, never an empty body. |
+
+For a push, local-only groups are not checked: the summary lists them as
+"verified on the pull request", and they never fail `build-test`.
+
+A docs-only pull request is a normal run. Its paths are claimed by no group, so
+the planner fails wide: `check.static` and every `affected` group run, and no
+local-only obligation is added (D-19).
+
+### Reading the summary
+
+`build-test`'s job summary starts with the verdict and, when it failed, one
+line for each failure. Then:
+
+- the tested revision (for a pull request, the merge commit with its base and
+  head), the image by digest, the descriptor check, and a digest of the body
+  it planned from;
+- each group run on GitHub, with its result;
+- each local-only group: its obligation met or failed, or omitted with its
+  reason, such as "verified on the pull request";
+- the whole plan, in the planner's text form, with every selected and omitted
+  group and its reason.
+
+### Fixing a failure
+
+| Failure | Fix |
+|---|---|
+| The planner stopped with an error | Correct the body's `validation-request` or `local-validation` block, as the diagnostic says. Editing the body reruns CI. |
+| A local-only obligation is not met | Run the group locally at the pull request's current head, then add or update its entry in the body's `local-validation` block: `<group> <full commit> passed`. A report is stale once the group's paths change after its commit, so a push to those paths needs a fresh run and a fresh entry. |
+| A group failed or timed out | Open its job's log, reproduce it locally with the command the plan shows, fix it, and push. |
+| A group was skipped, cancelled or recorded no result | Read the plan job's log, or the group job's, for the cause. Rerun the workflow if a runner failed. |
+| The descriptor is stale | Follow [Updating the image](#updating-the-image): commit the descriptor the `ci-image` workflow reports for this revision as `tools/ci-image/descriptor.json`. |
+| The body changed since planning | Nothing: the run the edit started replaces this one. |
+| The body could not be read | Rerun the workflow; the GitHub API was unavailable. |
