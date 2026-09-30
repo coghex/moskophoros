@@ -35,12 +35,13 @@ def find_blender(environ=os.environ, platform=sys.platform, macos_app=MACOS_APP)
     """Find Blender in design §Capture's order, without `--blender`.
 
     A non-empty `$MOSKOPHOROS_BLENDER` is used as given: if it is not an
-    executable file, discovery fails rather than falling back.
+    executable file, discovery fails rather than falling back. The result is
+    absolute, so it still names Blender after the test changes directory.
     """
     override = environ.get("MOSKOPHOROS_BLENDER", "")
     if override:
         if _is_executable(override):
-            return override
+            return os.path.abspath(override)
         raise BlenderNotFound(
             f"$MOSKOPHOROS_BLENDER is {override!r}, which is not an executable "
             "file. It is used without falling back to PATH or the macOS "
@@ -49,14 +50,14 @@ def find_blender(environ=os.environ, platform=sys.platform, macos_app=MACOS_APP)
     search_path = environ.get("PATH", os.defpath)
     found = shutil.which("blender", path=search_path)
     if found:
-        return found
+        return os.path.abspath(found)
     looked = [
         "$MOSKOPHOROS_BLENDER (unset or empty)",
         f"`blender` on PATH ({search_path})",
     ]
     if platform == "darwin":
         if _is_executable(macos_app):
-            return str(macos_app)
+            return os.path.abspath(macos_app)
         looked.append(str(macos_app))
     else:
         looked.append(f"{macos_app} (not checked: not macOS)")
@@ -169,3 +170,13 @@ def test_the_macos_app_is_not_used_elsewhere(tmp_path):
     app = _executable(tmp_path / "Blender")
     with pytest.raises(BlenderNotFound, match="not checked: not macOS"):
         find_blender({"PATH": str(tmp_path / "empty")}, "linux", app)
+
+
+def test_a_relative_blender_is_made_absolute(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    blender = _executable(tmp_path / "blender")
+    app = tmp_path / "Blender"
+    assert find_blender({"MOSKOPHOROS_BLENDER": "./blender"}, "darwin", app) == str(
+        blender
+    )
+    assert find_blender({"PATH": "."}, "darwin", app) == str(blender)
