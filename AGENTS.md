@@ -62,8 +62,8 @@ Add a dependency only for a concrete use, and pin it in `requirements.lock`.
 
 ## Build and test
 
-These commands need Python 3.13 or newer. CI runs the same ones on 3.13, and a
-change that alters them updates this section in the same pull request.
+These commands need Python 3.13 or newer, and a change that alters them
+updates this section in the same pull request.
 
 ```sh
 python3 -m venv .venv
@@ -72,7 +72,7 @@ python3 -m venv .venv
 .venv/bin/ruff check .
 .venv/bin/ruff format --check .
 .venv/bin/pytest                    # everything; Blender tests skip if absent
-.venv/bin/pytest -m "not blender"   # fast: no Blender needed; what CI runs
+.venv/bin/pytest -m "not blender"   # fast: no Blender needed
 .venv/bin/python tools/validation/plan.py --base origin/master --head HEAD
                                     # which test groups this change needs, and why
 ```
@@ -93,6 +93,11 @@ Python 3.13 and commit it with the change:
 - A pull request that selects `test.blender` must carry a `local-validation`
   block reporting a passing run at a current commit
   ([docs/validation.md](docs/validation.md#local-only-reports)).
+- On GitHub, `build-test` runs exactly the planned groups, each with its
+  catalog command inside the CI image, and never a local-only group
+  ([docs/validation.md](docs/validation.md#on-github)). When it fails a
+  local-only obligation, run the group locally at the current head and add a
+  fresh passing report to the pull request body; editing the body reruns it.
 - A skipped test is not a passing test. Report skips and the reason.
 - Tests write only to temporary directories, and generate their own `.glb`
   fixtures.

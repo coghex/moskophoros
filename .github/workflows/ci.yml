@@ -1,48 +1,166 @@
-# Publishes the `build-test` check the PR drainer requires. It installs the
-# locked development dependencies on Python 3.13 and runs the same commands as
-# AGENTS.md, Build and test. The categorized CI later replaces this job.
+# Publishes the `build-test` check the PR drainer requires. The planner
+# (tools/validation/plan.py) decides which catalog groups a change needs; each
+# selected group that runs on GitHub runs its catalog command inside the image
+# the committed descriptor names by digest; and `build-test` passes only when
+# the plan, every group, the descriptor and the pull request body all hold.
+# Local-only groups never run here. The logic lives in tools/validation/ci.py,
+# which tools/validation/test_ci.py tests. See docs/validation.md, On GitHub.
 name: CI
 
 on:
   pull_request:
+    # `edited` replans when the body changes: requests and local-only reports
+    # are read from it.
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [master]
 
+# Read-only: no job holds a write permission.
 permissions:
   contents: read
+  pull-requests: read
+  packages: read
 
+# A newer run for the same pull request cancels one still in progress, so an
+# older run cannot finish after it. Each push to master keeps its own run.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-push-{0}', github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+# Every job reads one revision, `github.sha`: GitHub's merge commit for a pull
+# request, or the pushed revision.
 jobs:
-  build-test:
-    runs-on: ubuntu-latest
+  plan:
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
+    outputs:
+      groups: ${{ steps.plan.outputs.groups }}
+      image: ${{ steps.plan.outputs.image }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
-      - name: Install the locked dependencies and the package
+      - name: Plan the tested revision
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REVISION: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+          PULL_REQUEST: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
         run: |
-          python3 -m venv .venv
-          .venv/bin/pip install -r requirements.lock
-          .venv/bin/pip install --no-deps -e .
-          .venv/bin/python --version
-          .venv/bin/pip list
+          set -euo pipefail
+          arguments=(--event "$EVENT" --revision "$REVISION" \
+            --output "$RUNNER_TEMP/plan" --github-output "$GITHUB_OUTPUT")
+          if [ "$EVENT" = pull_request ]; then
+            arguments+=(--repository "$REPOSITORY" --pull-request "$PULL_REQUEST")
+          else
+            arguments+=(--before "$BEFORE")
+          fi
+          python3 tools/validation/ci.py plan "${arguments[@]}"
 
-      - name: Lint
-        run: .venv/bin/ruff check .
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: plan
+          path: ${{ runner.temp }}/plan
+          if-no-files-found: ignore
 
-      - name: Check formatting
-        run: .venv/bin/ruff format --check .
+  groups:
+    needs: plan
+    if: needs.plan.result == 'success' && needs.plan.outputs.image != '' && needs.plan.outputs.groups != '[]'
+    name: ${{ matrix.group }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        group: ${{ fromJSON(needs.plan.outputs.groups) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
-      - name: Test
-        run: .venv/bin/pytest -m "not blender"
-
-      - name: Check the docs-landing helper
+      # The catalog's commands name `.venv`, so it points at the image's
+      # environment, and the package is installed into it as AGENTS.md, Build
+      # and test, does. Then the group's commands run unchanged.
+      - name: Run ${{ matrix.group }} in the descriptor's image
+        env:
+          GROUP: ${{ matrix.group }}
+          IMAGE: ${{ needs.plan.outputs.image }}
+          REVISION: ${{ github.sha }}
         run: |
-          bash -n tools/docs_land.sh
-          .venv/bin/python -m py_compile tools/docs_land_paths.py
+          set -euo pipefail
+          echo "running $GROUP at $REVISION in $IMAGE"
+          docker pull "$IMAGE"
+          docker run --rm --volume "$GITHUB_WORKSPACE:/work" --workdir /work \
+            --env GROUP --env IMAGE --env REVISION "$IMAGE" \
+            bash -euo pipefail -c '
+              git config --global --add safe.directory /work
+              ln -s "$VIRTUAL_ENV" .venv
+              /usr/local/bin/python3 -m pip --python .venv/bin/python \
+                install --quiet --no-deps -e .
+              exec .venv/bin/python tools/validation/ci.py run-group \
+                --group "$GROUP" --revision "$REVISION" --image "$IMAGE" \
+                --output "/work/.ci-results/$GROUP.json"'
 
-      - name: Check the validation catalog
-        run: .venv/bin/python tools/validation/plan.py --catalog-check
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: group-${{ matrix.group }}
+          path: ${{ github.workspace }}/.ci-results
+          if-no-files-found: ignore
+          include-hidden-files: true
+
+  # The aggregate the ruleset requires, and the only job with this name. It
+  # runs whether the jobs before it passed, failed or were skipped, and treats
+  # anything it cannot confirm as a failure.
+  build-test:
+    needs: [plan, groups]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          name: plan
+          path: ${{ runner.temp }}/plan
+
+      - uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          pattern: group-*
+          path: ${{ runner.temp }}/results
+
+      - name: Decide build-test
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAN_JOB: ${{ needs.plan.result }}
+          GROUPS_JOB: ${{ needs.groups.result }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          python3 tools/validation/ci.py conclude \
+            --plan-dir "$RUNNER_TEMP/plan" --results-dir "$RUNNER_TEMP/results" \
+            --plan-job "$PLAN_JOB" --groups-job "$GROUPS_JOB" \
+            --repository "$REPOSITORY" --summary "$GITHUB_STEP_SUMMARY"
