@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "groups": [
+    {
+      "id": "check.static",
+      "description": "ruff lint and format checks, this catalog's validity check, and syntax checks of the vendored docs-landing helper.",
+      "category": "floor",
+      "commands": [
+        [".venv/bin/ruff", "check", "."],
+        [".venv/bin/ruff", "format", "--check", "."],
+        [".venv/bin/python", "tools/validation/plan.py", "--catalog-check"],
+        ["bash", "-n", "tools/docs_land.sh"],
+        [".venv/bin/python", "-m", "py_compile", "tools/docs_land_paths.py"]
+      ]
+    },
+    {
+      "id": "test.workflow",
+      "description": "pytest over tools/: the review-gate test and the planner's own tests.",
+      "category": "affected",
+      "commands": [
+        [".venv/bin/pytest", "tools"]
+      ],
+      "paths": ["tools/", ".github/"]
+    },
+    {
+      "id": "test.package",
+      "description": "pytest over the package's tests, excluding the blender marker.",
+      "category": "affected",
+      "commands": [
+        [".venv/bin/pytest", "tests", "-m", "not blender"]
+      ],
+      "paths": ["src/", "tests/", "pyproject.toml", "requirements.lock"]
+    },
+    {
+      "id": "test.blender",
+      "description": "pytest over the blender marker, run on the owner's machine with Blender installed.",
+      "category": "local-only",
+      "commands": [
+        [".venv/bin/pytest", "-m", "blender"]
+      ],
+      "paths": ["src/", "tests/blender/", "pyproject.toml", "requirements.lock"]
+    }
+  ]
+}
