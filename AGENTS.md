@@ -29,6 +29,7 @@ reaches into it from elsewhere.
 | Blender backend | design §Capture, §Supported Blender version |
 | Stylize, cleanup, image operations | vision V-4, V-8, V-10; design §Pipeline |
 | Scope or direction questions | vision |
+| Test groups, CI checks, pull request validation | [docs/validation.md](docs/validation.md) |
 
 ## Owner authority
 
@@ -72,6 +73,8 @@ python3 -m venv .venv
 .venv/bin/ruff format --check .
 .venv/bin/pytest                    # everything; Blender tests skip if absent
 .venv/bin/pytest -m "not blender"   # fast: no Blender needed; what CI runs
+.venv/bin/python tools/validation/plan.py --base origin/master --head HEAD
+                                    # which test groups this change needs, and why
 ```
 
 `pyproject.toml` states minimum versions and `requirements.lock` pins the tested
@@ -82,10 +85,14 @@ Python 3.13 and commit it with the change:
 .venv/bin/uv pip compile pyproject.toml --extra dev --python-version 3.13 --universal -o requirements.lock
 ```
 
-- Mark every test that needs Blender with `@pytest.mark.blender`. An
-  unregistered marker is an error.
-- Run the tests covering what you changed. Run the Blender integration tests
-  when capture, sampling, fitting or output encoding changes.
+- Mark every test that needs Blender with `@pytest.mark.blender`, and keep it
+  under `tests/blender/`. An unregistered marker is an error.
+- Run the tests covering what you changed: the groups the planner selects.
+  Run the Blender tests whenever it selects `test.blender`, the local-only
+  group in [the catalog](tools/validation/catalog.json).
+- A pull request that selects `test.blender` must carry a `local-validation`
+  block reporting a passing run at a current commit
+  ([docs/validation.md](docs/validation.md#local-only-reports)).
 - A skipped test is not a passing test. Report skips and the reason.
 - Tests write only to temporary directories, and generate their own `.glb`
   fixtures.

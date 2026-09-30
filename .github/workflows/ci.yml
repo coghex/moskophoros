@@ -43,3 +43,6 @@ jobs:
         run: |
           bash -n tools/docs_land.sh
           .venv/bin/python -m py_compile tools/docs_land_paths.py
+
+      - name: Check the validation catalog
+        run: .venv/bin/python tools/validation/plan.py --catalog-check
