@@ -19,12 +19,16 @@ anything newer than the date below.
 
 ## Where things stand
 
+- **Review heading:** [docs/vision.md](docs/vision.md); `/guide` resumes from
+  [docs/guide/CURSOR.md](docs/guide/CURSOR.md).
 - **Phase:** design accepted, no code yet. The vision and the slice 1 design
   were accepted by the owner on 2026-09-29.
 - **Next milestone:** slice 1, the plain 3D-to-sheet pipeline. Its acceptance
   is in design §Slice 1 acceptance.
-- **Implementation:** no package yet. CI exists but only checks the
-  repository tooling (see below).
+- **Implementation:** the CI foundation (epic #3, issues #4 to #7) merged
+  2026-09-30: an empty `moskophoros` package, the pytest/ruff harness, the
+  test-group catalog and planner, the CI image and the planned `build-test`.
+  The first guide review left seven findings open (see the cursor).
 
 ## Environment
 
