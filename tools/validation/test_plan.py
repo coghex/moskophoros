@@ -6,6 +6,7 @@ separate process exactly as CI and people run it.
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -59,6 +60,31 @@ class Repo:
             capture_output=True,
             text=True,
         ).stdout.strip()
+
+    def commit_raw(self, name: bytes, content: bytes) -> str:
+        """Commit one file named by raw bytes, through Git plumbing alone.
+
+        Some filesystems refuse a name that is not UTF-8, so the file never
+        reaches the working tree.
+        """
+        blob = (
+            subprocess.run(
+                ["git", "-C", str(self.path), "hash-object", "-w", "--stdin"],
+                input=content,
+                check=True,
+                capture_output=True,
+            )
+            .stdout.decode()
+            .strip()
+        )
+        subprocess.run(
+            ["git", "-C", str(self.path), "update-index", "--add", "--cacheinfo"]
+            + [b"100644," + blob.encode() + b"," + name],
+            check=True,
+            capture_output=True,
+        )
+        self.git("commit", "-q", "-m", "raw name")
+        return self.git("rev-parse", "HEAD")
 
     def commit(self, files: dict, message: str = "change") -> str:
         for name, content in files.items():
@@ -403,6 +429,20 @@ def test_an_empty_comparison_fails_wide(repo, catalog):
     assert codes(result, "test.app") == ["fail-wide"]
 
 
+def test_a_pull_request_compares_from_the_merge_base(repo, catalog):
+    branch_point = repo.git("rev-parse", "HEAD")
+    head = repo.commit({"src/app.py": "changed\n"})
+    repo.git("checkout", "-q", "master")
+    repo.commit({"tools/tool.py": "base moved on\n", "README.md": "base\n"})
+    repo.git("checkout", "-q", "pr")
+    result = loaded(pr_plan(repo, catalog, report(head)))
+    assert result["comparison"]["merge_base"] == branch_point
+    assert result["changed_paths"] == ["src/app.py"]
+    assert result["fail_wide"] == []
+    assert codes(result, "test.tools") == ["not-affected"]
+    assert codes(result, "test.app") == ["affected"]
+
+
 def test_a_missing_pull_request_base_fails_wide(repo, catalog):
     result = loaded(
         run_planner(
@@ -711,10 +751,15 @@ def test_json_and_text_carry_the_same_selections_and_reasons(repo, catalog):
     as_json = loaded(pr_plan(repo, catalog, body), code=1)
     as_text = pr_plan(repo, catalog, body, json_form=False)
     assert as_text.returncode == 1
-    sections = text_sections(as_text.stdout)
-    assert set(sections) == {g["id"] for g in as_json["groups"]}
+    wide = "failing wide: changed paths no group claims: README.md"
+    assert text_sections(as_text.stdout) == {
+        "check.static": ("Selected, runs on GitHub:", "floor: always runs"),
+        "test.app": ("Selected, runs on GitHub:", f"affected by src/app.py; {wide}"),
+        "test.tools": ("Selected, runs on GitHub:", wide),
+        "test.extra": ("Selected, runs on GitHub:", "requested in the pull request"),
+        "test.local": ("Selected, local obligations:", "affected by src/app.py"),
+    }
     for item in as_json["groups"]:
-        section, reasons = sections[item["id"]]
         expected = "Omitted:"
         if item["selected"]:
             expected = (
@@ -722,10 +767,164 @@ def test_json_and_text_carry_the_same_selections_and_reasons(repo, catalog):
                 if item["local"]
                 else "Selected, runs on GitHub:"
             )
-        assert section == expected
-        assert reasons == "; ".join(plan.describe(reason) for reason in item["reasons"])
+        assert text_sections(as_text.stdout)[item["id"]][0] == expected
+    assert "Changed paths (2):\n  README.md\n  src/app.py\n" in as_text.stdout
     for cause in as_json["fail_wide"]:
         assert cause in as_text.stdout
     for problem in obligation(as_json)["problems"]:
         assert f"FAILED: {problem}" in as_text.stdout
+    assert (
+        f"FAILED: the report is stale: its paths changed since {reported}: src/app.py\n"
+    ) in as_text.stdout
     assert "Result: failed obligations: test.local" in as_text.stdout
+
+
+def test_text_names_the_paths_a_push_verifies_on_the_pull_request(repo, catalog):
+    before = repo.git("rev-parse", "HEAD")
+    after = repo.commit({"src/app.py": "changed\n", "tests/local/a.py": "a\n"})
+    result = run_planner(
+        "--repo", repo.path, "--catalog", catalog, "--before", before, "--after", after
+    )
+    assert result.returncode == 0, result.stderr
+    assert text_sections(result.stdout)["test.local"] == (
+        "Omitted:",
+        "verified on the pull request (affected by src/app.py, tests/local/a.py)",
+    )
+    assert text_sections(result.stdout)["test.app"] == (
+        "Selected, runs on GitHub:",
+        "affected by src/app.py, tests/local/a.py",
+    )
+
+
+# --------------------------------------------------------------------------
+# Paths that are not UTF-8
+
+
+@pytest.mark.parametrize(
+    ("path", "text"),
+    [
+        ("src/app.py", "src/app.py"),
+        ("src/café.py", "src/café.py"),
+        ("src/caf\udce9.py", '"src/caf\\xe9.py"'),
+        ("src/caf\\xe9.py", '"src/caf\\\\xe9.py"'),
+        ('src/"a".py', '"src/\\"a\\".py"'),
+        ("src/a, b.py", '"src/a, b.py"'),
+        ("src/a.py; requested", '"src/a.py; requested"'),
+        ("src/a\nb.py", '"src/a\\nb.py"'),
+        ("src/a\x07.py", '"src/a\\u0007.py"'),
+        ("src/\x80.py", '"src/\\u0080.py"'),
+        ("src/\udc80.py", '"src/\\x80.py"'),
+    ],
+)
+def test_a_path_is_shown_plainly_or_quoted_and_escaped(path, text):
+    assert plan.shown(path) == text
+
+
+def test_text_quotes_a_path_holding_a_reason_or_list_separator(repo, catalog):
+    body = "```validation-request\ntest.tools\n```\n"
+    repo.commit({"tools/a.py; requested in the pull request": "a\n"})
+    delimited = pr_plan(repo, catalog, body, json_form=False)
+    assert delimited.returncode == 0, delimited.stdout + delimited.stderr
+    assert text_sections(delimited.stdout)["test.tools"] == (
+        "Selected, runs on GitHub:",
+        'affected by "tools/a.py; requested in the pull request"; '
+        "requested in the pull request",
+    )
+    repo.commit({"tools/b, tools/c.py": "b\n"})
+    listed = pr_plan(repo, catalog, json_form=False)
+    assert text_sections(listed.stdout)["test.tools"][1] == (
+        'affected by "tools/a.py; requested in the pull request", "tools/b, tools/c.py"'
+    )
+
+
+def strict_text_plan(repo, catalog, *args):
+    """Run the text form with strict UTF-8 output, and decode it strictly."""
+    result = subprocess.run(
+        [sys.executable, str(PLANNER), "--repo", str(repo.path)]
+        + ["--catalog", str(catalog), *map(str, args)],
+        capture_output=True,
+        check=False,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8:strict"},
+    )
+    return result.returncode, result.stdout.decode(), result.stderr.decode()
+
+
+def test_text_shows_a_path_that_is_not_utf8_escaped(repo, catalog, tmp_path):
+    repo.commit_raw(b"src/caf\xe9.py", b"app\n")
+    head = repo.commit_raw(b"caf\xe9.md", b"notes\n")
+    body = tmp_path / "body.md"
+    body.write_text(report(head), encoding="utf-8")
+    code, stdout, stderr = strict_text_plan(
+        repo, catalog, "--base", "master", "--head", "HEAD", "--request-file", body
+    )
+    assert code == 0, stdout + stderr
+    assert "Traceback" not in stderr
+    assert 'Changed paths (2):\n  "caf\\xe9.md"\n  "src/caf\\xe9.py"\n' in stdout
+    assert '  - changed paths no group claims: "caf\\xe9.md"\n' in stdout
+    assert text_sections(stdout)["test.local"] == (
+        "Selected, local obligations:",
+        'affected by "src/caf\\xe9.py"',
+    )
+    assert f"met: passed at {head}" in stdout
+    as_json = loaded(pr_plan(repo, catalog, report(head)))
+    assert as_json["changed_paths"] == ["caf\udce9.md", "src/caf\udce9.py"]
+    assert as_json["unclaimed_paths"] == ["caf\udce9.md"]
+
+
+def test_text_names_a_stale_path_that_is_not_utf8(repo, catalog, tmp_path):
+    reported = repo.commit({"src/app.py": "changed\n"})
+    repo.commit_raw(b"src/caf\xe9.py", b"app\n")
+    body = tmp_path / "body.md"
+    body.write_text(report(reported), encoding="utf-8")
+    code, stdout, stderr = strict_text_plan(
+        repo, catalog, "--base", "master", "--head", "HEAD", "--request-file", body
+    )
+    assert code == 1, stdout + stderr
+    assert "Traceback" not in stderr
+    assert (
+        f"FAILED: the report is stale: its paths changed since {reported}: "
+        '"src/caf\\xe9.py"\n'
+    ) in stdout
+
+
+def test_a_plan_read_back_from_json_renders_as_the_text_form_does(
+    repo, catalog, tmp_path
+):
+    reported = repo.commit({"src/app.py": "changed\n"})
+    repo.commit_raw(b"src/caf\xe9.py", b"app\n")
+    repo.commit_raw(b"caf\xe9.md", b"notes\n")
+    body = tmp_path / "body.md"
+    body.write_text(report(reported), encoding="utf-8")
+    as_json = loaded(pr_plan(repo, catalog, report(reported)), code=1)
+    assert as_json["fail_wide"] == ["changed paths no group claims: caf\udce9.md"]
+    code, stdout, stderr = strict_text_plan(
+        repo, catalog, "--base", "master", "--head", "HEAD", "--request-file", body
+    )
+    assert code == 1, stdout + stderr
+    rendered = plan.render(as_json)
+    assert rendered.encode("utf-8").decode("utf-8") + "\n" == stdout
+    assert '  - changed paths no group claims: "caf\\xe9.md"\n' in stdout
+    assert text_sections(stdout)["test.tools"] == (
+        "Selected, runs on GitHub:",
+        'failing wide: changed paths no group claims: "caf\\xe9.md"',
+    )
+    assert (
+        f"FAILED: the report is stale: its paths changed since {reported}: "
+        '"src/caf\\xe9.py"\n'
+    ) in stdout
+    assert plan.shown_problems(obligation(as_json)) == [
+        f'the report is stale: its paths changed since {reported}: "src/caf\\xe9.py"'
+    ]
+
+
+def test_text_shows_a_push_path_that_is_not_utf8(repo, catalog):
+    before = repo.git("rev-parse", "HEAD")
+    after = repo.commit_raw(b"src/caf\xe9.py", b"app\n")
+    code, stdout, stderr = strict_text_plan(
+        repo, catalog, "--before", before, "--after", after
+    )
+    assert code == 0, stdout + stderr
+    assert text_sections(stdout)["test.local"] == (
+        "Omitted:",
+        'verified on the pull request (affected by "src/caf\\xe9.py")',
+    )

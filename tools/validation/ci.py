@@ -579,7 +579,7 @@ def decide(
             if obligation and not obligation["met"]:
                 failures.append(
                     f"the local-only group {entry['id']} has no fresh passing report: "
-                    + "; ".join(obligation["problems"])
+                    + "; ".join(planner.shown_problems(obligation))
                 )
 
     if descriptor["status"] == "stale":
@@ -717,10 +717,14 @@ def summary(state: dict | None, verdict: dict) -> str:
                     text = (
                         f"obligation met: passed at `{obligation['commit']}`"
                         if obligation["met"]
-                        else "obligation FAILED: " + "; ".join(obligation["problems"])
+                        else "obligation FAILED: "
+                        + "; ".join(planner.shown_problems(obligation))
                     )
                 else:
-                    text = "; ".join(planner.describe(r) for r in entry["reasons"])
+                    text = "; ".join(
+                        planner.describe(r, plan["unclaimed_paths"])
+                        for r in entry["reasons"]
+                    )
                 lines.append(f"- `{entry['id']}`: {text}")
             lines.append("")
         lines += ["### Plan", "", "```text", planner.render(plan), "```", ""]

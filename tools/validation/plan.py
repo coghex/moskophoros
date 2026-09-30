@@ -405,6 +405,70 @@ def push_range(
 # The plan
 
 
+def shown(path: str) -> str:
+    """Present a path in the text form, unambiguously and always printable.
+
+    A plain path is shown as it is. Any other is quoted: one holding '"',
+    '\\', the ',' and ';' that separate paths and reasons, an unprintable
+    character or a byte that is not UTF-8. Inside the quotes, '"' and '\\'
+    take a backslash, each byte that is not UTF-8 is '\\xNN', and any other
+    unprintable character is escaped as Python escapes it, but as '\\u00NN'
+    where Python would write '\\xNN', which only bytes use. The JSON form and
+    all matching keep the path itself.
+    """
+    if path.isprintable() and not any(character in path for character in '"\\,;'):
+        return path
+    parts = []
+    for character in path:
+        if character in '"\\':
+            parts.append("\\" + character)
+        elif "\udc80" <= character <= "\udcff":
+            parts.append(f"\\x{ord(character) - 0xDC00:02x}")
+        elif character.isprintable():
+            parts.append(character)
+        else:
+            escape = ascii(character)[1:-1]
+            parts.append("\\u00" + escape[2:] if escape.startswith("\\x") else escape)
+    return '"' + "".join(parts) + '"'
+
+
+def listing(paths: list[str], show=str) -> str:
+    return ", ".join(show(path) for path in paths)
+
+
+# The two messages that name paths. The plan records them with each path as it
+# is, and the text form rebuilds them from the plan's own path lists with each
+# path shown, so a plan read back from JSON renders as safely as a fresh one.
+
+
+def unclaimed_cause(paths: list[str], show=str) -> str:
+    return "changed paths no group claims: " + listing(paths, show)
+
+
+def stale_problem(commit: str, paths: list[str], show=str) -> str:
+    return f"the report is stale: its paths changed since {commit}: " + listing(
+        paths, show
+    )
+
+
+def shown_causes(causes: list[str], unclaimed: list[str]) -> list[str]:
+    """Fail-wide causes as the text form shows them, given the unclaimed paths."""
+    raw = unclaimed_cause(unclaimed) if unclaimed else None
+    return [
+        unclaimed_cause(unclaimed, shown) if cause == raw else cause for cause in causes
+    ]
+
+
+def shown_problems(obligation: dict) -> list[str]:
+    """An obligation's problems as the text form shows them."""
+    stale = obligation.get("stale_paths")
+    raw = stale_problem(obligation["commit"], stale) if stale else None
+    return [
+        stale_problem(obligation["commit"], stale, shown) if problem == raw else problem
+        for problem in obligation["problems"]
+    ]
+
+
 def affected_paths(group: dict, paths: list[str]) -> list[str]:
     return [
         path for path in paths if any(matches(path, p) for p in group.get("paths", []))
@@ -457,10 +521,7 @@ def check_obligation(
             else:
                 stale = affected_paths(group, since)
                 if stale:
-                    problems.append(
-                        f"the report is stale: its paths changed since {commit}: "
-                        + ", ".join(stale)
-                    )
+                    problems.append(stale_problem(commit, stale))
     result = {
         "met": not problems,
         "problems": problems,
@@ -491,7 +552,7 @@ def build_plan(
         claimed = {path for group in groups for path in affected_paths(group, paths)}
         unclaimed = [path for path in paths if path not in claimed]
         if unclaimed:
-            causes.append("changed paths no group claims: " + ", ".join(unclaimed))
+            causes.append(unclaimed_cause(unclaimed))
     explained = []
     for group in groups:
         category = group["category"]
@@ -553,14 +614,15 @@ def build_plan(
     }
 
 
-def describe(reason: dict) -> str:
+def describe(reason: dict, unclaimed: list[str] = ()) -> str:
+    """A reason as the text form shows it; `unclaimed` is the plan's unclaimed paths."""
     code = reason["code"]
     if code == "floor":
         return "floor: always runs"
     if code == "affected":
-        return "affected by " + ", ".join(reason["paths"])
+        return "affected by " + listing(reason["paths"], shown)
     if code == "fail-wide":
-        return "failing wide: " + "; ".join(reason["causes"])
+        return "failing wide: " + "; ".join(shown_causes(reason["causes"], unclaimed))
     if code == "requested":
         return "requested in the pull request"
     if code == "optional-unrequested":
@@ -570,7 +632,7 @@ def describe(reason: dict) -> str:
     if code == "verified-on-pull-request":
         return (
             "verified on the pull request (affected by "
-            + ", ".join(reason["paths"])
+            + listing(reason["paths"], shown)
             + ")"
         )
     raise ValueError(code)
@@ -594,10 +656,13 @@ def render(plan: dict) -> str:
         lines.append("Changed paths: unknown")
     else:
         lines.append(f"Changed paths ({len(paths)}):")
-        lines.extend(f"  {path}" for path in paths)
+        lines.extend(f"  {shown(path)}" for path in paths)
     if plan["fail_wide"]:
         lines.append("Failing wide: every floor and affected group runs, because")
-        lines.extend(f"  - {cause}" for cause in plan["fail_wide"])
+        lines.extend(
+            f"  - {cause}"
+            for cause in shown_causes(plan["fail_wide"], plan["unclaimed_paths"])
+        )
     width = max(len(entry["id"]) for entry in plan["groups"])
     sections = (
         ("Selected, runs on GitHub:", lambda e: e["selected"] and not e["local"]),
@@ -610,7 +675,9 @@ def render(plan: dict) -> str:
             continue
         lines.extend(["", title])
         for entry in members:
-            text = "; ".join(describe(reason) for reason in entry["reasons"])
+            text = "; ".join(
+                describe(reason, plan["unclaimed_paths"]) for reason in entry["reasons"]
+            )
             lines.append(f"  {entry['id']:<{width}}  {text}")
             if not entry["selected"]:
                 continue
@@ -624,7 +691,7 @@ def render(plan: dict) -> str:
             elif obligation:
                 lines.extend(
                     f"  {'':<{width}}  FAILED: {problem}"
-                    for problem in obligation["problems"]
+                    for problem in shown_problems(obligation)
                 )
     if plan["ignored_reports"]:
         lines.extend(["", f"Ignored {REPORT_BLOCK} entries (no obligation):"])
