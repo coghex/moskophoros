@@ -3,8 +3,10 @@
 Each case builds a history in a temporary repository, with GitHub's merge
 commit for a pull request made the way GitHub makes it, and runs ci.py's
 ``plan``, ``run-group`` and ``conclude`` as separate processes, exactly as the
-workflow's jobs do. A stub ``gh`` serves the pull request body. The last tests
-check the workflow file wires those jobs together as documented.
+workflow's jobs do. A stub ``gh`` serves the pull request body and the run's
+jobs. The waiting tests drive `build-test`'s waits with a controlled clock and
+scripted job lists, never real time. The last tests check the workflow file
+wires those jobs together as documented.
 """
 
 import importlib.util
@@ -31,10 +33,18 @@ ci = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ci)
 
 # Answers `gh api repos/<owner>/<name>/pulls/<n>` with the body in
-# $FAKE_BODY, or fails when $FAKE_BODY does not exist.
+# $FAKE_BODY, or fails when $FAKE_BODY does not exist; and answers the jobs of
+# run 11 attempt 2 with the JSON lines in $FAKE_JOBS, as `--jq .jobs[]` prints.
 FAKE_GH = """\
 #!/usr/bin/env python3
 import json, os, sys
+JOBS = "repos/owner/name/actions/runs/11/attempts/2/jobs?per_page=100"
+if sys.argv[1:] == ["api", "--paginate", JOBS, "--jq", ".jobs[]"]:
+    try:
+        print(open(os.environ["FAKE_JOBS"], encoding="utf-8").read(), end="")
+    except OSError as error:
+        sys.exit(f"HTTP 502: {error}")
+    sys.exit(0)
 if sys.argv[1:3] != ["api", "repos/owner/name/pulls/7"]:
     sys.exit(f"unexpected gh call: {sys.argv[1:]}")
 try:
@@ -160,6 +170,7 @@ class Run:
         self.results_dir = tmp_path / "results"
         self.log = tmp_path / "commands.log"
         self.body = tmp_path / "body.md"
+        self.jobs = tmp_path / "jobs.jsonl"
         bindir = tmp_path / "bin"
         bindir.mkdir()
         gh = bindir / "gh"
@@ -169,8 +180,10 @@ class Run:
             os.environ,
             PATH=f"{bindir}{os.pathsep}{os.environ['PATH']}",
             FAKE_BODY=str(self.body),
+            FAKE_JOBS=str(self.jobs),
             CI_TEST_LOG=str(self.log),
         )
+        self.run_arguments: list[str] = []
 
     def ci(self, repo: Repo | None, *args: str) -> subprocess.CompletedProcess:
         where = ["--repo", str(repo.path)] if repo else []
@@ -199,6 +212,7 @@ class Run:
             str(self.plan_dir),
             "--github-output",
             str(self.github_output),
+            *self.run_arguments,
         )
         outputs = dict(
             line.split("=", 1)
@@ -226,6 +240,7 @@ class Run:
                 "--output",
                 str(self.results_dir / f"group-{group_id}" / f"{group_id}.json"),
                 *[f"--{key}={value}" for key, value in options.items()],
+                *self.run_arguments,
             )
             passed = passed and process.returncode == 0
         return "success" if passed else "failure"
@@ -247,6 +262,7 @@ class Run:
             "owner/name",
             "--summary",
             str(self.summary),
+            *self.run_arguments,
         )
         self.text = self.summary.read_text() if self.summary.exists() else ""
         return process
@@ -564,6 +580,289 @@ def test_decide_never_passes_without_a_plan():
     assert not verdict["passed"]
 
 
+RUN = ["--run-id", "11", "--run-attempt", "2"]
+
+
+def test_records_are_bound_to_their_run_and_attempt(repo, run):
+    head, merge = pull_request(repo, {"src/app.py": "new\n"})
+    run.body.write_text(report(head))
+    run.run_arguments = RUN
+    assert run.whole(repo, merge).returncode == 0, run.text
+    state = json.loads((run.plan_dir / "plan-state.json").read_text())
+    assert state["run"] == {"id": 11, "attempt": 2}
+    record = json.loads(
+        (run.results_dir / "group-test.app" / "test.app.json").read_text()
+    )
+    assert record["run"] == {"id": 11, "attempt": 2}
+
+    run.run_arguments = ["--run-id", "11", "--run-attempt", "3"]
+    process = run.conclude("success")
+    assert process.returncode == 1
+    assert (
+        "the plan was recorded by run 11 attempt 2, not by this one, "
+        "run 11 attempt 3" in run.text
+    )
+    assert "test.app was recorded by run 11 attempt 2" in run.text
+
+
+def test_a_record_without_a_run_does_not_speak_for_one(repo, run):
+    head, merge = pull_request(repo, {"src/app.py": "new\n"})
+    run.body.write_text(report(head))
+    run.plan(repo, merge)
+    groups_job = run.run_groups(repo, merge)
+    run.run_arguments = RUN
+    process = run.conclude(groups_job)
+    assert process.returncode == 1
+    assert "the plan was recorded by an unidentified run" in run.text
+    assert "check.static was recorded by an unidentified run" in run.text
+
+
+# --------------------------------------------------------------------------
+# build-test's waits, with a controlled clock and scripted job lists
+
+
+class Clock:
+    """Time that moves only when the code under test sleeps."""
+
+    def __init__(self):
+        self.now = 0.0
+        self.slept = []
+
+    def __call__(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        assert seconds > 0
+        self.slept.append(seconds)
+        self.now += seconds
+
+
+def job(name, status="completed", conclusion="success"):
+    return {"name": name, "status": status, "conclusion": conclusion}
+
+
+class Jobs:
+    """Answers each read with the next scripted job list, or its error."""
+
+    def __init__(self, clock: Clock, *answers):
+        self.clock = clock
+        self.answers = list(answers)
+        self.timeouts = []
+
+    def __call__(self, timeout: float) -> list[dict]:
+        self.timeouts.append((self.clock.now, timeout))
+        answer = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+
+def waits(clock: Clock, **overrides) -> dict:
+    return {"clock": clock, "sleep": clock.sleep, "interval": 10, **overrides}
+
+
+PLANNED = {
+    "revision": "r",
+    "image": IMAGE,
+    "github_groups": ["check.static", "test.app"],
+}
+
+
+def test_the_plan_wait_returns_once_the_plan_job_finishes():
+    clock = Clock()
+    jobs = Jobs(
+        clock,
+        [job("build-test", "in_progress", None)],
+        [job("plan", "queued", None), job("build-test", "in_progress", None)],
+        [job("plan", "in_progress", None)],
+        [job("plan")],
+    )
+    assert ci.await_plan(jobs, 600, **waits(clock)) == "success"
+    assert clock.now == 30
+
+
+@pytest.mark.parametrize(
+    ("conclusion", "result"),
+    [("failure", "failure"), ("cancelled", "cancelled"), ("timed_out", "failure")],
+)
+def test_a_plan_job_that_did_not_succeed_is_reported_as_such(conclusion, result):
+    clock = Clock()
+    jobs = Jobs(clock, [job("plan", conclusion=conclusion)])
+    assert ci.await_plan(jobs, 600, **waits(clock)) == result
+
+
+def test_failed_planning_waits_for_no_group_and_cannot_pass():
+    clock = Clock()
+    jobs = Jobs(clock, AssertionError("no job list is read"))
+    assert ci.await_groups(PLANNED, "failure", jobs, 600, **waits(clock)) == "skipped"
+    assert ci.await_groups(None, "success", jobs, 600, **waits(clock)) == "skipped"
+    no_image = {**PLANNED, "image": None}
+    assert ci.await_groups(no_image, "success", jobs, 600, **waits(clock)) == "skipped"
+    assert jobs.timeouts == []
+    verdict = ci.decide(
+        {
+            **PLANNED,
+            "event": "push",
+            "errors": [],
+            "plan": None,
+            "descriptor": {"status": "current", "message": ""},
+        },
+        [],
+        "failure",
+        "skipped",
+    )
+    assert not verdict["passed"]
+    assert "the plan job concluded failure" in verdict["failures"]
+    assert "check.static skipped: no result was recorded" in verdict["failures"][1]
+
+
+def test_group_jobs_that_appear_late_are_awaited_until_they_finish():
+    clock = Clock()
+    jobs = Jobs(
+        clock,
+        [job("plan")],
+        [job("plan")],
+        [job("plan"), job("check.static", "queued", None)],
+        [job("plan"), job("check.static"), job("test.app", "in_progress", None)],
+        [job("plan"), job("check.static"), job("test.app")],
+    )
+    assert ci.await_groups(PLANNED, "success", jobs, 600, **waits(clock)) == "success"
+    assert clock.now == 40
+
+
+def test_a_selected_group_job_that_never_appears_fails_the_wait():
+    clock = Clock()
+    jobs = Jobs(clock, [job("plan"), job("check.static")])
+    with pytest.raises(ci.CIError, match="no job of this run is named test.app"):
+        ci.await_groups(PLANNED, "success", jobs, 600, **waits(clock, discovery=60))
+    assert clock.now == 60
+
+
+@pytest.mark.parametrize(
+    ("conclusions", "result"),
+    [
+        (["success", "cancelled"], "cancelled"),
+        (["success", "failure"], "failure"),
+        (["skipped", "success"], "failure"),
+        (["skipped", "skipped"], "skipped"),
+        (["success", None], "failure"),
+    ],
+)
+def test_group_jobs_combine_like_a_needs_result(conclusions, result):
+    clock = Clock()
+    jobs = Jobs(
+        clock,
+        [
+            job("check.static", conclusion=conclusions[0]),
+            job("test.app", conclusion=conclusions[1]),
+        ],
+    )
+    assert ci.await_groups(PLANNED, "success", jobs, 600, **waits(clock)) == result
+
+
+def test_a_group_that_never_finishes_fails_within_the_budget():
+    clock = Clock()
+    jobs = Jobs(clock, [job("check.static"), job("test.app", "in_progress", None)])
+    with pytest.raises(ci.CIError) as caught:
+        ci.await_groups(PLANNED, "success", jobs, 95, **waits(clock))
+    assert str(caught.value) == "gave up after 95 seconds waiting for test.app"
+    assert clock.now == 95
+    assert all(at + timeout <= 95 for at, timeout in jobs.timeouts)
+
+
+def test_a_status_read_that_keeps_failing_fails_within_the_budget():
+    clock = Clock()
+    jobs = Jobs(clock, ci.CIError("gh api failed: HTTP 502"))
+    with pytest.raises(ci.CIError) as caught:
+        ci.await_plan(jobs, 45, **waits(clock))
+    assert str(caught.value) == (
+        "gave up after 45 seconds waiting for plan; the last read of the run's "
+        "jobs failed: gh api failed: HTTP 502"
+    )
+    assert clock.now == 45
+    assert all(at + timeout <= 45 for at, timeout in jobs.timeouts)
+
+
+def test_a_status_read_that_fails_once_is_retried():
+    clock = Clock()
+    jobs = Jobs(clock, ci.CIError("gh api failed: HTTP 502"), [job("plan")])
+    assert ci.await_plan(jobs, 600, **waits(clock)) == "success"
+    assert clock.now == 10
+
+
+def test_two_jobs_sharing_a_selected_name_fail_the_wait():
+    clock = Clock()
+    jobs = Jobs(clock, [job("check.static"), job("check.static"), job("test.app")])
+    with pytest.raises(ci.CIError, match="more than one job .* check.static"):
+        ci.await_groups(PLANNED, "success", jobs, 600, **waits(clock))
+
+
+def test_a_group_named_like_a_run_job_is_refused():
+    clock = Clock()
+    jobs = Jobs(clock, [job("plan")])
+    state = {**PLANNED, "github_groups": ["plan"]}
+    with pytest.raises(ci.CIError, match="named like one of this run's own jobs"):
+        ci.await_groups(state, "success", jobs, 600, **waits(clock))
+
+
+def lines(*jobs) -> str:
+    return "".join(json.dumps(entry) + "\n" for entry in jobs)
+
+
+def test_await_plan_reads_this_runs_attempt_and_reports_the_result(run):
+    run.jobs.write_text(lines(job("plan", conclusion="failure"), job("build-test")))
+    output = run.tmp / "output"
+    process = run.ci(
+        None,
+        "await-plan",
+        "--repository",
+        "owner/name",
+        *RUN,
+        "--github-output",
+        str(output),
+    )
+    assert process.returncode == 0, process.stderr
+    assert output.read_text() == "plan_job=failure\n"
+
+
+def test_await_groups_that_run_out_of_time_fail_build_test_with_a_diagnostic(repo, run):
+    _, merge = pull_request(repo, {"docs/guide.md": "better\n"})
+    run.body.write_text("Docs.\n")
+    run.plan(repo, merge)
+    run.jobs.write_text(lines(job("plan"), job("check.static", "in_progress", None)))
+    summary = run.tmp / "summary.md"
+    process = run.ci(
+        None,
+        "await-groups",
+        "--repository",
+        "owner/name",
+        *RUN,
+        "--plan-dir",
+        str(run.plan_dir),
+        "--plan-job",
+        "success",
+        "--budget",
+        "0",
+        "--summary",
+        str(summary),
+    )
+    assert process.returncode == 1
+    assert summary.read_text() == (
+        "## build-test: failed\n\n### Failures\n\n"
+        "- gave up after 0 seconds waiting for check.static, test.app, test.tools\n"
+    )
+
+
+def test_await_plan_fails_when_the_jobs_cannot_be_read(run):
+    process = run.ci(
+        None, "await-plan", "--repository", "owner/name", *RUN, "--budget", "0"
+    )
+    assert process.returncode == 1
+    assert "the last read of the run's jobs failed: gh api failed: HTTP 502" in (
+        process.stdout
+    )
+
+
 # --------------------------------------------------------------------------
 # The workflow file
 
@@ -592,6 +891,7 @@ def test_the_workflow_holds_no_write_permission():
     text = WORKFLOW.read_text(encoding="utf-8")
     grants = re.findall(r"^\s+([\w-]+):\s*(read|write|none)\s*$", text, re.M)
     assert sorted(grants) == [
+        ("actions", "read"),
         ("contents", "read"),
         ("packages", "read"),
         ("pull-requests", "read"),
@@ -599,16 +899,49 @@ def test_the_workflow_holds_no_write_permission():
     assert "write-all" not in text and "read-all" not in text
 
 
-def test_build_test_is_the_one_aggregate_and_runs_after_failures():
+def test_build_test_is_the_one_aggregate_and_starts_with_the_run():
     jobs = workflow_jobs()
     assert set(jobs) == {"plan", "groups", "build-test"}
     assert all("name: build-test" not in body for body in jobs.values())
     aggregate = jobs["build-test"]
-    assert "    needs: [plan, groups]\n" in aggregate
-    assert "    if: ${{ !cancelled() }}\n" in aggregate
+    # No `needs` and no `if`: GitHub creates its check when the run starts,
+    # and cancelling the run cancels it rather than skipping it.
+    assert "needs:" not in aggregate
+    assert "\n    if:" not in aggregate
+    steps = [
+        "ci.py await-plan",
+        "name: plan-${{ github.run_attempt }}",
+        "ci.py await-groups",
+        "pattern: group-${{ github.run_attempt }}-*",
+        "ci.py conclude",
+    ]
+    positions = [aggregate.index(step) for step in steps]
+    assert positions == sorted(positions)
+    assert "PLAN_JOB: ${{ steps.plan.outputs.plan_job }}" in aggregate
+    assert "GROUPS_JOB: ${{ steps.groups.outputs.groups_job }}" in aggregate
     assert '--plan-job "$PLAN_JOB" --groups-job "$GROUPS_JOB"' in aggregate
-    assert "PLAN_JOB: ${{ needs.plan.result }}" in aggregate
-    assert "GROUPS_JOB: ${{ needs.groups.result }}" in aggregate
+    assert aggregate.count('--run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT"') == 3
+    assert "RUN_ATTEMPT: ${{ github.run_attempt }}" in aggregate
+
+
+def test_build_test_outlasts_its_waits_so_it_can_report_them():
+    jobs = workflow_jobs()
+    minutes = int(re.search(r"timeout-minutes: (\d+)", jobs["build-test"])[1])
+    waits = ci.PLAN_WAIT + ci.GROUPS_WAIT + 2 * ci.API_TIMEOUT
+    assert minutes * 60 >= waits + 5 * 60
+    plan = int(re.search(r"timeout-minutes: (\d+)", jobs["plan"])[1])
+    group = int(re.search(r"timeout-minutes: (\d+)", jobs["groups"])[1])
+    assert ci.PLAN_WAIT > plan * 60 and ci.GROUPS_WAIT > group * 60
+
+
+def test_plan_and_group_records_carry_the_run_and_attempt():
+    jobs = workflow_jobs()
+    assert "name: plan-${{ github.run_attempt }}" in jobs["plan"]
+    assert '--run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT"' in jobs["plan"]
+    groups = jobs["groups"]
+    assert "name: group-${{ github.run_attempt }}-${{ matrix.group }}" in groups
+    assert '--run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT"' in groups
+    assert "--env RUN_ID --env RUN_ATTEMPT" in groups
 
 
 def test_every_group_runs_in_the_planned_image_at_the_tested_revision():

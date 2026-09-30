@@ -438,7 +438,10 @@ can change its visibility, in the package's settings on GitHub.
 publishes `build-test`, one of the two checks the `master` ruleset requires.
 Its logic is in [`tools/validation/ci.py`](../tools/validation/ci.py), which
 `tools/validation/test_ci.py` tests. Every group reruns on every run; no result
-is reused (D-12).
+is reused (D-12). Each record the run writes carries the run's ID and attempt,
+and its artifacts are named by attempt, so `build-test` reads only what its own
+run and attempt produced. Rerun all jobs, not only the failed ones: a partial
+rerun's `build-test` cannot pass on results kept from an earlier attempt.
 
 ### Triggers
 
@@ -474,15 +477,45 @@ The run has three jobs:
    image's environment and the package is installed into it, as
    [AGENTS.md](../AGENTS.md#build-and-test) does. A local-only group never runs
    on GitHub.
-3. **`build-test`** is the aggregate, and the only job with that name. It runs
-   even when the jobs before it failed or were skipped.
+3. **`build-test`** is the aggregate, and the only job with that name. It
+   [starts with the run](#when-build-test-appears) and waits for the others
+   itself, so it concludes even when they failed or were skipped.
+
+### When `build-test` appears
+
+GitHub creates a job's check only when the job starts, and a job that needs
+another starts only after it finishes. So `build-test` needs no other job: its
+check appears, in progress, as soon as the run starts, before planning. From
+then on it is the newest `build-test` on the tested revision, and an earlier
+run's result, planned from an older body or head, no longer speaks for it. The
+PR drainer and `/finalize` read the newest check, so they see this run's
+pending `build-test`, never the last run's pass.
+
+Once started, `build-test` reads its own run's jobs from the GitHub API, which
+is why the workflow grants `actions: read`, and waits in two bounded steps:
+
+1. for the plan job to finish, up to 15 minutes;
+2. for every group job the plan started to finish, up to 30 minutes. A group
+   job that has not appeared within 5 minutes of planning counts as missing.
+
+It then reads the plan and group records and decides as below. A job is
+finished only when all its steps are, including uploading its record. If a
+wait runs out, a job never appears, two jobs share a group's name, or the run's
+jobs cannot be read before the wait ends, `build-test` fails and its summary
+names the jobs it was still waiting for and the last error. Its own time limit,
+55 minutes, outlasts both waits, so it always reports why.
+
+When a newer run cancels this one, `build-test` is cancelled with it: it ends
+cancelled, never skipped or passed.
 
 ### Replanning on a body edit
 
 Requests and local-only reports live in the pull request body, so editing the
 body starts a new run, which cancels any run in progress and plans from the
-new body. `build-test` reads the body again just before it concludes, and fails
-if it changed since its run planned: the run the edit started decides. Adding
+new body. The new run's `build-test` appears at once, in progress, so the old
+run's result stops counting as soon as the edit's run starts. `build-test`
+reads the body again just before it concludes, and fails if it changed since
+its run planned: the run the edit started decides. Adding
 or removing a `validation-request` block, or adding a `local-validation`
 report, needs no new commit.
 
@@ -494,7 +527,8 @@ It passes only when all of these hold, and fails otherwise:
 |---|---|
 | The plan was produced | the plan job left no record; the body could not be read from the API before planning; or the planner stopped with an error, such as a malformed request or an unknown group. |
 | Local-only obligations (pull requests only) | a selected local-only group has no report, or a report that is malformed, stale, `failed` or `not-run` ([Local-only reports](#local-only-reports)). |
-| Every selected group ran and passed | a group failed, timed out (15 minutes per group), was skipped, was cancelled, or recorded no result; ran at another revision or in another image; or ran without being selected. |
+| Every selected group ran and passed | a group failed, timed out (15 minutes per group), was skipped, was cancelled, or recorded no result; ran at another revision, in another image, or in another run or attempt; or ran without being selected. |
+| This run finished in time | the plan job or a group job did not finish, or never appeared, within [`build-test`'s waits](#when-build-test-appears), or the run's jobs could not be read. |
 | The descriptor is current | the descriptor's recipe fingerprint is not the tested revision's, or the descriptor is missing or malformed. |
 | The body did not change (pull requests only) | the body read just before concluding differs from the one planned from, or cannot be read. A body that cannot be read is a failure, never an empty body. |
 
@@ -530,3 +564,5 @@ line for each failure. Then:
 | The descriptor is stale | Follow [Updating the image](#updating-the-image): commit the descriptor the `ci-image` workflow reports for this revision as `tools/ci-image/descriptor.json`. |
 | The body changed since planning | Nothing: the run the edit started replaces this one. |
 | The body could not be read | Rerun the workflow; the GitHub API was unavailable. |
+| A wait ran out, or the run's jobs could not be read | Open the job named in the summary to see why it stalled, then rerun all jobs. |
+| A record came from another run or attempt | Rerun all jobs, not only the failed ones. |
