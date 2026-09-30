@@ -8,7 +8,8 @@ tree, the checked-out revision and untracked files never affect it.
   exactly the recipe inputs, with the descriptor excluded.
 - ``check-descriptor`` checks that a descriptor records a revision's
   fingerprint.
-- ``stage`` extracts exactly the recipe inputs into an empty build context.
+- ``stage`` writes exactly the recipe inputs, with their committed bytes and
+  modes, into an empty build context.
 - ``resolve`` looks up the image for a revision's fingerprint. A validated
   existing image is a *hit*; a tag the registry confirms is absent is a
   *miss*; a lookup that fails is neither, and nothing is published.
@@ -32,13 +33,11 @@ Any other exit status is an error. Standard library only. See
 
 import argparse
 import hashlib
-import io
 import json
 import os
 import re
 import subprocess
 import sys
-import tarfile
 
 sys.dont_write_bytecode = True
 
@@ -49,6 +48,8 @@ LOCK_PATH = "requirements.lock"
 RECIPE_INPUTS = ("tools/ci-image/", LOCK_PATH, ".github/workflows/ci-image.yml")
 FINGERPRINT_SCHEMA_VERSION = 1
 DESCRIPTOR_SCHEMA_VERSION = 1
+# The tree modes of regular files, and the permissions each is staged with.
+FILE_MODES = {"100644": 0o644, "100755": 0o755}
 
 PYTHON_SERIES = "3.13"
 VERSIONED = ("python", "pytest", "ruff")
@@ -180,18 +181,36 @@ def locked_versions(root: str, revision: str) -> dict[str, str]:
 
 
 def stage(root: str, revision: str, output: str) -> list[str]:
-    """Extract exactly one revision's recipe inputs into an empty directory."""
-    paths = [entry[0] for entry in recipe_entries(root, revision)]
+    """Write exactly one revision's recipe inputs into an empty directory.
+
+    Each input is written from its blob with the tree's bytes and executable
+    bit. Nothing converts it on the way: no ``.gitattributes`` or local Git
+    configuration applies, unlike ``git archive`` or a checkout. An input that
+    is not a regular file, such as a symlink or a submodule, is refused.
+    """
+    entries = recipe_entries(root, revision)
+    paths = [entry[0] for entry in entries]
     if not any(path == "tools/ci-image/Dockerfile" for path in paths):
         raise ImageError(f"{revision} has no tools/ci-image/Dockerfile to build")
+    for path, mode, kind, _ in entries:
+        if kind != "blob" or mode not in FILE_MODES:
+            raise ImageError(
+                f"{path} at {revision} is a {kind} with mode {mode}, not a regular "
+                "file; only regular files can be staged exactly"
+            )
+        if any(part in ("", ".", "..", ".git") for part in path.split("/")):
+            raise ImageError(f"{path} at {revision} is not a path that can be staged")
     if os.path.exists(output) and (not os.path.isdir(output) or os.listdir(output)):
         raise ImageError(
             f"{output} is not an empty directory; only recipe inputs may reach the build"
         )
-    archive = git(root, "archive", "--format=tar", commit(root, revision), "--", *paths)
     os.makedirs(output, exist_ok=True)
-    with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
-        tar.extractall(output, filter="data")
+    for path, mode, _, object_id in entries:
+        target = os.path.join(output, *path.split("/"))
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "xb") as handle:
+            handle.write(git(root, "cat-file", "blob", object_id))
+        os.chmod(target, FILE_MODES[mode])
     return paths
 
 

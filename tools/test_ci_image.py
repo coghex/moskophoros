@@ -303,6 +303,132 @@ def test_staging_extracts_exactly_the_recipe_inputs(repo, tmp_path):
     ]
 
 
+def committed_inputs(repo: Repo, revision: str = "HEAD") -> dict[str, tuple]:
+    """Each recipe input's bytes and executable bit, read from the committed tree."""
+    inputs = {}
+    for record in repo.git("ls-tree", "-r", "-z", "--full-tree", revision).split("\0"):
+        if not record:
+            continue
+        metadata, _, path = record.partition("\t")
+        mode, _, object_id = metadata.split()
+        if path == "tools/ci-image/descriptor.json" or not (
+            path.startswith("tools/ci-image/")
+            or path in ("requirements.lock", ".github/workflows/ci-image.yml")
+        ):
+            continue
+        blob = subprocess.run(
+            ["git", "-C", str(repo.path), "cat-file", "blob", object_id],
+            check=True,
+            capture_output=True,
+        ).stdout
+        inputs[path] = (blob, mode == "100755")
+    return inputs
+
+
+def staged_inputs(output: Path) -> dict[str, tuple]:
+    return {
+        str(p.relative_to(output)): (p.read_bytes(), bool(p.stat().st_mode & 0o111))
+        for p in output.rglob("*")
+        if p.is_file()
+    }
+
+
+# Attributes that make `git archive` drop, rewrite or convert recipe inputs.
+ATTRIBUTES = """\
+tools/ci-image/extra.txt export-ignore
+tools/ci-image/stamp.py export-subst
+tools/ci-image/Dockerfile text eol=crlf
+tools/ci-image/entry.sh text eol=crlf
+"""
+
+
+@pytest.fixture
+def attributed(repo: Repo) -> Repo:
+    """A recipe with an executable input and inputs that attributes would alter."""
+    repo.write("tools/ci-image/stamp.py", "print('$Format:%H$')\n")
+    repo.write("tools/ci-image/extra.txt", "extra\n")
+    repo.write("tools/ci-image/entry.sh", "#!/bin/sh\ntrue\n")
+    (repo.path / "tools/ci-image/entry.sh").chmod(0o755)
+    repo.commit("attributed inputs")
+    return repo
+
+
+def configure_attributes(repo: Repo, source: str, tmp_path: Path) -> None:
+    if source == "committed":
+        repo.write(".gitattributes", ATTRIBUTES)
+        repo.commit("attributes")
+    elif source == "attributes-file":
+        file = tmp_path / "attributes"
+        file.write_text(ATTRIBUTES)
+        repo.git("config", "--local", "core.attributesFile", str(file))
+    else:
+        (repo.path / ".git" / "info").mkdir(exist_ok=True)
+        (repo.path / ".git" / "info" / "attributes").write_text(ATTRIBUTES)
+
+
+@pytest.mark.parametrize("source", ["committed", "attributes-file", "info-attributes"])
+def test_staging_writes_the_committed_bytes_and_modes_whatever_the_attributes(
+    attributed, tmp_path, source
+):
+    before = fingerprint(attributed)
+    configure_attributes(attributed, source, tmp_path)
+    assert fingerprint(attributed) == before
+    expected = committed_inputs(attributed)
+    assert expected["tools/ci-image/entry.sh"][1] is True
+    assert b"$Format:%H$" in expected["tools/ci-image/stamp.py"][0]
+    output = tmp_path / "context"
+    run(attributed.path, "stage", "--output", str(output))
+    assert staged_inputs(output) == expected
+
+
+def test_an_attributes_file_among_the_inputs_is_staged_exactly(attributed, tmp_path):
+    before = fingerprint(attributed)
+    attributed.write(
+        "tools/ci-image/.gitattributes", ATTRIBUTES.replace("tools/ci-image/", "")
+    )
+    attributed.commit("recipe attributes")
+    assert fingerprint(attributed) != before
+    expected = committed_inputs(attributed)
+    assert ".gitattributes" in "".join(expected)
+    output = tmp_path / "context"
+    run(attributed.path, "stage", "--output", str(output))
+    assert staged_inputs(output) == expected
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        pytest.param(
+            lambda r: (
+                (r.path / "tools/ci-image/link").symlink_to("Dockerfile"),
+                r.git("add", "tools/ci-image/link"),
+            ),
+            id="symlink",
+        ),
+        pytest.param(
+            lambda r: r.git(
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                f"160000,{r.git('rev-parse', 'HEAD')},tools/ci-image/link",
+            ),
+            id="submodule",
+        ),
+    ],
+)
+def test_staging_refuses_an_input_that_is_not_a_regular_file(repo, tmp_path, entry):
+    entry(repo)
+    repo.git("commit", "-q", "-m", "not a regular file")
+    output = tmp_path / "context"
+    process = run(repo.path, "stage", "--output", str(output), check=False)
+    assert process.returncode == 2
+    assert (
+        "tools/ci-image/link" in process.stderr
+        and "not a regular file" in process.stderr
+    )
+    assert not output.exists()
+
+
 def test_staging_refuses_a_directory_that_is_not_empty(repo, tmp_path):
     output = tmp_path / "context"
     output.mkdir()
