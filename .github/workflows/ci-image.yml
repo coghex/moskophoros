@@ -2,10 +2,12 @@
 # confirmed miss, and report the descriptor the author commits.
 #
 # It starts by manual dispatch, or from a same-repository pull request that
-# changes a recipe input. Committing the returned descriptor is not a recipe
-# input, so it starts nothing. Every job reads one revision: the pull request's
-# head, or the dispatched revision. Only the publish job holds package write
-# permission. See docs/validation.md, The CI image.
+# changes a recipe input. GitHub matches these paths against the pull request's
+# whole change, so one that changes only the descriptor starts nothing, while
+# pushing the descriptor to a recipe-changing pull request runs it again and
+# finds the image already published. Every job reads one revision: the pull
+# request's head, or the dispatched revision. Only the publish job holds
+# package write permission. See docs/validation.md, The CI image.
 name: ci-image
 
 on:

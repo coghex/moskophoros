@@ -419,6 +419,9 @@ revision: the pull request's head, or the dispatched revision.
    image for the new fingerprint, or finds the one already published.
 3. Copy the descriptor from the workflow's summary into
    `tools/ci-image/descriptor.json`, and push it to the same pull request.
+   The workflow runs again, since GitHub matches its paths against the pull
+   request's whole change, and finds the image already published. The
+   descriptor is not a fingerprint input, so the fingerprint is unchanged.
 4. Check it:
 
    ```sh
