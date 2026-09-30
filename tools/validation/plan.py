@@ -405,6 +405,33 @@ def push_range(
 # The plan
 
 
+def shown(path: str) -> str:
+    """Present a path in the text form, unambiguously and always printable.
+
+    A plain path is shown as it is. Any other is quoted, with a backslash
+    before '"' and '\\', each byte that is not UTF-8 as '\\xNN', and other
+    unprintable characters escaped as Python escapes them. The JSON form and
+    all matching keep the path itself.
+    """
+    if path.isprintable() and '"' not in path and "\\" not in path:
+        return path
+    parts = []
+    for character in path:
+        if character in '"\\':
+            parts.append("\\" + character)
+        elif "\udc80" <= character <= "\udcff":
+            parts.append(f"\\x{ord(character) - 0xDC00:02x}")
+        elif character.isprintable():
+            parts.append(character)
+        else:
+            parts.append(ascii(character)[1:-1])
+    return '"' + "".join(parts) + '"'
+
+
+def listing(paths: list[str], show=str) -> str:
+    return ", ".join(show(path) for path in paths)
+
+
 def affected_paths(group: dict, paths: list[str]) -> list[str]:
     return [
         path for path in paths if any(matches(path, p) for p in group.get("paths", []))
@@ -412,7 +439,7 @@ def affected_paths(group: dict, paths: list[str]) -> list[str]:
 
 
 def check_obligation(
-    repo: Path, group: dict, head: str | None, entries: list[dict]
+    repo: Path, group: dict, head: str | None, entries: list[dict], show=str
 ) -> dict:
     """Decide whether the body's report satisfies one local-only obligation."""
     reports = [entry for entry in entries if entry["group"] == group["id"]]
@@ -459,7 +486,7 @@ def check_obligation(
                 if stale:
                     problems.append(
                         f"the report is stale: its paths changed since {commit}: "
-                        + ", ".join(stale)
+                        + listing(stale, show)
                     )
     result = {
         "met": not problems,
@@ -480,8 +507,12 @@ def build_plan(
     causes: list[str],
     requested: list[str],
     reports: list[dict] | None,
+    show=str,
 ) -> dict:
-    """Explain every catalog group as selected or omitted, with its reasons."""
+    """Explain every catalog group as selected or omitted, with its reasons.
+
+    `show` presents each path its messages name; the text form passes `shown`.
+    """
     pull_request = comparison["kind"] == "pull_request"
     causes = list(causes)
     unclaimed = []
@@ -491,7 +522,7 @@ def build_plan(
         claimed = {path for group in groups for path in affected_paths(group, paths)}
         unclaimed = [path for path in paths if path not in claimed]
         if unclaimed:
-            causes.append("changed paths no group claims: " + ", ".join(unclaimed))
+            causes.append("changed paths no group claims: " + listing(unclaimed, show))
     explained = []
     for group in groups:
         category = group["category"]
@@ -530,7 +561,7 @@ def build_plan(
                 entry["reasons"] = [omission]
         if local and entry["selected"]:
             entry["obligation"] = check_obligation(
-                repo, group, comparison.get("head_commit"), reports or []
+                repo, group, comparison.get("head_commit"), reports or [], show
             )
         explained.append(entry)
     obliged = {entry["id"] for entry in explained if "obligation" in entry}
@@ -558,7 +589,7 @@ def describe(reason: dict) -> str:
     if code == "floor":
         return "floor: always runs"
     if code == "affected":
-        return "affected by " + ", ".join(reason["paths"])
+        return "affected by " + listing(reason["paths"], shown)
     if code == "fail-wide":
         return "failing wide: " + "; ".join(reason["causes"])
     if code == "requested":
@@ -570,7 +601,7 @@ def describe(reason: dict) -> str:
     if code == "verified-on-pull-request":
         return (
             "verified on the pull request (affected by "
-            + ", ".join(reason["paths"])
+            + listing(reason["paths"], shown)
             + ")"
         )
     raise ValueError(code)
@@ -594,7 +625,7 @@ def render(plan: dict) -> str:
         lines.append("Changed paths: unknown")
     else:
         lines.append(f"Changed paths ({len(paths)}):")
-        lines.extend(f"  {path}" for path in paths)
+        lines.extend(f"  {shown(path)}" for path in paths)
     if plan["fail_wide"]:
         lines.append("Failing wide: every floor and affected group runs, because")
         lines.extend(f"  - {cause}" for cause in plan["fail_wide"])
@@ -694,7 +725,8 @@ def run(arguments: argparse.Namespace) -> int:
         )
     else:
         comparison, paths, causes = push_range(repo, arguments.before, arguments.after)
-    plan = build_plan(repo, groups, comparison, paths, causes, requested, reports)
+    show = str if arguments.json else shown
+    plan = build_plan(repo, groups, comparison, paths, causes, requested, reports, show)
     if arguments.json:
         print(json.dumps(plan, indent=2))
     else:
