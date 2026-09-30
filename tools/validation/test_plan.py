@@ -808,11 +808,30 @@ def test_text_names_the_paths_a_push_verifies_on_the_pull_request(repo, catalog)
         ("src/caf\udce9.py", '"src/caf\\xe9.py"'),
         ("src/caf\\xe9.py", '"src/caf\\\\xe9.py"'),
         ('src/"a".py', '"src/\\"a\\".py"'),
+        ("src/a, b.py", '"src/a, b.py"'),
+        ("src/a.py; requested", '"src/a.py; requested"'),
         ("src/a\nb.py", '"src/a\\nb.py"'),
     ],
 )
 def test_a_path_is_shown_plainly_or_quoted_and_escaped(path, text):
     assert plan.shown(path) == text
+
+
+def test_text_quotes_a_path_holding_a_reason_or_list_separator(repo, catalog):
+    body = "```validation-request\ntest.tools\n```\n"
+    repo.commit({"tools/a.py; requested in the pull request": "a\n"})
+    delimited = pr_plan(repo, catalog, body, json_form=False)
+    assert delimited.returncode == 0, delimited.stdout + delimited.stderr
+    assert text_sections(delimited.stdout)["test.tools"] == (
+        "Selected, runs on GitHub:",
+        'affected by "tools/a.py; requested in the pull request"; '
+        "requested in the pull request",
+    )
+    repo.commit({"tools/b, tools/c.py": "b\n"})
+    listed = pr_plan(repo, catalog, json_form=False)
+    assert text_sections(listed.stdout)["test.tools"][1] == (
+        'affected by "tools/a.py; requested in the pull request", "tools/b, tools/c.py"'
+    )
 
 
 def strict_text_plan(repo, catalog, *args):

@@ -408,12 +408,14 @@ def push_range(
 def shown(path: str) -> str:
     """Present a path in the text form, unambiguously and always printable.
 
-    A plain path is shown as it is. Any other is quoted, with a backslash
-    before '"' and '\\', each byte that is not UTF-8 as '\\xNN', and other
-    unprintable characters escaped as Python escapes them. The JSON form and
-    all matching keep the path itself.
+    A plain path is shown as it is. Any other is quoted: one holding '"',
+    '\\', the ',' and ';' that separate paths and reasons, an unprintable
+    character or a byte that is not UTF-8. Inside the quotes, '"' and '\\'
+    take a backslash, each byte that is not UTF-8 is '\\xNN', and other
+    unprintable characters are escaped as Python escapes them. The JSON form
+    and all matching keep the path itself.
     """
-    if path.isprintable() and '"' not in path and "\\" not in path:
+    if path.isprintable() and not any(character in path for character in '"\\,;'):
         return path
     parts = []
     for character in path:

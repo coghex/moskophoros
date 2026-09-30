@@ -283,13 +283,14 @@ body before opening the pull request.
 The text form lists the changed paths, any fail-wide causes, the groups
 selected to run on GitHub with their commands, the local obligations with
 their status, the omitted groups, and the result. It shows a plain path as
-it is, and quotes any other: a path holding `"`, `\`, an unprintable
-character or a byte that is not UTF-8 is shown in double quotes, with `\"`
-and `\\` for the first two, `\xNN` for each byte that is not UTF-8, and a
-Python escape such as `\n` for an unprintable character. The JSON form keeps
-every path as Git reports it. The JSON form carries the
-same information in these fields: `comparison`, `changed_paths` (`null` when
-the comparison failed), `unclaimed_paths`, `fail_wide`, `requested`, `groups`
+it is, and quotes any other: a path holding `"`, `\`, the `,` or `;` that
+separate paths and reasons, an unprintable character or a byte that is not
+UTF-8 is shown in double quotes, with `\"` and `\\` for the first two,
+`\xNN` for each byte that is not UTF-8, and a Python escape such as `\n` for
+an unprintable character. The JSON form keeps every path as Git reports it,
+and carries the same information in these fields: `comparison`,
+`changed_paths` (`null` when the comparison failed), `unclaimed_paths`,
+`fail_wide`, `requested`, `groups`
 (each with `id`, `category`, `description`, `commands`, `selected`, `local`,
 `reasons`, and `obligation` for a local obligation), `ignored_reports`,
 `failed_obligations` and `valid`.
