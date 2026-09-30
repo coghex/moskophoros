@@ -198,6 +198,18 @@ def test_duplicate_id_is_rejected_naming_the_group(tmp_path):
     assert "group 'a.b': duplicate id" in stderr
 
 
+@pytest.mark.parametrize("identifier", ["build-test", "review-approved"])
+def test_a_required_check_name_is_reserved(tmp_path, identifier):
+    stderr = invalid(tmp_path, with_groups(group(identifier, "floor")))
+    assert (
+        f"group {identifier!r}: the id is reserved: {identifier!r} is the name "
+        "of a required check"
+    ) in stderr
+    path = tmp_path / "bad.json"
+    with pytest.raises(plan.PlanError, match="is the name of a required check"):
+        plan.load_catalog(path)
+
+
 def test_unknown_category_is_rejected_naming_the_group(tmp_path):
     stderr = invalid(tmp_path, with_groups(group("a.b", "sometimes", ["src/"])))
     assert "group 'a.b': unknown category 'sometimes'" in stderr

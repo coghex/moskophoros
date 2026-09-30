@@ -23,6 +23,8 @@ CATEGORIES = ("floor", "affected", "optional", "local-only")
 TOP_KEYS = {"schema_version", "groups"}
 GROUP_KEYS = {"id", "description", "category", "commands", "paths"}
 ID_PATTERN = re.compile(r"[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*")
+# The checks the `master` ruleset requires. No group may take one's name.
+RESERVED_IDS = ("build-test", "review-approved")
 COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")
 FENCE_PATTERN = re.compile(r" {0,3}(`{3,}|~{3,})(.*)")
 REQUEST_BLOCK = "validation-request"
@@ -124,6 +126,11 @@ def catalog_problems(document: object, source: str) -> list[str]:
                 problems.append(
                     f"{where}: the id must be dot-separated lower-case words, "
                     "such as 'test.package'"
+                )
+            if identifier in RESERVED_IDS:
+                problems.append(
+                    f"{where}: the id is reserved: {identifier!r} is the name "
+                    "of a required check"
                 )
             if identifier in seen:
                 problems.append(f"{where}: duplicate id")
