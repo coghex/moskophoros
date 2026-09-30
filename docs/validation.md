@@ -343,8 +343,14 @@ python3 tools/ci-image/image.py fingerprint --revision HEAD
 ```
 
 The build context is staged from the same revision and holds exactly the
-fingerprint's inputs, so nothing else can reach the build. `stage` refuses an
-output directory that is not empty:
+fingerprint's inputs, so nothing else can reach the build. `stage` writes each
+input straight from the blob the tree records, executable exactly when its tree
+mode is `100755`. It does not use `git archive` or a checkout, so no
+`.gitattributes` file and no local Git configuration can drop, rewrite or
+convert an input: the context holds the committed bytes and modes that the
+fingerprint describes. An input that is not a regular file, such as a symlink
+or a submodule, is refused with its path named. `stage` also refuses an output
+directory that is not empty:
 
 ```sh
 python3 tools/ci-image/image.py stage --revision HEAD --output /tmp/context
