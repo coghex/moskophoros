@@ -66,9 +66,13 @@ commands assume the virtual environment described in
 | `test.blender` | `local-only` | `pytest -m blender`, on the owner's machine | `src/`, `tests/blender/`, `pyproject.toml`, `requirements.lock` |
 
 Every Blender-marked test lives under `tests/blender/`, so changing an
-ordinary test creates no Blender obligation. Until slice 1 adds Blender tests,
-`test.blender`'s command collects no tests, which pytest reports with exit
-status 5.
+ordinary test creates no Blender obligation. `test.blender` runs the Blender
+smoke test in `tests/blender/test_smoke.py`, which starts Blender headless and
+checks that it imports `bpy` in background mode. It finds Blender in the order
+design §Capture gives, except `--blender`. A non-empty `$MOSKOPHOROS_BLENDER`
+is used as given, with no fallback. When no Blender is found, the test fails
+with the places it looked, and never skips, so only a machine with Blender can
+report `test.blender` `passed`.
 
 No `optional` group is registered yet.
 
