@@ -147,8 +147,9 @@ runs it by digest. This follows Hetoimasia's recipe and descriptor model.
   descriptor below is the one file excluded, so recording a digest never
   changes the fingerprint. Only files the fingerprint covers reach the build.
 - **The descriptor** (`tools/ci-image/descriptor.json`) records the image
-  reference, its digest, the fingerprint it was built from, and the Python and
-  ruff versions it contains. CI runs exactly the descriptor's digest.
+  reference, its digest, the fingerprint it was built from, and the Python,
+  pytest and ruff versions it contains, read from the built image. CI runs
+  exactly the descriptor's digest.
 - **Updating the image:** a pull request that changes any fingerprint input
   runs the image workflow, which builds and publishes the candidate image under
   its fingerprint and reports its digest. The author commits the resulting
@@ -319,7 +320,10 @@ Owner approval 2026-09-29 of proposal P-4 as revised after review (concerns 3
 and 4): the fingerprint covers exactly `tools/ci-image/`, the lock file and the
 image workflow, excluding the descriptor; the author commits the descriptor in
 the recipe-changing pull request; and a stale descriptor fails `build-test`.
-See [P-4](#p-4-a-prebuilt-image-published-once-per-recipe-d-14).
+The descriptor records the Python, pytest and ruff versions the image contains
+(pytest added by owner approval 2026-09-29, when approving CIF-3 as #6, since
+pytest decides test results as ruff decides lint results). See
+[P-4](#p-4-a-prebuilt-image-published-once-per-recipe-d-14).
 
 ### D-15. The initial groups
 
@@ -486,8 +490,8 @@ Approved by the owner 2026-09-29.
 - **Acceptance signals:** rebuilding an unchanged recipe publishes nothing
   new; changing any fingerprint input, including the lock file alone,
   publishes a new digest; committing the descriptor leaves the fingerprint
-  unchanged; the image reports its pinned versions, including Python 3.13 and
-  ruff.
+  unchanged; the image reports its pinned versions, including Python 3.13,
+  pytest and ruff.
 - **Out of scope:** Blender.
 - **Open questions:** None
 
