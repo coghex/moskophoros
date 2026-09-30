@@ -226,7 +226,7 @@ def named_block(text: str, name: str, source: str) -> list[str] | None:
     """Return the lines of the one top-level block named `name`, or None."""
     found = []
     for block in top_level_fences(text):
-        if block["info"].split()[:1] != [name]:
+        if not block["info"].startswith(name):
             continue
         if block["info"] != name:
             raise PlanError(

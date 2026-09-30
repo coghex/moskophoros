@@ -514,11 +514,16 @@ def test_an_unterminated_request_block_is_an_error(repo, catalog):
     )
 
 
-def test_a_malformed_request_is_an_error(repo, catalog):
-    stderr = request_error(
-        repo, catalog, "```validation-request please\ntest.app\n```\n"
-    )
+@pytest.mark.parametrize(
+    "info",
+    ["validation-request please", "validation-request-extra", "validation-requests"],
+)
+def test_a_malformed_request_info_string_is_an_error(repo, catalog, info):
+    stderr = request_error(repo, catalog, f"```{info}\ntest.extra\n```\n")
     assert "malformed validation-request block" in stderr
+
+
+def test_a_malformed_request_line_is_an_error(repo, catalog):
     stderr = request_error(
         repo, catalog, "```validation-request\ntest.app test.extra\n```\n"
     )
@@ -637,6 +642,16 @@ def test_duplicate_reports_for_an_obligation_fail_it(repo, catalog):
     body = f"```local-validation\ntest.local {head} passed\ntest.local {head} failed\n```\n"
     result = loaded(pr_plan(repo, catalog, body), code=1)
     assert obligation(result)["problems"] == ["2 local-validation entries report it"]
+
+
+@pytest.mark.parametrize(
+    "info", ["local-validation please", "local-validation-extra", "local-validations"]
+)
+def test_a_malformed_report_info_string_is_an_error(repo, catalog, info):
+    head = repo.commit({"src/app.py": "changed\n"})
+    result = pr_plan(repo, catalog, f"```{info}\ntest.local {head} passed\n```\n")
+    assert result.returncode == 2
+    assert "malformed local-validation block" in result.stderr
 
 
 def test_two_report_blocks_are_an_error(repo, catalog):

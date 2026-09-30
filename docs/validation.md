@@ -192,7 +192,7 @@ GitHub. These are errors:
 - more than one `validation-request` block;
 - a block that is never closed;
 - an info string that starts with `validation-request` but says anything
-  else, such as `validation-request please`.
+  else, such as `validation-request please` or `validation-request-extra`.
 
 Only top-level blocks count. A block inside another fenced block, like the
 example above, is documentation, not a request. A fence is read only when it
