@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "moskophoros"
+version = "0.1.0"
+description = "Renders animated .glb models into pixel-art sprite sheets through headless Blender."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.13"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.1",
+    "ruff>=0.16",
+    "uv>=0.12",
+]
+
+[tool.pytest.ini_options]
+minversion = "9.1"
+testpaths = ["tests", "tools"]
+addopts = ["--strict-markers"]
+markers = [
+    "blender: needs Blender; runs only locally, never in CI",
+]
+
+[tool.ruff]
+target-version = "py313"
+# Vendored from Kanban and kept byte-identical (tools/README.md).
+extend-exclude = ["tools/docs_land_paths.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "EXE", "PLE", "PLW"]
+# The formatter owns line length.
+ignore = ["E501"]

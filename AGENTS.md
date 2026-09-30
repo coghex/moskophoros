@@ -61,16 +61,29 @@ Add a dependency only for a concrete use, and pin it in `requirements.lock`.
 
 ## Build and test
 
-The first implementation pull request creates the package and these commands.
-If it chooses differently, it updates this section in the same pull request.
+These commands need Python 3.13 or newer. CI runs the same ones on 3.13, and a
+change that alters them updates this section in the same pull request.
 
 ```sh
-python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.lock   # the exact tested tool versions
+.venv/bin/pip install --no-deps -e .
+.venv/bin/ruff check .
+.venv/bin/ruff format --check .
 .venv/bin/pytest                    # everything; Blender tests skip if absent
-.venv/bin/pytest -m "not blender"   # fast: no Blender needed
-.venv/bin/moskophoros --help
+.venv/bin/pytest -m "not blender"   # fast: no Blender needed; what CI runs
 ```
 
+`pyproject.toml` states minimum versions and `requirements.lock` pins the tested
+ones. After changing the development dependencies, regenerate the lock for
+Python 3.13 and commit it with the change:
+
+```sh
+.venv/bin/uv pip compile pyproject.toml --extra dev --python-version 3.13 --universal -o requirements.lock
+```
+
+- Mark every test that needs Blender with `@pytest.mark.blender`. An
+  unregistered marker is an error.
 - Run the tests covering what you changed. Run the Blender integration tests
   when capture, sampling, fitting or output encoding changes.
 - A skipped test is not a passing test. Report skips and the reason.
