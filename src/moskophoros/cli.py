@@ -44,6 +44,8 @@ DEFAULT_VIEW = "iso"
 CUSTOM_VIEW = "custom"
 ROOT_MOTION_MODES = ("error", "keep")
 _MAX_DIGITS = 4300
+_REPEATABLE = frozenset({"--clip", "--once"})
+_HELP = frozenset({"-h", "--help"})
 
 
 @dataclass(frozen=True)
@@ -145,28 +147,22 @@ class _Parser(argparse.ArgumentParser):
         raise UsageError(message)
 
 
-def _record(action, namespace, *, repeatable=False):
-    if not repeatable and action.dest in namespace.explicit_:
-        raise argparse.ArgumentError(action, "given more than once")
-    namespace.explicit_.add(action.dest)
-
-
 class _Single(argparse.Action):
-    """An option that takes one value and may be given at most once."""
+    """An option that takes one value; `_prepare` rejects a repeat."""
 
     def __call__(self, parser, namespace, values, option_string=None):
-        _record(self, namespace)
+        namespace.explicit_.add(self.dest)
         setattr(namespace, self.dest, values)
 
 
 class _Flag(argparse.Action):
-    """A flag that may be given at most once."""
+    """A flag; `_prepare` rejects a repeat."""
 
     def __init__(self, option_strings, dest, **kwargs):
         super().__init__(option_strings, dest, nargs=0, default=False, **kwargs)
 
     def __call__(self, parser, namespace, values, option_string=None):
-        _record(self, namespace)
+        namespace.explicit_.add(self.dest)
         setattr(namespace, self.dest, True)
 
 
@@ -177,7 +173,7 @@ class _Names(argparse.Action):
         names = getattr(namespace, self.dest) or []
         if values in names:
             raise argparse.ArgumentError(self, f"{values!r} named more than once")
-        _record(self, namespace, repeatable=True)
+        namespace.explicit_.add(self.dest)
         setattr(namespace, self.dest, [*names, values])
 
 
@@ -439,20 +435,25 @@ def _build_parser():
         action=_Flag,
         help="allow a Blender version other than the supported one (default: off)",
     )
-    flags = {"-h", "--help", "--no-preview", "--any-blender"}
+    flags = {*_HELP, "--no-preview", "--any-blender"}
     return parser, frozenset(value_options), frozenset(flags)
 
 
 def _prepare(parser, argv, value_options, flags):
-    """Reject unknown options, and join `--option -value` into `--option=-value`.
+    """Check options against their raw text, and join `--option -value`.
+
+    Unknown and repeated options are rejected here, where the text given is
+    still at hand: argparse reports an unknown option's value as a misplaced
+    positional argument, and passes options on already converted. Only
+    `--clip` and `--once` repeat.
 
     argparse takes a value such as `-1,0,0` or `-1e-3` for an option, so a
-    negative ground point or angle would need `=`. It also reports an unknown
-    option's value as a misplaced positional argument, naming the wrong
-    argument. A value starting with `--` is left for argparse to reject, and a
-    positional argument starting with `-` follows a bare `--`.
+    negative ground point or angle would need `=`; it is joined as
+    `--option=-value`. A value starting with `--` is left for argparse to
+    reject, and a positional argument starting with `-` follows a bare `--`.
     """
     prepared = []
+    given = {}
     index = 0
     while index < len(argv):
         token = argv[index]
@@ -460,20 +461,34 @@ def _prepare(parser, argv, value_options, flags):
         if token == "--":
             prepared.extend(argv[index - 1 :])
             break
-        name = token.partition("=")[0]
+        if not token.startswith("-") or token == "-":
+            prepared.append(token)
+            continue
+        name, equals, value = token.partition("=")
+        if name not in value_options | flags:
+            parser.error(f"unrecognized option: {token}")
         if (
-            token in value_options
+            not equals
+            and name in value_options
             and index < len(argv)
             and not argv[index].startswith("--")
         ):
             value = argv[index]
             index += 1
+            equals = "="
             if value.startswith("-") and value not in ("-", "-h"):
-                prepared.append(f"{token}={value}")
+                prepared.append(f"{name}={value}")
             else:
-                prepared.extend((token, value))
-            continue
-        if token.startswith("-") and token != "-" and name not in value_options | flags:
-            parser.error(f"unrecognized option: {name}")
-        prepared.append(token)
+                prepared.extend((name, value))
+        else:
+            prepared.append(token)
+        if name not in _REPEATABLE | _HELP:
+            values = given.setdefault(name, [])
+            values.append(value if equals else None)
+            if len(values) > 1:
+                shown = ", ".join(repr(text) for text in values if text is not None)
+                parser.error(
+                    f"argument {name}: given more than once"
+                    + (f": {shown}" if shown else "")
+                )
     return prepared

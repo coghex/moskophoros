@@ -401,7 +401,34 @@ def test_a_single_value_option_given_twice_is_rejected(capsys, option, first, se
     once = [option] if first is None else [option, first]
     again = [option] if second is None else [option, second]
     error = usage_error(capsys, [*once, *again, *POSITIONALS])
-    assert error == f"argument {option}: given more than once"
+    if first is None:
+        assert error == f"argument {option}: given more than once"
+    else:
+        assert error == (
+            f"argument {option}: given more than once: {first!r}, {second!r}"
+        )
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        (
+            ["--pitch=10", "--pitch", "20"],
+            "argument --pitch: given more than once: '10', '20'",
+        ),
+        (
+            ["--ground", "-1,0,0", "--ground=1,0,0"],
+            "argument --ground: given more than once: '-1,0,0', '1,0,0'",
+        ),
+        # A repeat is reported even when an earlier value is invalid.
+        (
+            ["--pitch", "91", "--pitch", "20"],
+            "argument --pitch: given more than once: '91', '20'",
+        ),
+    ],
+)
+def test_a_repeat_names_the_values_given(capsys, argv, message):
+    assert usage_error(capsys, [*argv, *POSITIONALS]) == message
 
 
 @pytest.mark.parametrize(
@@ -409,7 +436,7 @@ def test_a_single_value_option_given_twice_is_rejected(capsys, option, first, se
     [
         (["--frames", "8", *POSITIONALS], "unrecognized option: --frames"),
         (["--dir", "4", *POSITIONALS], "unrecognized option: --dir"),
-        (["--frames=8", *POSITIONALS], "unrecognized option: --frames"),
+        (["--frames=8", *POSITIONALS], "unrecognized option: --frames=8"),
         (["-v", *POSITIONALS], "unrecognized option: -v"),
         (["-in.glb", "out.png"], "unrecognized option: -in.glb"),
         ([*POSITIONALS, "--pitch"], "argument --pitch: expected one argument"),
