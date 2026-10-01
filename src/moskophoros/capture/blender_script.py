@@ -9,16 +9,19 @@ contract, §Clips and sampling, §Root motion, §Scale and ground point and
 Slice 1 implements measure mode; a render job is refused as unsupported.
 
 Identity mapping: the script imports a private copy of the source in which
-every node is renamed `moskophoros.node.<index>` and every animation
-`moskophoros.animation.<index>`. Blender names objects and bones after nodes
-and actions after animations, so original indices map exactly, whatever the
-original names, and an index with no imported counterpart fails by name.
+every node is renamed `moskophoros.node.<index>`, every mesh
+`moskophoros.mesh.<index>` and every animation `moskophoros.animation.<index>`.
+Blender names objects and bones after nodes, mesh data after meshes and
+actions after animations, so original indices map exactly, whatever the
+original names, and an index with no imported counterpart fails by name. The
+subject is found by mesh data, because Blender moves some meshes, such as a
+skinned mesh with animated morph weights, into an object of their own.
 
-Static state: the importer evaluates animation while importing, so the
-values it leaves are not the file's static ones. The script first imports
-the copy without animations and records every object's transform and every
-shape key's value, then imports it with animations and restores those
-values before each clip.
+Static state: the importer makes the first animation active, and Blender
+evaluates it, so its channels would no longer hold the file's static values.
+The copy therefore starts with a synthetic animation of one synthetic empty
+node, which moves nothing. Every object transform, pose bone transform and
+shape key value is recorded right after import and restored before each clip.
 
 A failure prints `moskophoros: error: <message>` to stderr and exits 1,
 writing no result.
@@ -41,6 +44,9 @@ JOB_SCHEMA = "moskophoros.capture-job/1"
 RESULT_SCHEMA = "moskophoros.capture-result/1"
 NODE_NAME = "moskophoros.node.{}"
 ANIMATION_NAME = "moskophoros.animation.{}"
+MESH_NAME = "moskophoros.mesh.{}"
+PLACEHOLDER = "moskophoros.placeholder"
+_MESH_DATA = re.compile(r"moskophoros\.mesh\.(\d+)(?:\.\d+)?")
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _GLB_HEADER = struct.Struct("<4sII")
@@ -239,6 +245,8 @@ def check_job(job):
 
     frames = job["frames"]
     _require(isinstance(frames, list) and frames, "frames")
+    ranges = {clip["name"]: (clip["t0_s"], clip["t1_s"]) for clip in clips}
+    addresses = set()
     for frame in frames:
         _fields(frame, ["address", "index", "angle_deg"], "frame")
         address = _fields(
@@ -258,6 +266,15 @@ def check_job(job):
             "a frame's direction",
         )
         _require(_is_number(address["time_s"]), "a frame's time_s")
+        t0, t1 = ranges[address["clip"]]
+        _require(
+            t0 <= address["time_s"] <= t1,
+            f"time {address['time_s']!r} is outside clip {address['clip']!r}'s "
+            f"range {t0!r} to {t1!r}",
+        )
+        key = tuple(address[k] for k in ("clip", "direction", "time_s"))
+        _require(key not in addresses, f"the frame address {address!r} repeats")
+        addresses.add(key)
         _require(_is_int(frame["index"]) and frame["index"] >= 0, "a frame's index")
         _require(_is_number(frame["angle_deg"]), "a frame's angle_deg")
 
@@ -293,18 +310,54 @@ def split_glb(data, path):
     return document, data[start + length :]
 
 
-def private_copy(document, rest, source, scene, animations):
-    """The GLB bytes Blender imports: nodes and animations renamed by index,
-    the job's scene made the default, and external files given absolute
-    paths. Without `animations`, it has none."""
+def private_copy(document, rest, source, scene):
+    """The GLB bytes Blender imports: nodes, meshes and animations renamed by
+    index, a placeholder animation first, the job's scene made the default,
+    and external files given absolute paths."""
     document = json.loads(json.dumps(document))
-    for index, node in enumerate(document.get("nodes", [])):
+    nodes = document.setdefault("nodes", [])
+    for index, node in enumerate(nodes):
         node["name"] = NODE_NAME.format(index)
+    for index, mesh in enumerate(document.get("meshes", [])):
+        mesh["name"] = MESH_NAME.format(index)
+    animations = document.get("animations") or []
+    for index, animation in enumerate(animations):
+        animation["name"] = ANIMATION_NAME.format(index)
     if animations:
-        for index, animation in enumerate(document.get("animations", [])):
-            animation["name"] = ANIMATION_NAME.format(index)
-    else:
-        document.pop("animations", None)
+        # One key at time 0 holding (0, 0, 0). Accessors without a buffer
+        # view are zeros.
+        accessors = document.setdefault("accessors", [])
+        accessors.append(
+            {
+                "componentType": 5126,
+                "count": 1,
+                "type": "SCALAR",
+                "min": [0],
+                "max": [0],
+            }
+        )
+        accessors.append({"componentType": 5126, "count": 1, "type": "VEC3"})
+        nodes.append({"name": PLACEHOLDER})
+        document["scenes"][scene].setdefault("nodes", []).append(len(nodes) - 1)
+        animations.insert(
+            0,
+            {
+                "name": PLACEHOLDER,
+                "channels": [
+                    {
+                        "sampler": 0,
+                        "target": {"node": len(nodes) - 1, "path": "translation"},
+                    }
+                ],
+                "samplers": [
+                    {
+                        "input": len(accessors) - 2,
+                        "output": len(accessors) - 1,
+                        "interpolation": "LINEAR",
+                    }
+                ],
+            },
+        )
     document["scene"] = scene
     directory = os.path.dirname(source)
     for key in ("buffers", "images"):
@@ -319,12 +372,13 @@ def private_copy(document, rest, source, scene, animations):
     return _GLB_HEADER.pack(b"glTF", 2, _GLB_HEADER.size + len(body)) + body
 
 
-def import_glb(data, directory, name):
+def import_glb(data, directory):
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    path = os.path.join(directory, name)
+    path = os.path.join(directory, "subject.glb")
     with open(path, "wb") as handle:
         handle.write(data)
-    result = bpy.ops.import_scene.gltf(filepath=path)
+    # No bone display shapes: they are not part of the subject.
+    result = bpy.ops.import_scene.gltf(filepath=path, disable_bone_shape=True)
     if "FINISHED" not in result:
         raise ScriptError(f"Blender could not import the model: {sorted(result)}")
 
@@ -332,22 +386,39 @@ def import_glb(data, directory, name):
 # Static state
 
 
+_TRANSFORM = (
+    "location",
+    "rotation_quaternion",
+    "rotation_euler",
+    "rotation_axis_angle",
+    "scale",
+)
+
+
+def _transform(item):
+    state = {"rotation_mode": item.rotation_mode}
+    state.update((key, tuple(getattr(item, key))) for key in _TRANSFORM)
+    return state
+
+
+def _restore(item, state):
+    item.rotation_mode = state["rotation_mode"]
+    for key in _TRANSFORM:
+        setattr(item, key, state[key])
+
+
 def record_statics():
-    """Every object's transform and every mesh's shape key values."""
+    """Every object's and pose bone's transform and every shape key value,
+    as the importer left them."""
     statics = {}
     for obj in bpy.data.objects:
+        bones = {}
+        if obj.pose is not None:
+            bones = {bone.name: _transform(bone) for bone in obj.pose.bones}
         keys = ()
         if obj.type == "MESH" and obj.data.shape_keys is not None:
             keys = tuple(block.value for block in obj.data.shape_keys.key_blocks)
-        statics[obj.name] = {
-            "rotation_mode": obj.rotation_mode,
-            "location": tuple(obj.location),
-            "rotation_quaternion": tuple(obj.rotation_quaternion),
-            "rotation_euler": tuple(obj.rotation_euler),
-            "rotation_axis_angle": tuple(obj.rotation_axis_angle),
-            "scale": tuple(obj.scale),
-            "shape_keys": keys,
-        }
+        statics[obj.name] = (_transform(obj), bones, keys)
     return statics
 
 
@@ -358,30 +429,13 @@ def reset(statics):
             data.animation_data.action = None
             data.animation_data.use_nla = False
     for obj in bpy.data.objects:
-        static = statics.get(obj.name)
-        if static is None:
-            raise ScriptError(f"object {obj.name!r} has no recorded static state")
-        obj.rotation_mode = static["rotation_mode"]
-        for key in (
-            "location",
-            "rotation_quaternion",
-            "rotation_euler",
-            "rotation_axis_angle",
-            "scale",
-        ):
-            setattr(obj, key, static[key])
+        transform, bones, keys = statics[obj.name]
+        _restore(obj, transform)
         if obj.pose is not None:
             for bone in obj.pose.bones:
-                bone.location = (0.0, 0.0, 0.0)
-                bone.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
-                bone.rotation_euler = (0.0, 0.0, 0.0)
-                bone.rotation_axis_angle = (0.0, 0.0, 1.0, 0.0)
-                bone.scale = (1.0, 1.0, 1.0)
+                _restore(bone, bones[bone.name])
         if obj.type == "MESH" and obj.data.shape_keys is not None:
-            blocks = obj.data.shape_keys.key_blocks
-            if len(blocks) != len(static["shape_keys"]):
-                raise ScriptError(f"object {obj.name!r}'s shape keys changed")
-            for block, value in zip(blocks, static["shape_keys"], strict=True):
+            for block, value in zip(obj.data.shape_keys.key_blocks, keys, strict=True):
                 block.value = value
 
 
@@ -422,24 +476,33 @@ def evaluate(scene, fps, time_s):
 
 
 def subject_objects(document, scene_index):
-    """The objects created from the selected scene's mesh nodes."""
+    """The objects holding the selected scene's meshes: one per mesh node."""
     nodes = document.get("nodes", [])
-    scenes = document.get("scenes", [])
-    pending = list(scenes[scene_index].get("nodes", []))
-    meshes = []
+    pending = list(document["scenes"][scene_index].get("nodes", []))
+    expected = {}
     while pending:
-        index = pending.pop()
-        node = nodes[index]
+        node = nodes[pending.pop()]
         if "mesh" in node:
-            meshes.append(index)
+            expected[node["mesh"]] = expected.get(node["mesh"], 0) + 1
         pending.extend(node.get("children", []))
     view_layer = bpy.context.view_layer
+    found = {}
     objects = []
-    for index in sorted(meshes):
-        obj = bpy.data.objects.get(NODE_NAME.format(index))
-        if obj is None or obj.type != "MESH" or obj.name not in view_layer.objects:
-            raise ScriptError(f"mesh node {index} has no imported mesh object")
+    for obj in sorted(bpy.data.objects, key=lambda obj: obj.name):
+        if obj.type != "MESH" or obj.name not in view_layer.objects:
+            continue
+        match = _MESH_DATA.fullmatch(obj.data.name)
+        if match is None:
+            continue
+        mesh = int(match[1])
+        found[mesh] = found.get(mesh, 0) + 1
         objects.append(obj)
+    for mesh in sorted(set(expected) | set(found)):
+        if expected.get(mesh, 0) != found.get(mesh, 0):
+            raise ScriptError(
+                f"mesh {mesh} is used by {expected.get(mesh, 0)} node(s) of the "
+                f"scene but has {found.get(mesh, 0)} imported object(s)"
+            )
     return objects
 
 
@@ -546,8 +609,10 @@ def measure(job, document, statics):
             heights = [y for _, y, _ in points]
             height = max(heights) - min(heights) if heights else 0.0
             for direction, angle in angles[time_s].items():
+                # Reduce first: a huge yaw would swallow the angle.
+                rotation = (angle % 360 + yaw % 360) % 360
                 measured[(clip["name"], direction, time_s)] = (
-                    bounds(points, ground, angle + yaw, pitch),
+                    bounds(points, ground, rotation, pitch),
                     height,
                 )
 
@@ -581,18 +646,8 @@ def main(argv):
         raise ScriptError(f"{source} has no scene {scene_index}")
 
     with tempfile.TemporaryDirectory(prefix="moskophoros-") as directory:
-        import_glb(
-            private_copy(document, rest, source, scene_index, False),
-            directory,
-            "static.glb",
-        )
-        statics = record_statics()
-        import_glb(
-            private_copy(document, rest, source, scene_index, True),
-            directory,
-            "animated.glb",
-        )
-        frames, roots = measure(job, document, statics)
+        import_glb(private_copy(document, rest, source, scene_index), directory)
+        frames, roots = measure(job, document, record_statics())
 
     result = {
         "schema": RESULT_SCHEMA,

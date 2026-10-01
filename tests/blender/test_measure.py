@@ -290,8 +290,9 @@ def test_skinned_geometry_between_keyframes_at_fractional_frames(found, tmp_path
     rows = by_clip(result)["bend"]
     times = [0.1 + k * 1.0 / 4 for k in range(4)]
     assert [t for _, t, _, _ in rows] == pytest.approx(times)
-    # The bone display shape the importer adds sits at the origin; were it
-    # measured, L would be above 0.
+    # Bone display shapes would sit at the origin, making L above 0. The
+    # script asks the importer for none, and measures only objects holding
+    # the file's meshes.
     assert_close(
         [box for _, _, box, _ in rows],
         [(0.0, 0.5 + 2 * (t - 0.1), 0.5, 0.0) for t in times],
@@ -484,6 +485,12 @@ def valid_job_text(found, tmp_path):
     return job
 
 
+def _repeat_first_frame(text):
+    job = json.loads(text)
+    job["frames"].append(job["frames"][0])
+    return json.dumps(job)
+
+
 @pytest.mark.parametrize(
     ("change", "message"),
     [
@@ -498,8 +505,22 @@ def valid_job_text(found, tmp_path):
         (lambda text: text.replace('"fps": 4.0', '"fps": NaN'), "non-finite"),
         (lambda text: text.replace('"fps": 4.0', '"fps": 1e999'), "non-finite"),
         (lambda text: text.replace('"variant": "default",', ""), "missing"),
+        (
+            lambda text: text.replace('"time_s": 0.25', '"time_s": 99', 1),
+            "outside clip",
+        ),
+        (_repeat_first_frame, "repeats"),
     ],
-    ids=["duplicate key", "schema", "render mode", "NaN", "overflow", "missing field"],
+    ids=[
+        "duplicate key",
+        "schema",
+        "render mode",
+        "NaN",
+        "overflow",
+        "missing field",
+        "a time outside its clip",
+        "a repeated address",
+    ],
 )
 def test_a_malformed_job_fails_before_importing(found, tmp_path, change, message):
     job = valid_job_text(found, tmp_path)
@@ -535,3 +556,78 @@ def test_an_unmappable_identity_fails_by_name(found, tmp_path, change, message):
     status, stderr = run_raw(found, tmp_path, json.dumps(job))
     assert status != 0
     assert f"moskophoros: error: {message}" in stderr, stderr
+
+
+# Bones whose file defaults differ from their bind pose, and meshes Blender
+# moves into objects of their own
+
+
+IDENTITY = (1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
+
+
+@pytest.mark.parametrize(
+    ("joint", "expected"),
+    [
+        # World = joint · v, with an identity inverse bind matrix.
+        ({"translation": (2.0, 0.0, 0.0)}, (0.0, 3.0, 1.0, 0.0)),
+        ({"scale": (2.0, 2.0, 2.0)}, (0.0, 2.0, 2.0, 0.0)),
+    ],
+    ids=["translated", "scaled"],
+)
+def test_a_joint_s_default_transform_is_its_static_pose(
+    found, tmp_path, joint, expected
+):
+    model = GlbWriter()
+    j = model.node("joint", **joint)
+    skin = model.skin([j], [IDENTITY])
+    mesh = model.mesh(
+        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+        joints=[(0, 0, 0, 0)] * 3,
+        skin_weights=[(1, 0, 0, 0)] * 3,
+    )
+    other = model.node("other", translation=(0.0, -9.0, 0.0))
+    model.scene([j, model.node("body", mesh=mesh, skin=skin), other], default=True)
+    # A clip that moves only a node with no geometry: the joint keeps its
+    # default transform in every clip.
+    model.animation("idle", [(other, "translation", [0, 1], [(0, -9, 0), (1, -9, 0)])])
+    result, _ = measure(found, model.write(tmp_path, "bind"), tmp_path)
+    assert_close(boxes(result)["idle"], [expected] * 4)
+
+
+def test_a_skinned_mesh_with_animated_morph_weights(found, tmp_path):
+    # Blender moves this mesh into an object of its own. The joint doubles
+    # and moves it by (2, 0, 0); the morph raises the top vertex by w, so
+    # U = 2·(1 + w) with w = t, and R = 2·1 + 2 = 4.
+    model = GlbWriter()
+    j = model.node("joint", translation=(2.0, 0.0, 0.0), scale=(2.0, 2.0, 2.0))
+    skin = model.skin([j], [IDENTITY])
+    mesh = model.mesh(
+        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+        targets=[[(0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 1.0, 0.0)]],
+        weights=[0.5],
+        joints=[(0, 0, 0, 0)] * 3,
+        skin_weights=[(1, 0, 0, 0)] * 3,
+    )
+    body = model.node("body", mesh=mesh, skin=skin)
+    still = model.node("still", mesh=True, translation=(-1.0, 0.0, 0.0))
+    model.scene([j, body, still], default=True)
+    model.animation("smile", [(body, "weights", [0, 1], [(0.0,), (1.0,)])])
+    model.animation("rest", [(still, "translation", [0, 1], [(-1, 0, 0), (-1, 0, 0)])])
+    result, _ = measure(found, model.write(tmp_path, "split"), tmp_path)
+    measured = boxes(result)
+    assert_close(measured["smile"], [(1.0, 4.0, 2.0 + 2.0 * t, 0.0) for t in TIMES])
+    # In another clip the weight is back at its default 0.5: U = 3.
+    assert_close(measured["rest"], [(1.0, 4.0, 3.0, 0.0)] * 4)
+
+
+def test_a_huge_model_yaw_measures_like_its_reduced_angle(found, tmp_path):
+    # 1e20 is exactly the integer 10**20, which is 280 mod 360.
+    path = projection_model(tmp_path)
+    huge, _ = measure(found, path, tmp_path, directions=4, yaw=1e20, workspace="huge")
+    small, _ = measure(
+        found, path, tmp_path, directions=4, yaw=280.0, workspace="small"
+    )
+    huge_rows, small_rows = by_clip(huge)["static"], by_clip(small)["static"]
+    assert len({box for _, _, box, _ in huge_rows}) == 4
+    for (_, _, box, _), (_, _, want, _) in zip(huge_rows, small_rows, strict=True):
+        assert box == pytest.approx(want, abs=TOLERANCE)
