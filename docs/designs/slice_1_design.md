@@ -22,7 +22,7 @@ Status legend: `[ ]` unprocessed · `[#N]` linked to issue N · `[no-issue]` rev
 - [x] S1-7. Render addressed frames with the accepted capture settings — [#31]
 - [x] S1-8. Implement plain image reduction and pass-through cleanup — [#32]
 - [x] S1-9. Assemble sheets and deterministic JSON descriptions — [#33]
-- [ ] S1-10. Generate animated direction previews
+- [x] S1-10. Generate animated direction previews — [#34]
 - [ ] S1-11. Reuse sheet settings with explicit overrides
 - [ ] S1-12. Connect the complete command and obtain owner acceptance
 
@@ -453,6 +453,24 @@ clip takes its sanitized name if free, else the smallest unused `-2`, `-3`, …
 suffix, counting other clips' own names, so no preview overwrites another.
 Recorded in [design §CLI](../design.md#cli). Rejected: refusing the run.
 
+### D-24. An explicit `--view` replaces the whole reused view
+
+Owner decision 2026-10-01, raised while drafting S1-11: with
+`--settings-from`, an explicit `--view` resolves exactly as without reuse,
+and the reused view is ignored. Without it, the reused view stays and
+individual overrides make the preset `custom`. Recorded in
+[design §Scale and ground point](../design.md#scale-and-ground-point).
+Rejected: refusing `--view` with `--settings-from`.
+
+### D-25. Reused settings are validated strictly
+
+Owner decision 2026-10-01, raised while drafting S1-11: every reused field
+must be present and acceptable to its option, `projection` must be
+`orthographic`, and the fixed values must be set. Unknown fields inside
+`settings` are a usage error. Recorded in
+[design §Scale and ground point](../design.md#scale-and-ground-point).
+Rejected: ignoring unknown fields, which could silently drop settings.
+
 ## Open questions
 
 ### Q-1. Should missing Blender fail selected integration tests?
@@ -775,7 +793,7 @@ product acceptance.
 - **Phase:** 6.
 - **Depends on:** S1-1, S1-4, S1-9.
 - **Ordering:** critical path; independent of S1-10.
-- **Relevant decisions:** D-1, D-3.
+- **Relevant decisions:** D-1, D-3, D-9, D-24, D-25.
 - **Acceptance signals:** independently expected reused values and overrides;
   malformed files are usage errors; a new clip that no longer fits fails rather
   than silently changing scale.

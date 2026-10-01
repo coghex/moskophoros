@@ -329,6 +329,19 @@ override the reused values. Clip selection and `--once` always come from the
 current command line. A file that is unreadable, or not a `moskophoros.sheet/1`
 document, is a usage error.
 
+An explicit `--view` replaces the whole reused view: that preset's values
+apply, then any explicit `--pitch`, `--directions` or `--start-angle` on top,
+exactly as without reuse. Without `--view`, the reused view stays, and an
+explicit `--pitch`, `--directions` or `--start-angle` overrides its value and
+makes the preset `custom`.
+
+The reused `settings` are checked strictly. Every reused field must be
+present with a value its option would accept, `projection` must be
+`orthographic`, and `pixels_per_meter`, `cell` and `ground_px` must be set.
+A missing or invalid field, or an unknown field inside `settings`, is a usage
+error naming it. The rest of the sheet is not checked beyond its `schema`
+(owner decisions 2026-10-01).
+
 ## Pipeline
 
 (V-4, V-5)
