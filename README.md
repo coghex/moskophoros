@@ -17,7 +17,9 @@ Early implementation. These parts exist as library code:
   scene, clips, time ranges and root nodes, and selects clips by name;
 - camera and direction math, `moskophoros.views`, and sample times and frame
   addresses, `moskophoros.sampling`, which enumerate every requested frame in
-  sheet order.
+  sheet order;
+- scale and placement, `moskophoros.fit`, which resolves one scale, cell and
+  ground pixel from measured bounds and reports frames that overflow the cell.
 
 The `moskophoros` command is not available yet, and nothing renders. The goals
 and long-term direction are in [docs/vision.md](docs/vision.md); the concrete
