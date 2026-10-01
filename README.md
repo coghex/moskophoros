@@ -10,9 +10,14 @@ configurable: top-down, side or isometric, with 1, 2, 4 or 8 directions.
 
 ## Status
 
-Early design. Nothing is implemented yet. The goals and long-term direction
-are in [docs/vision.md](docs/vision.md); the concrete design of the first
-version is in [docs/design.md](docs/design.md).
+Early development. The `moskophoros` command does not exist yet; the usage
+below is planned. Implemented so far:
+
+- the GLB reader (`moskophoros.gltf`), which reads a `.glb` file's subject
+  scene, clips, time ranges and root nodes, and selects clips by name.
+
+The goals and long-term direction are in [docs/vision.md](docs/vision.md);
+the concrete design of the first version is in [docs/design.md](docs/design.md).
 
 ## Planned usage
 
