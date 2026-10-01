@@ -68,6 +68,16 @@ and renamed into place only after the whole run succeeds, so a failed run
 leaves earlier outputs untouched. Errors go to stderr as
 `moskophoros: error: <message>`.
 
+With `--work-dir DIR`, `DIR` must be nonexistent or an existing empty
+directory. An existing nonempty directory is a usage error (exit 2) naming
+the directory, and its contents are untouched. The capture workspace contains
+separate `measure/` and `render/` directories, each with `job.json`, eventual
+`result.json` and produced buffers. An explicitly supplied workspace retains
+available artifacts after success or failure; normal temporary capture
+workspaces are deleted in either case. Retention does not make an incomplete
+phase a valid result or supply a replay interface. Reusing a retained location
+requires choosing a new or empty directory (owner decision 2026-09-30).
+
 ### Exit codes
 
 | Code | Meaning |
@@ -98,6 +108,8 @@ Checks, each an input error (exit 3) naming the file and the problem:
 
 - the file cannot be read, or is not binary glTF 2.0
 - the file has no scenes
+- the file changes during capture; the [capture contract](#capture-job-and-result-contract)
+  defines the digest checks (owner decision 2026-09-30)
 - an animation has no name, or two animations share a name (the message gives
   the animation's index)
 - a `--clip` or `--once` names a clip that does not exist
@@ -342,6 +354,129 @@ The version comes from `blender --version`. A mismatch in major.minor version
 is a backend error unless `--any-blender` is given; the actual version is
 always recorded.
 
+### Capture job and result contract
+
+Owner decision 2026-09-30: the capture transport, ownership, validation and
+compatibility rules below are accepted. These define the implementation
+contract; they do not claim that the backend is implemented.
+
+#### job format
+
+Both modes consume a UTF-8 JSON document. Unknown schema versions, duplicate
+keys, missing required fields and invalid numeric values are rejected.
+
+| Field | Meaning |
+|---|---|
+| `schema` | Exactly `moskophoros.capture-job/1`. |
+| `mode` | `measure` or `render`. |
+| `source` | Absolute `path` to the original GLB, its `sha256` and the selected original glTF `scene` index. |
+| `subject`, `variant` | Input stem and `default`, matching every requested frame address. |
+| `settings` | The accepted sheet settings, using resolved option values. In measure mode, `pixels_per_meter`, `cell` and `ground_px` are null: fitting belongs to the caller. In render mode all three are resolved, fixed values. |
+| `clips` | Selected clips in sheet order. Each carries its original `animation_index`, `name`, `t0_s`, `t1_s` and candidate `roots`. The synthetic `static` clip has a null animation index, zero endpoints and no animated roots. |
+| `clips[].roots` | Each candidate root's original `node_index` and optional original `node_name`, determined using the accepted ancestry rule. Indices identify nodes; names are diagnostics, never assumed unique. |
+| `frames` | The exact requested samples in sheet order: clip, direction, then sample. Each carries an `address`, sample `index` and direction `angle_deg`. The address has `subject`, `variant`, `clip`, `direction` and `time_s`. |
+| `output_dir` | Absolute path to this mode's own initially empty output directory. |
+
+The caller owns selection, sample times, direction enumeration and fitting.
+Blender evaluates the supplied times and angles; it does not select clips,
+resample them, auto-fit a cell or recompute the ground point. The job builder
+checks that its frames agree with the selected clips and resolved settings.
+All numbers must be finite; indices, dimensions, sample ranges and settings
+must satisfy the accepted product constraints.
+
+The backend maps original animation and node indices to imported state
+privately. It must handle unnamed or duplicate-named nodes without conflating
+them, and report an unmappable identity rather than guessing. Integration
+fixtures must prove that mapping. The mapping technique is an implementation
+choice inside the backend, not a new dependency on importer state elsewhere.
+
+#### result format
+
+Blender writes `result.json` only after the requested mode completes. The
+launcher requires both a successful subprocess exit and a valid result; it
+never interprets human-readable stdout as a manifest.
+
+| Field | Meaning |
+|---|---|
+| `schema` | Exactly `moskophoros.capture-result/1`. |
+| `mode` | Must match the submitted job. |
+| `job_sha256` | Hash of the submitted job encoded as canonical JSON with sorted keys, compact separators, ASCII escapes and non-finite numbers forbidden. This binds a result to its complete request, not just its source. |
+| `source_sha256` | Must match the job's source digest. |
+| `backend` | Actual Blender version; render results also record the actual renderer and studio light used. The version is parsed according to the owning supported-version contract. |
+| `frames` | Exactly one record per requested address, in request order. No missing, duplicate or unexpected address is accepted. |
+| `frames[].bounds_m` | Measure only: finite, nonnegative `L`, `R`, `U`, `D` as defined by the product design. |
+| `frames[].height_m` | Measure only: evaluated subject height along the glTF vertical axis, for the accepted unit warning. |
+| `roots` | Measure only: one entry per requested clip/root pair, with `clip`, `node_index`, `node_name` and nonnegative finite `travel_m`. Include zero travel. Evaluate the clip endpoints, even when the loop's render samples omit its endpoint. |
+| `frames[].buffers` | Render only: map from buffer name to relative file path. `color` is mandatory; extra named buffers can be described without changing the frame structure, although slice 1 produces only color. |
+
+Every result frame includes its full `address`. Sample indices and angles
+remain caller-owned lookup data; they do not replace the address as identity.
+Measure mode writes no color buffers. Render mode writes no new fitting or
+root-motion verdict: the caller has already accepted the measurement.
+
+The color path is `color/000000.png`, with a six-digit ordinal in
+request order; the ordinal can grow beyond six digits. Clip and subject names
+never become capture filenames. Each file is the accepted high-resolution
+color buffer. The launcher validates that referenced files exist, remain
+within the phase directory, have the required dimensions and decode in the
+required color mode before passing them to later stages. Paths may not be
+absolute, contain parent traversal or escape through a symlink.
+
+The caller combines actual render provenance with its generator, source and
+resolved settings to compute the accepted sheet fingerprint. It attaches that
+fingerprint to the loaded addressed frames before stylize and cleanup. The
+transport job hash is a separate request-integrity check, not a replacement
+for the sheet fingerprint and not part of its inputs.
+
+#### ownership and failure handling
+
+The launcher owns request files, phase directories and the Blender processes
+it starts. Only the script writes phase results and buffers. Measurement and
+rendering get separate initially empty directories; each contains its
+launcher-written `job.json` when the script starts, with no earlier results or
+buffers. Their result files cannot overwrite each other. Request and result
+JSON contain no timestamps or unrecorded seeds. Result manifests use relative buffer paths so retaining the
+workspace does not require rewriting frame records.
+
+The launcher checks source bytes against the recorded digest before and after
+each invocation. A changed source is an input failure naming the file, and no
+final output is published. This catches ordinary edits between phases; it is
+not a concurrent-file snapshot guarantee. Neither phase edits the owner's model.
+
+Unsuccessful launch, Blender failure, missing result, a result/request mismatch,
+unmappable backend identity or invalid referenced buffer is a backend failure
+using the accepted error code and captured diagnostics. A malformed job caught
+in the caller is an internal programming error, not bad user input. Root travel
+above the threshold remains the caller's input error; fixed-setting overflow
+remains its overflow error. Blender does not silently retry or fall back to
+different sampling, scale or rendering settings.
+
+On interruption the launcher stops only its own Blender process and does not
+publish final outputs. Backend waits are for actual process completion, failure
+or caller interruption. There is no fixed-duration render deadline or timeout
+option. Tests coordinate fake subprocesses explicitly and never
+sleep to guess completion.
+
+The [CLI work-directory contract](#cli) governs retained capture ownership.
+Normal temporary capture directories are deleted after success or failure. Explicitly retained
+capture directories preserve available job/result/buffer evidence on failure,
+without treating incomplete phases as valid results.
+
+#### compatibility and verification
+
+Capture jobs and results are versioned internal debugging artifacts. Retaining
+them does not create a replay command, cache-reuse feature or promise that a
+future release will consume old captures. The public sheet schema and
+`--settings-from` contract remain the accepted compatibility boundary.
+Adding auxiliary buffer names later must not require changing the address
+structure or rewriting the pipeline around Blender objects.
+
+Contract tests cover both formats and failure cases with controlled processes
+and supplied files. Blender integration tests prove actual identity mapping,
+sample ordering, bounds/root reporting, buffer contents and repeatability using
+generated models. Whole-command tests prove that source changes, failed capture
+and invalid capture results leave existing final outputs untouched.
+
 ### Supported Blender version
 
 **Blender 5.2 LTS**, tested with **5.2.2** (pinned 2026-09-29). 5.2.2 was the
@@ -533,9 +668,10 @@ Automated tests (pytest), none needing Blender:
 - sheet layout, JSON content and the fingerprint's stability
 - settings reuse and its overrides
 
-Integration tests run Blender and are skipped with a stated reason when Blender
-is not found. They use a small generated rigged `.glb` with a looping clip and
-a one-shot clip, and check:
+Integration tests run Blender and fail with a clear diagnostic when Blender is
+unavailable. Use `pytest -m "not blender"` to run only tests that do not require
+Blender (owner decision 2026-09-30). They use a small generated rigged `.glb`
+with a looping clip and a one-shot clip, and check:
 
 - measured bounds against the known geometry
 - that root motion is detected
