@@ -70,7 +70,12 @@ share a file (owner decision 2026-10-01).
 
 Existing outputs are overwritten. All outputs are written to temporary files
 and renamed into place only after the whole run succeeds, so a failed run
-leaves earlier outputs untouched. Errors go to stderr as
+leaves earlier outputs untouched. Publishing is all-or-nothing: if renaming
+fails partway, the outputs already replaced are rolled back and the earlier
+ones restored before the run fails. A run replaces only the files it writes
+and never deletes others, so previews from an earlier run that this run does
+not write, such as a dropped clip's or under `--no-preview`, stay as they
+were (owner decisions 2026-10-01). Errors go to stderr as
 `moskophoros: error: <message>`.
 
 With `--work-dir DIR`, `DIR` must be nonexistent or an existing empty
@@ -114,6 +119,7 @@ A usage error prints the usage synopsis to stderr, followed by the
 | 3 | Input error: see [Input contract](#input-contract) and [Root motion](#root-motion). |
 | 4 | Overflow: the subject does not fit a fixed cell and scale. |
 | 5 | Backend error: Blender missing, wrong version, or failed. |
+| 130 | Interrupted (Ctrl-C): `moskophoros: error: interrupted`, no traceback, nothing published (owner decision 2026-10-01). |
 
 ## Input contract
 

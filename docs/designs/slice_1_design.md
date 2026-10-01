@@ -23,7 +23,7 @@ Status legend: `[ ]` unprocessed · `[#N]` linked to issue N · `[no-issue]` rev
 - [x] S1-8. Implement plain image reduction and pass-through cleanup — [#32]
 - [x] S1-9. Assemble sheets and deterministic JSON descriptions — [#33]
 - [x] S1-10. Generate animated direction previews — [#34]
-- [ ] S1-11. Reuse sheet settings with explicit overrides
+- [x] S1-11. Reuse sheet settings with explicit overrides — [#35]
 - [ ] S1-12. Connect the complete command and obtain owner acceptance
 
 The owner approved these delivery boundaries and their dependencies on
@@ -471,6 +471,29 @@ must be present and acceptable to its option, `projection` must be
 [design §Scale and ground point](../design.md#scale-and-ground-point).
 Rejected: ignoring unknown fields, which could silently drop settings.
 
+### D-26. Publishing outputs is all-or-nothing
+
+Owner decision 2026-10-01, raised while drafting S1-12: earlier outputs are
+moved aside before publishing, and a rename failure partway rolls back what
+was replaced and restores them, so a failed run leaves earlier outputs
+untouched even during publication. Recorded in
+[design §CLI](../design.md#cli). Rejected: best-effort renaming that names
+what was replaced, which narrows the guarantee to failures before publishing.
+
+### D-27. A run never deletes files it did not write
+
+Owner decision 2026-10-01, raised while drafting S1-12: previews from an
+earlier run that this run does not write stay as they were. Recorded in
+[design §CLI](../design.md#cli). Rejected: removing matching previews, which
+risks deleting the user's files.
+
+### D-28. An interrupted run exits 130
+
+Owner decision 2026-10-01, raised while drafting S1-12: Ctrl-C prints
+`moskophoros: error: interrupted`, with no traceback, publishes nothing and
+exits 130. Recorded in [design §Exit codes](../design.md#exit-codes).
+Rejected: treating an interruption as an internal error (exit 1).
+
 ## Open questions
 
 ### Q-1. Should missing Blender fail selected integration tests?
@@ -813,7 +836,7 @@ product acceptance.
 - **Phase:** 7.
 - **Depends on:** S1-7, S1-10, S1-11.
 - **Ordering:** final critical-path slice.
-- **Relevant decisions:** D-1, D-3, D-4, D-5, D-7, D-8.
+- **Relevant decisions:** D-1, D-3, D-4, D-5, D-7, D-8, D-26, D-27, D-28.
 - **Acceptance signals:** generated-model command tests cover the complete
   output set, failure codes and publication failures, and a nonempty
   `--work-dir` that exits 2 with its contents untouched; repeated runs give identical
