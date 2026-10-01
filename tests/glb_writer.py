@@ -13,12 +13,19 @@ from pathlib import Path
 JSON_CHUNK = 0x4E4F534A
 BIN_CHUNK = 0x004E4942
 FLOAT = 5126
+UNSIGNED_SHORT = 5123
+_FORMATS = {FLOAT: "f", UNSIGNED_SHORT: "H"}
 
 # One triangle in the XY plane, facing +Z.
 TRIANGLE = ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
 
-_COMPONENTS = {"SCALAR": 1, "VEC3": 3, "VEC4": 4}
-_OUTPUT_TYPES = {"translation": "VEC3", "scale": "VEC3", "rotation": "VEC4"}
+_COMPONENTS = {"SCALAR": 1, "VEC3": 3, "VEC4": 4, "MAT4": 16}
+_OUTPUT_TYPES = {
+    "translation": "VEC3",
+    "scale": "VEC3",
+    "rotation": "VEC4",
+    "weights": "SCALAR",
+}
 
 
 def float32(value):
@@ -40,19 +47,90 @@ class GlbWriter:
         self._binary = bytearray()
         self._mesh = None
 
-    def node(self, name=None, *, mesh=False, translation=None, children=()):
-        """Add a node, optionally with the triangle mesh; return its index."""
+    def node(
+        self,
+        name=None,
+        *,
+        mesh=False,
+        translation=None,
+        rotation=None,
+        scale=None,
+        children=(),
+        skin=None,
+        weights=None,
+    ):
+        """Add a node and return its index.
+
+        `mesh` is True for the shared triangle, or a mesh index from `mesh`.
+        `rotation` is a quaternion (x, y, z, w). `weights` overrides the
+        mesh's default morph weights.
+        """
         node = {}
         if name is not None:
             node["name"] = name
-        if mesh:
+        if mesh is True:
             node["mesh"] = self._triangle()
-        if translation is not None:
-            node["translation"] = list(translation)
+        elif mesh is not False:
+            node["mesh"] = mesh
+        for key, value in (
+            ("translation", translation),
+            ("rotation", rotation),
+            ("scale", scale),
+            ("weights", weights),
+        ):
+            if value is not None:
+                node[key] = list(value)
         if children:
             node["children"] = list(children)
+        if skin is not None:
+            node["skin"] = skin
         self.document["nodes"].append(node)
         return len(self.document["nodes"]) - 1
+
+    def mesh(
+        self, positions, *, targets=(), weights=None, joints=None, skin_weights=None
+    ):
+        """Add a triangle-list mesh of `positions` and return its index.
+
+        `targets` are morph targets, each a list of position offsets, and
+        `weights` their default weights. `joints` and `skin_weights` give
+        each vertex four joint indices and four weights, for skinning.
+        """
+        primitive = {
+            "attributes": {"POSITION": self._accessor("VEC3", positions, True)}
+        }
+        if joints is not None:
+            primitive["attributes"]["JOINTS_0"] = self._accessor(
+                "VEC4", joints, False, UNSIGNED_SHORT
+            )
+            primitive["attributes"]["WEIGHTS_0"] = self._accessor(
+                "VEC4", skin_weights, False
+            )
+        if targets:
+            primitive["targets"] = [
+                {"POSITION": self._accessor("VEC3", offsets, True)}
+                for offsets in targets
+            ]
+        mesh = {"primitives": [primitive]}
+        if weights is not None:
+            mesh["weights"] = list(weights)
+        meshes = self.document.setdefault("meshes", [])
+        meshes.append(mesh)
+        return len(meshes) - 1
+
+    def skin(self, joints, inverse_bind_matrices):
+        """Add a skin of `joints`, with one column-major 4×4 inverse bind
+        matrix each, and return its index."""
+        skins = self.document.setdefault("skins", [])
+        skins.append(
+            {
+                "joints": list(joints),
+                "inverseBindMatrices": self._accessor(
+                    "MAT4", inverse_bind_matrices, False
+                ),
+            }
+        )
+        return len(skins) - 1
 
     def scene(self, nodes, *, default=False):
         """Add a scene of root `nodes`; `default` sets the `scene` property."""
@@ -66,18 +144,22 @@ class GlbWriter:
         """Add an animation; `name=None` leaves it unnamed.
 
         Each channel is `(node, path, times, values)`, where `path` is
-        `translation`, `rotation` or `scale` and each value is a tuple. Each
-        channel gets its own linear sampler.
+        `translation`, `rotation`, `scale` or `weights` and each value is a
+        tuple: for `weights`, one weight per morph target. Each channel gets
+        its own linear sampler.
         """
         samplers = []
         targets = []
         for node, path, times, values in channels:
             if len(times) != len(values):
                 raise ValueError("a channel needs one value per time")
+            rows = values
+            if path == "weights":
+                rows = [(weight,) for row in values for weight in row]
             samplers.append(
                 {
                     "input": self._accessor("SCALAR", [(t,) for t in times], True),
-                    "output": self._accessor(_OUTPUT_TYPES[path], values, False),
+                    "output": self._accessor(_OUTPUT_TYPES[path], rows, False),
                     "interpolation": "LINEAR",
                 }
             )
@@ -132,21 +214,18 @@ class GlbWriter:
 
     def _triangle(self):
         if self._mesh is None:
-            position = self._accessor("VEC3", TRIANGLE, True)
-            self.document["meshes"] = [
-                {"primitives": [{"attributes": {"POSITION": position}}]}
-            ]
-            self._mesh = 0
+            self._mesh = self.mesh(TRIANGLE)
         return self._mesh
 
-    def _accessor(self, kind, rows, bounds):
-        """Store float rows in the buffer and return their accessor's index."""
+    def _accessor(self, kind, rows, bounds, component=FLOAT):
+        """Store rows in the buffer and return their accessor's index."""
         if any(len(row) != _COMPONENTS[kind] for row in rows):
             raise ValueError(f"every {kind} row needs {_COMPONENTS[kind]} values")
-        rows = [tuple(float32(value) for value in row) for row in rows]
+        if component == FLOAT:
+            rows = [tuple(float32(value) for value in row) for row in rows]
         offset = len(self._binary)
         for row in rows:
-            self._binary += struct.pack(f"<{len(row)}f", *row)
+            self._binary += struct.pack(f"<{len(row)}{_FORMATS[component]}", *row)
         self._binary += b"\0" * (-len(self._binary) % 4)
         document = self.document
         document["buffers"] = [{"byteLength": len(self._binary)}]
@@ -160,7 +239,7 @@ class GlbWriter:
         )
         accessor = {
             "bufferView": len(views) - 1,
-            "componentType": FLOAT,
+            "componentType": component,
             "count": len(rows),
             "type": kind,
         }

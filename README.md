@@ -22,7 +22,10 @@ Early implementation. These parts exist as library code:
   ground pixel from measured bounds and reports frames that overflow the cell;
 - the capture interface, `moskophoros.capture`, which builds capture jobs,
   validates their results, finds Blender, checks its version and runs one
-  capture phase. The script that runs inside Blender is not written yet.
+  capture phase;
+- measurement inside Blender, `moskophoros/capture/blender_script.py`, which
+  reports each frame's bounds and height and each root's travel. Rendering
+  is not written yet.
 
 The `moskophoros` command is not available yet, and nothing renders. The goals
 and long-term direction are in [docs/vision.md](docs/vision.md); the concrete
