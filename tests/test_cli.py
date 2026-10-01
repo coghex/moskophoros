@@ -196,6 +196,7 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         ("--cell", "4096x4096", "cell", (4096, 4096)),
         ("--ground-px", "0,0", "ground_px", (0, 0)),
         ("--ground-px", "3.0,7", "ground_px", (3, 7)),
+        ("--ground-px", "9007199254740993,1e3", "ground_px", (9007199254740993, 1000)),
         ("--supersample", "1", "supersample", 1),
         ("--supersample", "16", "supersample", 16),
         ("--start-angle", "-720.5", "start_angle", -720.5),
@@ -317,7 +318,21 @@ def test_composite_numbers_must_be_finite(capsys, option, value):
     )
 
 
-@pytest.mark.parametrize("value", ["-1,0", "0,-1", "1.5,0", "0,0.5", "1", "1,2,3"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "-1,0",
+        "0,-1",
+        "1.5,0",
+        "0,0.5",
+        "0.99999999999999999,0",
+        "0,1.00000000000000001",
+        "1e999999999,0",
+        "x,0",
+        "1",
+        "1,2,3",
+    ],
+)
 def test_ground_px_takes_two_whole_numbers_0_or_greater(capsys, value):
     error = usage_error(capsys, ["--ground-px", value, *POSITIONALS])
     assert error == (

@@ -11,6 +11,7 @@ import math
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from types import MappingProxyType
 
@@ -42,6 +43,7 @@ DEFAULT_VIEW = "iso"
 # The resolved view name once --pitch, --directions or --start-angle is given.
 CUSTOM_VIEW = "custom"
 ROOT_MOTION_MODES = ("error", "keep")
+_MAX_DIGITS = 4300
 
 
 @dataclass(frozen=True)
@@ -243,19 +245,30 @@ def _ground(text):
     return x, y, z
 
 
+def _whole(text):
+    """A whole number 0 or greater, read exactly: `3.0` is 3, `0.5` is not."""
+    try:
+        value = Decimal(text)
+    except InvalidOperation:
+        return None
+    # Bounded like int() on decimal text, so a huge exponent cannot build a
+    # huge integer.
+    if not value.is_finite() or value < 0 or value.adjusted() >= _MAX_DIGITS:
+        return None
+    if value != value.to_integral_value():
+        return None
+    return int(value)
+
+
 def _ground_px(text):
     parts = text.split(",")
-    try:
-        if len(parts) != 2:
-            raise argparse.ArgumentTypeError(text)
-        x, y = (_number(part) for part in parts)
-        if not all(value.is_integer() and value >= 0 for value in (x, y)):
-            raise argparse.ArgumentTypeError(text)
-    except argparse.ArgumentTypeError:
+    coordinates = [_whole(part) for part in parts]
+    if len(parts) != 2 or None in coordinates:
         raise argparse.ArgumentTypeError(
             f"expected X,Y, two whole numbers 0 or greater, got {text!r}"
-        ) from None
-    return int(x), int(y)
+        )
+    x, y = coordinates
+    return x, y
 
 
 def _path(text):
