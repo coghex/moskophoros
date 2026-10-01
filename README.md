@@ -10,11 +10,14 @@ configurable: top-down, side or isometric, with 1, 2, 4 or 8 directions.
 
 ## Status
 
-Early implementation. Two parts exist as library code:
+Early implementation. These parts exist as library code:
 
 - command-line option parsing and validation, `moskophoros.cli`;
 - the GLB reader, `moskophoros.gltf`, which reads a `.glb` file's subject
-  scene, clips, time ranges and root nodes, and selects clips by name.
+  scene, clips, time ranges and root nodes, and selects clips by name;
+- camera and direction math, `moskophoros.views`, and sample times and frame
+  addresses, `moskophoros.sampling`, which enumerate every requested frame in
+  sheet order.
 
 The `moskophoros` command is not available yet, and nothing renders. The goals
 and long-term direction are in [docs/vision.md](docs/vision.md); the concrete
