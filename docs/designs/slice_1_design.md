@@ -14,7 +14,7 @@ Status legend: `[ ]` unprocessed · `[#N]` linked to issue N · `[no-issue]` rev
 
 - [x] EPIC. Deliver the first plain animated GLB-to-sheet pipeline — [#24]
 - [x] S1-1. Parse and validate the command-line options — [#25]
-- [ ] S1-2. Read GLB scenes and clips with generated fixtures
+- [x] S1-2. Read GLB scenes and clips with generated fixtures — [#26]
 - [ ] S1-3. Define frame addresses, camera directions and sample times
 - [ ] S1-4. Resolve scale and placement and detect overflow
 - [ ] S1-5. Define the capture interface and launch Blender safely
@@ -363,6 +363,17 @@ animation's index, like a missing name. An empty name cannot be selected with
 [design §Input contract](../design.md#input-contract). Rejected: accepting
 `""` as a clip name. Q-8 is resolved by this decision.
 
+### D-13. S1-1 owns view-preset resolution; S1-3 takes a resolved view
+
+Owner decision 2026-10-01, settling an overlap found while drafting S1-3:
+S1-3's scope listed "presets, overrides", which S1-1 (#25) already
+implements. S1-1 keeps preset resolution and the `custom` rule, matching
+[design §Project layout](../design.md#project-layout) (presets in `cli.py`,
+camera and direction math in `views.py`). S1-3 takes an already-resolved
+pitch, direction count, start angle and model yaw as plain values, so it still
+depends only on S1-2. Rejected: moving presets into S1-3, which would have
+required editing the filed S1-1 issue.
+
 ## Open questions
 
 ### Q-1. Should missing Blender fail selected integration tests?
@@ -548,15 +559,16 @@ product acceptance.
 - **Outcome:** pure functions and records enumerate the exact addressed samples
   and view geometry that all later stages share.
 - **Scope:** subject/variant/clip/direction/time identity; sample index for
-  layout only; presets, overrides, camera basis, yaw, angles and labels; looping,
-  one-shot, static and zero-duration timing.
+  layout only; camera basis, yaw, angles and labels from an already-resolved
+  view (D-13); looping, one-shot, static and zero-duration timing.
 - **Phase:** 2.
 - **Depends on:** S1-2.
 - **Ordering:** critical path.
-- **Relevant decisions:** D-1, D-3, D-4, D-6.
+- **Relevant decisions:** D-1, D-3, D-4, D-6, D-13.
 - **Acceptance signals:** independently calculated vectors and times cover
   top-down and custom views, both endpoint policies and nonzero clip starts.
-- **Out of scope:** Blender state, fitting and settings fingerprints.
+- **Out of scope:** Blender state, fitting, settings fingerprints, and preset
+  resolution (S1-1, D-13).
 - **Open questions:** None.
 
 ### S1-4. Resolve scale and placement and detect overflow
