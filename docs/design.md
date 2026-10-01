@@ -64,7 +64,9 @@ path with `.json` replacing `.png`. Previews are written as
 `<stem>.<clip>.gif` beside it; a clip name is made filename-safe by replacing
 every character outside `A–Z a–z 0–9 . _ -` with `_`. If two clip names become
 the same after that, the second and later previews gain the suffix `-2`, `-3`,
-and so on, in sheet order.
+and so on, in sheet order. Each clip takes the smallest suffix whose name is
+not already taken, including by another clip's own name, so no two previews
+share a file (owner decision 2026-10-01).
 
 Existing outputs are overwritten. All outputs are written to temporary files
 and renamed into place only after the whole run succeeds, so a failed run
@@ -647,9 +649,13 @@ through unchanged.
   the same wherever the command runs (owner decision 2026-10-01).
 
 **Previews.** For each clip, an animated GIF showing all directions side by
-side in index order:
+side in index order, packed with no gap between cells (owner decision
+2026-10-01):
 
 - scaled 4× with nearest-neighbor
+- in exact colors when a frame has at most 256 of them; otherwise reduced to
+  256 without dithering, with a warning naming the clip (owner decision
+  2026-10-01)
 - on a solid `#808080` background
 - each frame lasting the clip's frame duration, rounded to the nearest 10 ms
   and at least 20 ms

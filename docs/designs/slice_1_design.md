@@ -21,7 +21,7 @@ Status legend: `[ ]` unprocessed · `[#N]` linked to issue N · `[no-issue]` rev
 - [x] S1-6. Measure animated geometry and root travel in Blender — [#30]
 - [x] S1-7. Render addressed frames with the accepted capture settings — [#31]
 - [x] S1-8. Implement plain image reduction and pass-through cleanup — [#32]
-- [ ] S1-9. Assemble sheets and deterministic JSON descriptions
+- [x] S1-9. Assemble sheets and deterministic JSON descriptions — [#33]
 - [ ] S1-10. Generate animated direction previews
 - [ ] S1-11. Reuse sheet settings with explicit overrides
 - [ ] S1-12. Connect the complete command and obtain owner acceptance
@@ -431,6 +431,28 @@ Owner decision 2026-10-01, raised while drafting S1-9: `source.file` and
 runs. Recorded in [design §Export](../design.md#export). Rejected: the path as
 typed, which varies by directory and machine.
 
+### D-21. Previews keep exact colors when they can, and never dither
+
+Owner decision 2026-10-01, raised while drafting S1-10: a GIF frame holds at
+most 256 colors. A frame within that limit keeps its exact colors; one over
+it is reduced to 256 without dithering, with a warning naming the clip.
+Recorded in [design §Export](../design.md#export). Rejected: Pillow's default
+dithered reduction, which adds noise the sheet does not have, and failing the
+run, which would block most real characters.
+
+### D-22. Preview directions are packed with no gap
+
+Owner decision 2026-10-01, raised while drafting S1-10: directions sit side
+by side like sheet cells, so a preview shows the real cell boundaries.
+Recorded in [design §Export](../design.md#export). Rejected: a one-pixel gap.
+
+### D-23. Preview filenames take the next free suffix
+
+Owner decision 2026-10-01, raised while drafting S1-10: in sheet order, each
+clip takes its sanitized name if free, else the smallest unused `-2`, `-3`, …
+suffix, counting other clips' own names, so no preview overwrites another.
+Recorded in [design §CLI](../design.md#cli). Rejected: refusing the run.
+
 ## Open questions
 
 ### Q-1. Should missing Blender fail selected integration tests?
@@ -736,7 +758,7 @@ product acceptance.
 - **Phase:** 6.
 - **Depends on:** S1-9.
 - **Ordering:** critical path to owner review; independent of S1-11.
-- **Relevant decisions:** D-1, D-3.
+- **Relevant decisions:** D-1, D-3, D-21, D-22, D-23.
 - **Acceptance signals:** decode generated previews to verify geometry, clip
   timing, endpoint hold, background and unique filenames; `--no-preview`
   integration follows in S1-12.
