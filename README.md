@@ -10,11 +10,15 @@ configurable: top-down, side or isometric, with 1, 2, 4 or 8 directions.
 
 ## Status
 
-Early implementation. Command-line option parsing and validation exist as
-library code, `moskophoros.cli`. The `moskophoros` command is not available
-yet, and nothing renders. The goals and long-term direction are in
-[docs/vision.md](docs/vision.md); the concrete design of the first version is
-in [docs/design.md](docs/design.md).
+Early implementation. Two parts exist as library code:
+
+- command-line option parsing and validation, `moskophoros.cli`;
+- the GLB reader, `moskophoros.gltf`, which reads a `.glb` file's subject
+  scene, clips, time ranges and root nodes, and selects clips by name.
+
+The `moskophoros` command is not available yet, and nothing renders. The goals
+and long-term direction are in [docs/vision.md](docs/vision.md); the concrete
+design of the first version is in [docs/design.md](docs/design.md).
 
 ## Planned usage
 

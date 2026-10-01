@@ -22,6 +22,8 @@ dev = [
 [tool.pytest.ini_options]
 minversion = "9.1"
 testpaths = ["tests", "tools"]
+# Lets tests in every directory import shared helpers such as glb_writer.
+pythonpath = ["tests"]
 addopts = ["--strict-markers"]
 markers = [
     "blender: needs Blender; runs only locally, never in CI",
