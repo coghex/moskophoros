@@ -161,9 +161,11 @@ class _Reader:
     def fail(self, problem):
         raise InputError(self.path, problem)
 
-    def array(self, value, what):
-        if value is None:
+    def array(self, owner, key, what):
+        """`owner[key]` as a list: empty when absent, but never when null."""
+        if key not in owner:
             return []
+        value = owner[key]
         if not isinstance(value, list):
             self.fail(f"{what} is not an array")
         return value
@@ -184,24 +186,24 @@ class _Reader:
         return value
 
     def subject(self):
-        scenes = self.array(self.document.get("scenes"), "scenes")
+        scenes = self.array(self.document, "scenes", "scenes")
         if not scenes:
             self.fail("has no scenes")
-        nodes = self.objects(self.array(self.document.get("nodes"), "nodes"), "node")
+        nodes = self.objects(self.array(self.document, "nodes", "nodes"), "node")
         scene_index = self.document.get("scene", 0)
         self.index(scene_index, len(scenes), "the scene property", "scene")
         for i, scene in enumerate(self.objects(scenes, "scene")):
-            for node in self.array(scene.get("nodes"), f"scene {i}'s nodes"):
+            for node in self.array(scene, "nodes", f"scene {i}'s nodes"):
                 self.index(node, len(nodes), f"scene {i}", "node")
         parents = self.parents(nodes)
         names = []
         for i, node in enumerate(nodes):
             name = node.get("name")
-            if name is not None and not isinstance(name, str):
+            if "name" in node and not isinstance(name, str):
                 self.fail(f"node {i}'s name is not a string")
             names.append(name)
-        accessors = self.array(self.document.get("accessors"), "accessors")
-        animations = self.array(self.document.get("animations"), "animations")
+        accessors = self.array(self.document, "accessors", "accessors")
+        animations = self.array(self.document, "animations", "animations")
         if animations:
             clips = self.clips(animations, accessors, len(nodes), parents, names)
         else:
@@ -212,7 +214,7 @@ class _Reader:
         """Map each child to its parent, failing unless the nodes form a forest."""
         parent = {}
         for i, node in enumerate(nodes):
-            for child in self.array(node.get("children"), f"node {i}'s children"):
+            for child in self.array(node, "children", f"node {i}'s children"):
                 self.index(child, len(nodes), f"node {i}", "child node")
                 if child in parent:
                     self.fail(
@@ -250,9 +252,7 @@ class _Reader:
                     f"like animation {first_index[name]}"
                 )
             first_index[name] = i
-            samplers = self.array(
-                animation.get("samplers"), f"animation {i}'s samplers"
-            )
+            samplers = self.array(animation, "samplers", f"animation {i}'s samplers")
             if not samplers:
                 self.fail(f"animation {i} has no samplers")
             ranges = [
@@ -299,7 +299,7 @@ class _Reader:
         """Return the nodes animation `i` targets, and those it translates."""
         targeted = set()
         translated = set()
-        channels = self.array(animation.get("channels"), f"animation {i}'s channels")
+        channels = self.array(animation, "channels", f"animation {i}'s channels")
         for c, channel in enumerate(self.objects(channels, f"animation {i}'s channel")):
             what = f"animation {i}'s channel {c}"
             self.index(channel.get("sampler"), sampler_count, what, "sampler")

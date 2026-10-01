@@ -495,6 +495,38 @@ ERRORS = {
         _edited(_set("animations", 1, "channels", 0, "target", "path", 3)),
         "path is not a string",
     ),
+    "scene property null": (_edited(_set("scene", None)), "names no scene"),
+    "channel target node null": (
+        _edited(_set("animations", 2, "channels", 0, "target", "node", None)),
+        "names no target node",
+    ),
+    "scenes null": (_edited(_set("scenes", None)), "scenes is not an array"),
+    "scene nodes null": (
+        _edited(_set("scenes", 0, "nodes", None)),
+        "scene 0's nodes is not an array",
+    ),
+    "nodes null": (_edited(_set("nodes", None)), "nodes is not an array"),
+    "children null": (
+        _edited(_set("nodes", 0, "children", None)),
+        "node 0's children is not an array",
+    ),
+    "node name null": (
+        _edited(_set("nodes", 1, "name", None)),
+        "node 1's name is not a string",
+    ),
+    "accessors null": (_edited(_set("accessors", None)), "accessors is not an array"),
+    "animations null": (
+        _edited(_set("animations", None)),
+        "animations is not an array",
+    ),
+    "samplers null": (
+        _edited(_set("animations", 1, "samplers", None)),
+        "animation 1's samplers is not an array",
+    ),
+    "channels null": (
+        _edited(_set("animations", 1, "channels", None)),
+        "animation 1's channels is not an array",
+    ),
     # 4. not a forest
     "two parents": (_edited(_two_parents), "has two parents"),
     "a node listed twice as a child": (
