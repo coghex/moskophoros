@@ -19,7 +19,10 @@ Early implementation. These parts exist as library code:
   addresses, `moskophoros.sampling`, which enumerate every requested frame in
   sheet order;
 - scale and placement, `moskophoros.fit`, which resolves one scale, cell and
-  ground pixel from measured bounds and reports frames that overflow the cell.
+  ground pixel from measured bounds and reports frames that overflow the cell;
+- the capture interface, `moskophoros.capture`, which builds capture jobs,
+  validates their results, finds Blender, checks its version and runs one
+  capture phase. The script that runs inside Blender is not written yet.
 
 The `moskophoros` command is not available yet, and nothing renders. The goals
 and long-term direction are in [docs/vision.md](docs/vision.md); the concrete

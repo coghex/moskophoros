@@ -6,6 +6,8 @@ iniconfig==2.3.0
     # via pytest
 packaging==26.3
     # via pytest
+pillow==12.3.0
+    # via moskophoros (pyproject.toml)
 pluggy==1.6.0
     # via pytest
 pygments==2.21.0
