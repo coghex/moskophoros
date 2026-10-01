@@ -17,10 +17,10 @@ Status legend: `[ ]` unprocessed · `[#N]` linked to issue N · `[no-issue]` rev
 - [x] S1-2. Read GLB scenes and clips with generated fixtures — [#26]
 - [x] S1-3. Define frame addresses, camera directions and sample times — [#27]
 - [x] S1-4. Resolve scale and placement and detect overflow — [#28]
-- [ ] S1-5. Define the capture interface and launch Blender safely
-- [ ] S1-6. Measure animated geometry and root travel in Blender
-- [ ] S1-7. Render addressed frames with the accepted capture settings
-- [ ] S1-8. Implement plain image reduction and pass-through cleanup
+- [x] S1-5. Define the capture interface and launch Blender safely — [#29]
+- [x] S1-6. Measure animated geometry and root travel in Blender — [#30]
+- [x] S1-7. Render addressed frames with the accepted capture settings — [#31]
+- [x] S1-8. Implement plain image reduction and pass-through cleanup — [#32]
 - [ ] S1-9. Assemble sheets and deterministic JSON descriptions
 - [ ] S1-10. Generate animated direction previews
 - [ ] S1-11. Reuse sheet settings with explicit overrides
@@ -409,6 +409,28 @@ record `generator.blender`. The error quotes the output's first line.
 Recorded in [design §Capture](../design.md#capture). Rejected: accepting the
 raw first line as the version under `--any-blender`.
 
+### D-18. The fingerprint hashes an object that mirrors the sheet
+
+Owner decision 2026-10-01, raised while drafting S1-9: the hashed object is
+`{"generator": …, "settings": …, "source": {"sha256": …}}`, so a fingerprint
+can be recomputed from a sheet by keeping those parts. Recorded in
+[design §Export](../design.md#export). Rejected: a flat `source_sha256` key.
+
+### D-19. The sheet JSON keeps the example's key order, indented
+
+Owner decision 2026-10-01, raised while drafting S1-9: keys in design
+§Export's example order, 2-space indentation, UTF-8 with non-ASCII kept,
+shortest round-trip floats and a trailing newline. Recorded in
+[design §Export](../design.md#export). Rejected: canonical compact JSON, which
+is hard to read and diff.
+
+### D-20. Sheet JSON records base names, not paths
+
+Owner decision 2026-10-01, raised while drafting S1-9: `source.file` and
+`image.file` are base names, so the JSON is identical wherever the command
+runs. Recorded in [design §Export](../design.md#export). Rejected: the path as
+typed, which varies by directory and machine.
+
 ## Open questions
 
 ### Q-1. Should missing Blender fail selected integration tests?
@@ -699,7 +721,7 @@ product acceptance.
 - **Phase:** 5; independent of real rendering after its interface is settled.
 - **Depends on:** S1-4, S1-5, S1-8.
 - **Ordering:** critical path; can proceed alongside S1-6 and S1-7.
-- **Relevant decisions:** D-1, D-3.
+- **Relevant decisions:** D-1, D-3, D-18, D-19, D-20.
 - **Acceptance signals:** supplied frames and provenance yield independently
   expected coordinates, metadata, fingerprints and byte-identical repeated exports.
 - **Out of scope:** previews, backend execution and whole-command publication.

@@ -635,8 +635,16 @@ through unchanged.
 - `frames` lists every frame, in sheet order. A frame's address is `subject`,
   `variant`, `clip`, `direction` and `time_s` (V-9).
 - `fingerprint` is the SHA-256 of the canonical JSON (sorted keys, no
-  whitespace, UTF-8) of `generator`, `source.sha256` and `settings`.
+  whitespace, UTF-8) of `generator`, `source.sha256` and `settings`. The
+  hashed object mirrors the sheet's own structure:
+  `{"generator": …, "settings": …, "source": {"sha256": …}}` (owner decision
+  2026-10-01).
 - Floats are written with Python's shortest round-trip representation.
+- The file keeps the key order shown above, with 2-space indentation, UTF-8
+  with non-ASCII characters kept as is, and a trailing newline (owner decision
+  2026-10-01).
+- `source.file` and `image.file` are base names, never paths, so the JSON is
+  the same wherever the command runs (owner decision 2026-10-01).
 
 **Previews.** For each clip, an animated GIF showing all directions side by
 side in index order:
