@@ -580,11 +580,18 @@ def _buffer(phase_dir, path, size, where):
         raise _Invalid(
             f"{where} {path!r} is {actual[0]}x{actual[1]}, not {size[0]}x{size[1]}"
         )
+    # The header already gave the exact expected size, so Pillow's guard
+    # against unexpectedly large images would only refuse a large legitimate
+    # cell, such as 2048 pixels supersampled 8 times.
+    limit = Image.MAX_IMAGE_PIXELS
+    Image.MAX_IMAGE_PIXELS = None
     try:
         with Image.open(resolved, formats=["PNG"]) as image:
             image.load()
             if image.mode != "RGBA" or image.size != size:
                 raise _Invalid(f"{where} {path!r} decodes as {image.mode} {image.size}")
-    except (OSError, ValueError, Image.DecompressionBombError) as error:
+    except (OSError, ValueError) as error:
         raise _Invalid(f"{where} {path!r} does not decode: {error}") from None
+    finally:
+        Image.MAX_IMAGE_PIXELS = limit
     return resolved

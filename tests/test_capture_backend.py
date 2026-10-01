@@ -627,3 +627,12 @@ def test_a_valid_extra_buffer_is_accepted(tmp_path):
     result = validate_result(job, tmp_path, encode(document))
     first = next(iter(result.buffers.values()))
     assert set(first) == {"color", "depth"}
+
+
+def test_pillow_s_size_guard_does_not_refuse_an_expected_size(tmp_path, monkeypatch):
+    # With a limit of 1 pixel, Pillow would refuse every 8×6 buffer; the
+    # header has already checked the exact size, and the limit is restored.
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1)
+    job = render_job(str(tmp_path))
+    validate_result(job, tmp_path, encode(render_document(job, tmp_path)))
+    assert Image.MAX_IMAGE_PIXELS == 1
