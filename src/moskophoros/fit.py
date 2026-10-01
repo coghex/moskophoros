@@ -9,6 +9,7 @@ is pure.
 
 import math
 from dataclasses import dataclass
+from fractions import Fraction
 
 USAGE_ERROR = 2
 OVERFLOW_ERROR = 4
@@ -88,8 +89,8 @@ def resolve(measurements, ppm=None, cell=None, ground_px=None):
         width, height = cell
         gx = width // 2
     elif ppm is not None:
-        width = 2 * (math.ceil(max(left, right) * ppm) + m)
-        height = math.ceil(up * ppm) + math.ceil(down * ppm) + 2 * m
+        width = 2 * (math.ceil(_pixels(max(left, right), ppm)) + m)
+        height = math.ceil(_pixels(up, ppm)) + math.ceil(_pixels(down, ppm)) + 2 * m
         if width > MAX_CELL or height > MAX_CELL:
             raise UsageError(
                 f"--ppm {ppm!r} needs a {width}x{height} cell, larger than the "
@@ -100,12 +101,18 @@ def resolve(measurements, ppm=None, cell=None, ground_px=None):
         width, height = cell if cell is not None else DEFAULT_CELL
         gx = width // 2
         ppm = _auto_ppm(left, right, up, down, width, height, gx)
-    gy = height - m - math.ceil(down * ppm)
+    gy = height - m - math.ceil(_pixels(down, ppm))
     if ground_px is not None:
         gx, gy = ground_px
 
     _check_overflow(measurements, ppm, width, height, gx, gy)
     return Fit(ppm, (width, height), (gx, gy), _unit_warnings(measurements))
+
+
+def _pixels(extent, ppm):
+    """`extent · ppm` exactly, so huge but finite values neither overflow nor
+    round, and compare exactly with integer pixel coordinates."""
+    return Fraction(extent) * Fraction(ppm)
 
 
 def _auto_ppm(left, right, up, down, width, height, gx):
@@ -124,6 +131,11 @@ def _auto_ppm(left, right, up, down, width, height, gx):
             "every measured extent is 0, so auto-fit has nothing to scale; give --ppm"
         )
     ppm = min(limits)
+    if not math.isfinite(ppm):
+        raise UsageError(
+            "the measured extents are too small for auto-fit to choose a "
+            "finite scale; give --ppm"
+        )
     if ppm <= 0:
         raise UsageError(
             f"the {width}x{height} cell is too small to auto-fit the subject "
@@ -141,10 +153,10 @@ def _check_overflow(measurements, ppm, width, height, gx, gy):
     for address, measurement in measurements.items():
         b = measurement.bounds
         reach = {
-            "left": b.left * ppm - gx,
-            "right": b.right * ppm - (width - gx),
-            "top": b.up * ppm - gy,
-            "bottom": b.down * ppm - (height - gy),
+            "left": _pixels(b.left, ppm) - gx,
+            "right": _pixels(b.right, ppm) - (width - gx),
+            "top": _pixels(b.up, ppm) - gy,
+            "bottom": _pixels(b.down, ppm) - (height - gy),
         }
         overshoot = {side: math.ceil(reach[side]) for side in SIDES if reach[side] > 0}
         if overshoot:

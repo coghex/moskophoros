@@ -240,7 +240,7 @@ def test_overflowing_frames_are_listed_in_request_order():
         address("walk", 0, 0.0): Measurement(Bounds(2.5, 2.5, 0.0, 0.0), 1.0),
         address("walk", 1, 0.0): Measurement(Bounds(1.0, 1.0, 1.0, 0.5), 1.0),
         address("walk", 1, 0.25): Measurement(Bounds(0.0, 0.0, 3.15, 1.01), 1.0),
-        address("attack", 0, 1.5): Measurement(Bounds(0.0, 2.1, 0.0, 0.0), 1.0),
+        address("attack", 0, 1.5): Measurement(Bounds(0.0, 2.0625, 0.0, 0.0), 1.0),
     }
     with pytest.raises(CellOverflow) as raised:
         resolve(measurements, **FIXED)
@@ -292,7 +292,7 @@ def test_cases_2_and_3_without_ground_px_never_overflow(options):
     measurements = {
         address("walk", 0, 0.0): Measurement(Bounds(2.5, 2.5, 0.0, 0.0), 1.0),
         address("walk", 1, 0.25): Measurement(Bounds(0.0, 0.0, 3.15, 1.01), 1.0),
-        address("attack", 0, 1.5): Measurement(Bounds(0.0, 2.1, 0.0, 0.0), 1.0),
+        address("attack", 0, 1.5): Measurement(Bounds(0.0, 2.0625, 0.0, 0.0), 1.0),
     }
     with pytest.raises(CellOverflow):
         resolve(measurements, **FIXED)
@@ -329,3 +329,48 @@ def test_the_unit_warning_uses_the_tallest_height_not_the_bounds():
         address(direction=0): Measurement(Bounds(500.0, 500.0, 500.0, 0.0), 0.5),
     }
     assert resolve(measurements).warnings == ()
+
+
+# Huge but finite values. Pixel arithmetic is exact, so these neither raise
+# Python's own OverflowError nor round.
+
+
+def test_a_huge_ppm_gives_the_cell_size_usage_error():
+    # W = 2·(ceil(2 · 1e308) + 1), computed exactly.
+    with pytest.raises(UsageError, match="smaller --ppm") as raised:
+        resolve(one_frame(2.0, 1.0, 1.0, 0.0), ppm=1e308)
+    assert raised.value.exit_code == 2
+    width = 2 * (2 * int(1e308) + 1)
+    assert f"a {width}x" in str(raised.value)
+
+
+def test_a_huge_fixed_ppm_reports_overflow():
+    # gx = 32; gy = 64 - 1 - 0 = 63. Left 2e308 - 32, right 1e308 - 32 and
+    # top 1e308 - 63, all exact integers.
+    with pytest.raises(CellOverflow) as raised:
+        resolve(one_frame(2.0, 1.0, 1.0, 0.0), ppm=1e308, cell=(64, 64))
+    big = int(1e308)
+    assert raised.value.exit_code == 4
+    assert raised.value.frames == (
+        (address(), {"left": 2 * big - 32, "right": big - 32, "top": big - 63}),
+    )
+
+
+def test_a_huge_ground_px_reports_overflow_exactly():
+    # ppm 15.5 (as in test_auto_fit_in_the_default_cell). The right edge is at
+    # 64 - gx, so the right overshoot is 31 - 64 + gx, exactly.
+    gx = 9007199254741093
+    with pytest.raises(CellOverflow) as raised:
+        resolve(one_frame(1.0, 2.0, 1.5, 0.5), ground_px=(gx, 55))
+    assert raised.value.frames == ((address(), {"right": 31 - 64 + gx}),)
+    gx = 10**309
+    with pytest.raises(CellOverflow) as raised:
+        resolve(one_frame(1.0, 2.0, 1.5, 0.5), ground_px=(gx, 55))
+    assert raised.value.frames == ((address(), {"right": 31 - 64 + gx}),)
+
+
+def test_extents_too_small_for_a_finite_auto_fit_scale():
+    # 31 / 1e-320 is past the largest float.
+    with pytest.raises(UsageError, match="give --ppm") as raised:
+        resolve(one_frame(1e-320, 0.0, 0.0, 0.0))
+    assert raised.value.exit_code == 2
