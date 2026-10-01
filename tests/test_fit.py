@@ -374,3 +374,12 @@ def test_extents_too_small_for_a_finite_auto_fit_scale():
     with pytest.raises(UsageError, match="give --ppm") as raised:
         resolve(one_frame(1e-320, 0.0, 0.0, 0.0))
     assert raised.value.exit_code == 2
+
+
+def test_auto_fit_with_huge_extents():
+    # U + D = 2e308 is past the largest float, but the limit is exact:
+    # (64 - 2 - 1)/2e308 = 3.05e-307. gy = 64 - 1 - ceil(1e308 · 3.05e-307 = 30.5)
+    # = 32.
+    result = resolve(one_frame(0.0, 0.0, 1e308, 1e308))
+    assert result.ppm == pytest.approx(3.05e-307)
+    assert (result.cell, result.ground_px) == ((64, 64), (32, 32))

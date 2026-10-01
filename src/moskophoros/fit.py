@@ -8,6 +8,7 @@ is pure.
 """
 
 import math
+import sys
 from dataclasses import dataclass
 from fractions import Fraction
 
@@ -116,32 +117,36 @@ def _pixels(extent, ppm):
 
 
 def _auto_ppm(left, right, up, down, width, height, gx):
-    """The largest scale fitting the cell with its margin (case 3)."""
+    """The largest scale fitting the cell with its margin (case 3).
+
+    The limits are exact fractions, so huge extents neither overflow their
+    sum nor round; the scale is rounded to a float once, at the end.
+    """
     m = MARGIN
     limits = []
     if left > 0:
-        limits.append((gx - m) / left)
+        limits.append(Fraction(gx - m) / Fraction(left))
     if right > 0:
-        limits.append((width - gx - m) / right)
+        limits.append(Fraction(width - gx - m) / Fraction(right))
     if up + down > 0:
         # The extra pixel absorbs rounding the ground row to a whole pixel.
-        limits.append((height - 2 * m - 1) / (up + down))
+        limits.append(Fraction(height - 2 * m - 1) / (Fraction(up) + Fraction(down)))
     if not limits:
         raise UsageError(
             "every measured extent is 0, so auto-fit has nothing to scale; give --ppm"
         )
     ppm = min(limits)
-    if not math.isfinite(ppm):
-        raise UsageError(
-            "the measured extents are too small for auto-fit to choose a "
-            "finite scale; give --ppm"
-        )
     if ppm <= 0:
         raise UsageError(
             f"the {width}x{height} cell is too small to auto-fit the subject "
             f"with a {m}-pixel margin; give a larger --cell, or --ppm"
         )
-    return ppm
+    if ppm > sys.float_info.max:
+        raise UsageError(
+            "the measured extents are too small for auto-fit to choose a "
+            "finite scale; give --ppm"
+        )
+    return float(ppm)
 
 
 def _check_overflow(measurements, ppm, width, height, gx, gy):
