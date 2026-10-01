@@ -12,8 +12,8 @@ Status legend: `[ ]` unprocessed · `[#N]` linked to issue N · `[no-issue]` rev
 
 ## Processing status
 
-- [ ] EPIC. Deliver the first plain animated GLB-to-sheet pipeline
-- [ ] S1-1. Parse and validate the command-line options
+- [x] EPIC. Deliver the first plain animated GLB-to-sheet pipeline — [#24]
+- [x] S1-1. Parse and validate the command-line options — [#25]
 - [ ] S1-2. Read GLB scenes and clips with generated fixtures
 - [ ] S1-3. Define frame addresses, camera directions and sample times
 - [ ] S1-4. Resolve scale and placement and detect overflow
@@ -28,8 +28,9 @@ Status legend: `[ ]` unprocessed · `[#N]` linked to issue N · `[no-issue]` rev
 
 The owner approved these delivery boundaries and their dependencies on
 2026-09-30 (D-4), and approved final command activation and owner acceptance
-in S1-12 (D-5). These are not filed issue specifications. No tracker items
-have been created for this arc.
+in S1-12 (D-5). These are not filed issue specifications. The umbrella epic
+was filed as [#24](https://github.com/coghex/moskophoros/issues/24) on
+2026-10-01; child issues are linked in the ledger above as they are filed.
 
 ## Epic contract
 
@@ -74,11 +75,13 @@ Checked on 2026-09-30 at repository revision
 - The open tracker inventory contains only the CI foundation epic
   [#3](https://github.com/coghex/moskophoros/issues/3). No open pull request or
   overlapping slice 1 epic was found. Recheck overlap before readiness.
+  Rechecked 2026-10-01: this arc's own epic #24 is now open, and every child
+  issue of #3 is closed.
 
 The owner resolved the missing-Blender testing disagreement (D-3), capture
 contract (D-6) and retained-work-directory behavior (D-7) on 2026-09-30.
-Their owning definitions are recorded in the product design in this docs
-worktree. Those amendments and this delivery document remain unpublished.
+Their owning definitions are recorded in the product design. Those amendments
+and this delivery document landed on `master` in commit `2651912`.
 
 ## Desired experience
 
@@ -311,6 +314,55 @@ temporary capture directories are deleted. The rule is recorded in
 [design §CLI](../design.md#cli). Rejected: allocating fresh subdirectories
 under a nonempty parent. Q-4 is resolved by this decision.
 
+### D-8. S1-12 rejects a nonempty `--work-dir`; S1-1 only parses the path
+
+Owner decision 2026-10-01, answering which slice enforces D-7's usage error.
+S1-1 parses `--work-dir DIR` as a path and never inspects the filesystem.
+S1-12 checks that `DIR` is absent or empty at the point where it creates the
+capture workspace, as part of the workspace lifecycle it already owns. That
+keeps the parser free of filesystem reads and puts the check and the creation
+together, with no window for the directory to change between them. Rejected:
+checking in the S1-1 parser, which reports earlier but reads the disk during
+option validation and still leaves S1-12 to handle a directory that changes
+before use. The product rule in [design §CLI](../design.md#cli) is unchanged.
+
+### D-9. Settle the option-validation rules design §CLI left unstated
+
+Owner decision 2026-10-01: explicit approval of all eight P-6 rules listed
+under Q-5, recorded in the product contract rather than only in an issue. They
+now live in [design §Option validation](../design.md#option-validation), which
+is their single authority. Rejected: filing S1-1 with an open-question section
+for its solver to stop and ask, and letting a repeated single-value option
+keep its last value. Q-5 is resolved by this decision.
+
+### D-10. Without `--clip`, clips follow the file's animation order
+
+Owner decision 2026-10-01: every clip is selected in ascending animation
+index. This matches how the capture job identifies clips; a re-export that
+reorders animations reorders the sheet. Recorded in
+[design §CLI](../design.md#cli). Rejected: sorting by name, which is stable
+across re-exports but may not follow the author's intended order. Q-6 is
+resolved by this decision.
+
+### D-11. The reader rejects malformed structure it relies on as an input error
+
+Owner decision 2026-10-01: references the tool follows (`scene`, node,
+child, channel, sampler, accessor), a non-forest node hierarchy, and a
+sampler input accessor without one-element `min`/`max` are input errors
+(exit 3) naming the file and problem (V-11). Other glTF rules are left to
+Blender's importer. Recorded in
+[design §Input contract](../design.md#input-contract). Rejected: checking only
+the originally listed items and letting other malformations surface as
+backend errors or reader crashes. Q-7 is resolved by this decision.
+
+### D-12. An empty animation name counts as no name
+
+Owner decision 2026-10-01: `"name": ""` is an input error giving the
+animation's index, like a missing name. An empty name cannot be selected with
+`--clip` or form a preview filename. Recorded in
+[design §Input contract](../design.md#input-contract). Rejected: accepting
+`""` as a clip name. Q-8 is resolved by this decision.
+
 ## Open questions
 
 ### Q-1. Should missing Blender fail selected integration tests?
@@ -337,10 +389,68 @@ Resolved by D-7. The owner selected a new or empty workspace and rejected
 fresh per-run subdirectories inside a nonempty parent. See the owning
 [CLI contract](../design.md#cli). No workspace-policy decision remains open.
 
+### Q-5. Which option-validation rules does design §CLI leave unstated?
+
+Resolved by D-9; all eight rules below were approved as written.
+
+Raised 2026-10-01 while drafting S1-1. Design §CLI gives each option's type,
+default and range, but not these rules, several of which choose between a
+usage error (exit 2) and an input error (exit 3) or between rejecting and
+accepting a command line. The owner chose to settle them in design §CLI as a
+dated owner decision before S1-1 is filed, rather than leaving the solver to
+stop and ask. The rules proposed for signoff (P-6):
+
+1. Numeric options reject `nan` and `inf` as usage errors.
+2. `--start-angle` and `--model-yaw` accept any finite value; the parser keeps
+   the given value, and the existing `mod 360` in the direction formula
+   (S1-3) handles wrapping.
+3. `--ground-px X,Y` takes whole numbers 0 or greater; whether the point lies
+   inside the cell is left to overflow checking (S1-4).
+4. Naming the same clip twice with `--clip`, or twice with `--once`, is a
+   usage error.
+5. A `--once` naming a clip absent from an explicit `--clip` list is a usage
+   error. Without `--clip`, an unknown name stays an input error found by the
+   reader (S1-2).
+6. Giving a single-value option more than once is a usage error, not
+   "last one wins".
+7. A usage error prints the usage synopsis, then
+   `moskophoros: error: <message>`.
+8. `<infile.glb>` has no suffix requirement; its content is checked by the
+   reader (S1-2).
+
+Affects S1-1 and the product contract it implements.
+
+### Q-6. Without `--clip`, in what order are clips selected?
+
+Resolved by D-10. Raised 2026-10-01 while drafting S1-2: design §CLI said
+"every clip" without an order, which fixes the sheet's rows, JSON and
+fingerprint.
+
+### Q-7. How strictly does the reader validate glTF structure?
+
+Resolved by D-11. Raised 2026-10-01 while drafting S1-2: the input contract
+listed specific checks but not dangling references or missing accessor
+bounds the reader depends on.
+
+### Q-8. Is an empty animation name a name?
+
+Resolved by D-12. Raised 2026-10-01 while drafting S1-2.
+
 ## Readiness
 
-All four design questions are resolved and the owner has approved the seven
-recorded decisions. The twelve-slice processing ledger matches the delivery plan,
+Reopened 2026-10-01: D-8 moved the `--work-dir` emptiness check between
+slices, and D-9 added option-validation rules to the product contract. All
+five design questions were resolved and the owner signed off readiness again
+on 2026-10-01.
+
+Reopened again 2026-10-01: D-10, D-11 and D-12 amended the product contract
+for S1-2. All eight design questions are resolved, and the owner signed off
+readiness again on 2026-10-01. The ledger, slice
+order and dependencies are unchanged, and the only open epics are #3 and this
+arc's own #24.
+
+Previously: all four design questions were resolved and the owner had approved
+the seven recorded decisions. The twelve-slice processing ledger matches the delivery plan,
 dependencies are ordered, and the owning product contracts have been amended.
 The tracker was rechecked on 2026-09-30: no overlapping open product epic or
 PR was found. Model availability, production size and the final visual verdict
@@ -388,7 +498,9 @@ several temporary files alone does not establish the whole-run guarantee.
 
 The delivery boundaries below are accepted by D-4 and D-5. Their product
 behavior comes from D-1, with the accepted testing, capture and workspace
-amendments in D-3, D-6 and D-7. All design questions are resolved. The listed
+amendments in D-3, D-6 and D-7, and D-8 places the `--work-dir` check in
+S1-12. D-9 settles the option-validation rules S1-1 implements. All design
+questions are resolved. The listed
 phase numbers describe dependency layers, not milestones with separate
 product acceptance.
 
@@ -398,14 +510,18 @@ product acceptance.
   including help and explicit-option tracking for later reuse.
 - **Scope:** option types, ranges and combinations; paths and output suffix;
   preset-versus-explicit inputs; usage-error formatting. File/clip validation
-  belongs to S1-2 and orchestration to S1-12.
+  belongs to S1-2 and orchestration to S1-12. `--work-dir` is parsed as a path
+  only; the parser never inspects the filesystem (D-8). The rules in design
+  §Option validation (D-9) that a parser can check without the input file.
 - **Phase:** 1.
 - **Depends on:** none.
 - **Ordering:** critical path; can land first.
-- **Relevant decisions:** D-1, D-2, D-3, D-4, D-5.
+- **Relevant decisions:** D-1, D-2, D-3, D-4, D-5, D-8, D-9.
 - **Acceptance signals:** valid options parse without effects; invalid usage
-  gives the accepted diagnostic and exit classification; help covers all options.
-- **Out of scope:** installed console entry and rendering.
+  gives the accepted diagnostic and exit classification; each D-9 rule has a
+  tested outcome; help covers all options.
+- **Out of scope:** installed console entry and rendering; the nonempty
+  `--work-dir` check (S1-12, D-8); clip existence (S1-2).
 - **Open questions:** None.
 
 ### S1-2. Read GLB scenes and clips with generated fixtures
@@ -419,9 +535,11 @@ product acceptance.
 - **Phase:** 1.
 - **Depends on:** none.
 - **Ordering:** critical path; independent of S1-1.
-- **Relevant decisions:** D-1, D-3.
+- **Relevant decisions:** D-1, D-3, D-10, D-11, D-12.
 - **Acceptance signals:** generated valid inputs yield independently expected
-  scene/clip data; malformed inputs and invalid names fail with file/clip context.
+  scene/clip data, with default selection in animation-index order (D-10);
+  malformed inputs, including D-11's structural errors, and invalid or empty
+  names (D-12) fail with file/clip context.
 - **Out of scope:** implementing a renderer or duplicating Blender's importer.
 - **Open questions:** None.
 
@@ -579,14 +697,17 @@ product acceptance.
   carries the mechanical and owner evidence that closes the milestone.
 - **Scope:** wire validated options, input, samples, two capture calls, root
   checks, fit, plain pipeline, sheets, previews and reuse; temporary/retained
-  work-directory lifecycle; stage all outputs and preserve earlier outputs on
-  failure; install the console entry and document the working command.
+  work-directory lifecycle, including rejecting an existing nonempty
+  `--work-dir` as a usage error when the workspace is created (D-7, D-8);
+  stage all outputs and preserve earlier outputs on failure; install the
+  console entry and document the working command.
 - **Phase:** 7.
 - **Depends on:** S1-7, S1-10, S1-11.
 - **Ordering:** final critical-path slice.
-- **Relevant decisions:** D-1, D-3, D-4, D-5.
+- **Relevant decisions:** D-1, D-3, D-4, D-5, D-7, D-8.
 - **Acceptance signals:** generated-model command tests cover the complete
-  output set, failure codes and publication failures; repeated runs give identical
+  output set, failure codes and publication failures, and a nonempty
+  `--work-dir` that exits 2 with its contents untouched; repeated runs give identical
   PNG/JSON bytes. The owner approves a real character's eight-direction sheet
   and previews at the intended production size before final PR review and merge.
 - **Out of scope:** deferred style and game integration; accepting mechanical

@@ -56,6 +56,9 @@ moskophoros [options] <infile.glb> <outfile.png>
 | `--blender PATH` | discovered | Blender executable. See [Capture](#capture). |
 | `--any-blender` | off | Allow a Blender version other than the supported one. |
 
+Without `--clip`, every clip is selected in the file's animation order:
+ascending animation index (owner decision 2026-10-01).
+
 `<outfile.png>` must end in `.png`. The JSON is written beside it, at the same
 path with `.json` replacing `.png`. Previews are written as
 `<stem>.<clip>.gif` beside it; a clip name is made filename-safe by replacing
@@ -77,6 +80,27 @@ available artifacts after success or failure; normal temporary capture
 workspaces are deleted in either case. Retention does not make an incomplete
 phase a valid result or supply a replay interface. Reusing a retained location
 requires choosing a new or empty directory (owner decision 2026-09-30).
+
+### Option validation
+
+Each of these is a usage error (exit 2) unless stated otherwise (owner
+decision 2026-10-01):
+
+- A numeric option given `nan` or `inf`.
+- `--ground-px` coordinates that are not whole numbers 0 or greater. Whether
+  the point lies inside the cell is an [overflow](#scale-and-ground-point)
+  question, not a usage one.
+- The same clip named twice with `--clip`, or twice with `--once`.
+- A `--once` naming a clip absent from an explicit `--clip` list. Without
+  `--clip`, a `--once` naming a clip that does not exist is an
+  [input error](#input-contract).
+- A single-value option given more than once; the last value does not win.
+
+`--start-angle` and `--model-yaw` accept any finite number of degrees; the
+direction formula's `mod 360` handles wrapping. `<infile.glb>` has no suffix
+requirement; its content is checked under the [input contract](#input-contract).
+A usage error prints the usage synopsis to stderr, followed by the
+`moskophoros: error: <message>` line.
 
 ### Exit codes
 
@@ -108,10 +132,16 @@ Checks, each an input error (exit 3) naming the file and the problem:
 
 - the file cannot be read, or is not binary glTF 2.0
 - the file has no scenes
+- the structure the tool reads is malformed (owner decision 2026-10-01): a
+  `scene`, node, child, animation channel, sampler or accessor reference
+  names an object that does not exist; the node hierarchy is not a forest
+  (a node with two parents, or a cycle); or an animation sampler's input
+  accessor lacks the one-element `min` and `max` that give the clip's range.
+  Other glTF rules are left to Blender's importer.
 - the file changes during capture; the [capture contract](#capture-job-and-result-contract)
   defines the digest checks (owner decision 2026-09-30)
-- an animation has no name, or two animations share a name (the message gives
-  the animation's index)
+- an animation has no name or an empty name (owner decision 2026-10-01), or
+  two animations share a name (the message gives the animation's index)
 - a `--clip` or `--once` names a clip that does not exist
 - a clip travels across the ground (see [Root motion](#root-motion))
 
