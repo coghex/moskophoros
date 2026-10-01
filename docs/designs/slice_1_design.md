@@ -16,7 +16,7 @@ Status legend: `[ ]` unprocessed · `[#N]` linked to issue N · `[no-issue]` rev
 - [x] S1-1. Parse and validate the command-line options — [#25]
 - [x] S1-2. Read GLB scenes and clips with generated fixtures — [#26]
 - [x] S1-3. Define frame addresses, camera directions and sample times — [#27]
-- [ ] S1-4. Resolve scale and placement and detect overflow
+- [x] S1-4. Resolve scale and placement and detect overflow — [#28]
 - [ ] S1-5. Define the capture interface and launch Blender safely
 - [ ] S1-6. Measure animated geometry and root travel in Blender
 - [ ] S1-7. Render addressed frames with the accepted capture settings
@@ -392,6 +392,23 @@ is reported in whole pixels rounded up, so any overshoot shows as at least
 Rejected: fractional pixels, which are exact but noisier and depend on float
 formatting.
 
+### D-16. The first configured Blender source decides
+
+Owner decision 2026-10-01, raised while drafting S1-5: if `--blender` or
+`$MOSKOPHOROS_BLENDER` is set but names a missing or non-executable file,
+discovery fails with a backend error naming the source and path, and later
+sources are not tried. Recorded in [design §Capture](../design.md#capture).
+Rejected: falling through to the next source, which could silently run a
+different Blender than the one requested.
+
+### D-17. An unparseable Blender version is always a backend error
+
+Owner decision 2026-10-01, raised while drafting S1-5: `--any-blender`
+allows a different version, never an unknown one, so the sheet can always
+record `generator.blender`. The error quotes the output's first line.
+Recorded in [design §Capture](../design.md#capture). Rejected: accepting the
+raw first line as the version under `--any-blender`.
+
 ## Open questions
 
 ### Q-1. Should missing Blender fail selected integration tests?
@@ -615,7 +632,7 @@ product acceptance.
 - **Phase:** 4.
 - **Depends on:** S1-1, S1-2, S1-3, S1-4.
 - **Ordering:** critical path.
-- **Relevant decisions:** D-1, D-3, D-4, D-6, D-7.
+- **Relevant decisions:** D-1, D-3, D-4, D-6, D-7, D-8, D-16, D-17.
 - **Acceptance signals:** precedence, version suffixes and override, launch
   failure, script failure and malformed output have independently tested outcomes.
   Under P-3, buffer validation also proves path containment, image mode and

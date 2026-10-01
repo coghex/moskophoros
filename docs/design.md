@@ -389,6 +389,13 @@ The version comes from `blender --version`. A mismatch in major.minor version
 is a backend error unless `--any-blender` is given; the actual version is
 always recorded.
 
+The first source that is set decides: if `--blender` or
+`$MOSKOPHOROS_BLENDER` names a missing or non-executable file, that is a
+backend error naming the source and path, and later sources are not tried.
+Version output with no parseable version is a backend error quoting its first
+line, even with `--any-blender`, which allows a different version but never
+an unknown one (owner decisions 2026-10-01).
+
 ### Capture job and result contract
 
 Owner decision 2026-09-30: the capture transport, ownership, validation and
