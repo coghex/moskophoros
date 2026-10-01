@@ -478,3 +478,55 @@ signal.pause()
     finally:
         bystander.kill()
         bystander.wait()
+
+
+@pytest.mark.parametrize(
+    "capture",
+    [
+        "pathlib.Path('result.json').mkdir()\n",
+        "os.mkfifo('result.json')\n",
+    ],
+    ids=["a directory", "a FIFO"],
+)
+def test_a_result_that_is_not_a_regular_file(tmp_path, capture):
+    workspace, job = make_job(tmp_path)
+    fake = fake_blender(
+        tmp_path / "bin" / "blender", "print('made result')\n" + capture
+    )
+    with pytest.raises(BackendError, match="is not a regular file") as raised:
+        blender.run_phase(fake_found(fake), workspace, job)
+    assert raised.value.exit_code == 5
+    assert raised.value.stdout.strip() == "made result"
+
+
+def test_an_unreadable_result(tmp_path, monkeypatch):
+    # Permissions cannot make a file unreadable to root, so the read fails
+    # by substitution instead.
+    workspace, job = make_job(tmp_path)
+    fake = fake_blender(
+        tmp_path / "bin" / "blender",
+        "print('done', file=sys.stderr)\n" + write_result(measure_result(job)),
+    )
+    unreadable = workspace / "measure" / "result.json"
+    real_read = Path.read_bytes
+
+    def guarded_read(self):
+        if self == unreadable:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_read(self)
+
+    monkeypatch.setattr(Path, "read_bytes", guarded_read)
+    with pytest.raises(BackendError, match="cannot be read") as raised:
+        blender.run_phase(fake_found(fake), workspace, job)
+    assert raised.value.exit_code == 5
+    assert raised.value.stderr.strip() == "done"
+
+
+def test_a_result_with_a_huge_integer_bound_is_accepted(tmp_path):
+    workspace, job = make_job(tmp_path)
+    result = json.loads(measure_result(job))
+    result["frames"][0]["bounds_m"]["L"] = 10**400
+    fake = fake_blender(tmp_path / "bin" / "blender", write_result(json.dumps(result)))
+    found = blender.run_phase(fake_found(fake), workspace, job)
+    (measurement,) = found.measurements.values()
+    assert measurement.bounds.left == 10**400

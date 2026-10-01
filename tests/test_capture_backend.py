@@ -1,6 +1,7 @@
 import copy
 import hashlib
 import json
+import os
 import struct
 import zlib
 from dataclasses import replace
@@ -636,3 +637,76 @@ def test_pillow_s_size_guard_does_not_refuse_an_expected_size(tmp_path, monkeypa
     job = render_job(str(tmp_path))
     validate_result(job, tmp_path, encode(render_document(job, tmp_path)))
     assert Image.MAX_IMAGE_PIXELS == 1
+
+
+# Unusual values and files are classified, never raised raw.
+
+
+def test_huge_integers_are_finite_numbers(tmp_path):
+    job = measure_job(str(tmp_path))
+    document = measure_document(job)
+    document["frames"][0]["bounds_m"]["L"] = 10**400
+    document["frames"][0]["height_m"] = 10**400
+    result = validate_result(job, tmp_path, encode(document))
+    first = next(iter(result.measurements.values()))
+    assert (first.bounds.left, first.height) == (10**400, 10**400)
+
+
+def test_deeply_nested_json_is_rejected(tmp_path):
+    # Some Python versions' parsers exceed the recursion limit here, others
+    # parse it; either way it is a backend error, never a raw exception.
+    text = b"[" * 100_000 + b"]" * 100_000
+    with pytest.raises(BackendError) as raised:
+        validate_result(measure_job(str(tmp_path)), tmp_path, text)
+    assert raised.value.exit_code == 5
+
+
+def _directory_buffer(document, phase_dir):
+    path = phase_dir / "color/000001.png"
+    path.unlink()
+    path.mkdir()
+
+
+def _fifo_buffer(document, phase_dir):
+    path = phase_dir / "color/000001.png"
+    path.unlink()
+    os.mkfifo(path)
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        (
+            lambda d, p: d["frames"][1]["buffers"].update(color="color/0\u00001.png"),
+            "contains a NUL character",
+        ),
+        (_directory_buffer, "is not a regular file"),
+        (_fifo_buffer, "is not a regular file"),
+    ],
+    ids=["a NUL in the path", "a directory", "a FIFO"],
+)
+def test_unusual_buffer_files_are_rejected(tmp_path, change, message):
+    job = render_job(str(tmp_path))
+    document = render_document(job, tmp_path)
+    change(document, tmp_path)
+    with pytest.raises(BackendError, match=message) as raised:
+        validate_result(job, tmp_path, encode(document))
+    assert raised.value.exit_code == 5
+
+
+def test_an_unreadable_buffer_is_rejected(tmp_path, monkeypatch):
+    # Permissions cannot make a file unreadable to root, so the read fails
+    # by substitution instead.
+    job = render_job(str(tmp_path))
+    document = render_document(job, tmp_path)
+    unreadable = (tmp_path / "color/000002.png").resolve()
+    real_open = Path.open
+
+    def guarded_open(self, *args, **kwargs):
+        if self == unreadable:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", guarded_open)
+    with pytest.raises(BackendError, match="cannot be read: .*Permission denied"):
+        validate_result(job, tmp_path, encode(document))

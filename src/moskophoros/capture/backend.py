@@ -250,11 +250,13 @@ def _is_int(value):
 
 
 def _is_number(value):
-    return (
-        isinstance(value, int | float)
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-    )
+    """A finite number. Integers of any size are finite; testing one as a
+    float could overflow."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    return isinstance(value, float) and math.isfinite(value)
 
 
 def _check_source(source):
@@ -394,7 +396,7 @@ def _strict_json(data):
         return json.loads(
             text, object_pairs_hook=pairs, parse_constant=constant, parse_float=number
         )
-    except (UnicodeDecodeError, ValueError) as error:
+    except (UnicodeDecodeError, ValueError, RecursionError) as error:
         raise _Invalid(f"not JSON: {error}") from None
 
 
@@ -560,14 +562,21 @@ def _buffer(phase_dir, path, size, where):
         raise _Invalid(f"{where} path {path!r} is absolute")
     if ".." in relative.parts:
         raise _Invalid(f"{where} path {path!r} has a parent reference")
-    root = phase_dir.resolve()
-    resolved = (root / relative).resolve()
-    if not resolved.is_relative_to(root):
-        raise _Invalid(f"{where} path {path!r} escapes the phase directory")
-    if not resolved.is_file():
-        raise _Invalid(f"{where} {path!r} does not exist")
-    with resolved.open("rb") as handle:
-        header = handle.read(26)
+    if "\0" in path:
+        raise _Invalid(f"{where} path {path!r} contains a NUL character")
+    try:
+        root = phase_dir.resolve()
+        resolved = (root / relative).resolve()
+        if not resolved.is_relative_to(root):
+            raise _Invalid(f"{where} path {path!r} escapes the phase directory")
+        if not resolved.exists():
+            raise _Invalid(f"{where} {path!r} does not exist")
+        if not resolved.is_file():
+            raise _Invalid(f"{where} {path!r} is not a regular file")
+        with resolved.open("rb") as handle:
+            header = handle.read(26)
+    except (OSError, ValueError, RuntimeError) as error:
+        raise _Invalid(f"{where} {path!r} cannot be read: {error}") from None
     if len(header) < 26 or header[:8] != _PNG_SIGNATURE or header[12:16] != b"IHDR":
         raise _Invalid(f"{where} {path!r} is not a PNG")
     if header[24] != 8 or header[25] != _PNG_RGBA:

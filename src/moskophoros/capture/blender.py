@@ -180,11 +180,21 @@ def run_phase(blender, workspace, job):
             f"Blender's {mode} phase exited with status {status}", stdout, stderr
         )
     result_path = phase_dir / "result.json"
-    try:
-        data = result_path.read_bytes()
-    except FileNotFoundError:
+    if not result_path.exists():
         raise BackendError(
             f"Blender's {mode} phase wrote no result.json", stdout, stderr
+        )
+    if not result_path.is_file():
+        raise BackendError(
+            f"Blender's {mode} phase result.json is not a regular file", stdout, stderr
+        )
+    try:
+        data = result_path.read_bytes()
+    except OSError as error:
+        raise BackendError(
+            f"Blender's {mode} phase result.json cannot be read: {error}",
+            stdout,
+            stderr,
         ) from None
     try:
         return validate_result(job, phase_dir, data)
