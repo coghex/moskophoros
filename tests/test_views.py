@@ -158,7 +158,7 @@ def test_rotation_is_counter_clockwise_seen_from_above():
 def test_rotation_adds_the_model_yaw():
     result = directions(View(30.0, 4, 0.0, model_yaw=90.0))
     assert [d.angle for d in result] == [0.0, 90.0, 180.0, 270.0]
-    assert [d.rotation for d in result] == [90.0, 180.0, 270.0, 360.0]
+    assert [d.rotation for d in result] == [90.0, 180.0, 270.0, 0.0]
     # The yaw turns every direction a further 90°: a subject facing +Z faces
     # screen right at direction 0 and away at direction 1.
     assert [facing(d.rotation) for d in result] == [
@@ -172,3 +172,28 @@ def test_rotation_adds_the_model_yaw():
 def test_directions_are_deterministic():
     view = View(ISO_TRUE, 7, -13.25, model_yaw=12.5)
     assert directions(view) == directions(view)
+
+
+# Large finite angles. The expected reductions use exact integer arithmetic:
+# 1e20 is exactly the integer 10**20, which is 280 mod 360, and -10**20 is 80.
+
+
+def test_large_start_angles_keep_their_offsets():
+    result = directions(View(30.0, 8, 1e20))
+    assert [d.angle for d in result] == [280, 325, 10, 55, 100, 145, 190, 235]
+    assert [d.angle for d in directions(View(30.0, 4, -1e20))] == [80, 170, 260, 350]
+
+
+def test_large_model_yaws_keep_their_offsets():
+    result = directions(View(30.0, 4, 0.0, model_yaw=1e20))
+    assert [d.rotation for d in result] == [280, 10, 100, 190]
+
+
+@pytest.mark.parametrize("large", [1e20, -1e20, 1e300, -123456789.0])
+def test_rotation_is_periodic_for_large_angles(large):
+    small = int(large) % 360
+    assert facing(large) == pytest.approx(facing(small), abs=1e-15)
+    for row, small_row in zip(
+        rotation_matrix(large), rotation_matrix(small), strict=True
+    ):
+        assert row == pytest.approx(small_row, abs=1e-15)

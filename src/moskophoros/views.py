@@ -47,9 +47,9 @@ class CameraBasis:
 class Direction:
     """One subject rotation within a view.
 
-    `angle` is θᵢ in [0, 360). `rotation` is θᵢ + model yaw: the subject's
-    turn about the vertical axis through the ground point, counter-clockwise
-    seen from above.
+    `angle` is θᵢ in [0, 360). `rotation` is θᵢ + model yaw, also reduced to
+    [0, 360): the subject's turn about the vertical axis through the ground
+    point, counter-clockwise seen from above.
     """
 
     index: int
@@ -75,14 +75,14 @@ def directions(view):
     count = view.directions
     if isinstance(count, bool) or not isinstance(count, int) or count < 1:
         raise ValueError(f"direction count must be at least 1, got {count!r}")
+    # Reduce first: added to a huge start or yaw, the offsets would round away.
+    start = _wrap(view.start_angle)
+    yaw = _wrap(view.model_yaw)
     result = []
     for index in range(count):
-        angle = (view.start_angle + index * 360 / count) % 360
-        # A tiny negative remainder rounds up to 360 itself.
-        if angle == 360:
-            angle = 0.0
+        angle = _wrap(start + index * 360 / count)
         label = LABELS[int(angle)] if angle % 45 == 0 else None
-        result.append(Direction(index, angle, label, angle + view.model_yaw))
+        result.append(Direction(index, angle, label, _wrap(angle + yaw)))
     return tuple(result)
 
 
@@ -108,12 +108,19 @@ def facing(rotation):
 _QUARTER_TURNS = {0: (0.0, 1.0), 90: (1.0, 0.0), 180: (0.0, -1.0), 270: (-1.0, 0.0)}
 
 
-def _sin_cos(degrees):
-    """Sine and cosine, exact at quarter turns so axes stay exact."""
+def _wrap(degrees):
+    """`degrees` reduced to [0, 360). Python's float `%` is exact."""
     if not math.isfinite(degrees):
         raise ValueError(f"angle must be finite, got {degrees!r}")
     turned = degrees % 360
+    # A tiny negative remainder rounds up to 360 itself.
+    return 0.0 if turned == 360 else turned
+
+
+def _sin_cos(degrees):
+    """Sine and cosine, exact at quarter turns so axes stay exact."""
+    turned = _wrap(degrees)
     if turned in _QUARTER_TURNS:
         return _QUARTER_TURNS[turned]
-    radians = math.radians(degrees)
+    radians = math.radians(turned)
     return math.sin(radians), math.cos(radians)
