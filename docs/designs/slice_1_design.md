@@ -24,7 +24,7 @@ Status legend: `[ ]` unprocessed · `[#N]` linked to issue N · `[no-issue]` rev
 - [x] S1-9. Assemble sheets and deterministic JSON descriptions — [#33]
 - [x] S1-10. Generate animated direction previews — [#34]
 - [x] S1-11. Reuse sheet settings with explicit overrides — [#35]
-- [ ] S1-12. Connect the complete command and obtain owner acceptance
+- [x] S1-12. Connect the complete command and obtain owner acceptance — [#36]
 
 The owner approved these delivery boundaries and their dependencies on
 2026-09-30 (D-4), and approved final command activation and owner acceptance
