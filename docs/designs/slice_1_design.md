@@ -15,7 +15,7 @@ Status legend: `[ ]` unprocessed · `[#N]` linked to issue N · `[no-issue]` rev
 - [x] EPIC. Deliver the first plain animated GLB-to-sheet pipeline — [#24]
 - [x] S1-1. Parse and validate the command-line options — [#25]
 - [x] S1-2. Read GLB scenes and clips with generated fixtures — [#26]
-- [ ] S1-3. Define frame addresses, camera directions and sample times
+- [x] S1-3. Define frame addresses, camera directions and sample times — [#27]
 - [ ] S1-4. Resolve scale and placement and detect overflow
 - [ ] S1-5. Define the capture interface and launch Blender safely
 - [ ] S1-6. Measure animated geometry and root travel in Blender
@@ -374,6 +374,24 @@ pitch, direction count, start angle and model yaw as plain values, so it still
 depends only on S1-2. Rejected: moving presets into S1-3, which would have
 required editing the filed S1-1 issue.
 
+### D-14. A computed cell over 4096 pixels is a usage error
+
+Owner decision 2026-10-01, raised while drafting S1-4: with only `--ppm`,
+the cell is computed and had no upper bound. A computed width or height over
+4096, the `--cell` limit, is now a usage error giving the size and suggesting
+a smaller `--ppm`. Recorded in
+[design §Scale and ground point](../design.md#scale-and-ground-point).
+Rejected: no limit, which lets a mistaken scale produce a runaway sheet.
+
+### D-15. Overflow reports overshoot in whole pixels, rounded up
+
+Owner decision 2026-10-01, raised while drafting S1-4: each side's overshoot
+is reported in whole pixels rounded up, so any overshoot shows as at least
+1 px. Recorded in
+[design §Scale and ground point](../design.md#scale-and-ground-point).
+Rejected: fractional pixels, which are exact but noisier and depend on float
+formatting.
+
 ## Open questions
 
 ### Q-1. Should missing Blender fail selected integration tests?
@@ -580,7 +598,7 @@ product acceptance.
 - **Phase:** 3.
 - **Depends on:** S1-3.
 - **Ordering:** critical path.
-- **Relevant decisions:** D-1, D-3.
+- **Relevant decisions:** D-1, D-3, D-14, D-15.
 - **Acceptance signals:** numeric fixtures prove each formula and that fixed
   or reused settings fail on overflow instead of shrinking.
 - **Out of scope:** evaluating geometry or recomputing ground from a frame.

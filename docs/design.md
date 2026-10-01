@@ -302,11 +302,16 @@ is a usage error asking for `--ppm`.
 If auto-fit cannot produce a scale greater than 0 because the cell is too
 small, that is a usage error.
 
+A cell resolved in case 2 that is wider or taller than 4096 pixels, the
+`--cell` limit, is a usage error giving the computed size and suggesting a
+smaller `--ppm` (owner decision 2026-10-01).
+
 **Overflow.** Cases 2 and 3 fit by construction, unless `--ground-px` is
 given. Every other configuration is checked, including case 1 and any reused
 settings. A sample whose projected vertices fall outside the cell rectangle is
 an overflow (exit 4). The message lists each offending clip, direction and
-sample time, with the overshoot in pixels on each side. The margin is not
+sample time, with the overshoot on each side in whole pixels, rounded up
+(owner decision 2026-10-01). The margin is not
 required when checking.
 
 **Reuse.** `--settings-from FILE` reads the `settings` object of an earlier
