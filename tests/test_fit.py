@@ -340,8 +340,8 @@ def test_a_huge_ppm_gives_the_cell_size_usage_error():
     with pytest.raises(UsageError, match="smaller --ppm") as raised:
         resolve(one_frame(2.0, 1.0, 1.0, 0.0), ppm=1e308)
     assert raised.value.exit_code == 2
-    width = 2 * (2 * int(1e308) + 1)
-    assert f"a {width}x" in str(raised.value)
+    # W = 4·1e308 + 2 and H = 1e308 + 2, written in scientific notation.
+    assert "needs a 4.00000e+308x1.00000e+308 cell" in str(raised.value)
 
 
 def test_a_huge_fixed_ppm_reports_overflow():
@@ -383,3 +383,39 @@ def test_auto_fit_with_huge_extents():
     result = resolve(one_frame(0.0, 0.0, 1e308, 1e308))
     assert result.ppm == pytest.approx(3.05e-307)
     assert (result.cell, result.ground_px) == ((64, 64), (32, 32))
+
+
+def test_overflow_messages_survive_integers_past_python_s_digit_limit():
+    # The parser accepts a 4300-digit --ground-px, the most Python writes in
+    # decimal. 100 px past an edge 64 - gx away overshoots by gx + 36, which is
+    # 10**4300 + 35: 4301 digits.
+    huge = int("9" * 4300)
+    with pytest.raises(CellOverflow) as raised:
+        resolve(
+            one_frame(1.0, 100.0, 1.0, 0.0), ppm=1, cell=(64, 64), ground_px=(huge, 32)
+        )
+    assert raised.value.frames == ((address(), {"right": 10**4300 + 35}),)
+    assert "right 1.00000e+4300 px" in str(raised.value)
+    assert "ground pixel (9.99999e+4299, 32)" in str(raised.value)
+    # The same on the vertical axis: bottom 100 - (64 - gy).
+    with pytest.raises(CellOverflow) as raised:
+        resolve(
+            one_frame(1.0, 1.0, 1.0, 100.0), ppm=1, cell=(64, 64), ground_px=(32, huge)
+        )
+    assert raised.value.frames == ((address(), {"bottom": 10**4300 + 35}),)
+    assert "bottom 1.00000e+4300 px" in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("value", "text"),
+    [
+        (10**30 - 1, "999999999999999999999999999999"),
+        (10**30, "1.00000e+30"),
+        (123456789 * 10**40, "1.23456e+48"),
+        (-(10**31), "-1.00000e+31"),
+    ],
+)
+def test_large_integers_are_written_in_scientific_notation(value, text):
+    from moskophoros.fit import _int
+
+    assert _int(value) == text

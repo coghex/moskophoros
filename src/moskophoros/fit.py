@@ -94,7 +94,7 @@ def resolve(measurements, ppm=None, cell=None, ground_px=None):
         height = math.ceil(_pixels(up, ppm)) + math.ceil(_pixels(down, ppm)) + 2 * m
         if width > MAX_CELL or height > MAX_CELL:
             raise UsageError(
-                f"--ppm {ppm!r} needs a {width}x{height} cell, larger than the "
+                f"--ppm {ppm!r} needs a {_int(width)}x{_int(height)} cell, larger than the "
                 f"{MAX_CELL}-pixel limit; give a smaller --ppm"
             )
         gx = width // 2
@@ -170,16 +170,38 @@ def _check_overflow(measurements, ppm, width, height, gx, gy):
         return
     lines = [
         f"the subject overflows the {width}x{height} cell at {ppm!r} pixels per "
-        f"meter with ground pixel ({gx}, {gy}); a fixed scale, cell and ground "
-        "pixel are never shrunk to fit:"
+        f"meter with ground pixel ({_int(gx)}, {_int(gy)}); a fixed scale, cell "
+        "and ground pixel are never shrunk to fit:"
     ]
     for address, overshoot in overflowing:
-        sides = ", ".join(f"{side} {pixels} px" for side, pixels in overshoot.items())
+        sides = ", ".join(
+            f"{side} {_int(pixels)} px" for side, pixels in overshoot.items()
+        )
         lines.append(
             f"  clip {address.clip!r}, direction {address.direction}, "
             f"time {address.time_s!r} s: {sides}"
         )
     raise CellOverflow("\n".join(lines), tuple(overflowing))
+
+
+def _int(value):
+    """`value` in decimal, or in scientific notation from 10**30 on.
+
+    Pixel coordinates from `--ground-px` can be any whole number, and Python
+    refuses to write an integer of more than 4300 digits in decimal. The
+    mantissa is truncated, not rounded.
+    """
+    if abs(value) < 10**30:
+        return str(value)
+    sign = "-" if value < 0 else ""
+    value = abs(value)
+    exponent = (value.bit_length() - 1) * 30103 // 100000  # about log10
+    while 10 ** (exponent + 1) <= value:
+        exponent += 1
+    while 10**exponent > value:
+        exponent -= 1
+    digits = str(value // 10 ** (exponent - 5))
+    return f"{sign}{digits[0]}.{digits[1:]}e+{exponent}"
 
 
 def _unit_warnings(measurements):
