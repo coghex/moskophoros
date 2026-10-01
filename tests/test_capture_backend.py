@@ -458,8 +458,9 @@ def png(path, size=(8, 6), mode="RGBA", format="PNG"):
     return path
 
 
-def raw_png(path, width, height, bit_depth, color_type, channels):
-    """A PNG written by hand, for formats Pillow does not write."""
+def raw_png(path, width, height, bit_depth, color_type, channels, extra=()):
+    """A PNG written by hand, for formats Pillow does not write. `extra`
+    chunks, as (kind, data), go after the pixel data."""
 
     def chunk(kind, data):
         body = kind + data
@@ -475,6 +476,7 @@ def raw_png(path, width, height, bit_depth, color_type, channels):
             struct.pack(">IIBBBBB", width, height, bit_depth, color_type, 0, 0, 0),
         )
         + chunk(b"IDAT", zlib.compress(row * height))
+        + b"".join(chunk(kind, data) for kind, data in extra)
         + chunk(b"IEND", b"")
     )
 
@@ -586,6 +588,18 @@ RENDER_REJECTIONS = {
         "bit depth 16",
     ),
     "truncated pixel data": (_truncate, "does not decode"),
+    # Pillow raises SyntaxError for an unknown iCCP compression method.
+    "a malformed iCCP chunk": (
+        lambda d, p: raw_png(
+            p / "color/000002.png", 8, 6, 8, 6, 4, [(b"iCCP", b"name\x00\x01x")]
+        ),
+        "does not decode",
+    ),
+    # ... and IndexError for an empty iCCP chunk.
+    "an empty iCCP chunk": (
+        lambda d, p: raw_png(p / "color/000003.png", 8, 6, 8, 6, 4, [(b"iCCP", b"")]),
+        "does not decode",
+    ),
     "an invalid extra buffer": (
         lambda d, p: d["frames"][0]["buffers"].update(depth="depth/000000.png"),
         "depth buffer 'depth/000000.png' does not exist",

@@ -530,3 +530,41 @@ def test_a_result_with_a_huge_integer_bound_is_accepted(tmp_path):
     found = blender.run_phase(fake_found(fake), workspace, job)
     (measurement,) = found.measurements.values()
     assert measurement.bounds.left == 10**400
+
+
+def test_an_undecodable_buffer_is_a_backend_error_with_diagnostics(tmp_path):
+    # An 8-bit RGBA PNG of the right size whose trailing iCCP chunk is empty:
+    # Pillow's decoder raises IndexError on it.
+    from test_capture_backend import raw_png
+
+    workspace, job = make_job(tmp_path, "render")
+    color = tmp_path / "color.png"
+    raw_png(color, 8, 6, 8, 6, 4, [(b"iCCP", b"")])
+    result_text = json.dumps(
+        {
+            "schema": "moskophoros.capture-result/1",
+            "mode": "render",
+            "job_sha256": job_sha256(job),
+            "source_sha256": job["source"]["sha256"],
+            "backend": {
+                "blender": "5.2.2",
+                "renderer": "workbench",
+                "studio_light": "Default",
+            },
+            "frames": [
+                {"address": frame["address"], "buffers": {"color": "color/000000.png"}}
+                for frame in job["frames"]
+            ],
+        }
+    )
+    capture = (
+        "import shutil\n"
+        "print('rendered 1 frame')\n"
+        "pathlib.Path('color').mkdir()\n"
+        f"shutil.copy({str(color)!r}, 'color/000000.png')\n" + write_result(result_text)
+    )
+    fake = fake_blender(tmp_path / "bin" / "blender", capture)
+    with pytest.raises(BackendError, match="does not decode") as raised:
+        blender.run_phase(fake_found(fake), workspace, job)
+    assert raised.value.exit_code == 5
+    assert raised.value.stdout.strip() == "rendered 1 frame"

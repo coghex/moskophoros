@@ -599,8 +599,13 @@ def _buffer(phase_dir, path, size, where):
             image.load()
             if image.mode != "RGBA" or image.size != size:
                 raise _Invalid(f"{where} {path!r} decodes as {image.mode} {image.size}")
-    except (OSError, ValueError) as error:
-        raise _Invalid(f"{where} {path!r} does not decode: {error}") from None
+    except _Invalid:
+        raise
+    except Exception as error:
+        # The bytes come from Blender, not from this tool: whatever Pillow's
+        # decoder raises on them, such as SyntaxError or IndexError for a
+        # malformed chunk, means the buffer is invalid.
+        raise _Invalid(f"{where} {path!r} does not decode: {error!r}") from None
     finally:
         Image.MAX_IMAGE_PIXELS = limit
     return resolved
