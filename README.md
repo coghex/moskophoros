@@ -10,9 +10,11 @@ configurable: top-down, side or isometric, with 1, 2, 4 or 8 directions.
 
 ## Status
 
-Early design. Nothing is implemented yet. The goals and long-term direction
-are in [docs/vision.md](docs/vision.md); the concrete design of the first
-version is in [docs/design.md](docs/design.md).
+Early implementation. Command-line option parsing and validation exist as
+library code, `moskophoros.cli`. The `moskophoros` command is not available
+yet, and nothing renders. The goals and long-term direction are in
+[docs/vision.md](docs/vision.md); the concrete design of the first version is
+in [docs/design.md](docs/design.md).
 
 ## Planned usage
 
