@@ -12,7 +12,9 @@ configurable: top-down, side or isometric, with 1, 2, 4 or 8 directions.
 
 Early implementation. These parts exist as library code:
 
-- command-line option parsing and validation, `moskophoros.cli`;
+- command-line option parsing and validation, `moskophoros.cli`, which also
+  reads an earlier sheet's settings for `--settings-from`, checks them and
+  merges them with the explicit options;
 - the GLB reader, `moskophoros.gltf`, which reads a `.glb` file's subject
   scene, clips, time ranges and root nodes, and selects clips by name;
 - camera and direction math, `moskophoros.views`, and sample times and frame

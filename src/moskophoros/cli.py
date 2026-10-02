@@ -1,16 +1,22 @@
-"""Command-line options: parsing, validation, view presets and help.
+"""Command-line options: parsing, validation, view presets, help and reuse.
 
 `parse_args` turns an argument list into validated `Options`, following
 design §CLI, §Option validation and §Presets. On success it has no effects:
 it reads no files, starts no process and prints nothing. Checks that need the
 input file, the filesystem or Blender belong to the stages that use them.
+
+`resolve_settings` applies `--settings-from`, following design §Scale and
+ground point, Reuse: `read_settings` reads and checks the earlier sheet's
+`settings`, and `apply_settings` merges them with the parsed options. Reading
+that one file is its only effect.
 """
 
 import argparse
+import json
 import math
 import sys
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from types import MappingProxyType
@@ -43,7 +49,9 @@ DEFAULT_VIEW = "iso"
 # The resolved view name once --pitch, --directions or --start-angle is given.
 CUSTOM_VIEW = "custom"
 ROOT_MOTION_MODES = ("error", "keep")
+SHEET_SCHEMA = "moskophoros.sheet/1"
 _MAX_DIGITS = 4300
+_VIEW_FIELDS = ("view", "pitch", "directions", "start_angle")
 _REPEATABLE = frozenset({"--clip", "--once"})
 _HELP = frozenset({"-h", "--help"})
 
@@ -140,6 +148,121 @@ def parse_args(argv: Sequence[str]) -> Options:
     )
 
 
+@dataclass(frozen=True)
+class ReusedSettings:
+    """The values `--settings-from` reuses, named as in `Options`.
+
+    `view` is a preset name or `custom`, with the view's recorded pitch,
+    direction count and start angle. Scale, cell and ground pixel are always
+    set: reuse makes them fixed.
+    """
+
+    view: str
+    pitch: float
+    directions: int
+    start_angle: float
+    model_yaw: float
+    fps: float
+    supersample: int
+    ppm: float
+    cell: tuple[int, int]
+    ground: tuple[float, float, float]
+    ground_px: tuple[int, int]
+    root_motion: str
+
+
+def resolve_settings(options: Options) -> Options:
+    """`options` with its `--settings-from` file applied, or as parsed when
+    there is none. Raises `UsageError` as `read_settings` does."""
+    if options.settings_from is None:
+        return options
+    return apply_settings(options, read_settings(options.settings_from))
+
+
+def read_settings(path) -> ReusedSettings:
+    """Read and check the reusable `settings` of the sheet description at
+    `path`. Reading that file is the only effect.
+
+    Raises `UsageError`, reported as `parse_args` reports one, naming the
+    file and the problem: the file cannot be read, is not UTF-8 JSON, repeats
+    a key, is not a `moskophoros.sheet/1` document with a `settings` object,
+    or its `settings` has a missing, unknown or unacceptable field. Every
+    field is checked as its option checks it, including fields an explicit
+    option will replace. Nothing beyond `schema` and `settings` is read, and
+    `settings.clips` is ignored.
+    """
+    path = Path(path)
+    try:
+        data = path.read_bytes()
+    except OSError as error:
+        _settings_error(path, f"cannot be read: {error.strerror or error}")
+    try:
+        document = json.loads(
+            data.decode("utf-8"),
+            object_pairs_hook=_unique_keys,
+            parse_constant=_no_constant,
+        )
+    except UnicodeDecodeError as error:
+        _settings_error(path, f"is not UTF-8: {error.reason} at byte {error.start}")
+    except _DuplicateKey as error:
+        _settings_error(path, str(error))
+    except ValueError as error:
+        _settings_error(path, f"is not valid JSON: {error}")
+    except RecursionError:
+        _settings_error(path, "is not valid JSON: it is nested too deeply")
+    if not isinstance(document, dict):
+        _settings_error(path, f"is not a {SHEET_SCHEMA} document: not a JSON object")
+    if "schema" not in document:
+        _settings_error(path, f"is not a {SHEET_SCHEMA} document: schema is missing")
+    if document["schema"] != SHEET_SCHEMA:
+        _settings_error(
+            path,
+            f"is not a {SHEET_SCHEMA} document: schema is {_shown(document['schema'])}",
+        )
+    if "settings" not in document:
+        _settings_error(path, "settings: missing")
+    problems = []
+    checked = _check_shape(_SETTINGS, document["settings"], "settings", problems)
+    if problems:
+        _settings_error(path, "; ".join(problems))
+    view, cell, ground, ground_px = (
+        checked[name] for name in ("view", "cell", "ground_m", "ground_px")
+    )
+    return ReusedSettings(
+        view=view["preset"],
+        pitch=view["pitch_deg"],
+        directions=view["directions"],
+        start_angle=view["start_angle_deg"],
+        model_yaw=checked["model_yaw_deg"],
+        fps=checked["fps"],
+        supersample=checked["supersample"],
+        ppm=checked["pixels_per_meter"],
+        cell=(cell["width"], cell["height"]),
+        ground=(ground["x"], ground["y"], ground["z"]),
+        ground_px=(ground_px["x"], ground_px["y"]),
+        root_motion=checked["root_motion"],
+    )
+
+
+def apply_settings(options: Options, reused: ReusedSettings) -> Options:
+    """Merge `reused` into `options`; an explicit option wins over its
+    reused value.
+
+    An explicit `--view` resolves the view exactly as without reuse.
+    Otherwise the reused view stays, and an explicit `--pitch`,
+    `--directions` or `--start-angle` replaces its value and makes the preset
+    `custom`. Clip selection, `--once` and `explicit` stay as parsed.
+    """
+    explicit = options.explicit
+    names = [field.name for field in fields(ReusedSettings)]
+    if "view" in explicit:
+        names = [name for name in names if name not in _VIEW_FIELDS]
+    values = {name: getattr(reused, name) for name in names if name not in explicit}
+    if "view" not in explicit and explicit & set(_VIEW_FIELDS):
+        values["view"] = CUSTOM_VIEW
+    return replace(options, **values)
+
+
 class _Parser(argparse.ArgumentParser):
     def error(self, message):
         self.print_usage(sys.stderr)
@@ -215,12 +338,18 @@ def _positive(text):
     return value
 
 
+_pitch = _from_to(_number, 0, 90)
+_directions = _from_to(_integer, 1, 64)
+_supersample = _from_to(_integer, 1, 16)
+_cell_side = _from_to(_integer, 1, 4096)
+
+
 def _cell(text):
     parts = text.split("x")
     try:
         if len(parts) != 2:
             raise argparse.ArgumentTypeError(text)
-        width, height = (_from_to(_integer, 1, 4096)(part) for part in parts)
+        width, height = (_cell_side(part) for part in parts)
     except argparse.ArgumentTypeError:
         raise argparse.ArgumentTypeError(
             f"expected WxH, two integers each from 1 to 4096, got {text!r}"
@@ -322,14 +451,14 @@ def _build_parser():
     single(
         "--pitch",
         "DEG",
-        _from_to(_number, 0, 90),
+        _pitch,
         None,
         "camera pitch, 0 to 90 (default: from the view)",
     )
     single(
         "--directions",
         "N",
-        _from_to(_integer, 1, 64),
+        _directions,
         None,
         "direction count, 1 to 64 (default: from the view)",
     )
@@ -399,7 +528,7 @@ def _build_parser():
     single(
         "--supersample",
         "N",
-        _from_to(_integer, 1, 16),
+        _supersample,
         8,
         "capture resolution multiplier, 1 to 16 (default: 8)",
     )
@@ -492,3 +621,120 @@ def _prepare(parser, argv, value_options, flags):
                     + (f": {shown}" if shown else "")
                 )
     return prepared
+
+
+# Reading reused settings
+
+
+class _DuplicateKey(ValueError):
+    pass
+
+
+def _unique_keys(pairs):
+    document = {}
+    for key, value in pairs:
+        if key in document:
+            raise _DuplicateKey(f"repeats the key {key!r}")
+        document[key] = value
+    return document
+
+
+def _no_constant(name):
+    raise ValueError(f"{name} is not a JSON value")
+
+
+def _settings_error(path, problem):
+    _build_parser()[0].error(f"--settings-from {str(path)!r}: {problem}")
+
+
+def _shown(value):
+    """`value` as JSON, cut short when long."""
+    text = json.dumps(value, ensure_ascii=False)
+    return text if len(text) <= 60 else text[:57] + "..."
+
+
+def _reused(convert):
+    """Check a reused JSON number with its option's converter: the number's
+    shortest text must be a value the option would accept."""
+
+    def check(value):
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise argparse.ArgumentTypeError(f"expected a number, got {_shown(value)}")
+        return convert(repr(value))
+
+    return check
+
+
+def _whole_number(text):
+    value = _whole(text)
+    if value is None:
+        raise argparse.ArgumentTypeError(
+            f"expected a whole number 0 or greater, got {text!r}"
+        )
+    return value
+
+
+def _one_of(*choices):
+    def check(value):
+        if not isinstance(value, str) or value not in choices:
+            expected = " or ".join(map(repr, choices))
+            raise argparse.ArgumentTypeError(
+                f"expected {expected}, got {_shown(value)}"
+            )
+        return value
+
+    return check
+
+
+# The sheet's `settings` object, member by member. `clips` is recognized but
+# never read: clip selection comes from the current command line.
+_IGNORED = None
+_SETTINGS = {
+    "view": {
+        "preset": _one_of(*PRESETS, CUSTOM_VIEW),
+        "projection": _one_of("orthographic"),
+        "pitch_deg": _reused(_pitch),
+        "directions": _reused(_directions),
+        "start_angle_deg": _reused(_number),
+    },
+    "model_yaw_deg": _reused(_number),
+    "fps": _reused(_positive),
+    "supersample": _reused(_supersample),
+    "pixels_per_meter": _reused(_positive),
+    "cell": {"width": _reused(_cell_side), "height": _reused(_cell_side)},
+    "ground_m": {axis: _reused(_number) for axis in "xyz"},
+    "ground_px": {axis: _reused(_whole_number) for axis in "xy"},
+    "root_motion": _one_of(*ROOT_MOTION_MODES),
+    "clips": _IGNORED,
+}
+
+
+def _check_shape(shape, value, name, problems):
+    """Check `value` against `shape`, adding each problem under its field
+    path to `problems`, and return the converted values."""
+    if value is None:
+        problems.append(f"{name}: must be set, got null")
+        return None
+    if callable(shape):
+        try:
+            return shape(value)
+        except argparse.ArgumentTypeError as error:
+            problems.append(f"{name}: {error}")
+            return None
+    if not isinstance(value, dict):
+        problems.append(f"{name}: expected an object, got {_shown(value)}")
+        return None
+    checked = {}
+    for member, member_shape in shape.items():
+        if member_shape is _IGNORED:
+            continue
+        if member not in value:
+            problems.append(f"{name}.{member}: missing")
+            continue
+        checked[member] = _check_shape(
+            member_shape, value[member], f"{name}.{member}", problems
+        )
+    problems.extend(
+        f"{name}.{member}: unknown field" for member in value if member not in shape
+    )
+    return checked
