@@ -25,7 +25,11 @@ Early implementation. These parts exist as library code:
   capture phase;
 - measurement inside Blender, `moskophoros/capture/blender_script.py`, which
   reports each frame's bounds and height and each root's travel. Rendering
-  is not written yet.
+  is not written yet;
+- image operations, `moskophoros.imageops`, which load a captured PNG and
+  reduce a supersampled image by blocks, and the stylize and cleanup stages,
+  `moskophoros.stylize` and `moskophoros.cleanup`, which reduce captured
+  frames and pass them through.
 
 The `moskophoros` command is not available yet, and nothing renders. The goals
 and long-term direction are in [docs/vision.md](docs/vision.md); the concrete
