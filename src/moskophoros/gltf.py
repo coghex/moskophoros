@@ -7,6 +7,7 @@ Blender's importer.
 
 import json
 import math
+import re
 import struct
 from dataclasses import dataclass
 from pathlib import Path
@@ -259,6 +260,7 @@ class _Reader:
                 self.sampler_range(i, s, sampler, accessors)
                 for s, sampler in enumerate(samplers)
             ]
+            self.unsupported(i, name, samplers, animation)
             targeted, translated = self.targets(i, animation, len(samplers), node_count)
             roots = tuple(
                 Root(node, node_names[node])
@@ -269,6 +271,32 @@ class _Reader:
             t1 = max(high for _, high in ranges)
             clips.append(Clip(i, name, t0, t1, roots))
         return tuple(clips)
+
+    def unsupported(self, i, name, samplers, animation):
+        """Reject what Blender's importer cannot reproduce (owner decision
+        2026-10-02): CUBICSPLINE samplers, whose tangents it replaces with
+        its own, and pointers animating a mesh's morph weights, of which it
+        keeps only one animation per mesh."""
+        what = f"animation {i} ({name!r})"
+        for s, sampler in enumerate(samplers):
+            if (
+                isinstance(sampler, dict)
+                and sampler.get("interpolation") == "CUBICSPLINE"
+            ):
+                self.fail(
+                    f"{what} uses CUBICSPLINE interpolation in sampler {s}, which "
+                    "is not supported: Blender's importer does not keep its "
+                    "tangents. Export it with LINEAR or STEP interpolation"
+                )
+        channels = animation.get("channels")
+        for c, channel in enumerate(channels if isinstance(channels, list) else ()):
+            pointer = _pointer(channel)
+            if pointer is not None and _MESH_WEIGHTS.fullmatch(pointer):
+                self.fail(
+                    f"{what} animates a mesh's morph weights through "
+                    f"KHR_animation_pointer ({pointer}) in channel {c}, which is "
+                    "not supported: animate the node's weights instead"
+                )
 
     def sampler_range(self, animation, s, sampler, accessors):
         what = f"animation {animation}'s sampler {s}"
@@ -314,6 +342,24 @@ class _Reader:
             if path == "translation":
                 translated.add(node)
         return targeted, translated
+
+
+_MESH_WEIGHTS = re.compile(r"/meshes/\d+/weights")
+
+
+def _pointer(channel):
+    """A channel's KHR_animation_pointer pointer, or None."""
+    if not isinstance(channel, dict):
+        return None
+    target = channel.get("target")
+    extensions = target.get("extensions") if isinstance(target, dict) else None
+    extension = (
+        extensions.get("KHR_animation_pointer")
+        if isinstance(extensions, dict)
+        else None
+    )
+    pointer = extension.get("pointer") if isinstance(extension, dict) else None
+    return pointer if isinstance(pointer, str) else None
 
 
 def _finite(value):

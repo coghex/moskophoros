@@ -851,44 +851,6 @@ def test_weights_the_measurement_never_uses_do_not_matter(found, tmp_path):
     assert_close(boxes(result)["good"], [(0.0, 1.0 + t, 1.0, 0.0) for t in TIMES])
 
 
-def test_a_cubic_curve_is_checked_where_evaluated_not_by_its_handles(found, tmp_path):
-    # Weights 0, 8.5, 8.5 at 0, 1 and 2 s with zero tangents. Blender's
-    # imported handles pass 10, but the weights it evaluates stay within.
-    model = GlbWriter()
-    mesh = model.mesh(
-        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
-        targets=[[(0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 1.0, 0.0)]],
-        weights=[0.0],
-    )
-    face = model.node("face", mesh=mesh)
-    model.scene([face], default=True)
-    flat = (0.0,)
-    model.animation(
-        "rise",
-        [
-            (
-                face,
-                "weights",
-                [0, 1, 2],
-                [flat, (0.0,), flat, flat, (8.5,), flat, flat, (8.5,), flat],
-            )
-        ],
-        interpolation="CUBICSPLINE",
-    )
-    result, _ = measure(
-        found,
-        model.write(tmp_path, "cubic"),
-        tmp_path,
-        clip_names=["rise"],
-        once=["rise"],
-    )
-    rows = boxes(result)["rise"]
-    # Every sample measured, its top within 1 + 10, ending at 1 + 8.5.
-    assert len(rows) == 9
-    assert all(box[2] <= 11.0 for box in rows)
-    assert rows[-1] == pytest.approx((0.0, 1.0, 9.5, 0.0), abs=TOLERANCE)
-
-
 def test_gpu_instancing_counts_every_instance(found, tmp_path):
     # One triangle node drawn at x = 0 and x = 5: R = 6.
     model = GlbWriter()
@@ -897,35 +859,6 @@ def test_gpu_instancing_counts_every_instance(found, tmp_path):
     model.scene([shape], default=True)
     result, _ = measure(found, model.write(tmp_path, "instanced"), tmp_path)
     assert_close(boxes(result)["static"], [(0.0, 6.0, 1.0, 0.0)])
-
-
-def test_a_pointer_animation_of_a_mesh_s_weights(found, tmp_path):
-    # KHR_animation_pointer animates mesh 0's weight 0 -> 0.5 for both nodes
-    # using it; one also moves. U = 1 + 0.5·t on both, so the measured U is
-    # 1 + 0.5·t; R = 1 + 3 = 4 from the second node.
-    model = GlbWriter()
-    mesh = model.mesh(
-        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
-        targets=[[(0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 1.0, 0.0)]],
-        weights=[0.0],
-    )
-    first = model.node("first", mesh=mesh)
-    second = model.node("second", mesh=mesh, translation=(3.0, 0.0, 0.0))
-    model.scene([first, second], default=True)
-    clip = model.animation(
-        "swell", [(first, "translation", [0, 1], [(0, 0, 0), (0, 0, 0)])]
-    )
-    model.pointer_channel(clip, "/meshes/0/weights", [0, 1], [(0.0,), (0.5,)])
-    result, _ = measure(
-        found,
-        model.write(tmp_path, "pointer"),
-        tmp_path,
-        clip_names=["swell"],
-        once=["swell"],
-    )
-    assert_close(
-        boxes(result)["swell"], [(0.0, 4.0, 1.0 + 0.5 * t, 0.0) for t in [*TIMES, 1.0]]
-    )
 
 
 def test_a_clip_that_also_animates_a_camera(found, tmp_path):
@@ -947,12 +880,11 @@ def test_a_clip_that_also_animates_a_camera(found, tmp_path):
     assert_close(boxes(result)["pan"], [(0.0, 1.0 + t, 1.0, 0.0) for t in TIMES])
 
 
-@pytest.mark.parametrize(
-    "selected", [("first",), ("first", "second")], ids=["earlier alone", "both"]
-)
-def test_pointer_weight_clips_sharing_a_mesh(found, tmp_path, selected):
-    # Two clips animate mesh 0's weight through KHR_animation_pointer:
-    # `first` to 0.5, `second` to 0.25, so U = 1 + 0.5·t and 1 + 0.25·t.
+# Animation the input contract rejects (owner decision 2026-10-02)
+
+
+def cubic_model(tmp_path):
+    """A clip whose morph weight rises with CUBICSPLINE interpolation."""
     model = GlbWriter()
     mesh = model.mesh(
         [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
@@ -961,75 +893,63 @@ def test_pointer_weight_clips_sharing_a_mesh(found, tmp_path, selected):
     )
     face = model.node("face", mesh=mesh)
     model.scene([face], default=True)
-    for name, end in (("first", 0.5), ("second", 0.25)):
-        clip = model.animation(name, [(face, "translation", [0, 1], [(0, 0, 0)] * 2)])
-        model.pointer_channel(clip, "/meshes/0/weights", [0, 1], [(0.0,), (end,)])
-    result, _ = measure(
-        found, model.write(tmp_path, "clips"), tmp_path, clip_names=list(selected)
+    flat = (0.0,)
+    model.animation(
+        "rise",
+        [(face, "weights", [0, 1], [flat, (0.0,), (4.0,), (-4.0,), (0.0,), flat])],
+        interpolation="CUBICSPLINE",
     )
-    measured = boxes(result)
-    assert_close(measured["first"], [(0.0, 1.0, 1.0 + 0.5 * t, 0.0) for t in TIMES])
-    if "second" in selected:
-        assert_close(
-            measured["second"], [(0.0, 1.0, 1.0 + 0.25 * t, 0.0) for t in TIMES]
-        )
+    return model.write(tmp_path, "cubic")
 
 
-def pointer_and_node_model(tmp_path, stem, *, pointer_first, node_default=None):
-    """A clip animating mesh 0's weight to 0.5 by pointer and, unless the
-    node has a default, the node's own weight to 0.25."""
+def mesh_pointer_model(tmp_path):
+    """A clip animating mesh 0's morph weight through KHR_animation_pointer."""
     model = GlbWriter()
     mesh = model.mesh(
         [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
         targets=[[(0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 1.0, 0.0)]],
         weights=[0.0],
     )
-    face = model.node("face", mesh=mesh, weights=node_default)
+    face = model.node("face", mesh=mesh)
     model.scene([face], default=True)
-    if node_default is None:
-        clip = model.animation("clip", [(face, "weights", [0, 1], [(0.0,), (0.25,)])])
-    else:
-        clip = model.animation("clip", [(face, "translation", [0, 1], [(0, 0, 0)] * 2)])
+    clip = model.animation("swell", [(face, "translation", [0, 1], [(0, 0, 0)] * 2)])
     model.pointer_channel(clip, "/meshes/0/weights", [0, 1], [(0.0,), (0.5,)])
-    if pointer_first:
-        model.document["animations"][clip]["channels"].reverse()
-    return model, model.write(tmp_path, stem)
+    return model.write(tmp_path, "pointer")
 
 
 @pytest.mark.parametrize(
-    "pointer_first", [False, True], ids=["node first", "pointer first"]
+    ("build", "clip", "message"),
+    [
+        (cubic_model, "rise", "CUBICSPLINE"),
+        (mesh_pointer_model, "swell", "/meshes/0/weights"),
+    ],
+    ids=["cubic spline", "mesh weight pointer"],
 )
-def test_a_node_s_own_weight_animation_overrides_its_mesh_s(
-    found, tmp_path, pointer_first
+def test_the_script_refuses_what_the_input_contract_rejects(
+    found, tmp_path, build, clip, message
 ):
-    # The node's weight wins: U = 1 + 0.25·t, in either channel order.
-    _, path = pointer_and_node_model(tmp_path, "order", pointer_first=pointer_first)
-    result, _ = measure(found, path, tmp_path, clip_names=["clip"], once=["clip"])
-    assert_close(
-        boxes(result)["clip"], [(0.0, 1.0, 1.0 + 0.25 * t, 0.0) for t in [*TIMES, 1.0]]
+    # The reader rejects these first; a job that skipped it is refused, not
+    # measured wrongly.
+    path = build(tmp_path)
+    with pytest.raises(gltf.InputError, match=f"{clip!r}.*{message}"):
+        gltf.read_glb(path)
+    clips = (gltf.SelectedClip(gltf.Clip(0, clip, 0.0, 1.0, ()), one_shot=False),)
+    settings = backend.Settings(
+        "custom", 0.0, 1, 0.0, 0.0, 4.0, 1, None, None, (0, 0, 0), None, "error"
     )
-
-
-def test_a_node_s_default_weights_override_its_mesh_s_animation(found, tmp_path):
-    # The node's default 0.75 wins over the mesh's animated weight: U = 1.75.
-    _, path = pointer_and_node_model(
-        tmp_path, "default", pointer_first=False, node_default=[0.75]
+    frames = sampling.frames(path.stem, clips, views.View(0.0, 1, 0.0), 4.0)
+    workspace = tmp_path / "work"
+    workspace.mkdir()
+    job = backend.build_job(
+        "measure",
+        backend.Source(
+            path.resolve(), hashlib.sha256(path.read_bytes()).hexdigest(), 0
+        ),
+        path.stem,
+        settings,
+        clips,
+        frames,
+        str(workspace / "measure"),
     )
-    result, _ = measure(found, path, tmp_path)
-    assert_close(boxes(result)["clip"], [(0.0, 1.0, 1.75, 0.0)] * 4)
-
-
-def test_a_clip_whose_only_channel_is_overridden_moves_nothing(found, tmp_path):
-    # With the translation channel removed, the clip only animates the
-    # mesh's weight, which the node's default overrides: U = 1.75 throughout.
-    model, _ = pointer_and_node_model(
-        tmp_path, "unused", pointer_first=True, node_default=[0.75]
-    )
-    animation = model.document["animations"][0]
-    animation["channels"] = [
-        channel
-        for channel in animation["channels"]
-        if channel["target"].get("path") == "pointer"
-    ]
-    result, _ = measure(found, model.write(tmp_path, "inert"), tmp_path)
-    assert_close(boxes(result)["clip"], [(0.0, 1.0, 1.75, 0.0)] * 4)
+    with pytest.raises(backend.BackendError, match="not supported"):
+        blender.run_phase(found, workspace, job)

@@ -607,3 +607,64 @@ def test_unknown_clip_names_are_input_errors(tmp_path, clips, once, missing):
         select_clips(subject, clips, once)
     assert raised.value.exit_code == 3
     assert str(raised.value) == f"{path}: no clip is named {missing!r}"
+
+
+# Animation Blender's importer cannot reproduce (owner decision 2026-10-02)
+
+
+def _cubic(model, node):
+    flat = (0.0, 0.0, 0.0)
+    model.animation(
+        "sway",
+        [
+            (
+                node,
+                "translation",
+                [0, 1],
+                [flat, flat, flat, flat, (1.0, 0.0, 0.0), flat],
+            )
+        ],
+        interpolation="CUBICSPLINE",
+    )
+
+
+def _mesh_pointer(model, node):
+    clip = model.animation("swell", [(node, "translation", [0, 1], [(0, 0, 0)] * 2)])
+    model.pointer_channel(clip, "/meshes/0/weights", [0, 1], [(0.0,), (0.5,)])
+
+
+@pytest.mark.parametrize(
+    ("add", "message"),
+    [
+        (_cubic, "animation 0 ('sway') uses CUBICSPLINE interpolation in sampler 0"),
+        (
+            _mesh_pointer,
+            "animation 0 ('swell') animates a mesh's morph weights through "
+            "KHR_animation_pointer (/meshes/0/weights) in channel 1",
+        ),
+    ],
+    ids=["cubic spline", "mesh weight pointer"],
+)
+def test_unsupported_animation_is_an_input_error(tmp_path, add, message):
+    model = GlbWriter()
+    node = model.node("box", mesh=True)
+    model.scene([node])
+    add(model, node)
+    path = model.write(tmp_path)
+    with pytest.raises(InputError) as raised:
+        read_glb(path)
+    assert raised.value.exit_code == 3
+    assert raised.value.path == path
+    assert message in raised.value.problem
+
+
+def test_pointers_to_other_targets_are_accepted(tmp_path):
+    # A node's own weights, and a camera, may be animated through pointers.
+    model = GlbWriter()
+    node = model.node("box", mesh=True)
+    model.scene([node])
+    clip = model.animation("pan", [(node, "translation", [0, 1], [(0, 0, 0)] * 2)])
+    model.pointer_channel(clip, "/nodes/0/weights", [0, 1], [(0.0,), (0.5,)])
+    model.pointer_channel(clip, "/cameras/0/perspective/yfov", [0, 1], [(0.8,), (1.0,)])
+    (clip,) = read_glb(model.write(tmp_path)).clips
+    assert clip.name == "pan"
