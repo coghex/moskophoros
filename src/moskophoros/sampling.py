@@ -4,10 +4,15 @@ A frame's address (`subject`, `variant`, `clip`, `direction`, `time_s`) is
 its identity in every stage. `frames` enumerates a request in sheet order:
 clips in selection order, then directions in index order, then samples in
 time order. Everything here is pure.
+
+After capture, stages pass `ImageFrame`s: an address, its pixels and the
+metadata attached to it.
 """
 
 import math
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import Any
 
 from moskophoros import views
 
@@ -42,6 +47,21 @@ class Frame:
     address: FrameAddress
     index: int
     angle: float
+
+
+@dataclass(frozen=True, eq=False)
+class ImageFrame:
+    """A frame's image as it passes between the stages after capture.
+
+    `pixels` is an image as `imageops` defines it: a `uint8` array of shape
+    `(height, width, 4)`, straight-alpha RGBA. `metadata` is whatever the
+    caller attaches, such as the sheet fingerprint; every stage passes it on
+    unchanged. A stage never changes a frame's pixels in place.
+    """
+
+    address: FrameAddress
+    pixels: Any
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 def sample(selected, fps):
