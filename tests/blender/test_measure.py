@@ -945,3 +945,31 @@ def test_a_clip_that_also_animates_a_camera(found, tmp_path):
     model.pointer_channel(clip, "/cameras/0/perspective/yfov", [0, 1], [(0.8,), (1.0,)])
     result, _ = measure(found, model.write(tmp_path, "camera"), tmp_path)
     assert_close(boxes(result)["pan"], [(0.0, 1.0 + t, 1.0, 0.0) for t in TIMES])
+
+
+@pytest.mark.parametrize(
+    "selected", [("first",), ("first", "second")], ids=["earlier alone", "both"]
+)
+def test_pointer_weight_clips_sharing_a_mesh(found, tmp_path, selected):
+    # Two clips animate mesh 0's weight through KHR_animation_pointer:
+    # `first` to 0.5, `second` to 0.25, so U = 1 + 0.5·t and 1 + 0.25·t.
+    model = GlbWriter()
+    mesh = model.mesh(
+        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+        targets=[[(0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 1.0, 0.0)]],
+        weights=[0.0],
+    )
+    face = model.node("face", mesh=mesh)
+    model.scene([face], default=True)
+    for name, end in (("first", 0.5), ("second", 0.25)):
+        clip = model.animation(name, [(face, "translation", [0, 1], [(0, 0, 0)] * 2)])
+        model.pointer_channel(clip, "/meshes/0/weights", [0, 1], [(0.0,), (end,)])
+    result, _ = measure(
+        found, model.write(tmp_path, "clips"), tmp_path, clip_names=list(selected)
+    )
+    measured = boxes(result)
+    assert_close(measured["first"], [(0.0, 1.0, 1.0 + 0.5 * t, 0.0) for t in TIMES])
+    if "second" in selected:
+        assert_close(
+            measured["second"], [(0.0, 1.0, 1.0 + 0.25 * t, 0.0) for t in TIMES]
+        )

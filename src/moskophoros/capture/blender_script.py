@@ -372,10 +372,10 @@ def private_copy(document, rest, source, scene):
         node["name"] = NODE_NAME.format(index)
     meshes = document.get("meshes", [])
     originals = list(meshes)
-    copies = {}
+    users = {}
     for index, node in enumerate(nodes):
         if "mesh" in node:
-            copies.setdefault(node["mesh"], []).append(len(meshes))
+            users.setdefault(node["mesh"], []).append(index)
             mesh = json.loads(json.dumps(originals[node["mesh"]]))
             mesh["name"] = MESH_NAME.format(node["mesh"], index)
             targets = max(
@@ -398,8 +398,10 @@ def private_copy(document, rest, source, scene):
     animations = document.get("animations") or []
     for index, animation in enumerate(animations):
         animation["name"] = ANIMATION_NAME.format(index)
-        # A KHR_animation_pointer channel animating a mesh's weights now
-        # animates each node's copy of that mesh.
+        # A KHR_animation_pointer channel animating a mesh's weights becomes
+        # an ordinary weights channel of each node using that mesh. The
+        # importer keeps only one mesh-level weight animation per mesh, and
+        # every node now has its own copy anyway.
         channels = []
         for channel in animation.get("channels", []):
             pointer = (
@@ -411,15 +413,16 @@ def private_copy(document, rest, source, scene):
             match = (
                 _MESH_WEIGHTS.fullmatch(pointer) if isinstance(pointer, str) else None
             )
-            if match is None or int(match[1]) not in copies:
+            if match is None or int(match[1]) not in users:
                 channels.append(channel)
                 continue
-            for copy in copies[int(match[1])]:
-                duplicate = json.loads(json.dumps(channel))
-                duplicate["target"]["extensions"]["KHR_animation_pointer"][
-                    "pointer"
-                ] = f"/meshes/{copy}/weights"
-                channels.append(duplicate)
+            for node in users[int(match[1])]:
+                channels.append(
+                    {
+                        "sampler": channel["sampler"],
+                        "target": {"node": node, "path": "weights"},
+                    }
+                )
         if "channels" in animation:
             animation["channels"] = channels
     if animations:
