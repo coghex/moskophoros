@@ -303,6 +303,22 @@ def test_a_delay_longer_than_gif_allows_is_a_usage_error(seconds, one_shot):
     assert "655350 ms" in message
 
 
+def test_a_frame_too_long_for_a_float_is_a_usage_error():
+    # At the accepted fps 1e-309, a static frame's 1/fps overflows to infinity.
+    with pytest.raises(export.UsageError) as raised:
+        _previews(
+            _settings(1, (1, 1), fps=1e-309),
+            (SelectedClip(Clip(None, "static", 0.0, 0.0, ()), one_shot=True),),
+            lambda *_: _solid((0, 0, 0, 255), (1, 1)),
+        )
+    assert raised.value.exit_code == 2
+    message = str(raised.value)
+    assert "'static'" in message
+    assert "inf ms" in message
+    assert "655350 ms" in message
+    assert export.preview_delays_ms(float("inf"), 2, True) == [float("inf")] * 2
+
+
 # Wrong frames
 
 

@@ -277,9 +277,10 @@ def previews(frames, *, subject, settings, selected_clips):
         delays = preview_delays_ms(
             timing.frame_duration, timing.frame_count, selected.one_shot
         )
-        if max(delays) > MAX_PREVIEW_DELAY_MS:
+        longest = max(delays)
+        if longest > MAX_PREVIEW_DELAY_MS:
             raise UsageError(
-                f"a frame of clip {name!r}'s preview would last {max(delays)} ms, "
+                f"a frame of clip {name!r}'s preview would last {longest} ms, "
                 f"over GIF's limit of {MAX_PREVIEW_DELAY_MS} ms"
             )
         plans.append((name, timing.times, delays))
@@ -329,10 +330,14 @@ def preview_delays_ms(frame_duration_s, frame_count, one_shot):
     """Each GIF frame's delay in milliseconds, a multiple of 10.
 
     The frame duration is rounded to the nearest 10 ms, halves up, and is at
-    least 20 ms; a one-shot clip's last frame lasts 500 ms longer.
+    least 20 ms; a one-shot clip's last frame lasts 500 ms longer. A duration
+    too long for a float, such as `1/fps` at a tiny fps, gives `math.inf`.
     """
-    centiseconds = math.floor(Fraction(frame_duration_s) * 100 + Fraction(1, 2))
-    delay = max(MIN_PREVIEW_DELAY_MS, 10 * centiseconds)
+    if math.isinf(frame_duration_s):
+        delay = math.inf
+    else:
+        centiseconds = math.floor(Fraction(frame_duration_s) * 100 + Fraction(1, 2))
+        delay = max(MIN_PREVIEW_DELAY_MS, 10 * centiseconds)
     delays = [delay] * frame_count
     if one_shot:
         delays[-1] += ONE_SHOT_HOLD_MS
