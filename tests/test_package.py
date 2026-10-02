@@ -5,6 +5,7 @@ import moskophoros
 import moskophoros.capture
 import moskophoros.cleanup
 import moskophoros.cli
+import moskophoros.export
 import moskophoros.fit
 import moskophoros.gltf
 import moskophoros.imageops
@@ -24,6 +25,7 @@ def test_the_package_namespace_holds_only_its_submodules():
         "capture",
         "cleanup",
         "cli",
+        "export",
         "fit",
         "gltf",
         "imageops",
