@@ -297,6 +297,66 @@ def test_skinned_geometry_between_keyframes_at_fractional_frames(found, tmp_path
         [box for _, _, box, _ in rows],
         [(0.0, 0.5 + 2 * (t - 0.1), 0.5, 0.0) for t in times],
     )
+    # J1 moves only in x, so the skinned height stays 0.5 - 0.
+    assert [height for _, _, _, height in rows] == pytest.approx(
+        [0.5] * 4, abs=TOLERANCE
+    )
+
+
+def test_skinned_height_is_measured_at_the_evaluated_pose(found, tmp_path):
+    # J1 rises from y = 0.5 to 1.5; the vertex it carries rises with it, so
+    # the evaluated height is 0.5 + t, while the rest pose's is 0.5.
+    model = GlbWriter()
+    j1 = model.node(translation=(0.0, 0.5, 0.0))
+    j0 = model.node(children=[j1])
+    skin = model.skin(
+        [j0, j1],
+        [
+            (1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1),
+            (1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -0.5, 0, 1),
+        ],
+    )
+    mesh = model.mesh(
+        [(0.0, 0.0, 0.0), (0.25, 0.0, 0.0), (0.5, 0.5, 0.0)],
+        joints=[(0, 0, 0, 0), (0, 0, 0, 0), (1, 0, 0, 0)],
+        skin_weights=[(1, 0, 0, 0)] * 3,
+    )
+    model.scene([j0, model.node(mesh=mesh, skin=skin)], default=True)
+    model.animation(
+        "reach", [(j1, "translation", [0, 1], [(0.0, 0.5, 0), (0.0, 1.5, 0)])]
+    )
+    result, _ = measure(found, model.write(tmp_path, "reach"), tmp_path)
+    rows = by_clip(result)["reach"]
+    assert_close(
+        [box for _, _, box, _ in rows], [(0.0, 0.5, 0.5 + t, 0.0) for t in TIMES]
+    )
+    assert [height for _, _, _, height in rows] == pytest.approx(
+        [0.5 + t for t in TIMES], abs=TOLERANCE
+    )
+
+
+@pytest.mark.parametrize("rise", [2.0, -2.0], ids=["up", "down"])
+def test_vertical_translation_moves_the_subject_but_keeps_its_height(
+    found, tmp_path, rise
+):
+    # The unit triangle spans y = 0..1 and moves by rise·t: U = 1 + rise·t
+    # and D = −rise·t, each at least 0, while its height stays 1.
+    model = GlbWriter()
+    still = model.node("still", mesh=True)
+    model.scene([still], default=True)
+    model.animation("bob", [(still, "translation", [0, 1], [(0, 0, 0), (0, rise, 0)])])
+    result, _ = measure(found, model.write(tmp_path, "bob"), tmp_path)
+    rows = by_clip(result)["bob"]
+    assert_close(
+        [box for _, _, box, _ in rows],
+        [(0.0, 1.0, max(0.0, 1 + rise * t), max(0.0, -rise * t)) for t in TIMES],
+    )
+    assert [height for _, _, _, height in rows] == pytest.approx(
+        [1.0] * 4, abs=TOLERANCE
+    )
+    # It is a root that only moves vertically: no travel.
+    ((root),) = result.roots
+    assert root.travel_m == pytest.approx(0.0, abs=TOLERANCE)
 
 
 def test_a_one_shot_clip_ends_at_its_final_pose(found, tmp_path):
