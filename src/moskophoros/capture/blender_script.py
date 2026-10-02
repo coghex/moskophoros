@@ -9,16 +9,18 @@ contract, §Clips and sampling, §Root motion, §Scale and ground point and
 Slice 1 implements measure mode; a render job is refused as unsupported.
 
 Identity mapping: the script imports a private copy of the source in which
-every node is renamed `moskophoros.node.<index>`, every mesh
-`moskophoros.mesh.<index>.data` and every animation
-`moskophoros.animation.<index>`. Skins, cameras, lights and scenes are renamed
+every node is renamed `moskophoros.node.<index>` and every animation
+`moskophoros.animation.<index>`. Every mesh node gets its own copy of its
+mesh, named `moskophoros.mesh.<mesh>.node.<node>.data`, whose morph targets
+are named `moskophoros.target.<index>`. Skins, cameras, lights and scenes are renamed
 into namespaces of their own, so no name from the file reaches Blender and
 nothing the importer creates can take a node's name. Blender names objects
-and bones after nodes, mesh data after meshes and
+and bones after nodes, mesh data after meshes, shape keys after targets and
 actions after animations, so original indices map exactly, whatever the
 original names, and an index with no imported counterpart fails by name. The
-subject is found by mesh data, because Blender moves some meshes, such as a
-skinned mesh with animated morph weights, into an object of their own.
+subject is found by mesh data, which names its node, because Blender moves
+some meshes, such as a skinned mesh with animated morph weights, into an
+object of their own.
 
 Static state: the importer makes the first animation active, and Blender
 evaluates it, so its channels would no longer hold the file's static values.
@@ -49,9 +51,11 @@ NODE_NAME = "moskophoros.node.{}"
 ANIMATION_NAME = "moskophoros.animation.{}"
 # Not ending in digits: Blender would read those as its own ".001" suffix
 # when it duplicates mesh data.
-MESH_NAME = "moskophoros.mesh.{}.data"
+MESH_NAME = "moskophoros.mesh.{}.node.{}.data"
+TARGET_NAME = "moskophoros.target.{}"
 PLACEHOLDER = "moskophoros.placeholder"
-_MESH_DATA = re.compile(r"moskophoros\.mesh\.(\d+)\.data(?:\.\d+)?")
+_MESH_DATA = re.compile(r"moskophoros\.mesh\.\d+\.node\.(\d+)\.data(?:\.\d+)?")
+_TARGET_PATH = re.compile(r'key_blocks\["moskophoros\.target\.(\d+)"\]\.value')
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _GLB_HEADER = struct.Struct("<4sII")
@@ -365,8 +369,21 @@ def private_copy(document, rest, source, scene):
     nodes = document.setdefault("nodes", [])
     for index, node in enumerate(nodes):
         node["name"] = NODE_NAME.format(index)
-    for index, mesh in enumerate(document.get("meshes", [])):
-        mesh["name"] = MESH_NAME.format(index)
+    meshes = document.get("meshes", [])
+    originals = list(meshes)
+    for index, node in enumerate(nodes):
+        if "mesh" in node:
+            mesh = json.loads(json.dumps(originals[node["mesh"]]))
+            mesh["name"] = MESH_NAME.format(node["mesh"], index)
+            targets = max(
+                (len(primitive.get("targets", [])) for primitive in mesh["primitives"]),
+                default=0,
+            )
+            mesh["extras"] = {
+                "targetNames": [TARGET_NAME.format(i) for i in range(targets)]
+            }
+            meshes.append(mesh)
+            node["mesh"] = len(meshes) - 1
     # The importer names armatures after skins, objects after cameras and
     # lights, and collections after scenes.
     for key, kind in (("skins", "skin"), ("cameras", "camera"), ("scenes", "scene")):
@@ -466,46 +483,60 @@ def _restore(item, state):
 WEIGHT_LIMIT = 10.0
 
 
-def widen_weight_ranges(document):
-    """Let every morph weight reach any value Blender can hold.
-
-    The importer sets each shape key's slider range from the first key of
-    its animation only, and Blender clamps evaluated values to that range.
-    A weight beyond ±10, which Blender cannot hold, fails.
-    """
-    for node in document.get("nodes", []):
-        weights = node.get("weights")
-        if weights is None and "mesh" in node:
-            weights = document["meshes"][node["mesh"]].get("weights")
-        for weight in weights or ():
-            if abs(weight) > WEIGHT_LIMIT:
-                raise ScriptError(
-                    f"a default morph weight is {weight!r}, beyond Blender's "
-                    f"±{WEIGHT_LIMIT:g}"
-                )
-    for action in bpy.data.actions:
-        for layer in action.layers:
-            for strip in layer.strips:
-                for channelbag in strip.channelbags:
-                    for curve in channelbag.fcurves:
-                        if not curve.data_path.startswith("key_blocks["):
-                            continue
-                        for point in curve.keyframe_points:
-                            for value in (
-                                point.co[1],
-                                point.handle_left[1],
-                                point.handle_right[1],
-                            ):
-                                if abs(value) > WEIGHT_LIMIT:
-                                    raise ScriptError(
-                                        f"action {action.name!r} drives a morph "
-                                        f"weight to {value!r}, beyond Blender's "
-                                        f"±{WEIGHT_LIMIT:g}"
-                                    )
+def widen_weight_ranges():
+    """Let every morph weight reach any value Blender can hold. The importer
+    sets each shape key's range from the first key of its animation only,
+    and Blender clamps evaluated values to that range."""
     for key in bpy.data.shape_keys:
         for block in key.key_blocks[1:]:
             block.slider_min = -WEIGHT_LIMIT
             block.slider_max = WEIGHT_LIMIT
+
+
+def check_weights(objects, document, clip, times, fps):
+    """Fail if a weight the clip uses is beyond what Blender can hold.
+
+    A weight the clip animates is checked where it is evaluated, at each
+    sample; one it leaves alone keeps its node's default from the file.
+    """
+    nodes = document.get("nodes", [])
+    for obj in objects:
+        key = obj.data.shape_keys
+        if key is None:
+            continue
+        node = nodes[int(_MESH_DATA.fullmatch(obj.data.name)[1])]
+        mesh = document["meshes"][node["mesh"]]
+        defaults = node.get("weights") or mesh.get("weights") or []
+        curves = {}
+        animation = key.animation_data
+        if animation is not None and animation.action is not None:
+            for layer in animation.action.layers:
+                for strip in layer.strips:
+                    for channelbag in strip.channelbags:
+                        if channelbag.slot != animation.action_slot:
+                            continue
+                        for curve in channelbag.fcurves:
+                            match = _TARGET_PATH.fullmatch(curve.data_path)
+                            if match is not None:
+                                curves[int(match[1])] = curve
+        for block in key.key_blocks[1:]:
+            target = int(block.name.rsplit(".", 1)[1])
+            if target in curves:
+                for time_s in times:
+                    weight = curves[target].evaluate(time_s * fps)
+                    if abs(weight) > WEIGHT_LIMIT:
+                        raise ScriptError(
+                            f"clip {clip['name']!r} drives morph target {target} to "
+                            f"{weight!r} at {time_s!r} s, beyond Blender's "
+                            f"±{WEIGHT_LIMIT:g}"
+                        )
+            else:
+                weight = defaults[target] if target < len(defaults) else 0.0
+                if abs(weight) > WEIGHT_LIMIT:
+                    raise ScriptError(
+                        f"morph target {target}'s default weight is {weight!r}, "
+                        f"beyond Blender's ±{WEIGHT_LIMIT:g}"
+                    )
 
 
 def record_statics():
@@ -586,35 +617,33 @@ def evaluate(scene, fps, time_s):
 
 
 def subject_objects(document, scene_index):
-    """The objects holding the selected scene's meshes: one per mesh node, or
-    per instance."""
+    """The objects holding the selected scene's mesh nodes: one per node, or
+    one per instance."""
     nodes = document.get("nodes", [])
     pending = list(document["scenes"][scene_index].get("nodes", []))
     expected = {}
     while pending:
-        node = nodes[pending.pop()]
+        index = pending.pop()
+        node = nodes[index]
         if "mesh" in node:
-            expected[node["mesh"]] = expected.get(node["mesh"], 0) + instances(
-                document, node
-            )
+            expected[index] = instances(document, node)
         pending.extend(node.get("children", []))
-    view_layer = bpy.context.view_layer
     found = {}
     objects = []
     for obj in sorted(bpy.data.objects, key=lambda obj: obj.name):
-        if obj.type != "MESH" or obj.name not in view_layer.objects:
+        if obj.type != "MESH":
             continue
         match = _MESH_DATA.fullmatch(obj.data.name)
-        if match is None:
+        if match is None or int(match[1]) not in expected:
             continue
-        mesh = int(match[1])
-        found[mesh] = found.get(mesh, 0) + 1
+        node = int(match[1])
+        found[node] = found.get(node, 0) + 1
         objects.append(obj)
-    for mesh in sorted(set(expected) | set(found)):
-        if expected.get(mesh, 0) != found.get(mesh, 0):
+    for node in sorted(expected):
+        if expected[node] != found.get(node, 0):
             raise ScriptError(
-                f"mesh {mesh} is used by {expected.get(mesh, 0)} node(s) of the "
-                f"scene but has {found.get(mesh, 0)} imported object(s)"
+                f"mesh node {node} should make {expected[node]} object(s), but "
+                f"{found.get(node, 0)} were imported"
             )
     return objects
 
@@ -755,6 +784,7 @@ def measure(job, document, statics):
                 angles.setdefault(address["time_s"], {})[address["direction"]] = frame[
                     "angle_deg"
                 ]
+        check_weights(objects, document, clip, sorted(angles), fps)
         for time_s in sorted(angles):
             points = vertices(objects, evaluate(scene, fps, time_s))
             heights = [y for _, y, _ in points]
@@ -798,7 +828,7 @@ def main(argv):
 
     with tempfile.TemporaryDirectory(prefix="moskophoros-") as directory:
         import_glb(private_copy(document, rest, source, scene_index), directory)
-        widen_weight_ranges(document)
+        widen_weight_ranges()
         frames, roots = measure(job, document, record_statics())
 
     result = {

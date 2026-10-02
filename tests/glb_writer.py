@@ -150,19 +150,21 @@ class GlbWriter:
             self.document["scene"] = index
         return index
 
-    def animation(self, name, channels):
+    def animation(self, name, channels, *, interpolation="LINEAR"):
         """Add an animation; `name=None` leaves it unnamed.
 
         Each channel is `(node, path, times, values)`, where `path` is
         `translation`, `rotation`, `scale` or `weights` and each value is a
         tuple: for `weights`, one weight per morph target. Each channel gets
-        its own linear sampler.
+        its own sampler with `interpolation`. For `CUBICSPLINE`, `values`
+        holds an in-tangent, a value and an out-tangent for each time.
         """
+        per_time = 3 if interpolation == "CUBICSPLINE" else 1
         samplers = []
         targets = []
         for node, path, times, values in channels:
-            if len(times) != len(values):
-                raise ValueError("a channel needs one value per time")
+            if len(values) != per_time * len(times):
+                raise ValueError(f"a channel needs {per_time} value(s) per time")
             rows = values
             if path == "weights":
                 rows = [(weight,) for row in values for weight in row]
@@ -170,7 +172,7 @@ class GlbWriter:
                 {
                     "input": self._accessor("SCALAR", [(t,) for t in times], True),
                     "output": self._accessor(_OUTPUT_TYPES[path], rows, False),
-                    "interpolation": "LINEAR",
+                    "interpolation": interpolation,
                 }
             )
             targets.append(

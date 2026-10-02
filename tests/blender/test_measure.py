@@ -801,9 +801,92 @@ def test_animated_morph_weights_beyond_0_to_1(found, tmp_path, end):
     )
 
 
-def test_a_morph_weight_beyond_blender_s_limit_fails(found, tmp_path):
-    with pytest.raises(backend.BackendError, match="beyond Blender's ±10"):
-        measure(found, morph_model(tmp_path, "far", 12.0), tmp_path)
+def test_a_sampled_morph_weight_beyond_blender_s_limit_fails(found, tmp_path):
+    # One-shot samples reach t = 1, where the weight is 12.
+    path = morph_model(tmp_path, "far", 12.0)
+    with pytest.raises(
+        backend.BackendError, match="to 12.0 at 1.0 s, beyond Blender's ±10"
+    ):
+        measure(found, path, tmp_path, clip_names=["move"], once=["move"])
+
+
+def test_a_weight_beyond_the_limit_between_samples_is_never_used(found, tmp_path):
+    # Looping samples stop at t = 0.75, where the weight is 9: the 12 at
+    # t = 1 is never evaluated.
+    result, _ = measure(found, morph_model(tmp_path, "near", 12.0), tmp_path)
+    assert_close(
+        boxes(result)["move"], [(0.0, 1.0, 1.0 + 12.0 * t, 0.0) for t in TIMES]
+    )
+
+
+def test_a_default_morph_weight_beyond_the_limit_fails(found, tmp_path):
+    model = GlbWriter()
+    mesh = model.mesh(
+        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+        targets=[[(0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 1.0, 0.0)]],
+    )
+    model.scene([model.node("face", mesh=mesh, weights=[12.0])], default=True)
+    with pytest.raises(backend.BackendError, match="default weight is 12.0"):
+        measure(found, model.write(tmp_path, "heavy"), tmp_path)
+
+
+def test_weights_the_measurement_never_uses_do_not_matter(found, tmp_path):
+    # An unselected clip drives the subject's weight to 12, and a node of
+    # another scene has a default weight of 12; neither is measured.
+    model = GlbWriter()
+    mesh = model.mesh(
+        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+        targets=[[(0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 1.0, 0.0)]],
+        weights=[0.0],
+    )
+    elsewhere = model.node("elsewhere", mesh=mesh, weights=[12.0])
+    model.scene([elsewhere])
+    face = model.node("face", mesh=mesh)
+    model.scene([face], default=True)
+    model.animation("good", [(face, "translation", [0, 1], [(0, 0, 0), (1, 0, 0)])])
+    model.animation("unused", [(face, "weights", [0, 1], [(0.0,), (12.0,)])])
+    result, _ = measure(
+        found, model.write(tmp_path, "unused"), tmp_path, clip_names=["good"]
+    )
+    assert_close(boxes(result)["good"], [(0.0, 1.0 + t, 1.0, 0.0) for t in TIMES])
+
+
+def test_a_cubic_curve_is_checked_where_evaluated_not_by_its_handles(found, tmp_path):
+    # Weights 0, 8.5, 8.5 at 0, 1 and 2 s with zero tangents. Blender's
+    # imported handles pass 10, but the weights it evaluates stay within.
+    model = GlbWriter()
+    mesh = model.mesh(
+        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+        targets=[[(0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 1.0, 0.0)]],
+        weights=[0.0],
+    )
+    face = model.node("face", mesh=mesh)
+    model.scene([face], default=True)
+    flat = (0.0,)
+    model.animation(
+        "rise",
+        [
+            (
+                face,
+                "weights",
+                [0, 1, 2],
+                [flat, (0.0,), flat, flat, (8.5,), flat, flat, (8.5,), flat],
+            )
+        ],
+        interpolation="CUBICSPLINE",
+    )
+    result, _ = measure(
+        found,
+        model.write(tmp_path, "cubic"),
+        tmp_path,
+        clip_names=["rise"],
+        once=["rise"],
+    )
+    rows = boxes(result)["rise"]
+    # Every sample measured, its top within 1 + 10, ending at 1 + 8.5.
+    assert len(rows) == 9
+    assert all(box[2] <= 11.0 for box in rows)
+    assert rows[-1] == pytest.approx((0.0, 1.0, 9.5, 0.0), abs=TOLERANCE)
 
 
 def test_gpu_instancing_counts_every_instance(found, tmp_path):
