@@ -908,15 +908,39 @@ def configure_render(scene, settings):
     for name in dir(render):
         if name.startswith("use_stamp_"):
             setattr(render, name, False)
-    scale = settings["supersample"]
-    render.resolution_x = settings["cell"]["width"] * scale
-    render.resolution_y = settings["cell"]["height"] * scale
+    width, height, padded_width, padded_height = frame_size(settings)
+    render.resolution_x = padded_width
+    render.resolution_y = padded_height
     render.resolution_percentage = 100
     render.pixel_aspect_x = 1.0
     render.pixel_aspect_y = 1.0
-    render.use_border = False
+    # Blender renders at least 4 pixels each way. A smaller image is the
+    # top-left corner of a padded frame, cropped by the render border; the
+    # fractions are exact, so the crop is exactly the requested size.
+    padded = (padded_width, padded_height) != (width, height)
+    render.use_border = padded
+    render.use_crop_to_border = padded
+    render.border_min_x = 0.0
+    render.border_max_x = width / padded_width
+    render.border_min_y = 1.0 - height / padded_height
+    render.border_max_y = 1.0
     render.use_compositing = False
     render.use_sequencer = False
+
+
+MIN_RESOLUTION = 4
+# The camera stands this many meters clear of the subject's bounds, with its
+# near plane halfway there, however far the subject reaches.
+CLEARANCE = 1.0
+
+
+def frame_size(settings):
+    """The supersampled image size, and the frame Blender renders it from:
+    at least MIN_RESOLUTION pixels each way."""
+    scale = settings["supersample"]
+    width = settings["cell"]["width"] * scale
+    height = settings["cell"]["height"] * scale
+    return width, height, max(width, MIN_RESOLUTION), max(height, MIN_RESOLUTION)
 
 
 def _sin_cos(degrees):
@@ -941,7 +965,7 @@ def _blender(vector):
     return (x, -z, y)
 
 
-def place_camera(camera, settings, rotation_deg, distance):
+def place_camera(camera, settings, rotation_deg, reach):
     """Put the orthographic camera where the ground point lands on pixel
     corner (gx·s, gy·s), as if the subject were turned by `rotation_deg`.
 
@@ -957,12 +981,15 @@ def place_camera(camera, settings, rotation_deg, distance):
     toward = _turn((0.0, sin_p, cos_p), sin_a, cos_a)
     right = _turn((1.0, 0.0, 0.0), sin_a, cos_a)
     up = _turn((0.0, cos_p, 0.0 - sin_p), sin_a, cos_a)
-    ppm = settings["pixels_per_meter"]
-    width, height = settings["cell"]["width"], settings["cell"]["height"]
-    gx, gy = settings["ground_px"]["x"], settings["ground_px"]["y"]
+    scale = settings["supersample"]
+    meters = 1.0 / (settings["pixels_per_meter"] * scale)  # per image pixel
+    _, _, width, height = frame_size(settings)
+    gx = settings["ground_px"]["x"] * scale
+    gy = settings["ground_px"]["y"] * scale
     ground = tuple(settings["ground_m"][axis] for axis in "xyz")
-    across = (width / 2 - gx) / ppm
-    down = (gy - height / 2) / ppm
+    distance = reach + CLEARANCE
+    across = (width / 2 - gx) * meters
+    down = (gy - height / 2) * meters
     center = tuple(
         ground[i] + right[i] * across + up[i] * down + toward[i] * distance
         for i in range(3)
@@ -978,11 +1005,11 @@ def place_camera(camera, settings, rotation_deg, distance):
     data = camera.data
     data.type = "ORTHO"
     data.sensor_fit = "HORIZONTAL"
-    data.ortho_scale = width / ppm
+    data.ortho_scale = width * meters
     data.shift_x = 0.0
     data.shift_y = 0.0
-    data.clip_start = distance * 1e-3
-    data.clip_end = distance * 2 + 1.0
+    data.clip_start = CLEARANCE / 2
+    data.clip_end = distance + reach + CLEARANCE
     data.dof.use_dof = False
 
 
@@ -1043,9 +1070,7 @@ def render_frames(job, document, statics):
         for ordinal, frame in requested:
             depsgraph = evaluate(scene, fps, frame["address"]["time_s"])
             rotation = (frame["angle_deg"] % 360 + yaw % 360) % 360
-            place_camera(
-                camera, settings, rotation, reach(objects, depsgraph, ground) + 1.0
-            )
+            place_camera(camera, settings, rotation, reach(objects, depsgraph, ground))
             relative = f"color/{ordinal:06d}.png"
             scene.render.filepath = os.path.join(job["output_dir"], relative)
             bpy.ops.render.render(write_still=True)

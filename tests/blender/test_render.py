@@ -430,3 +430,78 @@ def test_the_result_records_the_renderer_and_studio_light(found, tmp_path):
     phase = tmp_path / "work" / "render"
     listing = sorted(p.relative_to(phase).as_posix() for p in phase.rglob("*"))
     assert listing == ["color", "color/000000.png", "job.json", "result.json"]
+
+
+# Edge cases of the frame
+
+
+def marker_model(tmp_path, stem):
+    """A red cube 2.4 px wide at 10 px per meter, centred on the origin."""
+    model = GlbWriter()
+    mesh = model.mesh(cube((0.0, 0.0, 0.0), 0.12), material=model.material(RED))
+    model.scene([model.node("marker", mesh=mesh)], default=True)
+    return model.write(tmp_path, stem)
+
+
+@pytest.mark.parametrize(
+    ("cell", "supersample"),
+    [
+        ((1, 6), 1),
+        ((2, 6), 1),
+        ((3, 6), 1),
+        ((6, 1), 1),
+        ((6, 2), 1),
+        ((6, 3), 1),
+        ((1, 1), 2),
+    ],
+    ids=["1 wide", "2 wide", "3 wide", "1 tall", "2 tall", "3 tall", "1x1 at 2x"],
+)
+def test_images_smaller_than_blender_s_minimum(found, tmp_path, cell, supersample):
+    # Blender renders at least 4 pixels each way. The small image must be the
+    # top-left corner of an ordinary render of the same frame: same scale,
+    # same ground pixel.
+    path = marker_model(tmp_path, "marker")
+    small, _ = render(
+        found,
+        path,
+        tmp_path,
+        cell=cell,
+        ground_px=(1, 1),
+        supersample=supersample,
+        ppm=10.0,
+        workspace="small",
+    )
+    width, height = cell[0] * supersample, cell[1] * supersample
+    reference_cell = (max(cell[0], 4), max(cell[1], 4))
+    reference, _ = render(
+        found,
+        path,
+        tmp_path,
+        cell=reference_cell,
+        ground_px=(1, 1),
+        supersample=supersample,
+        ppm=10.0,
+        workspace="reference",
+    )
+    (image,) = images(small).values()
+    (whole,) = images(reference).values()
+    assert image.size == (width, height)
+    corner = whole.crop((0, 0, width, height))
+    pairs = zip(image.get_flattened_data(), corner.get_flattened_data(), strict=True)
+    for a, b in pairs:
+        assert all(abs(x - y) <= 2 for x, y in zip(a, b, strict=True)), (a, b)
+    assert any(pixel[3] for pixel in image.get_flattened_data())
+
+
+def test_a_subject_reaching_far_from_the_ground_point_is_not_clipped(found, tmp_path):
+    # Two cubes 2000 m apart along the view: both render where projected.
+    model = GlbWriter()
+    near = model.mesh(cube((-0.5, 0.0, 0.0), 0.08), material=model.material(RED))
+    far = model.mesh(cube((0.5, 0.0, 2000.0), 0.08), material=model.material(GREEN))
+    model.scene(
+        [model.node("near", mesh=near), model.node("far", mesh=far)], default=True
+    )
+    result, _ = render(found, model.write(tmp_path, "deep"), tmp_path)
+    (image,) = images(result).values()
+    assert centroid(image, reddish) == pytest.approx((10.0, 20.0), abs=TOLERANCE_PX)
+    assert centroid(image, greenish) == pytest.approx((30.0, 20.0), abs=TOLERANCE_PX)
