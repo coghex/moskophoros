@@ -118,6 +118,16 @@ class GlbWriter:
         meshes.append(mesh)
         return len(meshes) - 1
 
+    def instances(self, node, translations):
+        """Draw `node`'s mesh once per translation, with EXT_mesh_gpu_instancing."""
+        accessor = self._accessor("VEC3", translations, False)
+        self.document["nodes"][node]["extensions"] = {
+            "EXT_mesh_gpu_instancing": {"attributes": {"TRANSLATION": accessor}}
+        }
+        used = self.document.setdefault("extensionsUsed", [])
+        if "EXT_mesh_gpu_instancing" not in used:
+            used.append("EXT_mesh_gpu_instancing")
+
     def skin(self, joints, inverse_bind_matrices):
         """Add a skin of `joints`, with one column-major 4×4 inverse bind
         matrix each, and return its index."""

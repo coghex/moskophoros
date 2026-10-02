@@ -462,6 +462,52 @@ def _restore(item, state):
         setattr(item, key, state[key])
 
 
+# Blender's limits for a shape key's value.
+WEIGHT_LIMIT = 10.0
+
+
+def widen_weight_ranges(document):
+    """Let every morph weight reach any value Blender can hold.
+
+    The importer sets each shape key's slider range from the first key of
+    its animation only, and Blender clamps evaluated values to that range.
+    A weight beyond ±10, which Blender cannot hold, fails.
+    """
+    for node in document.get("nodes", []):
+        weights = node.get("weights")
+        if weights is None and "mesh" in node:
+            weights = document["meshes"][node["mesh"]].get("weights")
+        for weight in weights or ():
+            if abs(weight) > WEIGHT_LIMIT:
+                raise ScriptError(
+                    f"a default morph weight is {weight!r}, beyond Blender's "
+                    f"±{WEIGHT_LIMIT:g}"
+                )
+    for action in bpy.data.actions:
+        for layer in action.layers:
+            for strip in layer.strips:
+                for channelbag in strip.channelbags:
+                    for curve in channelbag.fcurves:
+                        if not curve.data_path.startswith("key_blocks["):
+                            continue
+                        for point in curve.keyframe_points:
+                            for value in (
+                                point.co[1],
+                                point.handle_left[1],
+                                point.handle_right[1],
+                            ):
+                                if abs(value) > WEIGHT_LIMIT:
+                                    raise ScriptError(
+                                        f"action {action.name!r} drives a morph "
+                                        f"weight to {value!r}, beyond Blender's "
+                                        f"±{WEIGHT_LIMIT:g}"
+                                    )
+    for key in bpy.data.shape_keys:
+        for block in key.key_blocks[1:]:
+            block.slider_min = -WEIGHT_LIMIT
+            block.slider_max = WEIGHT_LIMIT
+
+
 def record_statics():
     """Every object's and pose bone's transform and every shape key value,
     as the importer left them."""
@@ -540,14 +586,17 @@ def evaluate(scene, fps, time_s):
 
 
 def subject_objects(document, scene_index):
-    """The objects holding the selected scene's meshes: one per mesh node."""
+    """The objects holding the selected scene's meshes: one per mesh node, or
+    per instance."""
     nodes = document.get("nodes", [])
     pending = list(document["scenes"][scene_index].get("nodes", []))
     expected = {}
     while pending:
         node = nodes[pending.pop()]
         if "mesh" in node:
-            expected[node["mesh"]] = expected.get(node["mesh"], 0) + 1
+            expected[node["mesh"]] = expected.get(node["mesh"], 0) + instances(
+                document, node
+            )
         pending.extend(node.get("children", []))
     view_layer = bpy.context.view_layer
     found = {}
@@ -568,6 +617,20 @@ def subject_objects(document, scene_index):
                 f"scene but has {found.get(mesh, 0)} imported object(s)"
             )
     return objects
+
+
+def instances(document, node):
+    """How many objects Blender makes of a mesh node: one, or, with
+    EXT_mesh_gpu_instancing, one per entry of its first attribute among
+    TRANSLATION, ROTATION and SCALE, as the importer counts them."""
+    extension = node.get("extensions", {}).get("EXT_mesh_gpu_instancing")
+    if extension is None:
+        return 1
+    attributes = extension.get("attributes", {})
+    for key in ("TRANSLATION", "ROTATION", "SCALE"):
+        if key in attributes:
+            return document["accessors"][attributes[key]]["count"]
+    return 0
 
 
 def include_every_collection(layer_collection):
@@ -735,6 +798,7 @@ def main(argv):
 
     with tempfile.TemporaryDirectory(prefix="moskophoros-") as directory:
         import_glb(private_copy(document, rest, source, scene_index), directory)
+        widen_weight_ranges(document)
         frames, roots = measure(job, document, record_statics())
 
     result = {

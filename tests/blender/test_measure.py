@@ -767,3 +767,50 @@ def test_a_time_beyond_blender_s_frame_range_fails(found, tmp_path):
     )
     with pytest.raises(backend.BackendError, match="beyond Blender's frame range"):
         measure(found, model.write(tmp_path, "long"), tmp_path, fps=0.0001)
+
+
+def morph_model(tmp_path, stem, weights):
+    """A unit triangle whose top vertex rises by its morph weight."""
+    model = GlbWriter()
+    mesh = model.mesh(
+        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+        targets=[[(0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 1.0, 0.0)]],
+        weights=[0.0],
+    )
+    face = model.node("face", mesh=mesh)
+    model.scene([face], default=True)
+    model.animation("move", [(face, "weights", [0, 1], [(0.0,), (weights,)])])
+    return model.write(tmp_path, stem)
+
+
+@pytest.mark.parametrize("end", [2.0, -2.0, 10.0, -10.0])
+def test_animated_morph_weights_beyond_0_to_1(found, tmp_path, end):
+    # The top vertex is at y = 1 + w, with w = end·t; one-shot reaches t = 1.
+    path = morph_model(tmp_path, "morph", end)
+    result, _ = measure(found, path, tmp_path, clip_names=["move"], once=["move"])
+    expected = []
+    for t in [*TIMES, 1.0]:
+        top = 1.0 + end * t
+        expected.append(
+            ((0.0, 1.0, max(0.0, top), max(0.0, -top)), max(top, 0.0) - min(top, 0.0))
+        )
+    rows = by_clip(result)["move"]
+    assert_close([box for _, _, box, _ in rows], [box for box, _ in expected])
+    assert [height for _, _, _, height in rows] == pytest.approx(
+        [height for _, height in expected], abs=TOLERANCE
+    )
+
+
+def test_a_morph_weight_beyond_blender_s_limit_fails(found, tmp_path):
+    with pytest.raises(backend.BackendError, match="beyond Blender's ±10"):
+        measure(found, morph_model(tmp_path, "far", 12.0), tmp_path)
+
+
+def test_gpu_instancing_counts_every_instance(found, tmp_path):
+    # One triangle node drawn at x = 0 and x = 5: R = 6.
+    model = GlbWriter()
+    shape = model.node("shape", mesh=True)
+    model.instances(shape, [(0.0, 0.0, 0.0), (5.0, 0.0, 0.0)])
+    model.scene([shape], default=True)
+    result, _ = measure(found, model.write(tmp_path, "instanced"), tmp_path)
+    assert_close(boxes(result)["static"], [(0.0, 6.0, 1.0, 0.0)])
