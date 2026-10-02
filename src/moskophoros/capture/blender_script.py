@@ -55,6 +55,7 @@ MESH_NAME = "moskophoros.mesh.{}.node.{}.data"
 TARGET_NAME = "moskophoros.target.{}"
 PLACEHOLDER = "moskophoros.placeholder"
 _MESH_DATA = re.compile(r"moskophoros\.mesh\.\d+\.node\.(\d+)\.data(?:\.\d+)?")
+_MESH_WEIGHTS = re.compile(r"/meshes/(\d+)/weights")
 _TARGET_PATH = re.compile(r'key_blocks\["moskophoros\.target\.(\d+)"\]\.value')
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -371,8 +372,10 @@ def private_copy(document, rest, source, scene):
         node["name"] = NODE_NAME.format(index)
     meshes = document.get("meshes", [])
     originals = list(meshes)
+    copies = {}
     for index, node in enumerate(nodes):
         if "mesh" in node:
+            copies.setdefault(node["mesh"], []).append(len(meshes))
             mesh = json.loads(json.dumps(originals[node["mesh"]]))
             mesh["name"] = MESH_NAME.format(node["mesh"], index)
             targets = max(
@@ -395,6 +398,30 @@ def private_copy(document, rest, source, scene):
     animations = document.get("animations") or []
     for index, animation in enumerate(animations):
         animation["name"] = ANIMATION_NAME.format(index)
+        # A KHR_animation_pointer channel animating a mesh's weights now
+        # animates each node's copy of that mesh.
+        channels = []
+        for channel in animation.get("channels", []):
+            pointer = (
+                channel.get("target", {})
+                .get("extensions", {})
+                .get("KHR_animation_pointer", {})
+                .get("pointer")
+            )
+            match = (
+                _MESH_WEIGHTS.fullmatch(pointer) if isinstance(pointer, str) else None
+            )
+            if match is None or int(match[1]) not in copies:
+                channels.append(channel)
+                continue
+            for copy in copies[int(match[1])]:
+                duplicate = json.loads(json.dumps(channel))
+                duplicate["target"]["extensions"]["KHR_animation_pointer"][
+                    "pointer"
+                ] = f"/meshes/{copy}/weights"
+                channels.append(duplicate)
+        if "channels" in animation:
+            animation["channels"] = channels
     if animations:
         # One key at time 0 holding (0, 0, 0). Accessors without a buffer
         # view are zeros.
@@ -589,7 +616,14 @@ def activate(animation_index):
                     animation_data.action = action
                     animation_data.action_slot = strip.action_slot
                     assigned.add(strip.action_slot.identifier)
-    unassigned = {slot.identifier for slot in action.slots} - assigned
+    # Only objects and shape keys shape the subject; slots for cameras,
+    # lights or materials, which the design ignores, need no owner here.
+    geometric = {
+        slot.identifier
+        for slot in action.slots
+        if slot.target_id_type in ("OBJECT", "KEY")
+    }
+    unassigned = geometric - assigned
     if unassigned:
         raise ScriptError(
             f"animation {animation_index}'s targets {sorted(unassigned)} have no "

@@ -897,3 +897,51 @@ def test_gpu_instancing_counts_every_instance(found, tmp_path):
     model.scene([shape], default=True)
     result, _ = measure(found, model.write(tmp_path, "instanced"), tmp_path)
     assert_close(boxes(result)["static"], [(0.0, 6.0, 1.0, 0.0)])
+
+
+def test_a_pointer_animation_of_a_mesh_s_weights(found, tmp_path):
+    # KHR_animation_pointer animates mesh 0's weight 0 -> 0.5 for both nodes
+    # using it; one also moves. U = 1 + 0.5·t on both, so the measured U is
+    # 1 + 0.5·t; R = 1 + 3 = 4 from the second node.
+    model = GlbWriter()
+    mesh = model.mesh(
+        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+        targets=[[(0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 1.0, 0.0)]],
+        weights=[0.0],
+    )
+    first = model.node("first", mesh=mesh)
+    second = model.node("second", mesh=mesh, translation=(3.0, 0.0, 0.0))
+    model.scene([first, second], default=True)
+    clip = model.animation(
+        "swell", [(first, "translation", [0, 1], [(0, 0, 0), (0, 0, 0)])]
+    )
+    model.pointer_channel(clip, "/meshes/0/weights", [0, 1], [(0.0,), (0.5,)])
+    result, _ = measure(
+        found,
+        model.write(tmp_path, "pointer"),
+        tmp_path,
+        clip_names=["swell"],
+        once=["swell"],
+    )
+    assert_close(
+        boxes(result)["swell"], [(0.0, 4.0, 1.0 + 0.5 * t, 0.0) for t in [*TIMES, 1.0]]
+    )
+
+
+def test_a_clip_that_also_animates_a_camera(found, tmp_path):
+    # Cameras are ignored: a clip that moves the triangle and widens a
+    # camera's field of view measures the triangle alone.
+    model = GlbWriter()
+    model.document["cameras"] = [
+        {"type": "perspective", "perspective": {"yfov": 0.8, "znear": 0.1}}
+    ]
+    shape = model.node("shape", mesh=True)
+    camera = model.node("camera", translation=(0.0, 0.0, 5.0))
+    model.document["nodes"][camera]["camera"] = 0
+    model.scene([shape, camera], default=True)
+    clip = model.animation(
+        "pan", [(shape, "translation", [0, 1], [(0, 0, 0), (1.0, 0, 0)])]
+    )
+    model.pointer_channel(clip, "/cameras/0/perspective/yfov", [0, 1], [(0.8,), (1.0,)])
+    result, _ = measure(found, model.write(tmp_path, "camera"), tmp_path)
+    assert_close(boxes(result)["pan"], [(0.0, 1.0 + t, 1.0, 0.0) for t in TIMES])
