@@ -6,7 +6,9 @@ the standard library. It follows design §Capture, §Capture job and result
 contract, §Clips and sampling, §Root motion, §Scale and ground point and
 §Camera and directions.
 
-Slice 1 implements measure mode; a render job is refused as unsupported.
+Measure mode reports bounds, heights and root travel; render mode renders
+each frame with the accepted Workbench settings. Both share the import,
+subject selection, identity mapping and clip isolation below.
 
 Identity mapping: the script imports a private copy of the source in which
 every node is renamed `moskophoros.node.<index>` and every animation
@@ -149,8 +151,6 @@ def check_job(job):
     )
     _require(job["schema"] == JOB_SCHEMA, f"schema {job['schema']!r}")
     _require(job["mode"] in ("measure", "render"), f"mode {job['mode']!r}")
-    if job["mode"] != "measure":
-        raise ScriptError(f"{job['mode']} jobs are not supported yet")
     source = _fields(job["source"], ["path", "sha256", "scene"], "source")
     _require(
         isinstance(source["path"], str) and os.path.isabs(source["path"]),
@@ -209,8 +209,31 @@ def check_job(job):
     _require(settings["root_motion"] in ("error", "keep"), "settings.root_motion")
     ground = _fields(settings["ground_m"], ["x", "y", "z"], "settings.ground_m")
     _require(all(map(_is_number, ground.values())), "settings.ground_m")
-    for key in ("pixels_per_meter", "cell", "ground_px"):
-        _require(settings[key] is None, f"settings.{key} is set in a measure job")
+    if job["mode"] == "measure":
+        for key in ("pixels_per_meter", "cell", "ground_px"):
+            _require(settings[key] is None, f"settings.{key} is set in a measure job")
+    else:
+        ppm = settings["pixels_per_meter"]
+        _require(
+            _is_number(ppm) and ppm > 0,
+            f"settings.pixels_per_meter {ppm!r} is not resolved for a render job",
+        )
+        for key, fields, low, high in (
+            ("cell", ["width", "height"], 1, 4096),
+            ("ground_px", ["x", "y"], 0, None),
+        ):
+            value = settings[key]
+            _require(
+                value is not None, f"settings.{key} is not resolved for a render job"
+            )
+            _fields(value, fields, f"settings.{key}")
+            _require(
+                all(
+                    _is_int(item) and item >= low and (high is None or item <= high)
+                    for item in value.values()
+                ),
+                f"settings.{key} {value!r} is out of range",
+            )
 
     clips = job["clips"]
     _require(isinstance(clips, list) and clips, "clips")
@@ -594,6 +617,8 @@ def reset(statics):
             data.animation_data.action = None
             data.animation_data.use_nla = False
     for obj in bpy.data.objects:
+        if obj.name not in statics:
+            continue  # the render camera, which this script places itself
         transform, bones, keys = statics[obj.name]
         _restore(obj, transform)
         if obj.pose is not None:
@@ -847,6 +872,219 @@ def measure(job, document, statics):
     return frames, roots
 
 
+# Rendering
+
+
+RENDERER = "workbench"
+
+
+def configure_render(scene, settings):
+    """Design §Capture's render settings and capture output."""
+    render = scene.render
+    render.engine = "BLENDER_WORKBENCH"
+    shading = scene.display.shading
+    # Studio lighting fixed in view space, Workbench's default.
+    shading.light = "STUDIO"
+    shading.use_world_space_lighting = False
+    # Texture color, falling back to the material color.
+    shading.color_type = "TEXTURE"
+    shading.show_shadows = False
+    shading.show_cavity = False
+    shading.show_object_outline = False
+    shading.use_dof = False
+    render.film_transparent = True
+    view = scene.view_settings
+    view.view_transform = "Standard"
+    view.look = "None"
+    view.exposure = 0.0
+    view.gamma = 1.0
+    scene.display_settings.display_device = "sRGB"
+    image = render.image_settings
+    image.file_format = "PNG"
+    image.color_mode = "RGBA"
+    image.color_depth = "8"
+    # No date or render-time metadata, so identical frames are identical files.
+    render.use_stamp = False
+    for name in dir(render):
+        if name.startswith("use_stamp_"):
+            setattr(render, name, False)
+    width, height, padded_width, padded_height = frame_size(settings)
+    render.resolution_x = padded_width
+    render.resolution_y = padded_height
+    render.resolution_percentage = 100
+    render.pixel_aspect_x = 1.0
+    render.pixel_aspect_y = 1.0
+    # Blender renders at least 4 pixels each way. A smaller image is the
+    # top-left corner of a padded frame, cropped by the render border; the
+    # fractions are exact, so the crop is exactly the requested size.
+    padded = (padded_width, padded_height) != (width, height)
+    render.use_border = padded
+    render.use_crop_to_border = padded
+    render.border_min_x = 0.0
+    render.border_max_x = width / padded_width
+    render.border_min_y = 1.0 - height / padded_height
+    render.border_max_y = 1.0
+    render.use_compositing = False
+    render.use_sequencer = False
+
+
+MIN_RESOLUTION = 4
+# The camera stands this many meters clear of the subject's bounds, with its
+# near plane halfway there, however far the subject reaches.
+CLEARANCE = 1.0
+
+
+def frame_size(settings):
+    """The supersampled image size, and the frame Blender renders it from:
+    at least MIN_RESOLUTION pixels each way."""
+    scale = settings["supersample"]
+    width = settings["cell"]["width"] * scale
+    height = settings["cell"]["height"] * scale
+    return width, height, max(width, MIN_RESOLUTION), max(height, MIN_RESOLUTION)
+
+
+def _sin_cos(degrees):
+    """Sine and cosine, exact at quarter turns so axes stay exact."""
+    turned = _wrap(degrees)
+    exact = {0: (0.0, 1.0), 90: (1.0, 0.0), 180: (0.0, -1.0), 270: (-1.0, 0.0)}
+    if turned in exact:
+        return exact[turned]
+    radians = math.radians(turned)
+    return math.sin(radians), math.cos(radians)
+
+
+def _turn(vector, sin, cos):
+    """`vector` turned about +Y, counter-clockwise seen from above."""
+    x, y, z = vector
+    return (x * cos + z * sin, y, -x * sin + z * cos)
+
+
+def _blender(vector):
+    """glTF (Y-up, +Z toward the viewer) to Blender (Z-up) coordinates."""
+    x, y, z = vector
+    return (x, -z, y)
+
+
+def place_camera(camera, settings, rotation_deg, reach):
+    """Put the orthographic camera where the ground point lands on pixel
+    corner (gx·s, gy·s), as if the subject were turned by `rotation_deg`.
+
+    Turning the subject by a about the vertical axis through the ground
+    point is the same image as turning the camera by −a around it; the
+    studio light is fixed to the camera, so the lighting is the same too.
+    The camera sits in direction (0, sin p, cos p) from the ground point
+    and looks back at it, with screen right +X and screen up
+    (0, cos p, −sin p).
+    """
+    sin_p, cos_p = _sin_cos(settings["view"]["pitch_deg"])
+    sin_a, cos_a = _sin_cos(-rotation_deg)
+    toward = _turn((0.0, sin_p, cos_p), sin_a, cos_a)
+    right = _turn((1.0, 0.0, 0.0), sin_a, cos_a)
+    up = _turn((0.0, cos_p, 0.0 - sin_p), sin_a, cos_a)
+    scale = settings["supersample"]
+    meters = 1.0 / (settings["pixels_per_meter"] * scale)  # per image pixel
+    _, _, width, height = frame_size(settings)
+    gx = settings["ground_px"]["x"] * scale
+    gy = settings["ground_px"]["y"] * scale
+    ground = tuple(settings["ground_m"][axis] for axis in "xyz")
+    distance = reach + CLEARANCE
+    across = (width / 2 - gx) * meters
+    down = (gy - height / 2) * meters
+    center = tuple(
+        ground[i] + right[i] * across + up[i] * down + toward[i] * distance
+        for i in range(3)
+    )
+    # Blender reads a nested sequence assigned to a matrix column by column:
+    # the camera's local X, Y and Z axes, then its position.
+    camera.matrix_world = [
+        (*_blender(right), 0.0),
+        (*_blender(up), 0.0),
+        (*_blender(toward), 0.0),
+        (*_blender(center), 1.0),
+    ]
+    data = camera.data
+    data.type = "ORTHO"
+    data.sensor_fit = "HORIZONTAL"
+    data.ortho_scale = width * meters
+    data.shift_x = 0.0
+    data.shift_y = 0.0
+    data.clip_start = CLEARANCE / 2
+    data.clip_end = distance + reach + CLEARANCE
+    data.dof.use_dof = False
+
+
+def reach(objects, depsgraph, ground):
+    """How far the subject's bounding boxes reach from the ground point, in
+    meters, so the camera can stand clear of it."""
+    gx, gy, gz = _blender(ground)
+    farthest = 0.0
+    for obj in objects:
+        evaluated = obj.evaluated_get(depsgraph)
+        m = evaluated.matrix_world
+        for corner in evaluated.bound_box:
+            x, y, z = (
+                m[row][0] * corner[0]
+                + m[row][1] * corner[1]
+                + m[row][2] * corner[2]
+                + m[row][3]
+                for row in range(3)
+            )
+            farthest = max(farthest, math.dist((x, y, z), (gx, gy, gz)))
+    return farthest
+
+
+def render_frames(job, document, statics):
+    """Render every requested frame to color/NNNNNN.png in request order."""
+    scene = bpy.context.scene
+    fps = scene.render.fps / scene.render.fps_base
+    settings = job["settings"]
+    yaw = settings["model_yaw_deg"]
+    ground = tuple(settings["ground_m"][axis] for axis in "xyz")
+    check_node_names()
+    objects = subject_objects(document, job["source"]["scene"])
+    include_every_collection(bpy.context.view_layer.layer_collection)
+    subject = {obj.name for obj in objects}
+    for obj in bpy.data.objects:
+        # Only the subject's meshes are rendered, hidden or not; nothing
+        # the importer added is.
+        obj.hide_render = obj.name not in subject
+        if obj.name in subject:
+            obj.hide_viewport = False
+    camera = bpy.data.objects.new("moskophoros.camera", bpy.data.cameras.new("camera"))
+    scene.collection.objects.link(camera)
+    scene.camera = camera
+    configure_render(scene, settings)
+    os.makedirs(os.path.join(job["output_dir"], "color"), exist_ok=False)
+
+    ordinals = {}
+    for ordinal, frame in enumerate(job["frames"]):
+        ordinals.setdefault(frame["address"]["clip"], []).append((ordinal, frame))
+    paths = {}
+    for clip in job["clips"]:
+        reset(statics)
+        if clip["animation_index"] is not None:
+            activate(clip["animation_index"])
+        requested = ordinals.get(clip["name"], [])
+        times = sorted({frame["address"]["time_s"] for _, frame in requested})
+        check_weights(objects, document, clip, times, fps)
+        for ordinal, frame in requested:
+            depsgraph = evaluate(scene, fps, frame["address"]["time_s"])
+            rotation = (frame["angle_deg"] % 360 + yaw % 360) % 360
+            place_camera(camera, settings, rotation, reach(objects, depsgraph, ground))
+            relative = f"color/{ordinal:06d}.png"
+            scene.render.filepath = os.path.join(job["output_dir"], relative)
+            bpy.ops.render.render(write_still=True)
+            paths[ordinal] = relative
+    return [
+        {"address": frame["address"], "buffers": {"color": paths[ordinal]}}
+        for ordinal, frame in enumerate(job["frames"])
+    ], {
+        "blender": ".".join(map(str, bpy.app.version)),
+        "renderer": RENDERER,
+        "studio_light": scene.display.shading.studio_light,
+    }
+
+
 def main(argv):
     if "--" not in argv or argv.index("--") + 1 >= len(argv):
         raise ScriptError("usage: blender ... --python blender_script.py -- JOB")
@@ -870,17 +1108,22 @@ def main(argv):
     with tempfile.TemporaryDirectory(prefix="moskophoros-") as directory:
         import_glb(private_copy(document, rest, source, scene_index), directory)
         widen_weight_ranges()
-        frames, roots = measure(job, document, record_statics())
+        if job["mode"] == "measure":
+            frames, roots = measure(job, document, record_statics())
+            backend = {"blender": ".".join(map(str, bpy.app.version))}
+        else:
+            frames, backend = render_frames(job, document, record_statics())
 
     result = {
         "schema": RESULT_SCHEMA,
-        "mode": "measure",
+        "mode": job["mode"],
         "job_sha256": canonical_sha256(job),
         "source_sha256": job["source"]["sha256"],
-        "backend": {"blender": ".".join(map(str, bpy.app.version))},
+        "backend": backend,
         "frames": frames,
-        "roots": roots,
     }
+    if job["mode"] == "measure":
+        result["roots"] = roots
     output = os.path.join(job["output_dir"], "result.json")
     temporary = output + ".partial"
     with open(temporary, "w", encoding="utf-8") as handle:

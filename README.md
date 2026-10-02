@@ -23,17 +23,19 @@ Early implementation. These parts exist as library code:
 - the capture interface, `moskophoros.capture`, which builds capture jobs,
   validates their results, finds Blender, checks its version and runs one
   capture phase;
-- measurement inside Blender, `moskophoros/capture/blender_script.py`, which
-  reports each frame's bounds and height and each root's travel. Rendering
-  is not written yet;
+- measurement and rendering inside Blender,
+  `moskophoros/capture/blender_script.py`, which reports each frame's bounds
+  and height and each root's travel, and renders each frame as a
+  supersampled PNG with the accepted Workbench settings;
 - image operations, `moskophoros.imageops`, which load a captured PNG and
   reduce a supersampled image by blocks, and the stylize and cleanup stages,
   `moskophoros.stylize` and `moskophoros.cleanup`, which reduce captured
   frames and pass them through.
 
-The `moskophoros` command is not available yet, and nothing renders. The goals
-and long-term direction are in [docs/vision.md](docs/vision.md); the concrete
-design of the first version is in [docs/design.md](docs/design.md).
+The `moskophoros` command is not available yet: these parts are not yet
+joined into a command that writes a sheet. The goals and long-term direction
+are in [docs/vision.md](docs/vision.md); the concrete design of the first
+version is in [docs/design.md](docs/design.md).
 
 ## Planned usage
 
