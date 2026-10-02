@@ -66,7 +66,11 @@ every character outside `A–Z a–z 0–9 . _ -` with `_`. If two clip names be
 the same after that, the second and later previews gain the suffix `-2`, `-3`,
 and so on, in sheet order. Each clip takes the smallest suffix whose name is
 not already taken, including by another clip's own name, so no two previews
-share a file (owner decision 2026-10-01).
+share a file (owner decision 2026-10-01). Cleaned names are compared ignoring
+ASCII case on every platform, so `Walk` and `walk` collide and the later one
+in sheet order takes the next free suffix: `hero.Walk.gif`, `hero.walk-2.gif`.
+"Another clip's own name" is its cleaned name, so `a b`, `a/b` and `a b-2`
+give `a_b`, `a_b-3` and `a_b-2` (owner decisions 2026-10-02).
 
 Existing outputs are overwritten. All outputs are written to temporary files
 and renamed into place only after the whole run succeeds, so a failed run
@@ -686,6 +690,12 @@ side in index order, packed with no gap between cells (owner decision
   and at least 20 ms
 - looping forever; one-shot clips hold their last frame for an extra 500 ms
   before repeating
+
+GIF stores a width in 16 bits and a delay in 16 bits of centiseconds. A
+preview wider than 65,535 pixels, or any frame delay over 655,350 ms
+(including a one-shot's extra 500 ms), is a usage error (exit 2) naming the
+clip, the computed width or delay, and the limit. The preview is never
+scaled, clamped or split to fit (owner decisions 2026-10-02).
 
 Previews exist for review in motion (V-12) and are not part of the sheet
 contract.
