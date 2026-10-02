@@ -631,3 +631,50 @@ def test_a_huge_model_yaw_measures_like_its_reduced_angle(found, tmp_path):
     assert len({box for _, _, box, _ in huge_rows}) == 4
     for (_, _, box, _), (_, _, want, _) in zip(huge_rows, small_rows, strict=True):
         assert box == pytest.approx(want, abs=TOLERANCE)
+
+
+def test_nodes_sharing_a_mesh_with_different_morph_weights(found, tmp_path):
+    # Blender gives each instance its own mesh data. The top vertex rises by
+    # each node's weight: 1.25 at x = 0 and 1.75 at x = 3, so U = 1.75 and
+    # R = 3 + 1 = 4.
+    model = GlbWriter()
+    mesh = model.mesh(
+        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+        targets=[[(0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 1.0, 0.0)]],
+        weights=[0.0],
+    )
+    first = model.node("first", mesh=mesh, weights=[0.25])
+    second = model.node(
+        "second", mesh=mesh, translation=(3.0, 0.0, 0.0), weights=[0.75]
+    )
+    model.scene([first, second], default=True)
+    path = model.write(tmp_path, "shared")
+    result, _ = measure(found, path, tmp_path)
+    assert_close(boxes(result)["static"], [(0.0, 4.0, 1.75, 0.0)])
+
+    model.animation("swap", [(second, "weights", [0, 1], [(0.75,), (0.0,)])])
+    result, _ = measure(
+        found, model.write(tmp_path, "swapped"), tmp_path, workspace="swap"
+    )
+    # U = max(1.25, 1 + 0.75·(1 − t)).
+    assert_close(
+        boxes(result)["swap"],
+        [(0.0, 4.0, max(1.25, 1.75 - 0.75 * t), 0.0) for t in TIMES],
+    )
+
+
+def test_a_root_in_another_scene_is_evaluated(found, tmp_path):
+    # The selected scene holds a still triangle; the clip moves a node of
+    # the other scene 5 m, which is a root but not part of the subject.
+    model = GlbWriter()
+    mover = model.node("mover", mesh=True, translation=(50.0, 0.0, 0.0))
+    model.scene([mover])
+    model.scene([model.node("still", mesh=True)], default=True)
+    model.animation(
+        "move", [(mover, "translation", [0, 1], [(50.0, 0, 0), (55.0, 0, 0)])]
+    )
+    result, job = measure(found, model.write(tmp_path, "scenes"), tmp_path)
+    assert [root["node_index"] for root in job["clips"][0]["roots"]] == [mover]
+    ((root),) = result.roots
+    assert root.travel_m == pytest.approx(5.0, abs=TOLERANCE)
+    assert_close(boxes(result)["move"], [(0.0, 1.0, 1.0, 0.0)] * 4)

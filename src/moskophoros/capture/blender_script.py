@@ -10,7 +10,8 @@ Slice 1 implements measure mode; a render job is refused as unsupported.
 
 Identity mapping: the script imports a private copy of the source in which
 every node is renamed `moskophoros.node.<index>`, every mesh
-`moskophoros.mesh.<index>` and every animation `moskophoros.animation.<index>`.
+`moskophoros.mesh.<index>.data` and every animation
+`moskophoros.animation.<index>`.
 Blender names objects and bones after nodes, mesh data after meshes and
 actions after animations, so original indices map exactly, whatever the
 original names, and an index with no imported counterpart fails by name. The
@@ -44,9 +45,11 @@ JOB_SCHEMA = "moskophoros.capture-job/1"
 RESULT_SCHEMA = "moskophoros.capture-result/1"
 NODE_NAME = "moskophoros.node.{}"
 ANIMATION_NAME = "moskophoros.animation.{}"
-MESH_NAME = "moskophoros.mesh.{}"
+# Not ending in digits: Blender would read those as its own ".001" suffix
+# when it duplicates mesh data.
+MESH_NAME = "moskophoros.mesh.{}.data"
 PLACEHOLDER = "moskophoros.placeholder"
-_MESH_DATA = re.compile(r"moskophoros\.mesh\.(\d+)(?:\.\d+)?")
+_MESH_DATA = re.compile(r"moskophoros\.mesh\.(\d+)\.data(?:\.\d+)?")
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _GLB_HEADER = struct.Struct("<4sII")
@@ -506,6 +509,12 @@ def subject_objects(document, scene_index):
     return objects
 
 
+def include_every_collection(layer_collection):
+    for child in layer_collection.children:
+        child.exclude = False
+        include_every_collection(child)
+
+
 def vertices(objects, depsgraph):
     """Every evaluated vertex, in glTF world coordinates."""
     points = []
@@ -577,6 +586,10 @@ def measure(job, document, statics):
     yaw = settings["model_yaw_deg"]
     ground = tuple(settings["ground_m"][axis] for axis in "xyz")
     objects = subject_objects(document, job["source"]["scene"])
+    # The importer leaves other scenes' collections out of the view layer,
+    # so their objects would never be evaluated; a root may be among them.
+    # The subject is already chosen, so including them changes no bounds.
+    include_every_collection(bpy.context.view_layer.layer_collection)
 
     measured = {}
     roots = []
