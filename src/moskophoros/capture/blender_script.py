@@ -56,6 +56,7 @@ TARGET_NAME = "moskophoros.target.{}"
 PLACEHOLDER = "moskophoros.placeholder"
 _MESH_DATA = re.compile(r"moskophoros\.mesh\.\d+\.node\.(\d+)\.data(?:\.\d+)?")
 _MESH_WEIGHTS = re.compile(r"/meshes/(\d+)/weights")
+_NODE_WEIGHTS = re.compile(r"/nodes/(\d+)/weights")
 _TARGET_PATH = re.compile(r'key_blocks\["moskophoros\.target\.(\d+)"\]\.value')
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -363,9 +364,12 @@ def split_glb(data, path):
 
 
 def private_copy(document, rest, source, scene):
-    """The GLB bytes Blender imports: nodes, meshes and animations renamed by
-    index, a placeholder animation first, the job's scene made the default,
-    and external files given absolute paths."""
+    """The GLB bytes Blender imports, and the original indices of animations
+    left with nothing to animate, which the copy leaves out.
+
+    Nodes, meshes and animations are renamed by index, a placeholder
+    animation comes first, the job's scene is made the default, and external
+    files are given absolute paths."""
     document = json.loads(json.dumps(document))
     nodes = document.setdefault("nodes", [])
     for index, node in enumerate(nodes):
@@ -396,27 +400,32 @@ def private_copy(document, rest, source, scene):
     for index, light in enumerate(lights.get("lights", [])):
         light["name"] = f"moskophoros.light.{index}.data"
     animations = document.get("animations") or []
+    inert = set()
     for index, animation in enumerate(animations):
         animation["name"] = ANIMATION_NAME.format(index)
         # A KHR_animation_pointer channel animating a mesh's weights becomes
         # an ordinary weights channel of each node using that mesh. The
         # importer keeps only one mesh-level weight animation per mesh, and
-        # every node now has its own copy anyway.
+        # every node now has its own copy anyway. A node's own weights take
+        # precedence over its mesh's: a node with default weights, or whose
+        # weights this animation animates itself, is left alone.
+        animated = set()
+        for channel in animation.get("channels", []):
+            target = channel.get("target", {})
+            if target.get("path") == "weights" and "node" in target:
+                animated.add(target["node"])
+            match = _NODE_WEIGHTS.fullmatch(_pointer(channel) or "")
+            if match is not None:
+                animated.add(int(match[1]))
         channels = []
         for channel in animation.get("channels", []):
-            pointer = (
-                channel.get("target", {})
-                .get("extensions", {})
-                .get("KHR_animation_pointer", {})
-                .get("pointer")
-            )
-            match = (
-                _MESH_WEIGHTS.fullmatch(pointer) if isinstance(pointer, str) else None
-            )
+            match = _MESH_WEIGHTS.fullmatch(_pointer(channel) or "")
             if match is None or int(match[1]) not in users:
                 channels.append(channel)
                 continue
             for node in users[int(match[1])]:
+                if node in animated or "weights" in nodes[node]:
+                    continue
                 channels.append(
                     {
                         "sampler": channel["sampler"],
@@ -425,6 +434,12 @@ def private_copy(document, rest, source, scene):
                 )
         if "channels" in animation:
             animation["channels"] = channels
+            if not channels:
+                # Every channel it had was overridden: it moves nothing.
+                inert.add(index)
+    animations = [a for i, a in enumerate(animations) if i not in inert]
+    if "animations" in document:
+        document["animations"] = animations
     if animations:
         # One key at time 0 holding (0, 0, 0). Accessors without a buffer
         # view are zeros.
@@ -471,7 +486,18 @@ def private_copy(document, rest, source, scene):
     text = json.dumps(document, separators=(",", ":")).encode("utf-8")
     text += b" " * (-len(text) % 4)
     body = _CHUNK_HEADER.pack(len(text), _JSON_CHUNK) + text + rest
-    return _GLB_HEADER.pack(b"glTF", 2, _GLB_HEADER.size + len(body)) + body
+    return _GLB_HEADER.pack(b"glTF", 2, _GLB_HEADER.size + len(body)) + body, inert
+
+
+def _pointer(channel):
+    """A channel's KHR_animation_pointer pointer, or None."""
+    pointer = (
+        channel.get("target", {})
+        .get("extensions", {})
+        .get("KHR_animation_pointer", {})
+        .get("pointer")
+    )
+    return pointer if isinstance(pointer, str) else None
 
 
 def import_glb(data, directory):
@@ -781,7 +807,7 @@ def node_position(index, depsgraph):
     return x, z, -y
 
 
-def measure(job, document, statics):
+def measure(job, document, statics, inert):
     scene = bpy.context.scene
     fps = scene.render.fps / scene.render.fps_base
     settings = job["settings"]
@@ -799,7 +825,7 @@ def measure(job, document, statics):
     roots = []
     for clip in job["clips"]:
         reset(statics)
-        if clip["animation_index"] is not None:
+        if clip["animation_index"] not in (None, *inert):
             activate(clip["animation_index"])
         for root in clip["roots"]:
             start = node_position(
@@ -864,9 +890,10 @@ def main(argv):
         raise ScriptError(f"{source} has no scene {scene_index}")
 
     with tempfile.TemporaryDirectory(prefix="moskophoros-") as directory:
-        import_glb(private_copy(document, rest, source, scene_index), directory)
+        copy, inert = private_copy(document, rest, source, scene_index)
+        import_glb(copy, directory)
         widen_weight_ranges()
-        frames, roots = measure(job, document, record_statics())
+        frames, roots = measure(job, document, record_statics(), inert)
 
     result = {
         "schema": RESULT_SCHEMA,

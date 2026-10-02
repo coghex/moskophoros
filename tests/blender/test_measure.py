@@ -973,3 +973,63 @@ def test_pointer_weight_clips_sharing_a_mesh(found, tmp_path, selected):
         assert_close(
             measured["second"], [(0.0, 1.0, 1.0 + 0.25 * t, 0.0) for t in TIMES]
         )
+
+
+def pointer_and_node_model(tmp_path, stem, *, pointer_first, node_default=None):
+    """A clip animating mesh 0's weight to 0.5 by pointer and, unless the
+    node has a default, the node's own weight to 0.25."""
+    model = GlbWriter()
+    mesh = model.mesh(
+        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+        targets=[[(0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 1.0, 0.0)]],
+        weights=[0.0],
+    )
+    face = model.node("face", mesh=mesh, weights=node_default)
+    model.scene([face], default=True)
+    if node_default is None:
+        clip = model.animation("clip", [(face, "weights", [0, 1], [(0.0,), (0.25,)])])
+    else:
+        clip = model.animation("clip", [(face, "translation", [0, 1], [(0, 0, 0)] * 2)])
+    model.pointer_channel(clip, "/meshes/0/weights", [0, 1], [(0.0,), (0.5,)])
+    if pointer_first:
+        model.document["animations"][clip]["channels"].reverse()
+    return model, model.write(tmp_path, stem)
+
+
+@pytest.mark.parametrize(
+    "pointer_first", [False, True], ids=["node first", "pointer first"]
+)
+def test_a_node_s_own_weight_animation_overrides_its_mesh_s(
+    found, tmp_path, pointer_first
+):
+    # The node's weight wins: U = 1 + 0.25·t, in either channel order.
+    _, path = pointer_and_node_model(tmp_path, "order", pointer_first=pointer_first)
+    result, _ = measure(found, path, tmp_path, clip_names=["clip"], once=["clip"])
+    assert_close(
+        boxes(result)["clip"], [(0.0, 1.0, 1.0 + 0.25 * t, 0.0) for t in [*TIMES, 1.0]]
+    )
+
+
+def test_a_node_s_default_weights_override_its_mesh_s_animation(found, tmp_path):
+    # The node's default 0.75 wins over the mesh's animated weight: U = 1.75.
+    _, path = pointer_and_node_model(
+        tmp_path, "default", pointer_first=False, node_default=[0.75]
+    )
+    result, _ = measure(found, path, tmp_path)
+    assert_close(boxes(result)["clip"], [(0.0, 1.0, 1.75, 0.0)] * 4)
+
+
+def test_a_clip_whose_only_channel_is_overridden_moves_nothing(found, tmp_path):
+    # With the translation channel removed, the clip only animates the
+    # mesh's weight, which the node's default overrides: U = 1.75 throughout.
+    model, _ = pointer_and_node_model(
+        tmp_path, "unused", pointer_first=True, node_default=[0.75]
+    )
+    animation = model.document["animations"][0]
+    animation["channels"] = [
+        channel
+        for channel in animation["channels"]
+        if channel["target"].get("path") == "pointer"
+    ]
+    result, _ = measure(found, model.write(tmp_path, "inert"), tmp_path)
+    assert_close(boxes(result)["clip"], [(0.0, 1.0, 1.75, 0.0)] * 4)
