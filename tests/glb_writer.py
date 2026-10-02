@@ -19,7 +19,7 @@ _FORMATS = {FLOAT: "f", UNSIGNED_SHORT: "H"}
 # One triangle in the XY plane, facing +Z.
 TRIANGLE = ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
 
-_COMPONENTS = {"SCALAR": 1, "VEC3": 3, "VEC4": 4, "MAT4": 16}
+_COMPONENTS = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4, "MAT4": 16}
 _OUTPUT_TYPES = {
     "translation": "VEC3",
     "scale": "VEC3",
@@ -88,17 +88,33 @@ class GlbWriter:
         return len(self.document["nodes"]) - 1
 
     def mesh(
-        self, positions, *, targets=(), weights=None, joints=None, skin_weights=None
+        self,
+        positions,
+        *,
+        targets=(),
+        weights=None,
+        joints=None,
+        skin_weights=None,
+        material=None,
+        texcoords=None,
     ):
         """Add a triangle-list mesh of `positions` and return its index.
 
         `targets` are morph targets, each a list of position offsets, and
         `weights` their default weights. `joints` and `skin_weights` give
         each vertex four joint indices and four weights, for skinning.
+        `material` is a material index from `material`, and `texcoords`
+        each vertex's (u, v).
         """
         primitive = {
             "attributes": {"POSITION": self._accessor("VEC3", positions, True)}
         }
+        if material is not None:
+            primitive["material"] = material
+        if texcoords is not None:
+            primitive["attributes"]["TEXCOORD_0"] = self._accessor(
+                "VEC2", texcoords, False
+            )
         if joints is not None:
             primitive["attributes"]["JOINTS_0"] = self._accessor(
                 "VEC4", joints, False, UNSIGNED_SHORT
@@ -117,6 +133,31 @@ class GlbWriter:
         meshes = self.document.setdefault("meshes", [])
         meshes.append(mesh)
         return len(meshes) - 1
+
+    def material(self, color=(1.0, 1.0, 1.0, 1.0), *, texture=None):
+        """Add a material of base color `color` (RGBA, linear) and, if given,
+        the base-color `texture` from `texture`; return its index."""
+        pbr = {"baseColorFactor": list(color), "metallicFactor": 0.0}
+        if texture is not None:
+            pbr["baseColorTexture"] = {"index": texture}
+        materials = self.document.setdefault("materials", [])
+        materials.append({"pbrMetallicRoughness": pbr})
+        return len(materials) - 1
+
+    def texture(self, png):
+        """Embed `png`, the bytes of a PNG image, as a texture with nearest
+        filtering; return its index."""
+        view = self._view(png)
+        self.document.setdefault("images", []).append(
+            {"bufferView": view, "mimeType": "image/png"}
+        )
+        samplers = self.document.setdefault("samplers", [])
+        samplers.append({"magFilter": 9728, "minFilter": 9728})
+        textures = self.document.setdefault("textures", [])
+        textures.append(
+            {"source": len(self.document["images"]) - 1, "sampler": len(samplers) - 1}
+        )
+        return len(textures) - 1
 
     def instances(self, node, translations):
         """Draw `node`'s mesh once per translation, with EXT_mesh_gpu_instancing."""
@@ -257,6 +298,16 @@ class GlbWriter:
         if self._mesh is None:
             self._mesh = self.mesh(TRIANGLE)
         return self._mesh
+
+    def _view(self, data):
+        """Store raw bytes in the buffer and return their buffer view's index."""
+        offset = len(self._binary)
+        self._binary += data
+        self._binary += b"\0" * (-len(self._binary) % 4)
+        self.document["buffers"] = [{"byteLength": len(self._binary)}]
+        views = self.document.setdefault("bufferViews", [])
+        views.append({"buffer": 0, "byteOffset": offset, "byteLength": len(data)})
+        return len(views) - 1
 
     def _accessor(self, kind, rows, bounds, component=FLOAT):
         """Store rows in the buffer and return their accessor's index."""

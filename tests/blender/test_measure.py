@@ -561,7 +561,11 @@ def _repeat_first_frame(text):
             ),
             "schema",
         ),
-        (lambda text: text.replace('"measure"', '"render"', 1), "not supported"),
+        # A render job needs its scale, cell and ground pixel resolved.
+        (
+            lambda text: text.replace('"measure"', '"render"', 1),
+            "settings.pixels_per_meter None is not resolved for a render job",
+        ),
         (lambda text: text.replace('"fps": 4.0', '"fps": NaN'), "non-finite"),
         (lambda text: text.replace('"fps": 4.0', '"fps": 1e999'), "non-finite"),
         (lambda text: text.replace('"variant": "default",', ""), "missing"),
@@ -574,7 +578,7 @@ def _repeat_first_frame(text):
     ids=[
         "duplicate key",
         "schema",
-        "render mode",
+        "unresolved render settings",
         "NaN",
         "overflow",
         "missing field",
