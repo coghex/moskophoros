@@ -537,6 +537,55 @@ def test_a_malformed_job_fails_before_importing(found, tmp_path, change, message
     assert "missing.glb" not in error[0]
 
 
+def _static_with_range(job):
+    job["clips"][0]["animation_index"] = None
+
+
+def _repeated_root(job):
+    job["clips"][0]["roots"].append(dict(job["clips"][0]["roots"][0]))
+
+
+def _wrong_angle(job):
+    job["frames"][0]["angle_deg"] = 1.0
+
+
+def _wrong_index(job):
+    job["frames"][1]["index"] = 5
+
+
+def _boolean_index(job):
+    job["frames"][1]["index"] = True
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        (_static_with_range, "must be the static clip"),
+        (_repeated_root, "repeats root node"),
+        (_wrong_angle, "angle is 1.0, not 0.0"),
+        (_wrong_index, "are not indexed"),
+        (_boolean_index, "a frame's index"),
+    ],
+    ids=[
+        "static clip with a range",
+        "repeated root",
+        "wrong angle",
+        "wrong index",
+        "boolean index",
+    ],
+)
+def test_an_inconsistent_job_fails_before_importing(found, tmp_path, change, message):
+    job = valid_job_text(found, tmp_path)
+    job["source"]["path"] = str(tmp_path / "missing.glb")
+    change(job)
+    status, stderr = run_raw(found, tmp_path, json.dumps(job))
+    assert status != 0
+    error = [
+        line for line in stderr.splitlines() if line.startswith("moskophoros: error:")
+    ]
+    assert error and message in error[0], stderr
+
+
 @pytest.mark.parametrize(
     ("change", "message"),
     [
@@ -678,3 +727,43 @@ def test_a_root_in_another_scene_is_evaluated(found, tmp_path):
     ((root),) = result.roots
     assert root.travel_m == pytest.approx(5.0, abs=TOLERANCE)
     assert_close(boxes(result)["move"], [(0.0, 1.0, 1.0, 0.0)] * 4)
+
+
+def test_file_names_cannot_take_a_node_s_identity(found, tmp_path):
+    # The skin's own name is the name the script gives node 2, and Blender
+    # names armatures after skins. Node 2 still walks 5 m.
+    model = GlbWriter()
+    joint = model.node("joint")
+    skin = model.skin([joint], [IDENTITY])
+    model.document["skins"][skin]["name"] = "moskophoros.node.2"
+    mesh = model.mesh(
+        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+        joints=[(0, 0, 0, 0)] * 3,
+        skin_weights=[(1, 0, 0, 0)] * 3,
+    )
+    body = model.node("body", mesh=mesh, skin=skin)
+    walker = model.node("moskophoros.mesh.0.data", mesh=True)
+    model.document["scenes"] = []
+    model.scene([joint, body, walker], default=True)
+    model.document["scenes"][0]["name"] = "moskophoros.node.1"
+    model.animation("walk", [(walker, "translation", [0, 1], [(0, 0, 0), (5.0, 0, 0)])])
+    assert walker == 2
+    result, _ = measure(found, model.write(tmp_path, "names"), tmp_path)
+    ((root),) = result.roots
+    assert (root.node_index, root.travel_m) == (2, pytest.approx(5.0, abs=TOLERANCE))
+    # At the last sample, t = 0.75, the walker's triangle reaches x = 3.75 + 1.
+    assert boxes(result)["walk"][-1] == pytest.approx(
+        (0.0, 4.75, 1.0, 0.0), abs=TOLERANCE
+    )
+
+
+def test_a_time_beyond_blender_s_frame_range_fails(found, tmp_path):
+    # 50000 s is frame 1.2 million at 24 fps, past Blender's ±1048574.
+    model = GlbWriter()
+    still = model.node("still", mesh=True)
+    model.scene([still], default=True)
+    model.animation(
+        "long", [(still, "translation", [0, 50000], [(0, 0, 0), (1, 0, 0)])]
+    )
+    with pytest.raises(backend.BackendError, match="beyond Blender's frame range"):
+        measure(found, model.write(tmp_path, "long"), tmp_path, fps=0.0001)

@@ -11,8 +11,10 @@ Slice 1 implements measure mode; a render job is refused as unsupported.
 Identity mapping: the script imports a private copy of the source in which
 every node is renamed `moskophoros.node.<index>`, every mesh
 `moskophoros.mesh.<index>.data` and every animation
-`moskophoros.animation.<index>`.
-Blender names objects and bones after nodes, mesh data after meshes and
+`moskophoros.animation.<index>`. Skins, cameras, lights and scenes are renamed
+into namespaces of their own, so no name from the file reaches Blender and
+nothing the importer creates can take a node's name. Blender names objects
+and bones after nodes, mesh data after meshes and
 actions after animations, so original indices map exactly, whatever the
 original names, and an index with no imported counterpart fails by name. The
 subject is found by mesh data, because Blender moves some meshes, such as a
@@ -225,6 +227,12 @@ def check_job(job):
         _fields(clip, ["animation_index", "name", "t0_s", "t1_s", "roots"], "clip")
         index = clip["animation_index"]
         _require(index is None or (_is_int(index) and index >= 0), "animation_index")
+        if index is None:
+            _require(
+                clip["t0_s"] == 0 and clip["t1_s"] == 0 and clip["roots"] == [],
+                f"clip {clip['name']!r} has no animation index, so it must be the "
+                "static clip: zero endpoints and no roots",
+            )
         _require(isinstance(clip["name"], str) and clip["name"], "a clip name")
         _require(clip["name"] not in names, f"clip {clip['name']!r} repeats")
         names.add(clip["name"])
@@ -235,6 +243,7 @@ def check_job(job):
             f"clip {clip['name']!r}'s range",
         )
         _require(isinstance(clip["roots"], list), "roots")
+        seen_roots = set()
         for root in clip["roots"]:
             _fields(root, ["node_index", "node_name"], "root")
             _require(
@@ -245,11 +254,17 @@ def check_job(job):
                 root["node_name"] is None or isinstance(root["node_name"], str),
                 "a root node_name",
             )
+            _require(
+                root["node_index"] not in seen_roots,
+                f"clip {clip['name']!r} repeats root node {root['node_index']}",
+            )
+            seen_roots.add(root["node_index"])
 
     frames = job["frames"]
     _require(isinstance(frames, list) and frames, "frames")
     ranges = {clip["name"]: (clip["t0_s"], clip["t1_s"]) for clip in clips}
     addresses = set()
+    samples = {}
     for frame in frames:
         _fields(frame, ["address", "index", "angle_deg"], "frame")
         address = _fields(
@@ -269,6 +284,8 @@ def check_job(job):
             "a frame's direction",
         )
         _require(_is_number(address["time_s"]), "a frame's time_s")
+        _require(_is_int(frame["index"]) and frame["index"] >= 0, "a frame's index")
+        _require(_is_number(frame["angle_deg"]), "a frame's angle_deg")
         t0, t1 = ranges[address["clip"]]
         _require(
             t0 <= address["time_s"] <= t1,
@@ -278,8 +295,35 @@ def check_job(job):
         key = tuple(address[k] for k in ("clip", "direction", "time_s"))
         _require(key not in addresses, f"the frame address {address!r} repeats")
         addresses.add(key)
-        _require(_is_int(frame["index"]) and frame["index"] >= 0, "a frame's index")
-        _require(_is_number(frame["angle_deg"]), "a frame's angle_deg")
+        expected = direction_angle(
+            view["start_angle_deg"], address["direction"], view["directions"]
+        )
+        _require(
+            frame["angle_deg"] == expected,
+            f"direction {address['direction']}'s angle is {frame['angle_deg']!r}, "
+            f"not {expected!r}",
+        )
+        samples.setdefault((address["clip"], address["direction"]), []).append(
+            (frame["index"], address["time_s"])
+        )
+    for (clip_name, direction), indexed in samples.items():
+        times = [time_s for _, time_s in indexed]
+        _require(
+            [index for index, _ in indexed] == list(range(len(indexed)))
+            and times == sorted(set(times)),
+            f"clip {clip_name!r} direction {direction}'s samples are not indexed "
+            "0, 1, 2, ... in time order",
+        )
+
+
+def _wrap(degrees):
+    turned = degrees % 360
+    return 0.0 if turned == 360 else turned
+
+
+def direction_angle(start, index, count):
+    """θᵢ = (start + i · 360 / N) mod 360, computed as moskophoros.views does."""
+    return _wrap(_wrap(start) + index * 360 / count)
 
 
 def canonical_sha256(document):
@@ -323,6 +367,14 @@ def private_copy(document, rest, source, scene):
         node["name"] = NODE_NAME.format(index)
     for index, mesh in enumerate(document.get("meshes", [])):
         mesh["name"] = MESH_NAME.format(index)
+    # The importer names armatures after skins, objects after cameras and
+    # lights, and collections after scenes.
+    for key, kind in (("skins", "skin"), ("cameras", "camera"), ("scenes", "scene")):
+        for index, item in enumerate(document.get(key, [])):
+            item["name"] = f"moskophoros.{kind}.{index}.data"
+    lights = document.get("extensions", {}).get("KHR_lights_punctual", {})
+    for index, light in enumerate(lights.get("lights", [])):
+        light["name"] = f"moskophoros.light.{index}.data"
     animations = document.get("animations") or []
     for index, animation in enumerate(animations):
         animation["name"] = ANIMATION_NAME.format(index)
@@ -471,8 +523,17 @@ def activate(animation_index):
 # Evaluation
 
 
+# Blender's frame range; a frame outside it would be clamped.
+MAX_FRAME = 1048574
+
+
 def evaluate(scene, fps, time_s):
     frame = time_s * fps
+    if not -MAX_FRAME <= frame <= MAX_FRAME:
+        raise ScriptError(
+            f"time {time_s!r} s is frame {frame!r} at {fps!r} fps, beyond "
+            f"Blender's frame range of ±{MAX_FRAME}"
+        )
     whole = math.floor(frame)
     scene.frame_set(int(whole), subframe=frame - whole)
     return bpy.context.evaluated_depsgraph_get()
@@ -562,6 +623,19 @@ def bounds(points, ground, rotation_deg, pitch_deg):
     }
 
 
+_SUFFIXED_NODE = re.compile(r"moskophoros\.node\.\d+\.\d+")
+
+
+def check_node_names():
+    """Every node's object must have kept its exact name."""
+    for obj in bpy.data.objects:
+        if _SUFFIXED_NODE.fullmatch(obj.name):
+            raise ScriptError(
+                f"Blender renamed a node's object to {obj.name!r}; its identity "
+                "is ambiguous"
+            )
+
+
 def node_position(index, depsgraph):
     """A node's evaluated world position in glTF coordinates: its bone's head
     if it is a joint, otherwise its object's origin."""
@@ -585,6 +659,7 @@ def measure(job, document, statics):
     pitch = settings["view"]["pitch_deg"]
     yaw = settings["model_yaw_deg"]
     ground = tuple(settings["ground_m"][axis] for axis in "xyz")
+    check_node_names()
     objects = subject_objects(document, job["source"]["scene"])
     # The importer leaves other scenes' collections out of the view layer,
     # so their objects would never be evaluated; a root may be among them.
