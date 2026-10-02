@@ -26,7 +26,11 @@ Early implementation. These parts exist as library code:
 - measurement and rendering inside Blender,
   `moskophoros/capture/blender_script.py`, which reports each frame's bounds
   and height and each root's travel, and renders each frame as a
-  supersampled PNG with the accepted Workbench settings.
+  supersampled PNG with the accepted Workbench settings;
+- image operations, `moskophoros.imageops`, which load a captured PNG and
+  reduce a supersampled image by blocks, and the stylize and cleanup stages,
+  `moskophoros.stylize` and `moskophoros.cleanup`, which reduce captured
+  frames and pass them through.
 
 The `moskophoros` command is not available yet: these parts are not yet
 joined into a command that writes a sheet. The goals and long-term direction
