@@ -30,7 +30,9 @@ Early implementation. These parts exist as library code:
 - image operations, `moskophoros.imageops`, which load a captured PNG and
   reduce a supersampled image by blocks, and the stylize and cleanup stages,
   `moskophoros.stylize` and `moskophoros.cleanup`, which reduce captured
-  frames and pass them through.
+  frames and pass them through;
+- export, `moskophoros.export`, which lays plain frames out on the sheet PNG
+  and writes its JSON description and fingerprint.
 
 The `moskophoros` command is not available yet: these parts are not yet
 joined into a command that writes a sheet. The goals and long-term direction
