@@ -150,6 +150,12 @@ Checks, each an input error (exit 3) naming the file and the problem:
   defines the digest checks (owner decision 2026-09-30)
 - an animation has no name or an empty name (owner decision 2026-10-01), or
   two animations share a name (the message gives the animation's index)
+- an animation uses `CUBICSPLINE` interpolation, whose tangents Blender's
+  importer replaces with its own, or a `KHR_animation_pointer` channel that
+  animates a mesh's morph weights (`/meshes/N/weights`), of which the
+  importer keeps only one animation per mesh. Neither could be measured
+  faithfully; the message names the file, the clip and the problem (owner
+  decision 2026-10-02)
 - a `--clip` or `--once` names a clip that does not exist
 - a clip travels across the ground (see [Root motion](#root-motion))
 
@@ -774,3 +780,4 @@ Decided later, each when its trigger arrives:
 | Other sheet formats and per-frame output | A consumer needs them. |
 | Perspective projection | A view needs it. |
 | Vertex-color rendering | A model needs it. |
+| `CUBICSPLINE` animation and mesh morph-weight animation pointers, rejected for now (owner decision 2026-10-02) | A model needs them. |

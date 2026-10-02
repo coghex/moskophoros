@@ -61,7 +61,25 @@ def _two_scenes():
     return model, ["spin"]
 
 
-MODELS = {"static": _static, "animated": _animated, "two scenes": _two_scenes}
+def _morphed():
+    model = GlbWriter()
+    mesh = model.mesh(
+        [(0, 0, 0), (1, 0, 0), (0, 1, 0)],
+        targets=[[(0, 0, 0), (0, 0, 0), (0, 1, 0)]],
+        weights=[0.5],
+    )
+    face = model.node("face", mesh=mesh, rotation=(0, 0, 0, 1), scale=(2, 2, 2))
+    model.scene([face, model.node("box", mesh=True)])
+    model.animation("smile", [(face, "weights", [0, 1], [(0.0,), (1.0,)])])
+    return model, ["smile"]
+
+
+MODELS = {
+    "static": _static,
+    "animated": _animated,
+    "two scenes": _two_scenes,
+    "morphed": _morphed,
+}
 
 
 @pytest.mark.blender
