@@ -1,4 +1,5 @@
-"""Command-line options: parsing, validation, view presets, help and reuse.
+"""The `moskophoros` command: options, settings reuse, the run and its exit
+codes.
 
 `parse_args` turns an argument list into validated `Options`, following
 design §CLI, §Option validation and §Presets. On success it has no effects:
@@ -9,21 +10,49 @@ input file, the filesystem or Blender belong to the stages that use them.
 ground point, Reuse: `read_settings` reads and checks the earlier sheet's
 `settings`, and `apply_settings` merges them with the parsed options. Reading
 that one file is its only effect.
+
+`main` runs the whole command, following design §CLI and §Pipeline: read and
+measure the model, check root motion, fit, render, stylize, clean up and
+export, then publish every output all or nothing. `run` does the same and
+returns the exit status of design §Exit codes.
 """
 
 import argparse
+import hashlib
 import json
 import math
+import os
+import shutil
 import sys
+import tempfile
+import traceback
 from collections.abc import Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, fields, replace
 from decimal import Decimal, InvalidOperation
+from itertools import count
 from pathlib import Path
 from types import MappingProxyType
 
+from moskophoros import (
+    cleanup,
+    export,
+    fit,
+    gltf,
+    imageops,
+    sampling,
+    stylize,
+    views,
+)
+from moskophoros.capture import backend, blender
+
 PROG = "moskophoros"
 USAGE = f"{PROG} [options] <infile.glb> <outfile.png>"
+INTERNAL_ERROR = 1
 USAGE_ERROR = 2
+INTERRUPTED = 130
+# Root travel above this is an input error under `--root-motion error`.
+MAX_ROOT_TRAVEL_M = 0.02
 
 
 @dataclass(frozen=True)
@@ -261,6 +290,346 @@ def apply_settings(options: Options, reused: ReusedSettings) -> Options:
     if "view" not in explicit and explicit & set(_VIEW_FIELDS):
         values["view"] = CUSTOM_VIEW
     return replace(options, **values)
+
+
+def main(argv: Sequence[str] | None = None):
+    """The `moskophoros` console script: run the command and exit with its
+    status."""
+    sys.exit(run(sys.argv[1:] if argv is None else argv))
+
+
+def run(argv: Sequence[str]) -> int:
+    """Run the command on `argv` and return its exit status.
+
+    Errors are reported on stderr as `moskophoros: error: <message>`, and a
+    usage error after the usage synopsis. An internal error prints its
+    traceback first. An interruption publishes nothing, is reported as
+    `interrupted` and returns 130.
+    """
+    try:
+        try:
+            options = resolve_settings(parse_args(argv))
+        except SystemExit as exit:
+            # Usage errors are already reported; --help exits 0.
+            return exit.code
+        _command(options)
+        return 0
+    except KeyboardInterrupt:
+        _report("error", "interrupted")
+        return INTERRUPTED
+    except (fit.UsageError, export.UsageError, _CommandUsageError) as error:
+        _build_parser()[0].print_usage(sys.stderr)
+        _report("error", str(error))
+        return USAGE_ERROR
+    except (gltf.InputError, fit.CellOverflow, backend.BackendError) as error:
+        _report("error", str(error))
+        return error.exit_code
+    except Exception:
+        traceback.print_exc()
+        _report("error", "internal error; this is a bug")
+        return INTERNAL_ERROR
+
+
+class _CommandUsageError(Exception):
+    """A usage error found while running: an output or work directory that
+    cannot be used. Exit classification 2."""
+
+
+def _report(kind, message):
+    sys.stderr.write(f"{PROG}: {kind}: {message}\n")
+
+
+def _command(options):
+    """Run the stages for parsed and merged `options`, then publish."""
+    outfile = options.outfile
+    json_path = outfile.with_name(outfile.name.removesuffix(".png") + ".json")
+    source, subject = _read_source(options.infile)
+    selected = gltf.select_clips(subject, options.clip or (), options.once)
+    preview_paths = (
+        () if options.no_preview else export.preview_paths(outfile, selected)
+    )
+    _check_targets([outfile, json_path, *preview_paths])
+    view = views.View(
+        options.pitch, options.directions, options.start_angle, options.model_yaw
+    )
+    requested = sampling.frames(subject.name, selected, view, options.fps)
+    settings = backend.Settings(
+        view=options.view,
+        pitch=options.pitch,
+        directions=options.directions,
+        start_angle=options.start_angle,
+        model_yaw=options.model_yaw,
+        fps=options.fps,
+        supersample=options.supersample,
+        ppm=options.ppm,
+        cell=options.cell,
+        ground=options.ground,
+        ground_px=options.ground_px,
+        root_motion=options.root_motion,
+    )
+    found = blender.locate(options.blender, options.any_blender)
+
+    with _workspace(options.work_dir) as workspace:
+        measured = blender.run_phase(
+            found,
+            workspace,
+            backend.build_job(
+                "measure",
+                source,
+                subject.name,
+                settings,
+                selected,
+                requested,
+                str(workspace / "measure"),
+            ),
+        )
+        if settings.root_motion == "error":
+            check_root_motion(options.infile, measured.roots)
+        fitted = fit.resolve(
+            measured.measurements, options.ppm, options.cell, options.ground_px
+        )
+        for warning in fitted.warnings:
+            _report("warning", warning)
+        settings = replace(
+            settings, ppm=fitted.ppm, cell=fitted.cell, ground_px=fitted.ground_px
+        )
+        rendered = blender.run_phase(
+            found,
+            workspace,
+            backend.build_job(
+                "render",
+                source,
+                subject.name,
+                settings,
+                selected,
+                requested,
+                str(workspace / "render"),
+            ),
+        )
+        generator = export.generator(rendered.backend)
+        metadata = {
+            "fingerprint": export.fingerprint(
+                generator,
+                backend.settings_document(settings, selected),
+                source.sha256,
+            )
+        }
+        captured = [
+            sampling.ImageFrame(address, imageops.load_png(buffers["color"]), metadata)
+            for address, buffers in rendered.buffers.items()
+        ]
+
+    frames = cleanup.passthrough(stylize.plain(captured, settings.supersample))
+    sheet = export.encode(
+        frames,
+        generator=generator,
+        source=source,
+        subject=subject.name,
+        settings=settings,
+        selected_clips=selected,
+        image_path=outfile,
+    )
+    outputs = [(outfile, sheet.png), (json_path, sheet.json)]
+    if not options.no_preview:
+        previews = export.previews(
+            frames, subject=subject.name, settings=settings, selected_clips=selected
+        )
+        for preview in previews:
+            for warning in preview.warnings:
+                _report("warning", warning)
+        outputs += zip(
+            preview_paths, (preview.gif for preview in previews), strict=True
+        )
+    publish(outputs)
+
+
+def _read_source(path):
+    """The capture `Source` and the `gltf.Subject` of the model at `path`.
+
+    The digest is taken before the model is read, so a change while it is
+    read is caught by capture's own digest checks.
+    """
+    try:
+        data = path.read_bytes()
+    except OSError as error:
+        raise gltf.InputError(
+            path, f"cannot be read: {error.strerror or error}"
+        ) from None
+    subject = gltf.read_glb(path)
+    source = backend.Source(
+        Path(os.path.abspath(path)),
+        hashlib.sha256(data).hexdigest(),
+        subject.scene_index,
+    )
+    return source, subject
+
+
+def check_root_motion(path, roots):
+    """Raise `gltf.InputError` for the model at `path` if any root in `roots`
+    travels more than `MAX_ROOT_TRAVEL_M` across the ground."""
+    travelling = [root for root in roots if root.travel_m > MAX_ROOT_TRAVEL_M]
+    if not travelling:
+        return
+    described = []
+    for root in travelling:
+        node = f"node {root.node_index}"
+        if root.node_name is not None:
+            node += f" ({root.node_name!r})"
+        described.append(
+            f"clip {root.clip!r} moves its root {node} {root.travel_m!r} m "
+            "across the ground"
+        )
+    raise gltf.InputError(
+        path,
+        "; ".join(described)
+        + f", more than {MAX_ROOT_TRAVEL_M} m; export the clip in place, "
+        "or give --root-motion keep",
+    )
+
+
+def _check_targets(targets):
+    """Refuse output paths that cannot be published, before capture starts."""
+    for target in targets:
+        if not target.parent.is_dir():
+            raise _CommandUsageError(
+                f"the output directory {str(target.parent)!r} does not exist"
+            )
+        if target.is_dir() and not target.is_symlink():
+            raise _CommandUsageError(f"the output {str(target)!r} is a directory")
+
+
+@contextmanager
+def _workspace(work_dir):
+    """The capture workspace: `work_dir`, new or empty and kept afterwards,
+    or a temporary directory deleted afterwards, whatever happens."""
+    if work_dir is None:
+        path = Path(tempfile.mkdtemp(prefix=f"{PROG}-"))
+        try:
+            yield path
+        finally:
+            shutil.rmtree(path, ignore_errors=True)
+        return
+    path = Path(os.path.abspath(work_dir))
+    shown = str(work_dir)
+    if os.path.lexists(path):
+        if not path.is_dir():
+            raise _CommandUsageError(f"--work-dir {shown!r} is not a directory")
+        try:
+            empty = next(path.iterdir(), None) is None
+        except OSError as error:
+            raise _CommandUsageError(
+                f"--work-dir {shown!r} cannot be read: {error.strerror or error}"
+            ) from None
+        if not empty:
+            raise _CommandUsageError(
+                f"--work-dir {shown!r} is not empty; give a new or empty directory"
+            )
+    else:
+        try:
+            path.mkdir(parents=True)
+        except OSError as error:
+            raise _CommandUsageError(
+                f"--work-dir {shown!r} cannot be created: {error.strerror or error}"
+            ) from None
+    yield path
+
+
+def publish(outputs):
+    """Write each `(path, bytes)` in `outputs`, all or nothing.
+
+    Every output is first written to a temporary file beside its target.
+    Then, target by target, an existing file is moved aside and the new one
+    renamed into place. If anything fails or is interrupted partway, every
+    output already placed is removed, every earlier file is moved back, and
+    the error propagates. Only after every rename succeeds are the earlier
+    files deleted. Nothing else in the output directories is touched.
+
+    A failure to write is a usage error naming the output.
+    """
+    outputs = [(Path(target), data) for target, data in outputs]
+    staged, moved, placed = [], [], []
+    try:
+        try:
+            for target, data in outputs:
+                staged.append((target, _stage(target, data)))
+            for target, temporary in staged:
+                if os.path.lexists(target):
+                    backup = _unused_name(target, "earlier")
+                    os.replace(target, backup)
+                    moved.append((target, backup))
+                os.replace(temporary, target)
+                placed.append(target)
+        except BaseException:
+            _roll_back(placed, moved)
+            raise
+        finally:
+            for target, temporary in staged:
+                if target not in placed:
+                    _remove_quietly(temporary)
+    except OSError as error:
+        name = error.filename or "an output"
+        raise _CommandUsageError(
+            f"cannot write {str(name)!r}: {error.strerror or error}; "
+            "earlier outputs are kept"
+        ) from None
+    for target, backup in moved:
+        try:
+            os.remove(backup)
+        except OSError as error:
+            _report(
+                "warning",
+                f"the earlier {str(target)!r} could not be deleted from "
+                f"{str(backup)!r}: {error.strerror or error}",
+            )
+
+
+def _stage(target, data):
+    """Write `data` to a new temporary file beside `target`; return its path.
+
+    It is created like any new file, so the umask sets its permissions.
+    """
+    path = _unused_name(target, "new")
+    with open(path, "xb") as handle:
+        handle.write(data)
+    return path
+
+
+def _unused_name(target, purpose):
+    """A name beside `target`, hidden and unused, for a `purpose` file."""
+    for n in count():
+        path = target.with_name(f".{target.name}.{PROG}-{purpose}-{os.getpid()}-{n}")
+        if not os.path.lexists(path):
+            return path
+
+
+def _roll_back(placed, moved):
+    """Undo a partial publication: remove what was placed, restore what was
+    moved aside. A step that fails is reported, and the rest still run."""
+    for target in reversed(placed):
+        try:
+            os.remove(target)
+        except OSError as error:
+            _report(
+                "error",
+                f"rolling back, {str(target)!r} could not be removed: "
+                f"{error.strerror or error}",
+            )
+    for target, backup in reversed(moved):
+        try:
+            os.replace(backup, target)
+        except OSError as error:
+            _report(
+                "error",
+                f"rolling back, the earlier {str(target)!r} could not be restored "
+                f"and is kept at {str(backup)!r}: {error.strerror or error}",
+            )
+
+
+def _remove_quietly(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 
 class _Parser(argparse.ArgumentParser):

@@ -8,51 +8,40 @@ direction into a single sheet, with a JSON file describing each frame.
 It is a general tool for game art, not tied to any one game. Views are
 configurable: top-down, side or isometric, with 1, 2, 4 or 8 directions.
 
-## Status
-
-Early implementation. These parts exist as library code:
-
-- command-line option parsing and validation, `moskophoros.cli`, which also
-  reads an earlier sheet's settings for `--settings-from`, checks them and
-  merges them with the explicit options;
-- the GLB reader, `moskophoros.gltf`, which reads a `.glb` file's subject
-  scene, clips, time ranges and root nodes, and selects clips by name;
-- camera and direction math, `moskophoros.views`, and sample times and frame
-  addresses, `moskophoros.sampling`, which enumerate every requested frame in
-  sheet order;
-- scale and placement, `moskophoros.fit`, which resolves one scale, cell and
-  ground pixel from measured bounds and reports frames that overflow the cell;
-- the capture interface, `moskophoros.capture`, which builds capture jobs,
-  validates their results, finds Blender, checks its version and runs one
-  capture phase;
-- measurement and rendering inside Blender,
-  `moskophoros/capture/blender_script.py`, which reports each frame's bounds
-  and height and each root's travel, and renders each frame as a
-  supersampled PNG with the accepted Workbench settings;
-- image operations, `moskophoros.imageops`, which load a captured PNG and
-  reduce a supersampled image by blocks, and the stylize and cleanup stages,
-  `moskophoros.stylize` and `moskophoros.cleanup`, which reduce captured
-  frames and pass them through;
-- export, `moskophoros.export`, which lays plain frames out on the sheet PNG,
-  writes its JSON description and fingerprint, and makes each clip's
-  animated GIF preview.
-
-The `moskophoros` command is not available yet: these parts are not yet
-joined into a command that writes a sheet. The goals and long-term direction
-are in [docs/vision.md](docs/vision.md); the concrete design of the first
-version is in [docs/design.md](docs/design.md).
-
-## Planned usage
+## Usage
 
 ```
 moskophoros [options] <infile.glb> <outfile.png>
 ```
 
-This writes `outfile.png` and `outfile.json` beside it.
+For example, to render a model's `walk` loop and its one-shot `attack` in the
+eight isometric directions, in 64×64 cells:
+
+```
+moskophoros --clip walk --clip attack --once attack --cell 64x64 hero.glb out/hero.png
+```
+
+A run writes, beside each other:
+
+- `hero.png`, the sheet: one row per clip and direction, one column per frame;
+- `hero.json`, the `moskophoros.sheet/1` description of every frame, the
+  settings used and a fingerprint of them;
+- `hero.<clip>.gif`, an animated preview of each clip in every direction,
+  unless `--no-preview` is given.
+
+Outputs are published only when the whole run succeeds, so a failed run leaves
+earlier outputs as they were. `--settings-from hero.json` reuses an earlier
+sheet's view, scale, cell and ground point, so new clips line up with it.
+`moskophoros --help` lists every option.
+
+The full contract, covering every option, the sheet and JSON formats, the
+exit codes and how scale and the ground point are chosen, is in
+[docs/design.md](docs/design.md). The goals and long-term direction are in
+[docs/vision.md](docs/vision.md).
 
 ## Requirements
 
-- Python 3 with numpy and Pillow
+- Python 3.13 or newer, with numpy and Pillow
 - Blender, run headless for rendering. The supported version is recorded in
   [docs/design.md](docs/design.md#supported-blender-version).
 
