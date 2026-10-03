@@ -505,8 +505,14 @@ def import_glb(data, directory):
     path = os.path.join(directory, "subject.glb")
     with open(path, "wb") as handle:
         handle.write(data)
-    # No bone display shapes: they are not part of the subject.
-    result = bpy.ops.import_scene.gltf(filepath=path, disable_bone_shape=True)
+    # No bone display shapes: they are not part of the subject. The TEMPERANCE
+    # bone heuristic places a mesh parented to a bone where glTF puts it under
+    # a scaled armature. The default, BLENDER, shortens each bone by the
+    # armature's scale but moves the bone's child objects back by the full
+    # length, misplacing them by length × (scale − 1).
+    result = bpy.ops.import_scene.gltf(
+        filepath=path, disable_bone_shape=True, bone_heuristic="TEMPERANCE"
+    )
     if "FINISHED" not in result:
         raise ScriptError(f"Blender could not import the model: {sorted(result)}")
 
