@@ -73,6 +73,8 @@ Each decision was relayed by laz in the project chat.
   - The capture now imports with `bone_heuristic="TEMPERANCE"`, which places them as glTF specifies.
   - The accepted render is the first one made with this fix.
 
-## Still open
+## Output errors
 
-- **The exit code for a failed output write** (disk full, permission denied) is not yet decided by the owner. Design §Exit codes has no row for it. The command currently restores the earlier outputs and exits 2. This acceptance does not decide that question.
+**2026-10-03, decided by the owner** (message `jhqfuhytzpwecxvgi57s2jpe7e`): an output that cannot be written, whether on a full disk, without permission or because a rename fails while publishing, exits with code 6 and prints no usage synopsis or traceback. The message names the output and the reason, and says the earlier outputs are kept. Rollback is unchanged: earlier outputs are restored byte for byte, newly placed outputs are removed, and staged files are deleted. design.md §Exit codes records this.
+
+The change touches only error reporting, so the accepted pixels are unaffected.
