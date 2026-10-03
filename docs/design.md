@@ -76,7 +76,10 @@ Existing outputs are overwritten. All outputs are written to temporary files
 and renamed into place only after the whole run succeeds, so a failed run
 leaves earlier outputs untouched. Publishing is all-or-nothing: if renaming
 fails partway, the outputs already replaced are rolled back and the earlier
-ones restored before the run fails. A run replaces only the files it writes
+ones restored before the run fails. An output that cannot be written, on a
+full disk, without permission or because a rename fails, is an output error
+(exit 6) naming the output and the reason, with the earlier outputs kept
+(owner decision 2026-10-03). A run replaces only the files it writes
 and never deletes others, so previews from an earlier run that this run does
 not write, such as a dropped clip's or under `--no-preview`, stay as they
 were (owner decisions 2026-10-01). Errors go to stderr as
@@ -123,6 +126,7 @@ A usage error prints the usage synopsis to stderr, followed by the
 | 3 | Input error: see [Input contract](#input-contract) and [Root motion](#root-motion). |
 | 4 | Overflow: the subject does not fit a fixed cell and scale. |
 | 5 | Backend error: Blender missing, wrong version, or failed. |
+| 6 | Output error: an output could not be written (a full disk, no permission, a failed rename). The message names the output and the reason; the earlier outputs are kept, and no usage synopsis or traceback is printed (owner decision 2026-10-03). |
 | 130 | Interrupted (Ctrl-C): `moskophoros: error: interrupted`, no traceback, nothing published (owner decision 2026-10-01). |
 
 ## Input contract
