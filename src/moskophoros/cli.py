@@ -414,12 +414,14 @@ def _command(options):
                 source.sha256,
             )
         }
-        captured = [
+        # Loaded one at a time as stylize reduces them, so only one
+        # supersampled frame is held at once.
+        captured = (
             sampling.ImageFrame(address, imageops.load_png(buffers["color"]), metadata)
             for address, buffers in rendered.buffers.items()
-        ]
+        )
+        frames = cleanup.passthrough(stylize.plain(captured, settings.supersample))
 
-    frames = cleanup.passthrough(stylize.plain(captured, settings.supersample))
     sheet = export.encode(
         frames,
         generator=generator,
