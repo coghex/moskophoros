@@ -23,8 +23,10 @@ import json
 import math
 import os
 import shutil
+import signal
 import sys
 import tempfile
+import threading
 import traceback
 from collections.abc import Sequence
 from contextlib import contextmanager
@@ -50,6 +52,7 @@ PROG = "moskophoros"
 USAGE = f"{PROG} [options] <infile.glb> <outfile.png>"
 INTERNAL_ERROR = 1
 USAGE_ERROR = 2
+OUTPUT_ERROR = 6
 INTERRUPTED = 130
 # Root travel above this is an input error under `--root-motion error`.
 MAX_ROOT_TRAVEL_M = 0.02
@@ -303,7 +306,8 @@ def run(argv: Sequence[str]) -> int:
 
     Errors are reported on stderr as `moskophoros: error: <message>`, and a
     usage error after the usage synopsis. An internal error prints its
-    traceback first. An interruption publishes nothing, is reported as
+    traceback first. An output that cannot be written returns 6, with the
+    earlier outputs kept. An interruption publishes nothing, is reported as
     `interrupted` and returns 130.
     """
     try:
@@ -321,7 +325,12 @@ def run(argv: Sequence[str]) -> int:
         _build_parser()[0].print_usage(sys.stderr)
         _report("error", str(error))
         return USAGE_ERROR
-    except (gltf.InputError, fit.CellOverflow, backend.BackendError) as error:
+    except (
+        gltf.InputError,
+        fit.CellOverflow,
+        backend.BackendError,
+        _OutputError,
+    ) as error:
         _report("error", str(error))
         return error.exit_code
     except Exception:
@@ -333,6 +342,13 @@ def run(argv: Sequence[str]) -> int:
 class _CommandUsageError(Exception):
     """A usage error found while running: an output or work directory that
     cannot be used. Exit classification 2."""
+
+
+class _OutputError(Exception):
+    """An output that could not be written, such as on a full disk or without
+    permission; the earlier outputs are kept. Exit classification 6."""
+
+    exit_code = OUTPUT_ERROR
 
 
 def _report(kind, message):
@@ -541,48 +557,80 @@ def publish(outputs):
 
     Every output is first written to a temporary file beside its target.
     Then, target by target, an existing file is moved aside and the new one
-    renamed into place. If anything fails or is interrupted partway, every
-    output already placed is removed, every earlier file is moved back, and
-    the error propagates. Only after every rename succeeds are the earlier
-    files deleted. Nothing else in the output directories is touched.
+    renamed into place. If anything fails or is interrupted before every
+    output is in place, each output placed is removed, each earlier file is
+    moved back, and the error propagates. Once every output is in place the
+    publication is complete: the earlier files are deleted, and an
+    interruption then no longer stops the run. Nothing else in the output
+    directories is touched.
 
-    A failure to write is a usage error naming the output.
+    While publishing, an interruption is deferred to the next step, so no
+    rename is ever left out of the record the rollback reads, and the
+    rollback itself runs to the end. A failure to write is an `_OutputError`
+    naming the output.
     """
     outputs = [(Path(target), data) for target, data in outputs]
+    interrupted = []
     staged, moved, placed = [], [], []
-    try:
+    target = None
+    with _deferred_interrupts(interrupted):
         try:
-            for target, data in outputs:
-                staged.append((target, _stage(target, data)))
-            for target, temporary in staged:
-                if os.path.lexists(target):
-                    backup = _unused_name(target, "earlier")
-                    os.replace(target, backup)
-                    moved.append((target, backup))
-                os.replace(temporary, target)
-                placed.append(target)
-        except BaseException:
-            _roll_back(placed, moved)
-            raise
-        finally:
-            for target, temporary in staged:
-                if target not in placed:
+            try:
+                for target, data in outputs:
+                    _stop_if(interrupted)
+                    staged.append((target, _stage(target, data)))
+                for target, temporary in staged:
+                    _stop_if(interrupted)
+                    if os.path.lexists(target):
+                        backup = _unused_name(target, "earlier")
+                        # Recorded first: the rollback checks which renames
+                        # happened.
+                        moved.append((target, backup))
+                        os.replace(target, backup)
+                    placed.append((target, temporary))
+                    os.replace(temporary, target)
+                _stop_if(interrupted)
+            except BaseException:
+                _roll_back(placed, moved)
+                raise
+            finally:
+                for _, temporary in staged:
                     _remove_quietly(temporary)
-    except OSError as error:
-        name = error.filename or "an output"
-        raise _CommandUsageError(
-            f"cannot write {str(name)!r}: {error.strerror or error}; "
-            "earlier outputs are kept"
-        ) from None
-    for target, backup in moved:
-        try:
-            os.remove(backup)
         except OSError as error:
-            _report(
-                "warning",
-                f"the earlier {str(target)!r} could not be deleted from "
-                f"{str(backup)!r}: {error.strerror or error}",
-            )
+            raise _OutputError(
+                f"cannot write {str(target)!r}: {error.strerror or error}; "
+                "earlier outputs are kept"
+            ) from None
+        for target, backup in moved:
+            try:
+                os.remove(backup)
+            except OSError as error:
+                _report(
+                    "warning",
+                    f"the earlier {str(target)!r} could not be deleted from "
+                    f"{str(backup)!r}: {error.strerror or error}",
+                )
+
+
+@contextmanager
+def _deferred_interrupts(received):
+    """Record Ctrl-C in `received` instead of raising it, in the main thread,
+    where Python delivers signals."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous = signal.signal(
+        signal.SIGINT, lambda signum, frame: received.append(signum)
+    )
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+
+def _stop_if(interrupted):
+    if interrupted:
+        raise KeyboardInterrupt
 
 
 def _stage(target, data):
@@ -591,8 +639,15 @@ def _stage(target, data):
     It is created like any new file, so the umask sets its permissions.
     """
     path = _unused_name(target, "new")
-    with open(path, "xb") as handle:
-        handle.write(data)
+    handle = open(path, "xb")
+    try:
+        with handle:
+            handle.write(data)
+    except BaseException:
+        # Only the file this call created, after a write such as on a full
+        # disk fails partway.
+        _remove_quietly(path)
+        raise
     return path
 
 
@@ -605,9 +660,12 @@ def _unused_name(target, purpose):
 
 
 def _roll_back(placed, moved):
-    """Undo a partial publication: remove what was placed, restore what was
-    moved aside. A step that fails is reported, and the rest still run."""
-    for target in reversed(placed):
+    """Undo a partial publication: remove each output whose rename into place
+    happened, then move each earlier file that was moved aside back. A step
+    that fails is reported, and the rest still run."""
+    for target, temporary in reversed(placed):
+        if os.path.lexists(temporary):
+            continue  # its rename never happened
         try:
             os.remove(target)
         except OSError as error:
@@ -617,6 +675,8 @@ def _roll_back(placed, moved):
                 f"{error.strerror or error}",
             )
     for target, backup in reversed(moved):
+        if not os.path.lexists(backup):
+            continue  # its rename never happened
         try:
             os.replace(backup, target)
         except OSError as error:

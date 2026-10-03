@@ -6,6 +6,7 @@ change the source or write a bad result. It logs each phase it runs. Tests
 coordinate with it through FIFOs, never by sleeping.
 """
 
+import errno
 import hashlib
 import json
 import os
@@ -461,6 +462,29 @@ def _failing_replace(monkeypatch, out, fail_at, error):
 RENAMES = 7
 
 
+# The output each rename moves: aside then into place for an existing
+# target, only into place for a new one.
+RENAMED = [
+    "hero.png",
+    "hero.png",
+    "hero.json",
+    "hero.json",
+    "hero.walk.gif",
+    "hero.attack.gif",
+    "hero.attack.gif",
+]
+
+
+def assert_output_error(setup, status, err, name, reason):
+    """Exit 6 with one error line naming the output, and no usage synopsis
+    or traceback."""
+    assert status == 6
+    assert err == (
+        f"moskophoros: error: cannot write {str(setup.out / name)!r}: {reason}; "
+        "earlier outputs are kept\n"
+    )
+
+
 @pytest.mark.parametrize("fail_at", range(RENAMES))
 def test_a_rename_failure_restores_every_earlier_output(
     setup, capsys, monkeypatch, fail_at
@@ -470,12 +494,59 @@ def test_a_rename_failure_restores_every_earlier_output(
         monkeypatch,
         setup.out,
         fail_at,
-        OSError(28, "No space left on device", str(setup.out / "x")),
+        OSError(errno.EBUSY, "Device or resource busy"),
     )
     status, _, err = run(capsys, setup.argv())
-    assert status == 2
-    assert "No space left on device; earlier outputs are kept" in err
+    assert_output_error(setup, status, err, RENAMED[fail_at], "Device or resource busy")
     assert len(calls) > fail_at
+    assert setup.listing() == earlier
+
+
+class _FullDisk:
+    """A file handle whose write stops halfway with ENOSPC."""
+
+    def __init__(self, handle):
+        self.handle = handle
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exception):
+        self.handle.close()
+
+    def write(self, data):
+        self.handle.write(data[: len(data) // 2])
+        raise OSError(errno.ENOSPC, "No space left on device", self.handle.name)
+
+
+def _failing_stage(monkeypatch, name, failure):
+    """Make staging the output `name` fail: `full` creates the staged file,
+    then its write fails with ENOSPC; `denied` cannot create it."""
+    real_open = open
+
+    def staged_open(path, mode="r", *args, **kwargs):
+        if "x" in mode and Path(path).name.startswith(f".{name}.moskophoros-new-"):
+            if failure == "denied":
+                raise PermissionError(errno.EACCES, "Permission denied", str(path))
+            return _FullDisk(real_open(path, mode, *args, **kwargs))
+        return real_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(cli, "open", staged_open, raising=False)
+
+
+@pytest.mark.parametrize("name", ["hero.png", "hero.walk.gif", "hero.attack.gif"])
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    [("full", "No space left on device"), ("denied", "Permission denied")],
+)
+def test_a_staging_failure_keeps_every_earlier_output(
+    setup, capsys, monkeypatch, name, failure, reason
+):
+    earlier = earlier_outputs(setup, "hero.png", "hero.json", "hero.attack.gif")
+    _failing_stage(monkeypatch, name, failure)
+    status, _, err = run(capsys, setup.argv())
+    assert_output_error(setup, status, err, name, reason)
+    # Byte for byte, with no staged file left behind.
     assert setup.listing() == earlier
 
 
@@ -495,6 +566,83 @@ def test_an_interruption_during_publication_restores_every_earlier_output(
     status, out, err = run(capsys, setup.argv())
     assert (status, out, err) == (130, "", "moskophoros: error: interrupted\n")
     assert setup.listing() == earlier
+
+
+def _interrupt_after(monkeypatch, module, name, out, after):
+    """Deliver a real Ctrl-C right after the `after`-th call of
+    `module.name` touching `out` completes, as if it arrived between that
+    filesystem change and whatever follows."""
+    real = getattr(module, name)
+    calls = []
+
+    def wrapper(*args, **kwargs):
+        result = real(*args, **kwargs)
+        if any(Path(arg).parent == out for arg in args if isinstance(arg, str | Path)):
+            calls.append(args)
+            if len(calls) - 1 == after:
+                signal.raise_signal(signal.SIGINT)
+        return result
+
+    monkeypatch.setattr(module, name, wrapper)
+    return calls
+
+
+@pytest.mark.parametrize("after", range(RENAMES))
+def test_ctrl_c_right_after_any_rename_restores_every_earlier_output(
+    setup, capsys, monkeypatch, after
+):
+    earlier = earlier_outputs(setup, "hero.png", "hero.json", "hero.attack.gif")
+    calls = _interrupt_after(monkeypatch, os, "replace", setup.out, after)
+    status, out, err = run(capsys, setup.argv())
+    assert (status, out, err) == (130, "", "moskophoros: error: interrupted\n")
+    assert len(calls) > after
+    # Byte for byte, with no staged or moved-aside file left behind.
+    assert setup.listing() == earlier
+
+
+def test_ctrl_c_while_staging_restores_every_earlier_output(setup, capsys, monkeypatch):
+    earlier = earlier_outputs(setup, "hero.png", "hero.json", "hero.attack.gif")
+    real_open = open
+
+    def staging_open(path, mode="r", *args, **kwargs):
+        handle = real_open(path, mode, *args, **kwargs)
+        if "x" in mode and Path(path).name.startswith(".hero.json."):
+            signal.raise_signal(signal.SIGINT)
+        return handle
+
+    monkeypatch.setattr(cli, "open", staging_open, raising=False)
+    status, out, err = run(capsys, setup.argv())
+    assert (status, out, err) == (130, "", "moskophoros: error: interrupted\n")
+    assert setup.listing() == earlier
+
+
+def test_ctrl_c_after_every_output_is_in_place_lets_the_run_finish(
+    setup, capsys, monkeypatch
+):
+    # Deleting the earlier files is cleanup after the publication is
+    # complete: an interruption there neither stops it nor loses a file.
+    earlier = earlier_outputs(setup, "hero.png", "hero.json", "hero.attack.gif")
+    _interrupt_after(monkeypatch, os, "remove", setup.out, 0)
+    status, out, err = run(capsys, setup.argv())
+    assert (status, out, err) == (0, "", "")
+    after = setup.listing()
+    assert sorted(after) == [
+        "hero.attack.gif",
+        "hero.json",
+        "hero.png",
+        "hero.walk.gif",
+        "notes.txt",
+    ]
+    for name in ("hero.png", "hero.json", "hero.attack.gif"):
+        assert after[name] != earlier[name]
+    assert after["notes.txt"] == earlier["notes.txt"]
+
+
+def test_ctrl_c_outside_publication_still_interrupts(setup, capsys):
+    # The deferral is only for publication: the handler is restored after.
+    assert run(capsys, setup.argv())[0] == 0
+    with pytest.raises(KeyboardInterrupt):
+        signal.raise_signal(signal.SIGINT)
 
 
 def test_earlier_previews_stay_under_no_preview(setup, capsys):
