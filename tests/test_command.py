@@ -20,7 +20,7 @@ import pytest
 from glb_writer import GlbWriter
 from PIL import Image
 
-from moskophoros import cli, export, stylize
+from moskophoros import cli, export, imageops, stylize
 
 FAKE = """\
 #!{python}
@@ -287,6 +287,26 @@ def test_the_fingerprint_reaches_the_frames_before_stylize(setup, capsys, monkey
     description = json.loads(setup.json.read_text())
     assert description["settings"] == settings
     assert description["fingerprint"] == expected
+
+
+def test_each_captured_frame_is_reduced_before_the_next_is_loaded(
+    setup, capsys, monkeypatch
+):
+    events = []
+    real_load, real_reduce = imageops.load_png, imageops.reduce_blocks
+
+    def load(path):
+        events.append("load")
+        return real_load(path)
+
+    def reduce(pixels, factor):
+        events.append("reduce")
+        return real_reduce(pixels, factor)
+
+    monkeypatch.setattr(imageops, "load_png", load)
+    monkeypatch.setattr(imageops, "reduce_blocks", reduce)
+    assert run(capsys, setup.argv())[0] == 0
+    assert events == ["load", "reduce"] * ((4 + 3) * 8)
 
 
 def test_two_runs_give_identical_outputs(setup, capsys, tmp_path):
