@@ -18,7 +18,6 @@ from pathlib import Path
 from PIL import Image
 
 from moskophoros import fit, sampling, views
-from moskophoros.cli import PRESETS, ROOT_MOTION_MODES
 
 INTERNAL_ERROR = 1
 BACKEND_ERROR = 5
@@ -269,6 +268,9 @@ def _check_source(source):
 
 
 def _check_settings(settings, mode):
+    # Imported here because the command in `cli` imports this module.
+    from moskophoros.cli import PRESETS, ROOT_MOTION_MODES
+
     problems = []
     if settings.view not in (*PRESETS, CUSTOM_VIEW):
         problems.append(f"view {settings.view!r}")

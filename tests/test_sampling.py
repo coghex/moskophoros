@@ -54,7 +54,7 @@ def test_frame_count_rounds_half_up(duration, fps, n):
     loop = sample(looping(animation("a", t0, t1)), fps)
     once = sample(one_shot(animation("a", t0, t1)), fps)
     assert loop == Sampling(n, tuple(t0 + k * d / n for k in range(n)), d / n)
-    assert once == Sampling(n + 1, tuple(t0 + k * d / n for k in range(n + 1)), d / n)
+    assert once == Sampling(n + 1, (*loop.times, t1), d / n)
 
 
 def test_a_short_clip_still_has_one_frame():
@@ -63,7 +63,29 @@ def test_a_short_clip_still_has_one_frame():
     clip = animation("blink", 3.0, 3.02)
     duration = 3.02 - 3.0
     assert sample(looping(clip), 12) == Sampling(1, (3.0,), duration)
-    assert sample(one_shot(clip), 12) == Sampling(2, (3.0, 3.0 + duration), duration)
+    assert sample(one_shot(clip), 12) == Sampling(2, (3.0, 3.02), duration)
+
+
+@pytest.mark.parametrize(
+    ("t0", "t1", "n"),
+    [
+        # RobotExpressive's Punch: t0 + 10·d/10 is 0.8333333134651181.
+        (0.0, 0.833333313465118, 10),
+        # A nonzero start: t0 + 10·d/10 is 0.933333313465118.
+        (0.1, 0.9333333134651179, 10),
+    ],
+)
+def test_a_one_shot_clip_ends_at_t1_exactly(t0, t1, n):
+    d = t1 - t0
+    assert t0 + n * d / n > t1  # the rounding this guards against
+    once = sample(one_shot(animation("punch", t0, t1)), 12)
+    loop = sample(looping(animation("punch", t0, t1)), 12)
+    assert once.times[-1] == t1
+    assert all(t0 <= time <= t1 for time in once.times)
+    # Everything else is unchanged: the interior samples, which the loop
+    # shares, the count and the frame duration.
+    assert loop == Sampling(n, tuple(t0 + k * d / n for k in range(n)), d / n)
+    assert once == Sampling(n + 1, (*loop.times, t1), d / n)
 
 
 @pytest.mark.parametrize("select", [looping, one_shot])
