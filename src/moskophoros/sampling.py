@@ -70,7 +70,8 @@ def sample(selected, fps):
     The synthetic `static` clip, which has no animation index, and any clip of
     zero duration have one frame at `t0` lasting `1/fps`. Otherwise, with
     `n = max(1, floor(d · fps + 0.5))`, a looping clip has `n` frames and a
-    one-shot clip `n + 1`, at `t0 + k·d/n`, each lasting `d/n`.
+    one-shot clip `n + 1`, at `t0 + k·d/n`, each lasting `d/n`. A one-shot
+    clip's last sample is `t1` itself, which `t0 + n·d/n` can miss by rounding.
     """
     if not (math.isfinite(fps) and fps > 0):
         raise ValueError(f"fps must be finite and greater than 0, got {fps!r}")
@@ -81,9 +82,10 @@ def sample(selected, fps):
     if duration == 0:
         return Sampling(1, (clip.t0,), 1 / fps)
     n = max(1, math.floor(duration * fps + 0.5))
-    count = n + 1 if selected.one_shot else n
-    times = tuple(clip.t0 + k * duration / n for k in range(count))
-    return Sampling(count, times, duration / n)
+    times = tuple(clip.t0 + k * duration / n for k in range(n))
+    if selected.one_shot:
+        times += (clip.t1,)
+    return Sampling(len(times), times, duration / n)
 
 
 def frames(subject, selected_clips, view, fps):

@@ -295,3 +295,37 @@ def test_an_unusable_blender_fails_with_5(capsys, found, model, out, tmp_path):
     assert status == 5
     assert "is not an executable file" in err
     assert listing(out) == before
+
+
+def test_a_one_shot_clip_whose_endpoint_rounds_past_t1(capsys, tmp_path, found):
+    # The clip's range in the JSON is 0 to 0.833333313465118, written to 15
+    # digits as RobotExpressive's Punch is. At 12 fps, n = 10, and
+    # 0 + 10·d/10 rounds past t1; the last sample must be t1 itself.
+    t1 = 0.833333313465118
+    model = GlbWriter()
+    arm = model.node("arm", mesh=model.mesh(box(-0.1, 0.0, -0.1, 0.1, 0.5, 0.1)))
+    model.scene([arm], default=True)
+    model.animation(
+        "punch", [(arm, "translation", [0.0, t1], [(0, 0, 0), (0, 0.2, 0)])]
+    )
+    sampler_input = model.document["animations"][0]["samplers"][0]["input"]
+    model.document["accessors"][sampler_input]["max"] = [t1]
+    path = model.write(tmp_path, "puncher")
+    out = tmp_path / "out"
+    out.mkdir()
+    status, _, err = run(
+        capsys,
+        found,
+        path,
+        out / "puncher.png",
+        "--once",
+        "punch",
+        "--fps",
+        "12",
+        base=["--supersample", "2", "--cell", "16x16"],
+    )
+    assert (status, err) == (0, "")
+    description = json.loads((out / "puncher.json").read_text())
+    times = sorted({frame["time_s"] for frame in description["frames"]})
+    assert len(times) == 11
+    assert times[-1] == t1
