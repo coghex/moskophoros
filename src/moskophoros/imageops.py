@@ -117,10 +117,15 @@ def reduce_blocks_mode(pixels, factor):
         keys = keys[starts]
         owner, colour = keys >> 24, keys & 0xFFFFFF
         channels = np.stack([colour >> 16, colour >> 8 & 255, colour & 255], axis=1)
-        # The squared distance to the mean W / A, scaled by A² to stay exact:
-        # Σ (c·A − W)².
-        total = alpha_sum[owner][:, np.newaxis]
-        distance = ((channels * total - weighted[owner]) ** 2).sum(axis=1)
+        # The squared distance to the mean W / A, scaled by A² to stay exact,
+        # is Σ (c·A − W)² = A·(A·Σc² − 2·Σc·W) + ΣW². Within a block A > 0
+        # and ΣW² are the same for every candidate, so A·Σc² − 2·Σc·W ranks
+        # them alike. It stays within int64 for any factor whose block fits
+        # in memory, where the squared form overflows above about 200.
+        total = alpha_sum[owner]
+        distance = total * (channels**2).sum(axis=1) - 2 * (
+            channels * weighted[owner]
+        ).sum(axis=1)
         # By block, then most votes, nearest the mean, smallest packed value.
         ranked = np.lexsort((colour, distance, -votes, owner))
         first = ranked[np.flatnonzero(np.diff(owner[ranked], prepend=-1))]

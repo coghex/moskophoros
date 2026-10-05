@@ -363,6 +363,24 @@ def test_the_mode_reduction_at_factor_sixteen_does_not_overflow():
     ]
 
 
+def test_a_tie_at_a_large_factor_is_ranked_without_overflow():
+    # One 224×224 opaque block: black and white tie at 20000 · 255 votes, and
+    # 10176 grey (200, 200, 200) pixels pull the mean towards white. The
+    # squared distances times A², 9931478743728000000 for black and
+    # 6248638050295680000 for white, exceed int64 in black's case.
+    flat = np.full((224 * 224, 4), 255, dtype=np.uint8)
+    flat[:20000, :3] = 0
+    flat[40000:, :3] = 200
+    total = 255 * 224 * 224
+    weighted = 255 * (20000 * 255 + 10176 * 200)
+    black = 3 * weighted**2
+    white = 3 * (255 * total - weighted) ** 2
+    assert (black, white) == (9931478743728000000, 6248638050295680000)
+    assert black > np.iinfo(np.int64).max > white
+    pixels = flat.reshape(224, 224, 4)
+    assert reduce_blocks_mode(pixels, 224).tolist() == [[[255, 255, 255, 255]]]
+
+
 def test_the_mode_reduction_leaves_its_input_unchanged_and_returns_uint8():
     pixels = np.arange(4 * 4 * 4, dtype=np.uint8).reshape(4, 4, 4)
     before = pixels.copy()
