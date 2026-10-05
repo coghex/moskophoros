@@ -35,7 +35,7 @@ concrete precondition
 - [x] SP1-2. Reduce supersampled frames by each block's most common colour — [#52]
 - [x] SP1-3. Read and validate palettes — [#53]
 - [x] SP1-4. Map frames onto a palette, alone and with the most-common-colour reduction — [#54]
-- [ ] SP1-5. Render the offered styles for the owner's visual review
+- [x] SP1-5. Render the offered styles for the owner's visual review — [#55]
 
 ## Epic contract
 
