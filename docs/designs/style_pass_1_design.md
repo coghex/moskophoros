@@ -30,7 +30,7 @@ concrete precondition
 
 ## Processing status
 
-- [ ] EPIC. Deliver the first owner-selected style passes: most-common-colour reduction and palettes
+- [x] EPIC. Deliver the first owner-selected style passes: most-common-colour reduction and palettes — [#50]
 - [ ] SP1-1. Record the chosen style in the sheet and reuse it
 - [ ] SP1-2. Reduce supersampled frames by each block's most common colour
 - [ ] SP1-3. Read and validate palettes
