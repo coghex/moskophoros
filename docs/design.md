@@ -624,6 +624,45 @@ This is the only look-related step in slice 1, selected by `--reduce plain`,
 the default. Future style passes replace or extend it (vision, Long-term
 direction).
 
+#### Palette inputs
+
+The standalone `palette.read_palette(path)` library function reads palettes;
+command-line selection and frame mapping belong to the next style slice. It
+returns an immutable ordered sequence of 8-bit RGB triples and only reads the
+named file (owner decisions 2026-10-04, D-4, D-5 and D-10 in
+[the style design](designs/style_pass_1_design.md#decisions)).
+
+The suffix chooses the format, ignoring case:
+
+- `.hex`: UTF-8, one six-digit `RRGGBB` per line, in either case, with an
+  optional leading `#`. Blank lines and surrounding whitespace are ignored.
+- `.gpl`: UTF-8, beginning with `GIMP Palette`; optional `Name:` and
+  `Columns:` metadata precede colour entries. Blank lines and `#` comments
+  are ignored. Entries are three whitespace-separated integers in 0 to 255,
+  optionally followed by a colour name. Both text formats preserve file order.
+- `.png`: distinct colours in first-appearance order, scanning rows top to
+  bottom and each row left to right. Repeated pixels contribute one colour;
+  indexed images contribute used pixel colours, excluding unused table entries;
+  greyscale expands to RGB. Every pixel must be fully opaque, including
+  transparency from a palette table or a transparent-colour key. Source
+  samples must be exactly representable at 8 bits per channel: 16-bit colour
+  samples are accepted only when they are multiples of 257, never rounded.
+
+A palette has 1 to 255 colours, leaving room for the previews' `#808080`
+background. Duplicate text entries are refused, naming both lines.
+`palette.validate_colors(colors, source=...)` applies the RGB, count and
+uniqueness checks to a plain sequence without reading anything; `source`
+identifies the caller's diagnostic source, such as a settings JSON file, and
+sequence errors refer to entries rather than invented text lines.
+
+All failures raise `PaletteError`, naming the file or caller-supplied source
+and the line for text errors: unreadable files, unsupported suffixes, invalid
+UTF-8, missing GPL headers, malformed lines, out-of-range channels,
+duplicates, empty or oversized palettes, undecodable PNGs, non-opaque pixels
+and source colours requiring lossy conversion. The module neither prints nor
+exits; the later command integration reports these as usage errors (exit 2)
+before Blender starts. Quantized colour extraction remains deferred.
+
 ### Cleanup (slice 1: none)
 
 A stage that receives addressed frames and returns them. Slice 1 passes them
@@ -762,6 +801,7 @@ src/moskophoros/
   cleanup.py              pass-through
   export.py               sheet, JSON, previews
   imageops.py             shared image operations
+  palette.py              ordered exact RGB palette reading and validation
 tests/
 ```
 
