@@ -24,14 +24,15 @@ moskophoros --clip walk --clip attack --once attack --cell 64x64 hero.glb out/he
 A run writes, beside each other:
 
 - `hero.png`, the sheet: one row per clip and direction, one column per frame;
-- `hero.json`, the `moskophoros.sheet/1` description of every frame, the
-  settings used and a fingerprint of them;
+- `hero.json`, the `moskophoros.sheet/2` description of every frame, the
+  settings and style used and a fingerprint of them;
 - `hero.<clip>.gif`, an animated preview of each clip in every direction,
   unless `--no-preview` is given.
 
 Outputs are published only when the whole run succeeds, so a failed run leaves
 earlier outputs as they were. `--settings-from hero.json` reuses an earlier
-sheet's view, scale, cell and ground point, so new clips line up with it.
+sheet's view, scale, cell, ground point and style, so new clips line up with
+it.
 `moskophoros --help` lists every option.
 
 The full contract, covering every option, the sheet and JSON formats, the

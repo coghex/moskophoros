@@ -50,6 +50,7 @@ def test_defaults():
         ground_px=None,
         root_motion="error",
         supersample=8,
+        reduce="plain",
         settings_from=None,
         no_preview=False,
         work_dir=None,
@@ -146,7 +147,7 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
             *["--start-angle", "5", "--model-yaw", "-90"],
             *["--clip", "a", "--once", "a", "--fps", "24", "--ppm", "64"],
             *["--cell", "32x48", "--ground", "1,2,3", "--ground-px", "16,40"],
-            *["--root-motion", "keep", "--supersample", "4"],
+            *["--root-motion", "keep", "--supersample", "4", "--reduce", "plain"],
             *["--settings-from", "old.json", "--no-preview"],
             *["--work-dir", "work", "--blender", "/opt/blender", "--any-blender"],
             *POSITIONALS,
@@ -171,6 +172,7 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         ground_px=(16, 40),
         root_motion="keep",
         supersample=4,
+        reduce="plain",
         settings_from=Path("old.json"),
         no_preview=True,
         work_dir=Path("work"),
@@ -205,6 +207,7 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         ("--model-yaw", "450", "model_yaw", 450.0),
         ("--ground", "-1.5,0,2e-1", "ground", (-1.5, 0.0, 0.2)),
         ("--root-motion", "keep", "root_motion", "keep"),
+        ("--reduce", "plain", "reduce", "plain"),
     ],
 )
 def test_range_boundaries_are_accepted(option, value, field, expected):
@@ -234,6 +237,9 @@ def test_range_boundaries_are_accepted(option, value, field, expected):
         ("--start-angle", "north", "expected a number"),
         ("--view", "front", "invalid choice"),
         ("--root-motion", "ignore", "invalid choice"),
+        ("--reduce", "mode", "invalid choice"),
+        ("--reduce", "Plain", "invalid choice"),
+        ("--reduce", "", "invalid choice"),
     ],
 )
 def test_the_nearest_invalid_value_is_rejected(capsys, option, value, message):
@@ -390,6 +396,7 @@ def test_once_may_precede_its_clip():
         ("--ground-px", "0,0", "1,1"),
         ("--root-motion", "error", "keep"),
         ("--supersample", "8", "4"),
+        ("--reduce", "plain", "plain"),
         ("--settings-from", "a.json", "b.json"),
         ("--work-dir", "a", "b"),
         ("--blender", "a", "b"),
@@ -476,6 +483,7 @@ DESIGN_OPTIONS = {
     "--ground-px X,Y": "auto",
     "--root-motion MODE": "error",
     "--supersample N": "8",
+    "--reduce NAME": "plain",
     "--settings-from FILE": "none",
     "--no-preview": "off",
     "--work-dir DIR": "a deleted temporary directory",

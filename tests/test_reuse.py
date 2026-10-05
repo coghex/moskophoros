@@ -32,8 +32,11 @@ SETTINGS = {
     "ground_m": {"x": 0.1, "y": -0.2, "z": 0.3},
     "ground_px": {"x": 24, "y": 37},
     "root_motion": "keep",
+    "style": {"reduce": "plain", "palette": None},
     "clips": [{"name": "walk", "loop": True}, {"name": "attack", "loop": False}],
 }
+# The same settings as an older `/1` sheet records them: without a style.
+LEGACY_SETTINGS = {name: SETTINGS[name] for name in SETTINGS if name != "style"}
 REUSED = {
     "view": "side",
     "pitch": 0.0,
@@ -47,12 +50,13 @@ REUSED = {
     "ground": (0.1, -0.2, 0.3),
     "ground_px": (24, 37),
     "root_motion": "keep",
+    "reduce": "plain",
 }
 
 
 def write_sheet(tmp_path, settings=None, name="old.json", **document):
     path = tmp_path / name
-    contents = {"schema": "moskophoros.sheet/1"} | document
+    contents = {"schema": "moskophoros.sheet/2"} | document
     contents["settings"] = copy.deepcopy(SETTINGS if settings is None else settings)
     path.write_text(json.dumps(contents, ensure_ascii=False), encoding="utf-8")
     return path
@@ -86,9 +90,15 @@ def rejected(capsys, path, *options):
     return raised.value.message.removeprefix(prefix)
 
 
-def edited(changes=(), removed=()):
-    """`SETTINGS` with dotted paths set to values, or removed."""
-    settings = copy.deepcopy(SETTINGS)
+def write_legacy_sheet(tmp_path, settings=None, name="old.json"):
+    """A `moskophoros.sheet/1` sheet, with `LEGACY_SETTINGS` by default."""
+    settings = LEGACY_SETTINGS if settings is None else settings
+    return write_sheet(tmp_path, settings, name, schema="moskophoros.sheet/1")
+
+
+def edited(changes=(), removed=(), base=SETTINGS):
+    """`base` with dotted paths set to values, or removed."""
+    settings = copy.deepcopy(base)
     for dotted, value in dict(changes).items():
         *parents, last = dotted.split(".")
         target = settings
@@ -144,6 +154,7 @@ def test_read_settings_returns_the_reused_values(tmp_path):
         ("--ground", "1,2,-3", {"ground": (1.0, 2.0, -3.0)}),
         ("--ground-px", "3,4", {"ground_px": (3, 4)}),
         ("--root-motion", "error", {"root_motion": "error"}),
+        ("--reduce", "plain", {"reduce": "plain"}),
         ("--pitch", "10", {"pitch": 10.0, "view": "custom"}),
         ("--directions", "4", {"directions": 4, "view": "custom"}),
         ("--start-angle", "45", {"start_angle": 45.0, "view": "custom"}),
@@ -262,7 +273,7 @@ def test_reused_clips_may_be_absent(tmp_path):
 def test_a_document_with_only_schema_and_settings_is_enough(tmp_path):
     path = tmp_path / "minimal.json"
     settings = edited(removed=["clips"])
-    path.write_text(json.dumps({"schema": "moskophoros.sheet/1", "settings": settings}))
+    path.write_text(json.dumps({"schema": "moskophoros.sheet/2", "settings": settings}))
     assert values(reuse(path)) == REUSED
 
 
@@ -335,6 +346,8 @@ def test_a_deeply_nested_file_is_rejected(tmp_path, capsys):
         ),
         ('{"settings": {"fps": 12, "fps": 12}}', "fps"),
         ('{"frames": [{"x": 0, "x": 0}]}', "x"),
+        ('{"settings": {"style": {"reduce": "plain", "reduce": "plain"}}}', "reduce"),
+        ('{"settings": {"style": {}, "style": {}}}', "style"),
     ],
 )
 def test_a_repeated_key_anywhere_is_rejected(tmp_path, capsys, text, key):
@@ -343,23 +356,36 @@ def test_a_repeated_key_anywhere_is_rejected(tmp_path, capsys, text, key):
     assert rejected(capsys, path) == f"repeats the key {key!r}"
 
 
+NOT_A_SHEET = "is not a moskophoros.sheet/2 or moskophoros.sheet/1 document"
+
+
 @pytest.mark.parametrize(
     ("document", "problem"),
     [
-        ([], "is not a moskophoros.sheet/1 document: not a JSON object"),
-        ({}, "is not a moskophoros.sheet/1 document: schema is missing"),
+        ([], f"{NOT_A_SHEET}: not a JSON object"),
+        ({}, f"{NOT_A_SHEET}: schema is missing"),
         (
-            {"schema": "moskophoros.sheet/2"},
-            'is not a moskophoros.sheet/1 document: schema is "moskophoros.sheet/2"',
+            {"schema": "moskophoros.sheet/3"},
+            f'{NOT_A_SHEET}: schema is "moskophoros.sheet/3"',
         ),
         (
-            {"schema": " moskophoros.sheet/1"},
-            'is not a moskophoros.sheet/1 document: schema is " moskophoros.sheet/1"',
+            {"schema": "moskophoros.sheet/0"},
+            f'{NOT_A_SHEET}: schema is "moskophoros.sheet/0"',
         ),
-        ({"schema": 1}, "is not a moskophoros.sheet/1 document: schema is 1"),
+        (
+            {"schema": " moskophoros.sheet/2"},
+            f'{NOT_A_SHEET}: schema is " moskophoros.sheet/2"',
+        ),
+        ({"schema": 1}, f"{NOT_A_SHEET}: schema is 1"),
+        (
+            {"schema": ["moskophoros.sheet/2"]},
+            f'{NOT_A_SHEET}: schema is ["moskophoros.sheet/2"]',
+        ),
+        ({"schema": None}, f"{NOT_A_SHEET}: schema is null"),
+        ({"schema": "moskophoros.sheet/2"}, "settings: missing"),
         ({"schema": "moskophoros.sheet/1"}, "settings: missing"),
         (
-            {"schema": "moskophoros.sheet/1", "settings": None},
+            {"schema": "moskophoros.sheet/2", "settings": None},
             "settings: must be set, got null",
         ),
         (
@@ -398,6 +424,9 @@ REUSED_FIELDS = [
     "ground_px.x",
     "ground_px.y",
     "root_motion",
+    "style",
+    "style.reduce",
+    "style.palette",
 ]
 
 
@@ -452,6 +481,20 @@ def test_a_missing_field_is_rejected(tmp_path, capsys, field):
         ("ground_px.y", "3", 'expected a number, got "3"'),
         ("root_motion", "ignore", "expected 'error' or 'keep', got \"ignore\""),
         ("root_motion", 1, "expected 'error' or 'keep', got 1"),
+        ("style", "plain", 'expected an object, got "plain"'),
+        ("style", [], "expected an object, got []"),
+        ("style.reduce", "mode", "expected 'plain', got \"mode\""),
+        ("style.reduce", "Plain", "expected 'plain', got \"Plain\""),
+        ("style.reduce", 1, "expected 'plain', got 1"),
+        ("style.reduce", ["plain"], "expected 'plain', got [\"plain\"]"),
+        ("style.palette", [], "expected null, got []"),
+        ("style.palette", "", 'expected null, got ""'),
+        ("style.palette", False, "expected null, got false"),
+        (
+            "style.palette",
+            {"source": "p.gpl", "colors": []},
+            'expected null, got {"source": "p.gpl", "colors": []}',
+        ),
     ],
 )
 def test_an_unacceptable_value_is_rejected(tmp_path, capsys, field, value, problem):
@@ -474,14 +517,25 @@ def test_the_fixed_values_must_be_set(tmp_path, capsys, field):
     assert rejected(capsys, path) == f"settings.{field}: must be set, got null"
 
 
-@pytest.mark.parametrize("field", ["fps", "view.pitch_deg", "root_motion", "ground_m"])
+@pytest.mark.parametrize(
+    "field",
+    ["fps", "view.pitch_deg", "root_motion", "ground_m", "style", "style.reduce"],
+)
 def test_other_null_fields_are_rejected(tmp_path, capsys, field):
     path = write_sheet(tmp_path, edited({field: None}))
     assert rejected(capsys, path) == f"settings.{field}: must be set, got null"
 
 
 @pytest.mark.parametrize(
-    "field", ["variant", "view.roll_deg", "cell.depth", "ground_px.z", "ground_m.w"]
+    "field",
+    [
+        "variant",
+        "view.roll_deg",
+        "cell.depth",
+        "ground_px.z",
+        "ground_m.w",
+        "style.dither",
+    ],
 )
 def test_an_unknown_field_is_rejected(tmp_path, capsys, field):
     path = write_sheet(tmp_path, edited({field: 0}))
@@ -511,6 +565,23 @@ def test_a_field_an_explicit_option_replaces_is_still_checked(tmp_path, capsys):
     )
 
 
+def test_an_invalid_reused_style_is_checked_despite_an_explicit_reduce(
+    tmp_path, capsys
+):
+    path = write_sheet(tmp_path, edited({"style.reduce": "mode", "style.palette": 1}))
+    problem = rejected(capsys, path, "--reduce", "plain")
+    assert problem == (
+        "settings.style.reduce: expected 'plain', got \"mode\"; "
+        "settings.style.palette: expected null, got 1"
+    )
+
+
+@pytest.mark.parametrize("style", [None, "plain", {}])
+def test_a_style_an_explicit_reduce_replaces_is_still_checked(tmp_path, capsys, style):
+    path = write_sheet(tmp_path, edited({"style": style}))
+    assert rejected(capsys, path, "--reduce", "plain").startswith("settings.style")
+
+
 def test_every_problem_is_reported_in_field_order(tmp_path, capsys):
     settings = edited({"extra": 1, "cell.width": 0, "ground_px": None}, ["fps"])
     problem = rejected(capsys, write_sheet(tmp_path, settings))
@@ -528,6 +599,37 @@ def test_a_long_value_is_shown_cut_short(tmp_path, capsys):
     assert problem == "settings.root_motion: expected 'error' or 'keep', got \"" + (
         "x" * 56 + "..."
     )
+
+
+# Older `/1` sheets
+
+
+def test_a_legacy_sheet_reuses_as_plain(tmp_path):
+    options = reuse(write_legacy_sheet(tmp_path))
+    assert values(options) == REUSED
+    assert cli.style_record(options) == {"reduce": "plain", "palette": None}
+
+
+def test_a_legacy_sheet_with_an_explicit_reduce_records_it(tmp_path):
+    options = reuse(write_legacy_sheet(tmp_path), "--reduce", "plain")
+    assert options.reduce == "plain"
+    assert "reduce" in options.explicit
+
+
+def test_a_legacy_sheet_carrying_a_style_is_refused(tmp_path, capsys):
+    path = write_legacy_sheet(tmp_path, SETTINGS)
+    assert rejected(capsys, path) == "settings.style: unknown field"
+
+
+@pytest.mark.parametrize("field", ["fps", "view.directions", "ground_px"])
+def test_a_legacy_sheet_is_checked_as_before(tmp_path, capsys, field):
+    path = write_legacy_sheet(tmp_path, edited({field: None}, base=LEGACY_SETTINGS))
+    assert rejected(capsys, path) == f"settings.{field}: must be set, got null"
+
+
+def test_a_legacy_sheet_missing_a_field_names_it(tmp_path, capsys):
+    path = write_legacy_sheet(tmp_path, edited(removed=["fps"], base=LEGACY_SETTINGS))
+    assert rejected(capsys, path) == "settings.fps: missing"
 
 
 # Fixed configuration
@@ -635,24 +737,10 @@ ORIGINALS = {
 }
 
 
-def _settings(options):
-    return Settings(
-        view=options.view,
-        pitch=options.pitch,
-        directions=options.directions,
-        start_angle=options.start_angle,
-        model_yaw=options.model_yaw,
-        fps=options.fps,
-        supersample=options.supersample,
-        ppm=options.ppm,
-        cell=options.cell,
-        ground=options.ground,
-        ground_px=options.ground_px,
-        root_motion=options.root_motion,
-    )
+PLAIN = {"reduce": "plain", "palette": None}
 
 
-def _encode(settings, clip_names, once_names):
+def _encode(settings, clip_names, once_names, style=PLAIN):
     selected = gltf.select_clips(SUBJECT, clip_names, once_names)
     view = views.View(
         settings.pitch, settings.directions, settings.start_angle, settings.model_yaw
@@ -668,6 +756,7 @@ def _encode(settings, clip_names, once_names):
         source=SOURCE,
         subject="hero",
         settings=settings,
+        style=style,
         selected_clips=selected,
         image_path=Path("hero.png"),
     )
@@ -676,7 +765,12 @@ def _encode(settings, clip_names, once_names):
 def _rerun(path, *options):
     """Reuse the sheet at `path` with `options`, and encode again."""
     resolved = reuse(path, *options)
-    return _encode(_settings(resolved), resolved.clip or (), resolved.once)
+    return _encode(
+        cli.capture_settings(resolved),
+        resolved.clip or (),
+        resolved.once,
+        cli.style_record(resolved),
+    )
 
 
 @pytest.mark.parametrize("view", ORIGINALS)
@@ -817,3 +911,30 @@ def test_reading_the_settings_file_is_the_only_effect(tmp_path, capsys, valid):
     assert after == before
     out, _ = capsys.readouterr()
     assert out == ""
+
+
+@pytest.mark.parametrize("options", [(), ("--reduce", "plain")])
+def test_a_reused_sheet_round_trips_its_style(tmp_path, options):
+    original = _encode(ORIGINALS["custom"], (), ())
+    path = tmp_path / "hero.json"
+    path.write_bytes(original.json)
+
+    again = _rerun(path, *options)
+
+    assert json.loads(again.json)["settings"]["style"] == PLAIN
+    assert again.json == original.json
+
+
+@pytest.mark.parametrize("options", [(), ("--reduce", "plain")])
+def test_a_reused_legacy_sheet_gives_the_same_sheet_as_plain(tmp_path, options):
+    original = _encode(ORIGINALS["iso"], (), ())
+    legacy = json.loads(original.json)
+    legacy["schema"] = "moskophoros.sheet/1"
+    del legacy["settings"]["style"]
+    path = tmp_path / "hero.json"
+    path.write_text(json.dumps(legacy, indent=2, ensure_ascii=False) + "\n")
+
+    again = _rerun(path, *options)
+
+    assert json.loads(again.json)["schema"] == "moskophoros.sheet/2"
+    assert again.json == original.json
