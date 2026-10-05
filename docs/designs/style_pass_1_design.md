@@ -32,7 +32,7 @@ concrete precondition
 
 - [x] EPIC. Deliver the first owner-selected style passes: most-common-colour reduction and palettes — [#50]
 - [x] SP1-1. Record the chosen style in the sheet and reuse it — [#51]
-- [ ] SP1-2. Reduce supersampled frames by each block's most common colour
+- [x] SP1-2. Reduce supersampled frames by each block's most common colour — [#52]
 - [ ] SP1-3. Read and validate palettes
 - [ ] SP1-4. Map frames onto a palette, alone and with the most-common-colour reduction
 - [ ] SP1-5. Render the offered styles for the owner's visual review
