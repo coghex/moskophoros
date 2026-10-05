@@ -51,6 +51,8 @@ moskophoros [options] <infile.glb> <outfile.png>
 | `--root-motion MODE` | `error` | `error` or `keep`. See [Root motion](#root-motion). |
 | `--supersample N` | `8` | Capture resolution multiplier, 1 to 16. |
 | `--reduce NAME` | `plain` | How each supersampled block becomes one pixel: `plain`, the alpha-weighted mean, or `mode`, the most common colour. See [Stylize](#stylize). |
+| `--palette FILE` | none | Map colours to an ordered `.hex`, `.gpl` or `.png` palette. See [Stylize](#stylize). |
+| `--no-palette` | off | Drop a reused palette; cannot accompany `--palette`. |
 | `--settings-from FILE` | none | Reuse settings from an earlier sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
 | `--no-preview` | off | Skip the animated previews. |
 | `--work-dir DIR` | temporary | Keep capture output in `DIR` instead of a deleted temporary directory. |
@@ -111,6 +113,10 @@ decision 2026-10-01):
   [input error](#input-contract).
 - A single-value option given more than once; the last value does not win.
 - A `--reduce` value other than `plain` or `mode` (owner decision 2026-10-04).
+- `--palette` together with `--no-palette`, or either option repeated.
+- A bad palette file: see [Palette inputs](#palette-inputs). These errors name
+  the file and, for text errors, the line, and precede every Blender invocation,
+  including its version probe (owner decisions 2026-10-04).
 
 `--start-angle` and `--model-yaw` accept any finite number of degrees; the
 direction formula's `mod 360` handles wrapping. `<infile.glb>` has no suffix
@@ -345,11 +351,14 @@ sheet's JSON and reuses these values:
 - fps and supersample
 - ppm, cell, ground point and ground pixel
 - root-motion mode
-- the style's reduction, `settings.style.reduce`
+- the style's reduction and inline palette, `settings.style.reduce` and
+  `settings.style.palette`
 
 This makes scale, cell and ground pixel fixed. Options given explicitly
 override the reused values; an explicit `--reduce` replaces the reused
-reduction. Clip selection and `--once` always come from the current command
+reduction, retaining the palette. `--palette FILE` replaces the reused palette;
+`--no-palette` drops it. Reuse applies the recorded ordered colours without
+opening the original palette file and keeps its record unchanged. Clip selection and `--once` always come from the current command
 line. A file that is unreadable, or not a `moskophoros.sheet/2` or
 `moskophoros.sheet/1` document, is a usage error.
 
@@ -368,8 +377,13 @@ The reused `settings` are checked strictly. Every reused field must be
 present with a value its option would accept, `projection` must be
 `orthographic`, and `pixels_per_meter`, `cell` and `ground_px` must be set.
 In a `/2` sheet, `style` must be an object with exactly `reduce`, a value
-`--reduce` accepts, and `palette`, which must be `null`; it is checked even
-when an explicit `--reduce` replaces it (owner decision 2026-10-04).
+`--reduce` accepts, and `palette`, either `null` or an object with exactly
+`source`, `sha256` and `colors`. The source is a nonempty base filename, never
+a path; the digest is exactly 64 lowercase hexadecimal digits; colours are
+1 to 255 unique canonical lowercase `#rrggbb` strings in their recorded order.
+The palette module applies its shared count, RGB and uniqueness checks. All
+reused fields are validated before any override, including `--reduce`,
+`--palette` and `--no-palette` (owner decisions 2026-10-04).
 A missing or invalid field, or an unknown field inside `settings`, is a usage
 error naming it. The rest of the sheet is not checked beyond its `schema`
 (owner decisions 2026-10-01).
@@ -633,8 +647,8 @@ pixel takes the colour with the most votes, with alpha 255.
   against the unrounded mean.
 - A tie at equal distance goes to the smallest packed `0xRRGGBB` value.
 
-Every step is exact integer arithmetic, so both reductions are fully
-determined. The transparent pixels are the same under either. Under
+Both reductions use exact integer arithmetic and are fully determined. The
+transparent pixels are the same under either. Under
 Workbench's smooth shading a block may hold nearly as many colours as pixels,
 so the vote can fall to the tie-break; that is accepted, and the owner judges
 the look (vision V-12). Future style passes replace or extend these (vision,
@@ -642,10 +656,10 @@ Long-term direction).
 
 #### Palette inputs
 
-The standalone `palette.read_palette(path)` library function reads palettes;
-command-line selection and frame mapping belong to the next style slice. It
-returns an immutable ordered sequence of 8-bit RGB triples and only reads the
-named file (owner decisions 2026-10-04, D-4, D-5 and D-10 in
+`--palette FILE` selects an ordered palette. The standalone
+`palette.read_palette(path)` library function returns an immutable ordered
+sequence of 8-bit RGB triples and only reads the named file (owner decisions
+2026-10-04, D-4, D-5 and D-10 in
 [the style design](designs/style_pass_1_design.md#decisions)).
 
 The suffix chooses the format, ignoring case:
@@ -676,8 +690,35 @@ and the line for text errors: unreadable files, unsupported suffixes, invalid
 UTF-8, missing GPL headers, malformed lines, out-of-range channels,
 duplicates, empty or oversized palettes, undecodable PNGs, non-opaque pixels
 and source colours requiring lossy conversion. The module neither prints nor
-exits; the later command integration reports these as usage errors (exit 2)
-before Blender starts. Quantized colour extraction remains deferred.
+exits; the command reports these as usage errors (exit 2) before any Blender
+invocation. `palette.read_palette_bytes(data, source=...)` parses a byte snapshot
+without reading a file, so the command hashes exactly the bytes it parsed.
+Quantized colour extraction remains deferred.
+
+#### Palette mapping and composition
+
+`imageops.map_palette(pixels, colors)` maps each nontransparent pixel to the
+nearest palette entry by Euclidean distance in OKLab, with no dithering. Equal
+distances choose the earlier entry. It uses a fixed 256-entry sRGB-to-linear
+table and the [OKLab matrices](https://bottosson.github.io/posts/oklab/), with
+NumPy float64 elementwise arithmetic in a fixed operation order. Alpha is
+unchanged; alpha-zero pixels become `(0, 0, 0, 0)`; the input is untouched.
+Distance work uses fixed-size pixel batches and visits palette entries in
+order, never allocating a pixel-count × palette-size array.
+
+The four fixed looks are (owner decisions 2026-10-04, D-6 and D-7):
+
+| Reduction | Without palette | With palette |
+|---|---|---|
+| `plain` | Reduce by alpha-weighted mean. | Reduce, then map output pixels. |
+| `mode` | Vote for exact captured colours. | Map supersampled pixels, then vote; shades mapped to the same colour pool their votes. |
+
+Coverage and mode tie rules stay as above. Every look has the same transparent
+pixels and binary output alpha; each opaque paletted output colour belongs to
+the palette. Stages keep addresses, frame order and metadata. The command
+processes one supersampled frame at a time. Palette data never enters capture
+settings or jobs. Without a palette, both reductions produce the same bytes
+as before palette mapping was added.
 
 ### Cleanup (slice 1: none)
 
@@ -739,7 +780,9 @@ through unchanged.
 - `frames` lists every frame, in sheet order. A frame's address is `subject`,
   `variant`, `clip`, `direction` and `time_s` (V-9).
 - `settings.style` records the look: `reduce`, the `--reduce` value, and
-  `palette`, always `null` for now. It sits between `root_motion` and
+  `palette`, either `null` or an ordered object with `source` (the palette
+  file's base filename), `sha256` (SHA-256 of its bytes), and `colors` (ordered
+  canonical lowercase `#rrggbb` strings). It sits between `root_motion` and
   `clips`. Export writes and fingerprints the record the command resolved
   without interpreting it, so a new look changes neither export nor capture.
   `moskophoros.sheet/1` is the same document without `settings.style`;
@@ -756,6 +799,16 @@ through unchanged.
   2026-10-01).
 - `source.file` and `image.file` are base names, never paths, so the JSON is
   the same wherever the command runs (owner decision 2026-10-01).
+
+For example, the palette record for `two.hex` containing `000000` and
+`ffffff`, each followed by a newline, is:
+
+```json
+{"source": "two.hex", "sha256": "89b96770b769aab4951a86bb5b9ddea7b757fd45f822c7a4d4196759ec2f32b6", "colors": ["#000000", "#ffffff"]}
+```
+
+The palette's file bytes, colours and their order all participate in the
+fingerprint; reuse needs only this inline record.
 
 **Previews.** For each clip, an animated GIF showing all directions side by
 side in index order, packed with no gap between cells (owner decision
@@ -777,6 +830,10 @@ preview wider than 65,535 pixels, or any frame delay over 655,350 ms
 clip, the computed width or delay, and the limit. The preview is never
 scaled, clamped or split to fit (owner decisions 2026-10-02).
 
+A paletted frame uses at most 255 colours plus the grey background, so its
+preview keeps exact colours without a quantization warning. Preview handling
+is otherwise unchanged.
+
 Previews exist for review in motion (V-12) and are not part of the sheet
 contract.
 
@@ -792,6 +849,8 @@ byte-identical. To make that true:
 - no timestamps are written anywhere
 - sorting is fixed wherever order is not already defined
 - output encoding is fixed
+- palette mapping uses its fixed sRGB table and NumPy arithmetic; the recorded
+  NumPy version participates in the generator and fingerprint
 
 Output from a different Blender version or GPU may differ; the recorded
 generator and fingerprint make such a difference visible.

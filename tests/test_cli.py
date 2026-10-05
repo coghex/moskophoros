@@ -154,7 +154,14 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         ]
     )
     fields = {name for name in cli.Options.__dataclass_fields__}
-    assert options.explicit == fields - {"infile", "outfile", "explicit"}
+    assert options.explicit == fields - {
+        "infile",
+        "outfile",
+        "explicit",
+        "palette_file",
+        "palette",
+        "no_palette",
+    }
     assert options == cli.Options(
         infile=Path("in.glb"),
         outfile=Path("out.png"),

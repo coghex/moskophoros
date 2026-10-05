@@ -32,7 +32,12 @@ A run writes, beside each other:
 Outputs are published only when the whole run succeeds, so a failed run leaves
 earlier outputs as they were. `--settings-from hero.json` reuses an earlier
 sheet's view, scale, cell, ground point and style, so new clips line up with
-it.
+it. `--reduce mode` keeps the most common colour in each supersampled block.
+`--palette colours.hex` (also `.gpl` or `.png`) adds palette mapping: plain maps
+after averaging; mode maps before voting, so nearby shades pool their votes.
+An earlier sheet's palette is reused from its JSON without the original file;
+`--palette FILE` replaces it and `--no-palette` drops it.
+
 `moskophoros --help` lists every option.
 
 The full contract, covering every option, the sheet and JSON formats, the

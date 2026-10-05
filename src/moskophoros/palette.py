@@ -72,6 +72,15 @@ def read_palette(path):
         data = path.read_bytes()
     except OSError as error:
         raise PaletteError(path, f"cannot be read: {error.strerror or error}") from None
+    return read_palette_bytes(data, source=path)
+
+
+def read_palette_bytes(data, *, source):
+    """Parse a palette snapshot, so its colours and digest describe the same bytes."""
+    path = Path(source)
+    suffix = path.suffix.lower()
+    if suffix not in {".hex", ".gpl", ".png"}:
+        raise PaletteError(path, "accepted suffixes are .hex, .gpl and .png")
     if suffix == ".png":
         return _png(data, path)
     try:
