@@ -10,10 +10,12 @@ import errno
 import hashlib
 import json
 import os
+import shutil
 import signal
 import sys
 import textwrap
 import threading
+from dataclasses import replace
 from importlib.metadata import entry_points
 from pathlib import Path
 
@@ -21,7 +23,8 @@ import pytest
 from glb_writer import GlbWriter
 from PIL import Image
 
-from moskophoros import cli, export, imageops, stylize
+from moskophoros import cli, export, gltf, imageops, sampling, stylize, views
+from moskophoros.capture import backend, blender
 
 FAKE = """\
 #!{python}
@@ -110,6 +113,7 @@ DEFAULT_CONFIG = {
 }
 OPTIONS = ["--once", "attack", "--supersample", "1", "--cell", "16x16", "--fps", "4"]
 BACKEND = {"blender": "5.2.2", "renderer": "workbench", "studio_light": "Default"}
+MODES = ("measure", "render")
 
 
 class Setup:
@@ -205,7 +209,8 @@ def test_a_run_writes_the_sheet_its_json_and_a_preview_per_clip(setup, capsys):
         "hero.walk.gif",
     ]
     description = json.loads(setup.json.read_text())
-    assert description["schema"] == "moskophoros.sheet/1"
+    assert description["schema"] == "moskophoros.sheet/2"
+    assert description["settings"]["style"] == {"reduce": "plain", "palette": None}
     assert description["image"]["file"] == "hero.png"
     assert [(c["name"], c["loop"]) for c in description["clips"]] == [
         ("walk", True),
@@ -275,6 +280,7 @@ def test_the_fingerprint_reaches_the_frames_before_stylize(setup, capsys, monkey
         "ground_m": {"x": 0.0, "y": 0.0, "z": 0.0},
         "ground_px": {"x": 8, "y": 15},
         "root_motion": "error",
+        "style": {"reduce": "plain", "palette": None},
         "clips": [{"name": "walk", "loop": True}, {"name": "attack", "loop": False}],
     }
     expected = export.fingerprint(
@@ -315,6 +321,65 @@ def test_two_runs_give_identical_outputs(setup, capsys, tmp_path):
     first = setup.listing()
     assert run(capsys, setup.argv())[0] == 0
     assert setup.listing() == first
+
+
+def test_an_explicit_plain_reduction_changes_no_output(setup, capsys):
+    assert run(capsys, setup.argv())[0] == 0
+    default = setup.listing()
+    assert run(capsys, setup.argv("--reduce", "plain"))[0] == 0
+    assert setup.listing() == default
+
+
+def test_the_style_never_reaches_the_capture_jobs(setup, capsys):
+    work = setup.tmp_path / "work"
+    jobs = []
+    for options in [(), ("--reduce", "plain")]:
+        assert run(capsys, setup.argv("--work-dir", str(work), *options))[0] == 0
+        jobs.append({mode: (work / mode / "job.json").read_bytes() for mode in MODES})
+        shutil.rmtree(work)
+    assert jobs[0] == jobs[1]
+    for mode in MODES:
+        job = json.loads(jobs[0][mode])
+        assert "style" not in job["settings"]
+        assert job["schema"] == "moskophoros.capture-job/1"
+
+
+# Measure and render jobs as master built them before the style was recorded,
+# for fixed source and output paths: SHA-256 of the job file's text.
+JOB_BASELINES = {
+    "measure": "ff7fc011058a0270b604a93cb7fcccaa930addf47248857ed31a0d0b88b8348d",
+    "render": "445b27ea3c882aabdb2bf0a1fe366462a0029a6ab3ae7ac99ba37436b0ce7017",
+}
+
+
+@pytest.mark.parametrize("options", [(), ("--reduce", "plain")])
+def test_the_capture_jobs_are_byte_identical_to_the_baseline(options):
+    subject = gltf.Subject(
+        Path("/models/hero.glb"),
+        "hero",
+        0,
+        (
+            gltf.Clip(0, "walk", 0.0, 0.5, (gltf.Root(0, "hips"),)),
+            gltf.Clip(1, "attack", 0.25, 0.5, ()),
+        ),
+    )
+    source = backend.Source(Path("/models/hero.glb"), "cd" * 32, 0)
+    parsed = cli.parse_args(
+        ["--once", "attack", "--fps", "4", *options, "hero.glb", "hero.png"]
+    )
+    settings = cli.capture_settings(cli.resolve_settings(parsed))
+    selected = gltf.select_clips(subject, parsed.clip or (), parsed.once)
+    view = views.View(
+        settings.pitch, settings.directions, settings.start_angle, settings.model_yaw
+    )
+    requested = sampling.frames("hero", selected, view, settings.fps)
+    fitted = replace(settings, ppm=24.5, cell=(48, 40), ground_px=(24, 37))
+    for mode, resolved in (("measure", settings), ("render", fitted)):
+        job = backend.build_job(
+            mode, source, "hero", resolved, selected, requested, f"/work/{mode}"
+        )
+        text = blender._job_text(job)
+        assert hashlib.sha256(text.encode()).hexdigest() == JOB_BASELINES[mode]
 
 
 def test_settings_reuse_with_an_explicit_override(setup, capsys):
@@ -759,7 +824,7 @@ def test_a_bad_settings_file_is_a_usage_error(setup, capsys):
     bad.write_text("{}")
     status, _, err = run(capsys, setup.argv("--settings-from", str(bad)))
     assert status == 2
-    assert "is not a moskophoros.sheet/1 document" in err
+    assert "is not a moskophoros.sheet/2 or moskophoros.sheet/1 document" in err
     assert setup.listing() == earlier
 
 

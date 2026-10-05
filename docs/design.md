@@ -50,6 +50,7 @@ moskophoros [options] <infile.glb> <outfile.png>
 | `--ground-px X,Y` | auto | Cell pixel corner the ground point lands on. |
 | `--root-motion MODE` | `error` | `error` or `keep`. See [Root motion](#root-motion). |
 | `--supersample N` | `8` | Capture resolution multiplier, 1 to 16. |
+| `--reduce NAME` | `plain` | How each supersampled block becomes one pixel: `plain`, the only reduction. See [Stylize](#stylize-slice-1-plain). |
 | `--settings-from FILE` | none | Reuse settings from an earlier sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
 | `--no-preview` | off | Skip the animated previews. |
 | `--work-dir DIR` | temporary | Keep capture output in `DIR` instead of a deleted temporary directory. |
@@ -109,6 +110,7 @@ decision 2026-10-01):
   `--clip`, a `--once` naming a clip that does not exist is an
   [input error](#input-contract).
 - A single-value option given more than once; the last value does not win.
+- A `--reduce` value other than `plain` (owner decision 2026-10-04).
 
 `--start-angle` and `--model-yaw` accept any finite number of degrees; the
 direction formula's `mod 360` handles wrapping. `<infile.glb>` has no suffix
@@ -343,11 +345,18 @@ sheet's JSON and reuses these values:
 - fps and supersample
 - ppm, cell, ground point and ground pixel
 - root-motion mode
+- the style's reduction, `settings.style.reduce`
 
 This makes scale, cell and ground pixel fixed. Options given explicitly
-override the reused values. Clip selection and `--once` always come from the
-current command line. A file that is unreadable, or not a `moskophoros.sheet/1`
-document, is a usage error.
+override the reused values; an explicit `--reduce` replaces the reused
+reduction. Clip selection and `--once` always come from the current command
+line. A file that is unreadable, or not a `moskophoros.sheet/2` or
+`moskophoros.sheet/1` document, is a usage error.
+
+A `moskophoros.sheet/1` sheet, written before the style was recorded, has no
+`settings.style` and reads as `{"reduce": "plain", "palette": null}`. Its
+other fields are checked as below, and a `style` field in it is an unknown
+field (owner decision 2026-10-04).
 
 An explicit `--view` replaces the whole reused view: that preset's values
 apply, then any explicit `--pitch`, `--directions` or `--start-angle` on top,
@@ -358,6 +367,9 @@ makes the preset `custom`.
 The reused `settings` are checked strictly. Every reused field must be
 present with a value its option would accept, `projection` must be
 `orthographic`, and `pixels_per_meter`, `cell` and `ground_px` must be set.
+In a `/2` sheet, `style` must be an object with exactly `reduce`, a value
+`--reduce` accepts, and `palette`, which must be `null`; it is checked even
+when an explicit `--reduce` replaces it (owner decision 2026-10-04).
 A missing or invalid field, or an unknown field inside `settings`, is a usage
 error naming it. The rest of the sheet is not checked beyond its `schema`
 (owner decisions 2026-10-01).
@@ -448,7 +460,7 @@ keys, missing required fields and invalid numeric values are rejected.
 | `mode` | `measure` or `render`. |
 | `source` | Absolute `path` to the original GLB, its `sha256` and the selected original glTF `scene` index. |
 | `subject`, `variant` | Input stem and `default`, matching every requested frame address. |
-| `settings` | The accepted sheet settings, using resolved option values. In measure mode, `pixels_per_meter`, `cell` and `ground_px` are null: fitting belongs to the caller. In render mode all three are resolved, fixed values. |
+| `settings` | The accepted sheet settings, using resolved option values. In measure mode, `pixels_per_meter`, `cell` and `ground_px` are null: fitting belongs to the caller. In render mode all three are resolved, fixed values. The sheet's `style` is left out: style is applied after capture, so the job is the same whatever the style (owner decision 2026-10-04). |
 | `clips` | Selected clips in sheet order. Each carries its original `animation_index`, `name`, `t0_s`, `t1_s` and candidate `roots`. The synthetic `static` clip has a null animation index, zero endpoints and no animated roots. |
 | `clips[].roots` | Each candidate root's original `node_index` and optional original `node_name`, determined using the accepted ancestry rule. Indices identify nodes; names are diagnostics, never assumed unique. |
 | `frames` | The exact requested samples in sheet order: clip, direction, then sample. Each carries an `address`, sample `index` and direction `angle_deg`. The address has `subject`, `variant`, `clip`, `direction` and `time_s`. |
@@ -608,8 +620,9 @@ Each supersampled frame is reduced by `s×s` blocks. For each output pixel:
 - otherwise, its color is the alpha-weighted mean of the block's RGB, rounded
   half up, with alpha 255
 
-This is the only look-related step in slice 1. Future style passes replace or
-extend it (vision, Long-term direction).
+This is the only look-related step in slice 1, selected by `--reduce plain`,
+the default. Future style passes replace or extend it (vision, Long-term
+direction).
 
 #### Palette inputs
 
@@ -665,11 +678,11 @@ through unchanged.
 - Cells are packed with no gaps; unused cells are fully transparent.
 - Output is an 8-bit RGBA PNG written by Pillow with no text or time chunks.
 
-**JSON (`moskophoros.sheet/1`).**
+**JSON (`moskophoros.sheet/2`).**
 
 ```json
 {
-  "schema": "moskophoros.sheet/1",
+  "schema": "moskophoros.sheet/2",
   "generator": {
     "tool": "moskophoros", "version": "0.1.0",
     "python": "3.x.y", "numpy": "x.y.z", "pillow": "x.y.z",
@@ -689,6 +702,7 @@ through unchanged.
     "ground_m": { "x": 0.0, "y": 0.0, "z": 0.0 },
     "ground_px": { "x": 24, "y": 46 },
     "root_motion": "error",
+    "style": { "reduce": "plain", "palette": null },
     "clips": [ { "name": "walk", "loop": true },
                { "name": "attack", "loop": false } ]
   },
@@ -708,6 +722,13 @@ through unchanged.
 
 - `frames` lists every frame, in sheet order. A frame's address is `subject`,
   `variant`, `clip`, `direction` and `time_s` (V-9).
+- `settings.style` records the look: `reduce`, the `--reduce` value, and
+  `palette`, always `null` for now. It sits between `root_motion` and
+  `clips`. Export writes and fingerprints the record the command resolved
+  without interpreting it, so a new look changes neither export nor capture.
+  `moskophoros.sheet/1` is the same document without `settings.style`;
+  [reuse](#scale-and-ground-point) still reads it (owner decisions
+  2026-10-04).
 - `fingerprint` is the SHA-256 of the canonical JSON (sorted keys, no
   whitespace, UTF-8) of `generator`, `source.sha256` and `settings`. The
   hashed object mirrors the sheet's own structure:
