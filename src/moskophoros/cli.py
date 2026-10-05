@@ -11,6 +11,11 @@ ground point, Reuse: `read_settings` reads and checks the earlier sheet's
 `settings`, and `apply_settings` merges them with the parsed options. Reading
 that one file is its only effect.
 
+`capture_settings` gives the settings capture and export share, and
+`style_record` the style the sheet records beside them, following design
+§Export: the reduction and the palette. The style never reaches the capture
+job.
+
 `main` runs the whole command, following design §CLI and §Pipeline: read and
 measure the model, check root motion, fit, render, stylize, clean up and
 export, then publish every output all or nothing. `run` does the same and
@@ -81,7 +86,11 @@ DEFAULT_VIEW = "iso"
 # The resolved view name once --pitch, --directions or --start-angle is given.
 CUSTOM_VIEW = "custom"
 ROOT_MOTION_MODES = ("error", "keep")
-SHEET_SCHEMA = "moskophoros.sheet/1"
+# The values --reduce accepts; the first is the default.
+REDUCTIONS = ("plain",)
+SHEET_SCHEMA = "moskophoros.sheet/2"
+# An older sheet, still reused; it reads as the plain reduction with no palette.
+LEGACY_SHEET_SCHEMA = "moskophoros.sheet/1"
 _MAX_DIGITS = 4300
 _VIEW_FIELDS = ("view", "pitch", "directions", "start_angle")
 _REPEATABLE = frozenset({"--clip", "--once"})
@@ -115,6 +124,7 @@ class Options:
     ground_px: tuple[int, int] | None
     root_motion: str
     supersample: int
+    reduce: str
     settings_from: Path | None
     no_preview: bool
     work_dir: Path | None
@@ -171,6 +181,7 @@ def parse_args(argv: Sequence[str]) -> Options:
         ground_px=args.ground_px,
         root_motion=args.root_motion,
         supersample=args.supersample,
+        reduce=args.reduce,
         settings_from=args.settings_from,
         no_preview=args.no_preview,
         work_dir=args.work_dir,
@@ -201,6 +212,7 @@ class ReusedSettings:
     ground: tuple[float, float, float]
     ground_px: tuple[int, int]
     root_motion: str
+    reduce: str
 
 
 def resolve_settings(options: Options) -> Options:
@@ -217,11 +229,13 @@ def read_settings(path) -> ReusedSettings:
 
     Raises `UsageError`, reported as `parse_args` reports one, naming the
     file and the problem: the file cannot be read, is not UTF-8 JSON, repeats
-    a key, is not a `moskophoros.sheet/1` document with a `settings` object,
-    or its `settings` has a missing, unknown or unacceptable field. Every
-    field is checked as its option checks it, including fields an explicit
-    option will replace. Nothing beyond `schema` and `settings` is read, and
-    `settings.clips` is ignored.
+    a key, is not a `moskophoros.sheet/2` or `moskophoros.sheet/1` document
+    with a `settings` object, or its `settings` has a missing, unknown or
+    unacceptable field. Every field is checked as its option checks it,
+    including fields an explicit option will replace. A `/2` sheet's
+    `settings.style` is checked the same way; a `/1` sheet has none and reads
+    as the plain reduction. Nothing beyond `schema` and `settings` is read,
+    and `settings.clips` is ignored.
     """
     path = Path(path)
     try:
@@ -242,19 +256,19 @@ def read_settings(path) -> ReusedSettings:
         _settings_error(path, f"is not valid JSON: {error}")
     except RecursionError:
         _settings_error(path, "is not valid JSON: it is nested too deeply")
+    not_a_sheet = f"is not a {' or '.join(_SHAPES)} document"
     if not isinstance(document, dict):
-        _settings_error(path, f"is not a {SHEET_SCHEMA} document: not a JSON object")
+        _settings_error(path, f"{not_a_sheet}: not a JSON object")
     if "schema" not in document:
-        _settings_error(path, f"is not a {SHEET_SCHEMA} document: schema is missing")
-    if document["schema"] != SHEET_SCHEMA:
-        _settings_error(
-            path,
-            f"is not a {SHEET_SCHEMA} document: schema is {_shown(document['schema'])}",
-        )
+        _settings_error(path, f"{not_a_sheet}: schema is missing")
+    schema = document["schema"]
+    if not isinstance(schema, str) or schema not in _SHAPES:
+        _settings_error(path, f"{not_a_sheet}: schema is {_shown(schema)}")
     if "settings" not in document:
         _settings_error(path, "settings: missing")
     problems = []
-    checked = _check_shape(_SETTINGS, document["settings"], "settings", problems)
+    shape = _SHAPES[schema]
+    checked = _check_shape(shape, document["settings"], "settings", problems)
     if problems:
         _settings_error(path, "; ".join(problems))
     view, cell, ground, ground_px = (
@@ -273,6 +287,7 @@ def read_settings(path) -> ReusedSettings:
         ground=(ground["x"], ground["y"], ground["z"]),
         ground_px=(ground_px["x"], ground_px["y"]),
         root_motion=checked["root_motion"],
+        reduce=checked["style"]["reduce"] if "style" in shape else REDUCTIONS[0],
     )
 
 
@@ -293,6 +308,34 @@ def apply_settings(options: Options, reused: ReusedSettings) -> Options:
     if "view" not in explicit and explicit & set(_VIEW_FIELDS):
         values["view"] = CUSTOM_VIEW
     return replace(options, **values)
+
+
+def capture_settings(options: Options) -> backend.Settings:
+    """The resolved settings capture and export share, from merged `options`.
+
+    They hold no style: `style_record` gives that, and it stays out of the
+    capture job.
+    """
+    return backend.Settings(
+        view=options.view,
+        pitch=options.pitch,
+        directions=options.directions,
+        start_angle=options.start_angle,
+        model_yaw=options.model_yaw,
+        fps=options.fps,
+        supersample=options.supersample,
+        ppm=options.ppm,
+        cell=options.cell,
+        ground=options.ground,
+        ground_px=options.ground_px,
+        root_motion=options.root_motion,
+    )
+
+
+def style_record(options: Options) -> dict:
+    """The sheet's `settings.style` record for merged `options`: the reduction,
+    and the palette, which is always null for now."""
+    return {"reduce": options.reduce, "palette": None}
 
 
 def main(argv: Sequence[str] | None = None):
@@ -369,20 +412,8 @@ def _command(options):
         options.pitch, options.directions, options.start_angle, options.model_yaw
     )
     requested = sampling.frames(subject.name, selected, view, options.fps)
-    settings = backend.Settings(
-        view=options.view,
-        pitch=options.pitch,
-        directions=options.directions,
-        start_angle=options.start_angle,
-        model_yaw=options.model_yaw,
-        fps=options.fps,
-        supersample=options.supersample,
-        ppm=options.ppm,
-        cell=options.cell,
-        ground=options.ground,
-        ground_px=options.ground_px,
-        root_motion=options.root_motion,
-    )
+    settings = capture_settings(options)
+    sheet_style = style_record(options)
     found = blender.locate(options.blender, options.any_blender)
 
     with _workspace(options.work_dir) as workspace:
@@ -426,7 +457,7 @@ def _command(options):
         metadata = {
             "fingerprint": export.fingerprint(
                 generator,
-                backend.settings_document(settings, selected),
+                export.sheet_settings(settings, selected, sheet_style),
                 source.sha256,
             )
         }
@@ -444,6 +475,7 @@ def _command(options):
         source=source,
         subject=subject.name,
         settings=settings,
+        style=sheet_style,
         selected_clips=selected,
         image_path=outfile,
     )
@@ -964,6 +996,14 @@ def _build_parser():
         "capture resolution multiplier, 1 to 16 (default: 8)",
     )
     single(
+        "--reduce",
+        "NAME",
+        str,
+        REDUCTIONS[0],
+        f"pixel reduction: {', '.join(REDUCTIONS)} (default: {REDUCTIONS[0]})",
+        choices=REDUCTIONS,
+    )
+    single(
         "--settings-from",
         "FILE",
         _path,
@@ -1118,9 +1158,11 @@ def _one_of(*choices):
 
 
 # The sheet's `settings` object, member by member. `clips` is recognized but
-# never read: clip selection comes from the current command line.
+# never read: clip selection comes from the current command line. A member
+# that must be null is `_NULL`.
 _IGNORED = None
-_SETTINGS = {
+_NULL = object()
+_LEGACY_SETTINGS = {
     "view": {
         "preset": _one_of(*PRESETS, CUSTOM_VIEW),
         "projection": _one_of("orthographic"),
@@ -1138,11 +1180,24 @@ _SETTINGS = {
     "root_motion": _one_of(*ROOT_MOTION_MODES),
     "clips": _IGNORED,
 }
+_SETTINGS = {
+    name: _LEGACY_SETTINGS[name] for name in _LEGACY_SETTINGS if name != "clips"
+}
+_SETTINGS |= {
+    "style": {"reduce": _one_of(*REDUCTIONS), "palette": _NULL},
+    "clips": _IGNORED,
+}
+# Each reusable schema's `settings`, newest first.
+_SHAPES = {SHEET_SCHEMA: _SETTINGS, LEGACY_SHEET_SCHEMA: _LEGACY_SETTINGS}
 
 
 def _check_shape(shape, value, name, problems):
     """Check `value` against `shape`, adding each problem under its field
     path to `problems`, and return the converted values."""
+    if shape is _NULL:
+        if value is not None:
+            problems.append(f"{name}: expected null, got {_shown(value)}")
+        return None
     if value is None:
         problems.append(f"{name}: must be set, got null")
         return None

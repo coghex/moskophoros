@@ -1,5 +1,6 @@
 import hashlib
 import io
+import json
 import platform
 import random
 import struct
@@ -13,7 +14,7 @@ from PIL import Image
 
 import moskophoros
 from moskophoros import export, stylize
-from moskophoros.capture.backend import Settings, Source
+from moskophoros.capture.backend import Settings, Source, settings_document
 from moskophoros.gltf import Clip, SelectedClip
 from moskophoros.sampling import FrameAddress, ImageFrame
 
@@ -48,6 +49,7 @@ RUN = SelectedClip(Clip(0, "läuft", 0.0, 1.0, ()), one_shot=False)
 STRIKE = SelectedClip(Clip(1, "攻撃", 0.5, 1.5, ()), one_shot=True)
 POSE = SelectedClip(Clip(2, "pose", 0.25, 0.25, ()), one_shot=False)
 SOURCE = Source(Path("/work/models/héros.glb"), SHA, 0)
+PLAIN = {"reduce": "plain", "palette": None}
 
 # Sample times worked out by hand from design §Clips and sampling:
 # läuft: d = 1, n = floor(1 · 3 + 0.5) = 3 frames at k/3, each 1/3 long.
@@ -68,7 +70,7 @@ CANONICAL = (
     '{"loop":true,"name":"pose"}],'
     '"fps":3.0,"ground_m":{"x":0.0,"y":0.0,"z":0.0},"ground_px":{"x":1,"y":2},'
     '"model_yaw_deg":0.0,"pixels_per_meter":24.5,"root_motion":"error",'
-    '"supersample":4,"view":{"directions":2,"pitch_deg":0.0,"preset":"side",'
+    '"style":{"palette":null,"reduce":"plain"},"supersample":4,"view":{"directions":2,"pitch_deg":0.0,"preset":"side",'
     '"projection":"orthographic","start_angle_deg":90.0}},'
     '"source":{"sha256":"' + SHA + '"}}'
 )
@@ -95,6 +97,7 @@ def _encode_side(frames=None, **changes):
         "source": SOURCE,
         "subject": "héros",
         "settings": SIDE,
+        "style": PLAIN,
         "selected_clips": (RUN, STRIKE, POSE),
         "image_path": Path("/tmp/out/héros.png"),
     } | changes
@@ -139,7 +142,7 @@ EXPECTED_FRAMES = ",\n".join(
 
 EXPECTED_JSON = (
     """{
-  "schema": "moskophoros.sheet/1",
+  "schema": "moskophoros.sheet/2",
   "generator": {
     "tool": "moskophoros",
     "version": "0.1.0",
@@ -182,6 +185,10 @@ EXPECTED_JSON = (
       "y": 2
     },
     "root_motion": "error",
+    "style": {
+      "reduce": "plain",
+      "palette": null
+    },
     "clips": [
       {
         "name": "läuft",
@@ -270,6 +277,7 @@ def test_the_fingerprint_hashes_the_canonical_mirrored_object():
         "ground_m": {"x": 0.0, "y": 0.0, "z": 0.0},
         "ground_px": {"x": 1, "y": 2},
         "root_motion": "error",
+        "style": {"reduce": "plain", "palette": None},
         "clips": [
             {"name": "läuft", "loop": True},
             {"name": "攻撃", "loop": False},
@@ -296,6 +304,7 @@ def test_the_fingerprint_ignores_file_names_and_paths():
         {"settings": replace(SIDE, root_motion="keep")},
         {"source": Source(SOURCE.path, "cd" * 32, 0)},
         {"selected_clips": (RUN, STRIKE, replace(POSE, one_shot=True))},
+        {"style": {"reduce": "mode", "palette": None}},
     ],
     ids=[
         "blender",
@@ -306,12 +315,49 @@ def test_the_fingerprint_ignores_file_names_and_paths():
         "root motion",
         "source digest",
         "loop",
+        "style",
     ],
 )
 def test_the_fingerprint_changes_with_any_hashed_input(changes):
     sheet = _encode_side(**changes)
     assert f'"fingerprint": "{FINGERPRINT}"'.encode() not in sheet.json
     assert b'"fingerprint": "sha256:' in sheet.json
+
+
+def test_the_fingerprint_covers_the_style_record():
+    settings = export.sheet_settings(SIDE, (RUN, STRIKE, POSE), PLAIN)
+    restyled = export.sheet_settings(
+        SIDE, (RUN, STRIKE, POSE), {"reduce": "plain", "palette": []}
+    )
+    assert export.fingerprint(GENERATOR, settings, SHA) == FINGERPRINT
+    assert export.fingerprint(GENERATOR, restyled, SHA) != FINGERPRINT
+    unstyled = {key: value for key, value in settings.items() if key != "style"}
+    assert export.fingerprint(GENERATOR, unstyled, SHA) != FINGERPRINT
+
+
+def test_the_style_record_sits_just_before_clips():
+    settings = export.sheet_settings(SIDE, (RUN,), PLAIN)
+    assert list(settings)[-2:] == ["style", "clips"]
+    assert settings["style"] == PLAIN
+    unstyled = {key: value for key, value in settings.items() if key != "style"}
+    assert unstyled == settings_document(SIDE, (RUN,))
+
+
+def test_export_records_any_style_record_as_given():
+    # Export knows no reductions or palettes: a record from a later look is
+    # written and fingerprinted as it is.
+    style = {
+        "reduce": "unknown-look",
+        "palette": {"source": "p.gpl", "sha256": SHA, "colors": ["#123abc"]},
+    }
+    sheet = _encode_side(style=style)
+    description = json.loads(sheet.json)
+    assert description["settings"]["style"] == style
+    assert description["fingerprint"] == export.fingerprint(
+        GENERATOR, export.sheet_settings(SIDE, (RUN, STRIKE, POSE), style), SHA
+    )
+    assert description["fingerprint"] != FINGERPRINT
+    assert sheet.png == _encode_side().png
 
 
 def test_the_fingerprint_rejects_a_malformed_digest():
@@ -373,6 +419,7 @@ def _encode_grid(frames):
         source=Source(Path("/m/grid.glb"), SHA, 0),
         subject="grid",
         settings=GRID,
+        style=PLAIN,
         selected_clips=(SHORT, LONG),
         image_path="grid.png",
     )
@@ -432,6 +479,7 @@ def test_the_static_clip_is_one_frame_at_zero():
         source=Source(Path("/m/box.glb"), SHA, 0),
         subject="box",
         settings=settings,
+        style=PLAIN,
         selected_clips=(static,),
         image_path="box.png",
     )

@@ -1,4 +1,4 @@
-"""The sheet PNG, its `moskophoros.sheet/1` JSON and the animated previews,
+"""The sheet PNG, its `moskophoros.sheet/2` JSON and the animated previews,
 following design §Export.
 
 `encode` lays the plain frames out on the sheet, describes them and returns
@@ -27,7 +27,7 @@ import moskophoros
 from moskophoros import sampling, views
 from moskophoros.capture.backend import settings_document
 
-SCHEMA = "moskophoros.sheet/1"
+SCHEMA = "moskophoros.sheet/2"
 USAGE_ERROR = 2
 PREVIEW_SCALE = 4
 PREVIEW_BACKGROUND = (128, 128, 128)
@@ -108,15 +108,30 @@ def fingerprint(generator, settings, source_sha256):
     return "sha256:" + hashlib.sha256(canonical).hexdigest()
 
 
-def encode(frames, *, generator, source, subject, settings, selected_clips, image_path):
+def sheet_settings(settings, selected_clips, style):
+    """The sheet's `settings` object: the capture job's settings, fitted, with
+    `style` recorded as given just before `clips`.
+
+    `style` is the record the command resolved, written and fingerprinted as
+    it is: export does not know which reductions or palettes exist.
+    """
+    document = settings_document(settings, selected_clips)
+    clips = document.pop("clips")
+    return document | {"style": style, "clips": clips}
+
+
+def encode(
+    frames, *, generator, source, subject, settings, style, selected_clips, image_path
+):
     """Lay out and describe the sheet, returning its PNG and JSON bytes.
 
-    `frames` are the plain `sampling.ImageFrame`s, exactly one for each frame
-    the selected clips and resolved `settings` request, each the cell size,
-    in any order. `generator` comes from `generator()`, `source` is the
-    capture `Source`, `selected_clips` are `gltf.SelectedClip`s in selection
-    order, and `image_path` is where the PNG will be written; only its base
-    name is recorded, as is the source's.
+    `frames` are the plain `sampling.ImageFrame`s, exactly one for each
+    frame the selected clips and resolved `settings` request, each the cell
+    size, in any order. `generator` comes from `generator()`, `source` is the
+    capture `Source`, `style` is the style record `sheet_settings` takes,
+    `selected_clips` are `gltf.SelectedClip`s in selection order, and
+    `image_path` is where the PNG will be written; only its base name is
+    recorded, as is the source's.
 
     Raises `ValueError` for frames that are missing, extra, duplicated or
     the wrong size, or for unfitted settings: these are internal errors.
@@ -156,7 +171,7 @@ def encode(frames, *, generator, source, subject, settings, selected_clips, imag
             }
         )
 
-    settings_doc = settings_document(settings, selected_clips)
+    settings_doc = sheet_settings(settings, selected_clips, style)
     description = {
         "schema": SCHEMA,
         "generator": generator,
