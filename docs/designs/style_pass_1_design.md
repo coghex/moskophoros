@@ -764,12 +764,12 @@ none. Affects SP1-5.
   previews in SP1-5. No test or metric stands in for it; E-1's statistics,
   if the owner asks for them, inform choices, not acceptance.
 
-Every slice amends the design sections its decisions change, landing that
-documentation with `docs-push` and linking it from the pull request (AGENTS.md
-§Delivery): §CLI and §Option validation for the options, §Stylize for the
+Every slice amends the design sections its decisions change in the pull
+request, because tests read `docs/design.md`. Standalone acceptance documents
+land with `docs-push` and are linked from the pull request (AGENTS.md §Delivery).
+The sections are §CLI and §Option validation for the options, §Stylize for the
 passes, §Export and §Scale and ground point (Reuse) for the record, schema and
-reuse, §job format for the exclusion, and §Deferred for what this arc
-settles.
+reuse, §job format for the exclusion, and §Deferred for what this arc settles.
 
 ## Delivery plan
 
@@ -878,7 +878,7 @@ processing (see [Decisions](#decisions)).
 - Five one-PR slices, dependency-ordered, mirrored in the processing ledger.
 - Compatibility (schema `/2`, `/1` reuse), persistence (style recorded
   inline), determinism (integer reduction, fixed tie-breaks, recorded numpy
-  for OKLab), documentation (design amendments by `docs-push`) and tests
+  for OKLab), documentation (design amendments in the pull request; standalone acceptance docs by `docs-push`) and tests
   (generated fixtures; the Blender group for determinism) are recorded.
 - No overlapping epic exists: open issues are #3, #24 and #43, with no open
   pull request (checked 2026-10-05).
