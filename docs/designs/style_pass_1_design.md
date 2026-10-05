@@ -34,7 +34,7 @@ concrete precondition
 - [x] SP1-1. Record the chosen style in the sheet and reuse it — [#51]
 - [x] SP1-2. Reduce supersampled frames by each block's most common colour — [#52]
 - [x] SP1-3. Read and validate palettes — [#53]
-- [ ] SP1-4. Map frames onto a palette, alone and with the most-common-colour reduction
+- [x] SP1-4. Map frames onto a palette, alone and with the most-common-colour reduction — [#54]
 - [ ] SP1-5. Render the offered styles for the owner's visual review
 
 ## Epic contract
