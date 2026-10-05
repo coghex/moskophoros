@@ -155,6 +155,7 @@ def test_read_settings_returns_the_reused_values(tmp_path):
         ("--ground-px", "3,4", {"ground_px": (3, 4)}),
         ("--root-motion", "error", {"root_motion": "error"}),
         ("--reduce", "plain", {"reduce": "plain"}),
+        ("--reduce", "mode", {"reduce": "mode"}),
         ("--pitch", "10", {"pitch": 10.0, "view": "custom"}),
         ("--directions", "4", {"directions": 4, "view": "custom"}),
         ("--start-angle", "45", {"start_angle": 45.0, "view": "custom"}),
@@ -483,10 +484,11 @@ def test_a_missing_field_is_rejected(tmp_path, capsys, field):
         ("root_motion", 1, "expected 'error' or 'keep', got 1"),
         ("style", "plain", 'expected an object, got "plain"'),
         ("style", [], "expected an object, got []"),
-        ("style.reduce", "mode", "expected 'plain', got \"mode\""),
-        ("style.reduce", "Plain", "expected 'plain', got \"Plain\""),
-        ("style.reduce", 1, "expected 'plain', got 1"),
-        ("style.reduce", ["plain"], "expected 'plain', got [\"plain\"]"),
+        ("style.reduce", "median", "expected 'plain' or 'mode', got \"median\""),
+        ("style.reduce", "Plain", "expected 'plain' or 'mode', got \"Plain\""),
+        ("style.reduce", "MODE", "expected 'plain' or 'mode', got \"MODE\""),
+        ("style.reduce", 1, "expected 'plain' or 'mode', got 1"),
+        ("style.reduce", ["plain"], "expected 'plain' or 'mode', got [\"plain\"]"),
         ("style.palette", [], "expected null, got []"),
         ("style.palette", "", 'expected null, got ""'),
         ("style.palette", False, "expected null, got false"),
@@ -568,10 +570,10 @@ def test_a_field_an_explicit_option_replaces_is_still_checked(tmp_path, capsys):
 def test_an_invalid_reused_style_is_checked_despite_an_explicit_reduce(
     tmp_path, capsys
 ):
-    path = write_sheet(tmp_path, edited({"style.reduce": "mode", "style.palette": 1}))
+    path = write_sheet(tmp_path, edited({"style.reduce": "median", "style.palette": 1}))
     problem = rejected(capsys, path, "--reduce", "plain")
     assert problem == (
-        "settings.style.reduce: expected 'plain', got \"mode\"; "
+        "settings.style.reduce: expected 'plain' or 'mode', got \"median\"; "
         "settings.style.palette: expected null, got 1"
     )
 
@@ -599,6 +601,27 @@ def test_a_long_value_is_shown_cut_short(tmp_path, capsys):
     assert problem == "settings.root_motion: expected 'error' or 'keep', got \"" + (
         "x" * 56 + "..."
     )
+
+
+# The reduction
+
+
+def test_a_mode_sheet_reuses_mode(tmp_path):
+    options = reuse(write_sheet(tmp_path, edited({"style.reduce": "mode"})))
+    assert values(options) == REUSED | {"reduce": "mode"}
+    assert cli.style_record(options) == {"reduce": "mode", "palette": None}
+
+
+@pytest.mark.parametrize(("sheet", "explicit"), [("mode", "plain"), ("plain", "mode")])
+def test_an_explicit_reduce_overrides_the_reused_one(tmp_path, sheet, explicit):
+    path = write_sheet(tmp_path, edited({"style.reduce": sheet}))
+    options = reuse(path, "--reduce", explicit)
+    assert values(options) == REUSED | {"reduce": explicit}
+
+
+def test_a_legacy_sheet_with_an_explicit_mode_records_mode(tmp_path):
+    options = reuse(write_legacy_sheet(tmp_path), "--reduce", "mode")
+    assert cli.style_record(options) == {"reduce": "mode", "palette": None}
 
 
 # Older `/1` sheets
@@ -938,3 +961,18 @@ def test_a_reused_legacy_sheet_gives_the_same_sheet_as_plain(tmp_path, options):
 
     assert json.loads(again.json)["schema"] == "moskophoros.sheet/2"
     assert again.json == original.json
+
+
+def test_a_reused_mode_sheet_round_trips_and_differs_from_plain(tmp_path):
+    mode = {"reduce": "mode", "palette": None}
+    original = _encode(ORIGINALS["iso"], (), (), mode)
+    path = tmp_path / "hero.json"
+    path.write_bytes(original.json)
+
+    again = _rerun(path)
+    plain = json.loads(_rerun(path, "--reduce", "plain").json)
+
+    assert again.json == original.json
+    assert json.loads(again.json)["settings"]["style"] == mode
+    assert plain["settings"]["style"] == PLAIN
+    assert plain["fingerprint"] != json.loads(original.json)["fingerprint"]

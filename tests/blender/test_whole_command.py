@@ -184,6 +184,19 @@ def test_two_runs_give_byte_identical_outputs(capsys, found, model, earlier, out
     assert listing(out) == listing(earlier)
 
 
+def test_two_mode_runs_give_byte_identical_outputs(capsys, found, model, tmp_path):
+    first, second = tmp_path / "first", tmp_path / "second"
+    for directory in (first, second):
+        directory.mkdir()
+        status, _, err = run(
+            capsys, found, model, directory / "hero.png", *SHEET, "--reduce", "mode"
+        )
+        assert (status, err) == (0, "")
+    assert listing(first) == listing(second)
+    description = json.loads((first / "hero.json").read_text())
+    assert description["settings"]["style"] == {"reduce": "mode", "palette": None}
+
+
 def test_settings_reuse_with_an_explicit_override(capsys, found, model, earlier, out):
     status, _, err = run(
         capsys,
