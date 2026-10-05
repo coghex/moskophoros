@@ -922,8 +922,10 @@ Decided later, each when its trigger arrives:
 
 | Item | Trigger |
 |---|---|
-| Auxiliary capture buffers (depth, normal, base color, material ID) | The first style pass that needs them. |
-| Style passes and their configuration | The owner starts style work. |
+| Auxiliary capture buffers (depth, normal, base color, material ID) | The first style pass that needs them: per-material colour ramps, which need material IDs (owner decision 2026-10-04). |
+| Per-material colour ramps | The owner starts a later style arc. |
+| Saved style files, and a free chain of passes beyond the four looks | The owner requests them. |
+| Quantized palette extraction from many-colour art, as a standalone command | The owner requests it. |
 | Per-stage caching | Iteration speed becomes a problem. |
 | Root-motion extraction (keeping travel as data rather than rendering it) | A consumer needs it. |
 | Variants (bone-attached props, palette swaps) | The owner requests them. |
@@ -931,3 +933,8 @@ Decided later, each when its trigger arrives:
 | Perspective projection | A view needs it. |
 | Vertex-color rendering | A model needs it. |
 | `CUBICSPLINE` animation and mesh morph-weight animation pointers, rejected for now (owner decision 2026-10-02) | A model needs them. |
+
+Style passes and their configuration started with style pass 1: `--reduce` and
+`--palette` (see [Stylize](#stylize)), accepted by the owner on 2026-10-05. The
+rows above hold what it left for later; palette swaps stay a variant (owner
+decisions 2026-10-04).
