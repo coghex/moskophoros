@@ -19,6 +19,7 @@ from dataclasses import replace
 from importlib.metadata import entry_points
 from pathlib import Path
 
+import numpy as np
 import pytest
 from glb_writer import GlbWriter
 from PIL import Image
@@ -90,6 +91,12 @@ else:
                               rng.randrange(256), 255)
             )
             image = Image.frombytes("RGBA", size, data)
+        elif config["pixels"] == "speckled":
+            # Three of one colour and one of another in every 2x2 block.
+            image = Image.new("RGBA", size, (200, 40, 10, 255))
+            for y in range(0, size[1], 2):
+                for x in range(0, size[0], 2):
+                    image.putpixel((x, y), (10, 40, 200, 255))
         else:
             image = Image.new("RGBA", size, (37 * i % 256, 91 * i % 256, 128, 255))
             image.paste((0, 0, 0, 0), (0, 0, size[0] // 2, size[1] // 2))
@@ -380,6 +387,100 @@ def test_the_capture_jobs_are_byte_identical_to_the_baseline(options):
         )
         text = blender._job_text(job)
         assert hashlib.sha256(text.encode()).hexdigest() == JOB_BASELINES[mode]
+
+
+# The most-common-colour reduction: each 2x2 block of the speckled capture
+# holds three of SPECKLE_MOST and one other, which plain blends.
+SPECKLED = ["--once", "attack", "--cell", "16x16", "--fps", "4", "--supersample", "2"]
+SPECKLE_MOST = (200, 40, 10, 255)
+# ((3 · 200 + 10) / 4, 40, (3 · 10 + 200) / 4), rounded half up.
+SPECKLE_MEAN = (153, 40, 58, 255)
+UNUSED = (0, 0, 0, 0)
+
+
+def speckled_argv(setup, *options, outfile=None):
+    return [
+        *SPECKLED,
+        *options,
+        "--blender",
+        str(setup.fake),
+        str(setup.model),
+        str(setup.png if outfile is None else outfile),
+    ]
+
+
+def sheet_colours(path):
+    with Image.open(path) as image:
+        pixels = np.array(image)
+    return {tuple(int(v) for v in pixel) for pixel in pixels.reshape(-1, 4)}
+
+
+def test_reduce_mode_keeps_each_block_s_most_common_colour(setup, capsys):
+    setup.configure(pixels="speckled")
+    assert run(capsys, speckled_argv(setup, "--reduce", "mode"))[0] == 0
+    assert sheet_colours(setup.png) == {SPECKLE_MOST, UNUSED}
+    mode = json.loads(setup.json.read_text())
+    assert mode["settings"]["style"] == {"reduce": "mode", "palette": None}
+
+    assert run(capsys, speckled_argv(setup))[0] == 0
+    assert sheet_colours(setup.png) == {SPECKLE_MEAN, UNUSED}
+    plain = json.loads(setup.json.read_text())
+    assert plain["settings"]["style"] == {"reduce": "plain", "palette": None}
+    assert mode["fingerprint"] != plain["fingerprint"]
+    assert {k: v for k, v in mode["settings"].items() if k != "style"} == {
+        k: v for k, v in plain["settings"].items() if k != "style"
+    }
+
+
+def test_a_reused_mode_sheet_selects_mode_unless_overridden(setup, capsys):
+    setup.configure(pixels="speckled")
+    assert run(capsys, speckled_argv(setup, "--reduce", "mode"))[0] == 0
+    reused = setup.out / "reused.png"
+    argv = [
+        "--settings-from",
+        str(setup.json),
+        "--once",
+        "attack",
+        "--blender",
+        str(setup.fake),
+        str(setup.model),
+    ]
+    assert run(capsys, [*argv, str(reused)])[0] == 0
+    assert sheet_colours(reused) == {SPECKLE_MOST, UNUSED}
+    assert reused.read_bytes() == setup.png.read_bytes()
+    assert (setup.out / "reused.json").read_text().replace(
+        "reused.png", "hero.png"
+    ) == setup.json.read_text()
+
+    assert run(capsys, ["--reduce", "plain", *argv, str(reused)])[0] == 0
+    assert sheet_colours(reused) == {SPECKLE_MEAN, UNUSED}
+    style = json.loads((setup.out / "reused.json").read_text())["settings"]["style"]
+    assert style == {"reduce": "plain", "palette": None}
+
+
+def test_mode_reduces_each_captured_frame_before_the_next_is_loaded(
+    setup, capsys, monkeypatch
+):
+    events = []
+    real_load, real_reduce = imageops.load_png, imageops.reduce_blocks_mode
+
+    def load(path):
+        events.append("load")
+        return real_load(path)
+
+    def reduce(pixels, factor):
+        events.append("reduce")
+        return real_reduce(pixels, factor)
+
+    def plain(pixels, factor):
+        raise AssertionError("plain ran under --reduce mode")
+
+    monkeypatch.setattr(imageops, "load_png", load)
+    monkeypatch.setattr(imageops, "reduce_blocks_mode", reduce)
+    monkeypatch.setattr(imageops, "reduce_blocks", plain)
+    setup.configure(pixels="speckled")
+    assert run(capsys, speckled_argv(setup, "--reduce", "mode"))[0] == 0
+    assert events == ["load", "reduce"] * ((4 + 3) * 8)
 
 
 def test_settings_reuse_with_an_explicit_override(setup, capsys):

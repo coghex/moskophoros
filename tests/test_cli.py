@@ -208,6 +208,7 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         ("--ground", "-1.5,0,2e-1", "ground", (-1.5, 0.0, 0.2)),
         ("--root-motion", "keep", "root_motion", "keep"),
         ("--reduce", "plain", "reduce", "plain"),
+        ("--reduce", "mode", "reduce", "mode"),
     ],
 )
 def test_range_boundaries_are_accepted(option, value, field, expected):
@@ -237,7 +238,8 @@ def test_range_boundaries_are_accepted(option, value, field, expected):
         ("--start-angle", "north", "expected a number"),
         ("--view", "front", "invalid choice"),
         ("--root-motion", "ignore", "invalid choice"),
-        ("--reduce", "mode", "invalid choice"),
+        ("--reduce", "median", "invalid choice"),
+        ("--reduce", "Mode", "invalid choice"),
         ("--reduce", "Plain", "invalid choice"),
         ("--reduce", "", "invalid choice"),
     ],
@@ -397,6 +399,7 @@ def test_once_may_precede_its_clip():
         ("--root-motion", "error", "keep"),
         ("--supersample", "8", "4"),
         ("--reduce", "plain", "plain"),
+        ("--reduce", "plain", "mode"),
         ("--settings-from", "a.json", "b.json"),
         ("--work-dir", "a", "b"),
         ("--blender", "a", "b"),

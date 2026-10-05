@@ -87,7 +87,7 @@ DEFAULT_VIEW = "iso"
 CUSTOM_VIEW = "custom"
 ROOT_MOTION_MODES = ("error", "keep")
 # The values --reduce accepts; the first is the default.
-REDUCTIONS = ("plain",)
+REDUCTIONS = ("plain", "mode")
 SHEET_SCHEMA = "moskophoros.sheet/2"
 # An older sheet, still reused; it reads as the plain reduction with no palette.
 LEGACY_SHEET_SCHEMA = "moskophoros.sheet/1"
@@ -467,7 +467,8 @@ def _command(options):
             sampling.ImageFrame(address, imageops.load_png(buffers["color"]), metadata)
             for address, buffers in rendered.buffers.items()
         )
-        frames = cleanup.passthrough(stylize.plain(captured, settings.supersample))
+        reduce = {"plain": stylize.plain, "mode": stylize.mode}[options.reduce]
+        frames = cleanup.passthrough(reduce(captured, settings.supersample))
 
     sheet = export.encode(
         frames,

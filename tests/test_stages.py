@@ -40,6 +40,30 @@ def test_plain_reduces_every_frame_keeping_addresses_order_and_metadata():
         assert np.array_equal(original.pixels, before[k])
 
 
+def test_mode_reduces_every_frame_keeping_addresses_order_and_metadata():
+    frames = _frames()
+    for frame in frames:
+        # The top-left block: three of the frame's colour, one other.
+        frame.pixels[0, 0] = (1, 2, 3, 255)
+    before = [frame.pixels.copy() for frame in frames]
+    result = stylize.mode(frames, 2)
+    assert isinstance(result, tuple)
+    assert [frame.address for frame in result] == [frame.address for frame in frames]
+    for k, (original, reduced) in enumerate(zip(frames, result, strict=True)):
+        assert reduced.metadata is original.metadata
+        assert reduced.pixels.tolist() == [
+            [[10 * (k + 1), 20, 30, 255], [0, 0, 0, 0]],
+            [[0, 0, 0, 0], [0, 0, 0, 0]],
+        ]
+        assert np.array_equal(original.pixels, before[k])
+
+
+def test_mode_accepts_any_iterable_and_rejects_an_indivisible_frame():
+    assert len(stylize.mode(iter(_frames()), 4)) == 3
+    with pytest.raises(ValueError, match="does not divide"):
+        stylize.mode(_frames(), 3)
+
+
 def test_plain_accepts_any_iterable_and_returns_a_tuple():
     result = stylize.plain(iter(_frames()), 4)
     assert isinstance(result, tuple)
@@ -78,3 +102,4 @@ def test_the_stages_touch_no_file_or_process(monkeypatch):
     monkeypatch.setattr(os, "open", forbidden)
     monkeypatch.setattr(subprocess, "Popen", forbidden)
     cleanup.passthrough(stylize.plain(_frames(), 2))
+    cleanup.passthrough(stylize.mode(_frames(), 2))
