@@ -342,3 +342,38 @@ def test_a_one_shot_clip_whose_endpoint_rounds_past_t1(capsys, tmp_path, found):
     times = sorted({frame["time_s"] for frame in description["frames"]})
     assert len(times) == 11
     assert times[-1] == t1
+
+
+@pytest.mark.parametrize("look", ["plain", "mode"])
+def test_paletted_looks_are_byte_identical_on_repeat_and_reuse(
+    capsys, found, model, tmp_path, look
+):
+    palette = tmp_path / "test.hex"
+    palette.write_text("000000\nff0000\nffffff\n")
+    output = tmp_path / "out"
+    output.mkdir()
+    options = [*SHEET, "--reduce", look, "--palette", str(palette)]
+    assert run(capsys, found, model, output / "hero.png", *options) == (0, "", "")
+    before = listing(output)
+    with Image.open(output / "hero.png") as image:
+        colors = set(image.get_flattened_data())
+    assert colors <= {
+        (0, 0, 0, 0),
+        (0, 0, 0, 255),
+        (255, 0, 0, 255),
+        (255, 255, 255, 255),
+    }
+    assert any(c[3] for c in colors)
+    assert run(capsys, found, model, output / "hero.png", *options) == (0, "", "")
+    assert listing(output) == before
+    palette.unlink()
+    assert run(
+        capsys,
+        found,
+        model,
+        output / "hero.png",
+        *SHEET,
+        "--settings-from",
+        str(output / "hero.json"),
+    ) == (0, "", "")
+    assert listing(output) == before

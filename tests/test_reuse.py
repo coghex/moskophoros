@@ -489,14 +489,9 @@ def test_a_missing_field_is_rejected(tmp_path, capsys, field):
         ("style.reduce", "MODE", "expected 'plain' or 'mode', got \"MODE\""),
         ("style.reduce", 1, "expected 'plain' or 'mode', got 1"),
         ("style.reduce", ["plain"], "expected 'plain' or 'mode', got [\"plain\"]"),
-        ("style.palette", [], "expected null, got []"),
-        ("style.palette", "", 'expected null, got ""'),
-        ("style.palette", False, "expected null, got false"),
-        (
-            "style.palette",
-            {"source": "p.gpl", "colors": []},
-            'expected null, got {"source": "p.gpl", "colors": []}',
-        ),
+        ("style.palette", [], "expected an object, got []"),
+        ("style.palette", "", 'expected an object, got ""'),
+        ("style.palette", False, "expected an object, got false"),
     ],
 )
 def test_an_unacceptable_value_is_rejected(tmp_path, capsys, field, value, problem):
@@ -574,7 +569,7 @@ def test_an_invalid_reused_style_is_checked_despite_an_explicit_reduce(
     problem = rejected(capsys, path, "--reduce", "plain")
     assert problem == (
         "settings.style.reduce: expected 'plain' or 'mode', got \"median\"; "
-        "settings.style.palette: expected null, got 1"
+        "settings.style.palette: expected an object, got 1"
     )
 
 

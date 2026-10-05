@@ -10,6 +10,68 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from moskophoros.palette import validate_colors
+
+# A fixed lookup for every encoded 8-bit sRGB value. No per-pixel gamma powers.
+_SRGB = np.arange(256, dtype=np.float64) / 255
+_SRGB_LINEAR = np.where(
+    _SRGB <= 0.04045, _SRGB / 12.92, ((_SRGB + 0.055) / 1.055) ** 2.4
+)
+_SRGB_LINEAR.setflags(write=False)
+_PALETTE_BATCH = 65536
+
+
+def _oklab(rgb):
+    """Linear sRGB to OKLab, using the 2021 matrices from Björn Ottosson.
+
+    https://bottosson.github.io/posts/oklab/ . Explicit elementwise arithmetic
+    keeps the operation order independent of the number of pixels in a batch.
+    """
+    r, g, b = np.moveaxis(_SRGB_LINEAR[rgb], -1, 0)
+    l_root = np.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+    m = np.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+    s = np.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+    return np.stack(
+        (
+            0.2104542553 * l_root + 0.7936177850 * m - 0.0040720468 * s,
+            1.9779984951 * l_root - 2.4285922050 * m + 0.4505937099 * s,
+            0.0259040371 * l_root + 0.7827717662 * m - 0.8086757660 * s,
+        ),
+        axis=-1,
+    )
+
+
+def map_palette(pixels, colors):
+    """Map RGBA to an ordered palette by Euclidean OKLab distance, undithered.
+
+    Equal distances keep the earlier entry. Alpha is unchanged; zero-alpha
+    pixels become transparent black. The input is untouched. Work memory is
+    bounded by a fixed pixel batch plus the palette, never pixels × colours.
+    """
+    if not isinstance(pixels, np.ndarray) or pixels.dtype != np.uint8:
+        raise TypeError("pixels must be a uint8 array")
+    if pixels.ndim != 3 or pixels.shape[2] != 4:
+        raise ValueError("pixels must have shape (height, width, 4)")
+    palette = np.asarray(validate_colors(colors, source="palette"), dtype=np.uint8)
+    labs = _oklab(palette)
+    result = np.array(pixels, copy=True, order="C")
+    flat = result.reshape(-1, 4)
+    for start in range(0, len(flat), _PALETTE_BATCH):
+        batch = flat[start : start + _PALETTE_BATCH]
+        lab = _oklab(batch[:, :3])
+        best = np.full(len(batch), np.inf)
+        chosen = np.zeros(len(batch), dtype=np.uint8)
+        for index, color in enumerate(labs):
+            difference = lab - color
+            distance = np.sum(difference * difference, axis=1)
+            closer = distance < best
+            best[closer] = distance[closer]
+            chosen[closer] = index
+        batch[:, :3] = palette[chosen]
+        batch[batch[:, 3] == 0] = 0
+    return result
+
+
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _PNG_RGBA = 6
 

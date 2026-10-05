@@ -103,3 +103,5 @@ def test_the_stages_touch_no_file_or_process(monkeypatch):
     monkeypatch.setattr(subprocess, "Popen", forbidden)
     cleanup.passthrough(stylize.plain(_frames(), 2))
     cleanup.passthrough(stylize.mode(_frames(), 2))
+    cleanup.passthrough(stylize.plain(_frames(), 2, palette=((0, 0, 0),)))
+    cleanup.passthrough(stylize.mode(_frames(), 2, palette=((0, 0, 0),)))

@@ -8,8 +8,8 @@ input file, the filesystem or Blender belong to the stages that use them.
 
 `resolve_settings` applies `--settings-from`, following design §Scale and
 ground point, Reuse: `read_settings` reads and checks the earlier sheet's
-`settings`, and `apply_settings` merges them with the parsed options. Reading
-that one file is its only effect.
+`settings`, and `apply_settings` merges them with the parsed options. It also
+reads a selected palette snapshot; these reads precede any Blender invocation.
 
 `capture_settings` gives the settings capture and export share, and
 `style_record` the style the sheet records beside them, following design
@@ -27,6 +27,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import signal
 import sys
@@ -47,6 +48,7 @@ from moskophoros import (
     fit,
     gltf,
     imageops,
+    palette,
     sampling,
     stylize,
     views,
@@ -98,6 +100,15 @@ _HELP = frozenset({"-h", "--help"})
 
 
 @dataclass(frozen=True)
+class PaletteRecord:
+    """A palette snapshot; reuse never needs its original file."""
+
+    source: str
+    sha256: str
+    colors: tuple[tuple[int, int, int], ...]
+
+
+@dataclass(frozen=True)
 class Options:
     """Validated options.
 
@@ -131,6 +142,9 @@ class Options:
     blender: Path | None
     any_blender: bool
     explicit: frozenset[str]
+    palette_file: Path | None = None
+    no_palette: bool = False
+    palette: PaletteRecord | None = None
 
 
 class UsageError(SystemExit):
@@ -151,6 +165,8 @@ def parse_args(argv: Sequence[str]) -> Options:
     parser, value_options, flags = _build_parser()
     namespace = argparse.Namespace(explicit_=set())
     args = parser.parse_args(_prepare(parser, argv, value_options, flags), namespace)
+    if args.palette is not None and args.no_palette:
+        parser.error("--palette and --no-palette cannot be given together")
 
     once = tuple(args.once or ())
     clip = None if args.clip is None else tuple(args.clip)
@@ -188,6 +204,8 @@ def parse_args(argv: Sequence[str]) -> Options:
         blender=args.blender,
         any_blender=args.any_blender,
         explicit=explicit,
+        palette_file=args.palette,
+        no_palette=args.no_palette,
     )
 
 
@@ -213,14 +231,36 @@ class ReusedSettings:
     ground_px: tuple[int, int]
     root_motion: str
     reduce: str
+    palette: PaletteRecord | None = None
 
 
 def resolve_settings(options: Options) -> Options:
-    """`options` with its `--settings-from` file applied, or as parsed when
-    there is none. Raises `UsageError` as `read_settings` does."""
-    if options.settings_from is None:
-        return options
-    return apply_settings(options, read_settings(options.settings_from))
+    """Validate reuse before overrides, then resolve palette bytes before Blender."""
+    if options.settings_from is not None:
+        options = apply_settings(options, read_settings(options.settings_from))
+    if options.palette_file is not None:
+        path = options.palette_file
+        try:
+            source = _palette_source(path.name)
+        except argparse.ArgumentTypeError as error:
+            _build_parser()[0].error(f"--palette {str(path)!r}: {error}")
+        try:
+            data = path.read_bytes()
+        except OSError as error:
+            _build_parser()[0].error(
+                f"--palette {str(path)!r}: cannot be read: {error.strerror or error}"
+            )
+        try:
+            colors = palette.read_palette_bytes(data, source=path)
+        except palette.PaletteError as error:
+            _build_parser()[0].error(f"--palette {error}")
+        options = replace(
+            options,
+            palette=PaletteRecord(source, hashlib.sha256(data).hexdigest(), colors),
+        )
+    elif options.no_palette:
+        options = replace(options, palette=None)
+    return options
 
 
 def read_settings(path) -> ReusedSettings:
@@ -288,6 +328,7 @@ def read_settings(path) -> ReusedSettings:
         ground_px=(ground_px["x"], ground_px["y"]),
         root_motion=checked["root_motion"],
         reduce=checked["style"]["reduce"] if "style" in shape else REDUCTIONS[0],
+        palette=checked["style"]["palette"] if "style" in shape else None,
     )
 
 
@@ -333,9 +374,18 @@ def capture_settings(options: Options) -> backend.Settings:
 
 
 def style_record(options: Options) -> dict:
-    """The sheet's `settings.style` record for merged `options`: the reduction,
-    and the palette, which is always null for now."""
-    return {"reduce": options.reduce, "palette": None}
+    """The sheet's ordered look record, independent of capture settings."""
+    record = options.palette
+    return {
+        "reduce": options.reduce,
+        "palette": None
+        if record is None
+        else {
+            "source": record.source,
+            "sha256": record.sha256,
+            "colors": ["#" + bytes(color).hex() for color in record.colors],
+        },
+    }
 
 
 def main(argv: Sequence[str] | None = None):
@@ -468,7 +518,13 @@ def _command(options):
             for address, buffers in rendered.buffers.items()
         )
         reduce = {"plain": stylize.plain, "mode": stylize.mode}[options.reduce]
-        frames = cleanup.passthrough(reduce(captured, settings.supersample))
+        colors = options.palette.colors if options.palette is not None else None
+        reduced = (
+            reduce(captured, settings.supersample)
+            if colors is None
+            else reduce(captured, settings.supersample, palette=colors)
+        )
+        frames = cleanup.passthrough(reduced)
 
     sheet = export.encode(
         frames,
@@ -1004,6 +1060,10 @@ def _build_parser():
         f"pixel reduction: {', '.join(REDUCTIONS)} (default: {REDUCTIONS[0]})",
         choices=REDUCTIONS,
     )
+    single("--palette", "FILE", _path, None, "map colours to a HEX, GPL or PNG palette")
+    parser.add_argument(
+        "--no-palette", action=_Flag, help="drop a reused palette (default: off)"
+    )
     single(
         "--settings-from",
         "FILE",
@@ -1036,7 +1096,7 @@ def _build_parser():
         action=_Flag,
         help="allow a Blender version other than the supported one (default: off)",
     )
-    flags = {*_HELP, "--no-preview", "--any-blender"}
+    flags = {*_HELP, "--no-preview", "--any-blender", "--no-palette"}
     return parser, frozenset(value_options), frozenset(flags)
 
 
@@ -1160,9 +1220,51 @@ def _one_of(*choices):
 
 # The sheet's `settings` object, member by member. `clips` is recognized but
 # never read: clip selection comes from the current command line. A member
-# that must be null is `_NULL`.
+# that may be null or a palette record is `_PALETTE`.
 _IGNORED = None
-_NULL = object()
+_PALETTE = object()
+
+
+def _palette_source(value):
+    if (
+        not isinstance(value, str)
+        or not value
+        or value in {".", ".."}
+        or any(c in value for c in "/\\\0:")
+    ):
+        raise argparse.ArgumentTypeError("expected a nonempty base filename")
+    return value
+
+
+def _palette_digest(value):
+    if not isinstance(value, str) or not re.fullmatch("[0-9a-f]{64}", value):
+        raise argparse.ArgumentTypeError("expected 64 lowercase hexadecimal digits")
+    return value
+
+
+def _palette_colors(value):
+    if not isinstance(value, list):
+        raise argparse.ArgumentTypeError(
+            "expected an array of canonical #rrggbb colours"
+        )
+    colors = []
+    for index, color in enumerate(value, 1):
+        if not isinstance(color, str) or not re.fullmatch("#[0-9a-f]{6}", color):
+            raise argparse.ArgumentTypeError(
+                f"entry {index}: expected a lowercase #rrggbb colour"
+            )
+        colors.append(tuple(bytes.fromhex(color[1:])))
+    try:
+        return palette.validate_colors(colors, source="palette")
+    except palette.PaletteError as error:
+        raise argparse.ArgumentTypeError(error.problem) from None
+
+
+_PALETTE_FIELDS = {
+    "source": _palette_source,
+    "sha256": _palette_digest,
+    "colors": _palette_colors,
+}
 _LEGACY_SETTINGS = {
     "view": {
         "preset": _one_of(*PRESETS, CUSTOM_VIEW),
@@ -1185,7 +1287,7 @@ _SETTINGS = {
     name: _LEGACY_SETTINGS[name] for name in _LEGACY_SETTINGS if name != "clips"
 }
 _SETTINGS |= {
-    "style": {"reduce": _one_of(*REDUCTIONS), "palette": _NULL},
+    "style": {"reduce": _one_of(*REDUCTIONS), "palette": _PALETTE},
     "clips": _IGNORED,
 }
 # Each reusable schema's `settings`, newest first.
@@ -1195,10 +1297,12 @@ _SHAPES = {SHEET_SCHEMA: _SETTINGS, LEGACY_SHEET_SCHEMA: _LEGACY_SETTINGS}
 def _check_shape(shape, value, name, problems):
     """Check `value` against `shape`, adding each problem under its field
     path to `problems`, and return the converted values."""
-    if shape is _NULL:
-        if value is not None:
-            problems.append(f"{name}: expected null, got {_shown(value)}")
-        return None
+    if shape is _PALETTE:
+        if value is None:
+            return None
+        before = len(problems)
+        checked = _check_shape(_PALETTE_FIELDS, value, name, problems)
+        return PaletteRecord(**checked) if len(problems) == before else None
     if value is None:
         problems.append(f"{name}: must be set, got null")
         return None
