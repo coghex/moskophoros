@@ -1,39 +1,39 @@
 # Guide cursor
 
-Resume after: `c93605c2a0608e0153fbecb1b57e2ab923888c67` · [2026-10-04T175222Z-c93605c](2026-10-04T175222Z-c93605c.md) · 2026-10-04T17:59Z
+Resume after: `bb3c9b418b148deae59cbc889464fd1279a79679` · [2026-10-06T175903Z-bb3c9b4](2026-10-06T175903Z-bb3c9b4.md) · 2026-10-06T18:04Z
 Covered beyond the boundary: none
 
 ## Next
 
-Carry the inspected, owner-accepted slice 1 baseline into the next owner-selected
-arc. No guide repair or proposal is pending; findings go through the manager.
+Owner/manager disposition of the one advisory palette-error finding. This bounded
+review authorizes no follow-up issue, repair or solve.
 
 ## Open findings
 
-- none
+- 2026-10-06T175903Z-bb3c9b4/GUIDE-1 — P2: normalize malformed PNG palette decoder errors to usage exit 2 — unprocessed
 
 ## Pending handoff
 
-- No fresh tests or renders: dispatch protected concurrent timing-sensitive tests.
+- No fresh project tests, probes or renders: dispatch required recorded evidence.
 - #43 remains owner-deferred until a model needs those animation features.
 - Epics #3 and #24 remain open with their implementation children closed.
 - Prior stale-merge-commit/base-edit CI behavior remains unverified.
 - History before `0eb2491` (bootstrap and PRs #1–#2) remains unreviewed.
-- End recheck found no movement; reviewed boundary remains c93605c.
+- End recheck found no movement; reviewed boundary is bb3c9b4.
 
 ## Alignment
 
 | Principle | Reading | Since | Note |
 |---|---|---|---|
 | V-1 | aligned | 2026-10-04T175222Z-c93605c | Generic subjects, clips and layouts; no game integration. |
-| V-2 | aligned | 2026-09-30T043336Z-fe94bd6 | CLI, deterministic encoding and publication reviewed; historical runtime evidence attributed. |
+| V-2 | drifting | 2026-10-06T175903Z-bb3c9b4 | GUIDE-1: malformed palette returns internal exit 1 instead of usage 2. |
 | V-3 | aligned | 2026-10-04T175222Z-c93605c | Binary GLB structure and original scene/animation identities. |
 | V-4 | aligned | 2026-10-04T175222Z-c93605c | Addressed frames and preserved metadata; style remains downstream of capture. |
 | V-5 | aligned | 2026-10-04T175222Z-c93605c | One bpy script behind validated JSON and subprocess boundary. |
 | V-6 | aligned | 2026-10-04T175222Z-c93605c | Parameterized views and settings override precedence. |
 | V-7 | aligned | 2026-10-04T175222Z-c93605c | Global fit, fixed placement and reuse, root endpoints and camera-relative lighting. |
-| V-8 | aligned | 2026-10-04T175222Z-c93605c | Plain reduction only; style remains owner-directed. |
+| V-8 | aligned | 2026-10-04T175222Z-c93605c | Owner-selected reductions/palettes; accepted foundational style-record change. |
 | V-9 | aligned | 2026-10-04T175222Z-c93605c | Time-based full addresses and attached settings fingerprint. |
 | V-10 | aligned | 2026-10-04T175222Z-c93605c | Composable shared image operations. |
-| V-11 | aligned | 2026-10-04T175222Z-c93605c | Consumed input and capture outputs validated; accepted feature rejection retained. |
+| V-11 | drifting | 2026-10-06T175903Z-bb3c9b4 | GUIDE-1: malformed PNG exception escapes file-naming palette validation. |
 | V-12 | aligned | 2026-09-30T043336Z-fe94bd6 | Independent mechanical assertions and recorded owner visual acceptance; no fresh tests. |
