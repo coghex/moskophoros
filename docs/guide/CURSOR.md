@@ -5,12 +5,13 @@ Covered beyond the boundary: none
 
 ## Next
 
-Owner/manager disposition of the one advisory palette-error finding. This bounded
-review authorizes no follow-up issue, repair or solve.
+No open guide finding. GUIDE-1 is processed through #61 → PR #62, merged at
+`a7ba0d5`. Work after `bb3c9b4` awaits a future guide review; this bookkeeping
+does not advance coverage or change the historical alignment readings.
 
 ## Open findings
 
-- 2026-10-06T175903Z-bb3c9b4/GUIDE-1 — P2: normalize malformed PNG palette decoder errors to usage exit 2 — unprocessed
+- none
 
 ## Pending handoff
 
