@@ -12,6 +12,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 from PIL import Image
+from test_capture_backend import raw_png
 from test_command import Setup, run
 from test_reuse import edited, write_sheet
 
@@ -243,6 +244,7 @@ def test_palette_parsing_does_not_read_files(tmp_path):
         "too-many",
         "png-alpha",
         "png-broken",
+        "png-empty-iccp",
     ],
 )
 def test_palette_errors_precede_every_blender_invocation_including_version(
@@ -254,6 +256,8 @@ def test_palette_errors_precede_every_blender_invocation_including_version(
     if kind != "absent":
         if kind == "png-alpha":
             Image.new("RGBA", (1, 1), (1, 2, 3, 254)).save(path)
+        elif kind == "png-empty-iccp":
+            raw_png(path, 8, 6, 8, 6, 4, [(b"iCCP", b"")])
         else:
             content = {
                 "malformed": "000000\nbad",
@@ -272,6 +276,8 @@ def test_palette_errors_precede_every_blender_invocation_including_version(
     status, out, err = run(capsys, setup.argv("--palette", str(path)))
     assert (status, out) == (2, "")
     assert str(path) in err
+    assert "Traceback" not in err
+    assert "internal error" not in err
     if kind in {"malformed", "duplicate"}:
         assert "line 2" in err
     assert setup.listing() == {}

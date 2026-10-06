@@ -5,6 +5,7 @@ import zlib
 
 import pytest
 from PIL import Image
+from test_capture_backend import raw_png
 
 from moskophoros.palette import PaletteError, read_palette, validate_colors
 
@@ -205,6 +206,13 @@ def test_undecodable_png(tmp_path, damage):
         path.write_bytes(data[:29] + bytes([data[29] ^ 1]) + data[30:])
     else:
         Image.new("RGB", (1, 1)).save(path, format="JPEG")
+    assert_problem(path, "not a decodable PNG")
+
+
+def test_empty_iccp_chunk_is_an_undecodable_png(tmp_path):
+    # A correct-CRC, empty iCCP chunk makes Pillow's decoder raise IndexError.
+    path = tmp_path / "icc.png"
+    raw_png(path, 8, 6, 8, 6, 4, [(b"iCCP", b"")])
     assert_problem(path, "not a decodable PNG")
 
 
