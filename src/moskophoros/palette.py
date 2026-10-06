@@ -143,6 +143,7 @@ def _png(data, path):
     except PaletteError:
         raise
     except (
+        IndexError,
         OSError,
         ValueError,
         SyntaxError,
