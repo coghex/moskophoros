@@ -28,7 +28,7 @@ concrete precondition
 - [x] MAT-2. Read material identities from the glTF — [#65]
 - [x] MAT-3. Capture material-ID and shade buffers — [#66]
 - [x] MAT-4. Read and validate a material library — [#67]
-- [ ] MAT-5. Map frames onto material ramps
+- [x] MAT-5. Map frames onto material ramps — [#68]
 - [ ] MAT-6. Choose, record and reuse a material library from the command
 - [ ] MAT-7. Render materials for the owner's visual review
 - [ ] MAT-8. Generate ramps from material properties
