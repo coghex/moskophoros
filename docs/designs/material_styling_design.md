@@ -30,7 +30,7 @@ concrete precondition
 - [x] MAT-4. Read and validate a material library — [#67]
 - [x] MAT-5. Map frames onto material ramps — [#68]
 - [x] MAT-6. Choose, record and reuse a material library from the command — [#69]
-- [ ] MAT-7. Render materials for the owner's visual review
+- [x] MAT-7. Render materials for the owner's visual review — [#70]
 - [ ] MAT-8. Generate ramps from material properties
 
 The owner approved this slice list on 2026-10-07 (D-14); it replaces the
