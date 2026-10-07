@@ -31,7 +31,7 @@ concrete precondition
 - [x] MAT-5. Map frames onto material ramps — [#68]
 - [x] MAT-6. Choose, record and reuse a material library from the command — [#69]
 - [x] MAT-7. Render materials for the owner's visual review — [#70]
-- [ ] MAT-8. Generate ramps from material properties
+- [ ] MAT-8. Generate ramps from material properties — [deferred]: Q-24 (the ramp-generation formula) must be specified, with the owner's review of sample ramps, and recorded in this design; it follows #70
 
 The owner approved this slice list on 2026-10-07 (D-14); it replaces the
 earlier M1–M5 shape.
@@ -1221,6 +1221,8 @@ the same day without changing the slices.*
 - **Open questions:** None.
 
 ### MAT-8. Generate ramps from material properties
+
+> **Deferred** on 2026-10-07 during issue processing: not ready until Q-24, the ramp-generation formula, is specified with a short owner review of sample ramps and recorded here (Q-24, D-21). It follows the owner's review in #70 (MAT-7). Process this entry again once that is recorded.
 
 - **Outcome:** a library entry can give properties instead of a hand-listed
   ramp; the tool builds the ramp and snaps it to the palette, records both,
