@@ -26,7 +26,7 @@ concrete precondition
 - [x] EPIC. Draw each named material from its own ramp on a shared palette — [#63]
 - [x] MAT-1. Carry several named capture buffers per frame through the pipeline — [#64]
 - [x] MAT-2. Read material identities from the glTF — [#65]
-- [ ] MAT-3. Capture material-ID and shade buffers
+- [x] MAT-3. Capture material-ID and shade buffers — [#66]
 - [ ] MAT-4. Read and validate a material library
 - [ ] MAT-5. Map frames onto material ramps
 - [ ] MAT-6. Choose, record and reuse a material library from the command
