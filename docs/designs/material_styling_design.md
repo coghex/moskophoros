@@ -23,7 +23,7 @@ concrete precondition
 
 ## Processing status
 
-- [ ] EPIC. Draw each named material from its own ramp on a shared palette
+- [x] EPIC. Draw each named material from its own ramp on a shared palette — [#63]
 - [ ] MAT-1. Carry several named capture buffers per frame through the pipeline
 - [ ] MAT-2. Read material identities from the glTF
 - [ ] MAT-3. Capture material-ID and shade buffers
