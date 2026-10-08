@@ -161,6 +161,10 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         "palette_file",
         "palette",
         "no_palette",
+        "materials_file",
+        "materials",
+        "no_materials",
+        "shade_range",
     }
     assert options == cli.Options(
         infile=Path("in.glb"),

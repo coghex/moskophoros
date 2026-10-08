@@ -346,15 +346,31 @@ def test_palette_reuse_and_overrides_do_not_need_original_file(tmp_path):
             )
         )
 
-    assert cli.style_record(resolve()) == {"reduce": "mode", "palette": RECORD}
-    assert cli.style_record(resolve("--reduce", "plain")) == {
-        "reduce": "plain",
-        "palette": RECORD,
-    }
-    assert cli.style_record(resolve("--no-palette")) == {
-        "reduce": "mode",
-        "palette": None,
-    }
+    unmaterialed = {"materials": None, "shade_range": [84, 191]}
+    assert (
+        cli.style_record(resolve())
+        == {
+            "reduce": "mode",
+            "palette": RECORD,
+        }
+        | unmaterialed
+    )
+    assert (
+        cli.style_record(resolve("--reduce", "plain"))
+        == {
+            "reduce": "plain",
+            "palette": RECORD,
+        }
+        | unmaterialed
+    )
+    assert (
+        cli.style_record(resolve("--no-palette"))
+        == {
+            "reduce": "mode",
+            "palette": None,
+        }
+        | unmaterialed
+    )
     replacement = palette_file(tmp_path, ((1, 2, 3),))
     record = cli.style_record(resolve("--palette", str(replacement)))["palette"]
     assert record == {

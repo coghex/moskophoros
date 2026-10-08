@@ -53,6 +53,8 @@ moskophoros [options] <infile.glb> <outfile.png>
 | `--reduce NAME` | `plain` | How each supersampled block becomes one pixel: `plain`, the alpha-weighted mean, or `mode`, the most common colour. See [Stylize](#stylize). |
 | `--palette FILE` | none | Map colours to an ordered `.hex`, `.gpl` or `.png` palette. See [Stylize](#stylize). |
 | `--no-palette` | off | Drop a reused palette; cannot accompany `--palette`. |
+| `--materials FILE` | none | Draw each named material from the ramps of a JSON material library, on the palette in force. Needs a palette. See [Material libraries](#material-libraries). |
+| `--no-materials` | off | Drop a reused material library; cannot accompany `--materials`. |
 | `--settings-from FILE` | none | Reuse settings from an earlier sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
 | `--no-preview` | off | Skip the animated previews. |
 | `--work-dir DIR` | temporary | Keep capture output in `DIR` instead of a deleted temporary directory. |
@@ -114,9 +116,15 @@ decision 2026-10-01):
 - A single-value option given more than once; the last value does not win.
 - A `--reduce` value other than `plain` or `mode` (owner decision 2026-10-04).
 - `--palette` together with `--no-palette`, or either option repeated.
+- `--materials` together with `--no-materials`, or either option repeated.
 - A bad palette file: see [Palette inputs](#palette-inputs). These errors name
   the file and, for text errors, the line, and precede every Blender invocation,
   including its version probe (owner decisions 2026-10-04).
+- A bad material library, or a library without a palette, or a reused library
+  beside an explicit option that would change its palette: see
+  [Material libraries](#material-libraries). These errors name the file and the
+  material or entry, and precede every Blender invocation, including its
+  version probe (owner decisions 2026-10-07, D-8 and D-24).
 
 `--start-angle` and `--model-yaw` accept any finite number of degrees; the
 direction formula's `mod 360` handles wrapping. `<infile.glb>` has no suffix
@@ -376,19 +384,47 @@ sheet's JSON and reuses these values:
 - fps and supersample
 - ppm, cell, ground point and ground pixel
 - root-motion mode
-- the style's reduction and inline palette, `settings.style.reduce` and
-  `settings.style.palette`
+- the style: its reduction and inline palette, `settings.style.reduce` and
+  `settings.style.palette`, its inline material library, `settings.style.materials`,
+  and the fixed shade range, `settings.style.shade_range`
 
 This makes scale, cell and ground pixel fixed. Options given explicitly
 override the reused values; an explicit `--reduce` replaces the reused
 reduction, retaining the palette. `--palette FILE` replaces the reused palette;
 `--no-palette` drops it. Reuse applies the recorded ordered colours without
-opening the original palette file and keeps its record unchanged. Clip selection and `--once` always come from the current command
-line. A file that is unreadable, or not a `moskophoros.sheet/2` or
+opening the original palette file and keeps its record unchanged. Clip
+selection and `--once` always come from the current command line. A file that
+is unreadable, or not a `moskophoros.sheet/3`, `moskophoros.sheet/2` or
 `moskophoros.sheet/1` document, is a usage error.
 
+The reused library follows the palette's pattern (owner decisions 2026-10-07,
+D-19 and D-24). It is applied without opening the original library file and
+keeps its record unchanged. `--materials FILE` replaces it, and
+`--no-materials` drops it. A reused library is kept only with the palette it
+was written for:
+
+| Library | Palette | Result |
+|---|---|---|
+| reused | reused | allowed |
+| reused | explicit, with the same ordered colours | allowed; the palette's record names the new file |
+| reused | explicit, with other colours (reordered, added, removed or changed) | usage error: a new palette would silently recolour every ramp. Give `--materials FILE` too, or `--no-materials` |
+| reused | `--no-palette` | usage error: a library needs a palette. Give `--no-materials` too |
+| explicit | reused or explicit | allowed, validated against the palette in force |
+| `--no-materials` | any | the reused library is dropped, and the ordinary looks apply |
+
+"Different" compares the palettes' ordered colour lists, never file names or
+hashes, which stay provenance. A deliberate palette swap that keeps a library
+is a variant, deferred with palette swaps. The recorded library is validated
+against the recorded palette before any override, and an invalid one is an
+error even when an override drops or replaces it; a library that is dropped or
+replaced is never checked against another palette. The final library and
+palette are validated before any Blender invocation.
+
+A `moskophoros.sheet/2` sheet, written before the library was recorded, has a
+`settings.style` of exactly `reduce` and `palette`, and reuses as having no
+library and with the current default shade range (`capture.backend.DEFAULT_SHADE_RANGE`).
 A `moskophoros.sheet/1` sheet, written before the style was recorded, has no
-`settings.style` and reads as `{"reduce": "plain", "palette": null}`. Its
+`settings.style` and also reads as `{"reduce": "plain", "palette": null}`; its
 other fields are checked as below, and a `style` field in it is an unknown
 field (owner decision 2026-10-04).
 
@@ -401,14 +437,23 @@ makes the preset `custom`.
 The reused `settings` are checked strictly. Every reused field must be
 present with a value its option would accept, `projection` must be
 `orthographic`, and `pixels_per_meter`, `cell` and `ground_px` must be set.
-In a `/2` sheet, `style` must be an object with exactly `reduce`, a value
-`--reduce` accepts, and `palette`, either `null` or an object with exactly
-`source`, `sha256` and `colors`. The source is a nonempty base filename, never
-a path; the digest is exactly 64 lowercase hexadecimal digits; colours are
-1 to 255 unique canonical lowercase `#rrggbb` strings in their recorded order.
-The palette module applies its shared count, RGB and uniqueness checks. All
-reused fields are validated before any override, including `--reduce`,
-`--palette` and `--no-palette` (owner decisions 2026-10-04).
+In a `/3` sheet, `style` must be an object with exactly `reduce`, a value
+`--reduce` accepts, `palette`, either `null` or an object with exactly
+`source`, `sha256` and `colors`, `materials`, either `null` or an object with
+exactly `source`, `sha256`, `ramps`, `default` and `materials`, and
+`shade_range`. The source is a nonempty base filename, never a path; the
+digest is exactly 64 lowercase hexadecimal digits; colours are 1 to 255 unique
+canonical lowercase `#rrggbb` strings in their recorded order. The palette
+module applies its shared count, RGB and uniqueness checks. A library record's
+`ramps`, `default` (a ramp name, or `null` for none) and `materials` are
+validated by the library module exactly as a library file is, against the
+recorded palette, and a record beside a `null` palette is an error.
+`shade_range` is an array of exactly two JSON integers, never booleans or
+floating-point numbers, with `0 ≤ lo < hi ≤ 255`; it is validated even when
+`materials` is `null`. A `/2` sheet's `style` is exactly `reduce` and
+`palette`, checked the same way. All reused fields are validated before any
+override, including `--reduce`, `--palette`, `--no-palette`, `--materials` and
+`--no-materials` (owner decisions 2026-10-04, 2026-10-07).
 A missing or invalid field, or an unknown field inside `settings`, is a usage
 error naming it. The rest of the sheet is not checked beyond its `schema`
 (owner decisions 2026-10-01).
@@ -858,10 +903,9 @@ the named file and validates it against the palette `colors`.
 snapshot, so a caller can hash exactly the bytes it parsed, and
 `materials.validate_library(document, colors, source=...)` validates an
 already-parsed library without reading anything or changing its input. All
-three return the same result for the same library. No command option reads a
-library yet; `stylize` maps frames onto a library's ramps
-([Material ramps](#material-ramps)), and the command option that chooses a
-library is a later slice.
+three return the same result for the same library. `--materials FILE` gives the
+command a library, and `stylize` maps frames onto its ramps
+([Material ramps](#material-ramps)).
 
 A library is a UTF-8 JSON object:
 
@@ -981,6 +1025,48 @@ order. The ordinary look keeps its own arithmetic, including the NumPy
 `float64` OKLab palette mapping above, and is unchanged. Dithering and eased
 bands are out of scope (D-7).
 
+#### Using a library from the command
+
+`--materials FILE` reads the library file once; the same bytes are parsed
+(`materials.read_library_bytes`) and hashed (SHA-256), and the library is
+validated against the palette in force, whether it came from `--palette` or
+from reused settings. `--no-materials` drops a reused library. The library is
+used with the reduction, the palette and the shade range in force: each frame
+is mapped as under [Material ramps](#material-ramps), from the decoded
+material-ID and shade buffers. No command option sets the shade range; a new
+run uses `capture.backend.DEFAULT_SHADE_RANGE`, and a reused sheet keeps its
+recorded range, even when an explicit library replaces the reused one.
+
+Each of these is a usage error (exit 2) before any Blender invocation,
+including its version probe, naming the file and, where there is one, the
+material or entry: every library error, a library without a palette (given
+neither by `--palette` nor by reused settings), and the combinations of
+[reuse](#scale-and-ground-point) that would change a reused library's palette.
+A library is checked against the palette in force only if it stays.
+
+When a library is in use, whether given or reused, the command prints these
+warnings on stderr, each once (owner decisions 2026-10-07, D-3, D-9, D-17 and
+D-18), before capture starts:
+
+- each named model material with no library entry, naming it and whether it
+  took the default ramp or the ordinary look; a `BLEND` material takes the
+  ordinary look whatever the default, so a name used only by `BLEND`
+  materials says that, and a name shared with opaque materials adds that its
+  `BLEND` parts take the ordinary look
+- one warning counting the parts with no material name, from the glTF
+  primitives of the selected scene: an unnamed material, or a primitive without
+  one
+- each library entry whose name is used only by `BLEND` materials
+
+Library entries and named ramps the model never uses are silent (D-15).
+Names are shown as JSON strings, so quotes and whitespace are visible. The
+warnings are not errors, and no output changes with them.
+
+Without a library, the sheet PNG and previews of every look are byte-identical
+to those the reductions gave before libraries existed; only the sheet's JSON
+changes, by its schema and the `style` fields below, and with them its
+fingerprint.
+
 ### Cleanup (slice 1: none)
 
 A stage that receives addressed frames and returns them. Slice 1 passes them
@@ -996,11 +1082,11 @@ through unchanged.
 - Cells are packed with no gaps; unused cells are fully transparent.
 - Output is an 8-bit RGBA PNG written by Pillow with no text or time chunks.
 
-**JSON (`moskophoros.sheet/2`).**
+**JSON (`moskophoros.sheet/3`).**
 
 ```json
 {
-  "schema": "moskophoros.sheet/2",
+  "schema": "moskophoros.sheet/3",
   "generator": {
     "tool": "moskophoros", "version": "0.1.0",
     "python": "3.x.y", "numpy": "x.y.z", "pillow": "x.y.z",
@@ -1024,7 +1110,8 @@ through unchanged.
     "ground_m": { "x": 0.0, "y": 0.0, "z": 0.0 },
     "ground_px": { "x": 24, "y": 46 },
     "root_motion": "error",
-    "style": { "reduce": "plain", "palette": null },
+    "style": { "reduce": "plain", "palette": null, "materials": null,
+               "shade_range": [84, 191] },
     "clips": [ { "name": "walk", "loop": true },
                { "name": "attack", "loop": false } ]
   },
@@ -1044,15 +1131,22 @@ through unchanged.
 
 - `frames` lists every frame, in sheet order. A frame's address is `subject`,
   `variant`, `clip`, `direction` and `time_s` (V-9).
-- `settings.style` records the look: `reduce`, the `--reduce` value, and
-  `palette`, either `null` or an ordered object with `source` (the palette
-  file's base filename), `sha256` (SHA-256 of its bytes), and `colors` (ordered
-  canonical lowercase `#rrggbb` strings). It sits between `root_motion` and
-  `clips`. Export writes and fingerprints the record the command resolved
-  without interpreting it, so a new look changes neither export nor capture.
-  `moskophoros.sheet/1` is the same document without `settings.style`;
-  [reuse](#scale-and-ground-point) still reads it (owner decisions
-  2026-10-04).
+- `settings.style` records the look, in this order: `reduce`, the `--reduce`
+  value; `palette`, either `null` or an ordered object with `source` (the
+  palette file's base filename), `sha256` (SHA-256 of its bytes), and `colors`
+  (ordered canonical lowercase `#rrggbb` strings); `materials`, either `null`
+  or an object with `source` (the library file's base filename), `sha256`
+  (SHA-256 of its bytes), `ramps` (each named ramp, a list of palette indices,
+  in name order), `default` (a ramp name, or `null`) and `materials` (each
+  entry in name order: `{"ramp": [...]}`, `{"uses": NAME}` or `"ordinary"`);
+  and `shade_range`, the fixed shade range `[lo, hi]` as two integers, recorded
+  whether or not a library is used and outside the library. It sits between
+  `root_motion` and `clips`. Export writes and fingerprints the record the
+  command resolved without interpreting it, so a new look changes neither
+  export nor capture. `moskophoros.sheet/2` is the same document with a
+  `style` of only `reduce` and `palette`, and `moskophoros.sheet/1` without
+  `settings.style`; [reuse](#scale-and-ground-point) still reads both (owner
+  decisions 2026-10-04, 2026-10-07).
 - `fingerprint` is the SHA-256 of the canonical JSON (sorted keys, no
   whitespace, UTF-8) of `generator`, `source.sha256` and `settings`. The
   hashed object mirrors the sheet's own structure:
@@ -1073,7 +1167,17 @@ For example, the palette record for `two.hex` containing `000000` and
 ```
 
 The palette's file bytes, colours and their order all participate in the
-fingerprint; reuse needs only this inline record.
+fingerprint; reuse needs only this inline record. The library record is
+likewise inline, so reuse never opens the library file: for `ramps`
+`{"metal": [12, 13, 14]}`, `default` `null` and a `steel` entry using `metal`,
+it is
+
+```json
+{"source": "materials.json", "sha256": "…", "ramps": {"metal": [12, 13, 14]}, "default": null, "materials": {"steel": {"uses": "metal"}}}
+```
+
+and a library file's bytes, its ramps, default and entries, and the shade
+range all participate in the fingerprint.
 
 **Previews.** For each clip, an animated GIF showing all directions side by
 side in index order, packed with no gap between cells (owner decision
@@ -1142,7 +1246,7 @@ src/moskophoros/
   export.py               sheet, JSON, previews
   imageops.py             shared image operations
   palette.py              ordered exact RGB palette reading and validation
-  materials.py            material library reading and validation
+  materials.py            material library reading, validation and warnings
 tests/
 ```
 

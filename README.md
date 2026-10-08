@@ -24,7 +24,7 @@ moskophoros --clip walk --clip attack --once attack --cell 64x64 hero.glb out/he
 A run writes, beside each other:
 
 - `hero.png`, the sheet: one row per clip and direction, one column per frame;
-- `hero.json`, the `moskophoros.sheet/2` description of every frame, the
+- `hero.json`, the `moskophoros.sheet/3` description of every frame, the
   settings and style used and a fingerprint of them;
 - `hero.<clip>.gif`, an animated preview of each clip in every direction,
   unless `--no-preview` is given.
@@ -37,6 +37,14 @@ it. `--reduce mode` keeps the most common colour in each supersampled block.
 after averaging; mode maps before voting, so nearby shades pool their votes.
 An earlier sheet's palette is reused from its JSON without the original file;
 `--palette FILE` replaces it and `--no-palette` drops it.
+`--materials library.json` draws each named material in the model from the
+ramps of a shared material library, on the palette (so it needs one): the same
+`steel` on another model gets the same colours, and a material the library does
+not know takes its default ramp or the ordinary look, named in a warning.
+The library is recorded in the sheet's JSON and reused with `--settings-from`
+without the original file; `--materials FILE` replaces it and `--no-materials`
+drops it. See [docs/design.md](docs/design.md#material-libraries) for the file
+format.
 
 `moskophoros --help` lists every option.
 
