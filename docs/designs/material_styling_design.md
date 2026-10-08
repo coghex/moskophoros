@@ -457,9 +457,10 @@ restored exactly before the next colour render.
   direction enters it. Encoded as the colour is (sRGB, `Standard`), with
   `R = G = B`, alpha 255 where a surface was sampled and 0 elsewhere.
 - **ID:** a 16-bit value in two bytes; 0 with alpha 0 is background; the
-  spike assigned 1, 2, … in material order. All 256 values of each byte
-  come out exact: the 256 materials of *many* give exactly their 256 values
-  and no other.
+  spike assigned 1, 2, … in material order. The 256 materials of *many*
+  give exactly their 256 values and no other. That exercises every value of
+  the low byte but only 0 and 1 of the high byte; MAT-3's Blender tests
+  cover a carry between the bytes and the largest code.
 
 **Measurements** (shade bytes of the chosen method on *form*: mean ± standard
 deviation, 5th to 95th percentile, and the band of the mean for N = 3, 4 and
