@@ -133,11 +133,15 @@ class Model:
         image.save(data, "PNG")
         return self.writer.texture(data.getvalue())
 
-    def primitive(self, positions, material=None, *, normals=None, texcoords=None):
+    def primitive(
+        self, positions, material=None, *, normals=None, texcoords=None, colors=None
+    ):
         writer = self.writer
         primitive = {
             "attributes": {"POSITION": writer._accessor("VEC3", positions, True)}
         }
+        if colors is not None:
+            primitive["attributes"]["COLOR_0"] = writer._accessor("VEC4", colors, False)
         if normals is not None:
             primitive["attributes"]["NORMAL"] = writer._accessor("VEC3", normals, False)
         if texcoords is not None:
@@ -261,3 +265,16 @@ def appearance(directory):
         )
 
     return form(directory, "appearance", materials)
+
+
+def vertex_colours(directory):
+    """Two quads side by side sharing material 0, meeting along x = 0; only
+    the right one has (neutral white) vertex colours, so Blender's importer
+    gives it its own copy of the material."""
+    model = Model()
+    shared = model.material("steel")
+    model.primitive(quad_xy(-1.0, 0.0, 0.0, 1.0, 0.0), shared)
+    model.primitive(
+        quad_xy(0.0, 0.0, 1.0, 1.0, 0.0), shared, colors=[(1.0, 1.0, 1.0, 1.0)] * 6
+    )
+    return model.write(directory, "colours")

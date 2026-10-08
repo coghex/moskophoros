@@ -62,7 +62,9 @@ MATERIAL_NAME = "moskophoros.material.{}.data"
 PLACEHOLDER = "moskophoros.placeholder"
 _MESH_DATA = re.compile(r"moskophoros\.mesh\.\d+\.node\.(\d+)\.data(?:\.\d+)?")
 _MESH_WEIGHTS = re.compile(r"/meshes/\d+/weights")
-_MATERIAL = re.compile(r"moskophoros\.material\.(\d+)\.data")
+# The importer copies a material, adding Blender's ".001" suffix, when one
+# glTF material serves primitives with and without vertex colours.
+_MATERIAL = re.compile(r"moskophoros\.material\.(\d+)\.data(?:\.\d+)?")
 _TARGET_PATH = re.compile(r'key_blocks\["moskophoros\.target\.(\d+)"\]\.value')
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -1049,18 +1051,27 @@ class Auxiliary:
         }
         for owner, name, value in _AUXILIARY_SETTINGS:
             self._set(owners[owner], name, value)
+        rendered = {
+            slot.material
+            for obj in self.objects
+            if obj.type == "MESH"
+            for slot in obj.material_slots
+            if slot.material is not None
+        }
+        codes = []
+        for material in bpy.data.materials:
+            match = _MATERIAL.fullmatch(material.name)
+            if match is not None:
+                codes.append((material, self.codes[int(match.group(1))]))
+            elif material in rendered:
+                raise ScriptError(
+                    f"a rendered surface uses the material {material.name!r}, "
+                    "which is no glTF material of the model"
+                )
         self._set(scene.render, "filepath", filepath)
         self.stand_in = bpy.data.materials.new(NO_MATERIAL)
-        for material in [*bpy.data.materials]:
-            if material is self.stand_in:
-                code = NO_MATERIAL_ID
-            else:
-                match = _MATERIAL.fullmatch(material.name)
-                if match is None:
-                    # The importer made it; no glTF primitive uses it.
-                    code = NO_MATERIAL_ID
-                else:
-                    code = self.codes[int(match.group(1))]
+        codes.append((self.stand_in, NO_MATERIAL_ID))
+        for material, code in codes:
             self._inject(material, code)
         for obj in self.objects:
             if obj.type != "MESH":

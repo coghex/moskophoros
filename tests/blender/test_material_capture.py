@@ -9,7 +9,7 @@ a point (x, y) lands at pixel (gx + x·ppm, gy − y·ppm), times the supersampl
 import numpy as np
 import pytest
 from glb_writer import GlbWriter
-from material_models import EDGES, appearance, edges, form, quad_xy
+from material_models import EDGES, appearance, edges, form, quad_xy, vertex_colours
 from PIL import Image
 from test_render import render
 
@@ -118,6 +118,16 @@ def test_a_mask_material_is_opaque_in_colour_id_and_shade(found, tmp_path):
     assert (shade[region][..., 3] == 255).all()
     # The texture's transparent cells are there: dark texels in the colour.
     assert (color[region][..., 0] < 100).any() and (color[region][..., 0] > 150).any()
+
+
+def test_an_importer_copy_of_a_material_keeps_its_glTF_material(found, tmp_path):
+    # Blender copies material 0 (as moskophoros.material.0.data.001) for the
+    # quad with vertex colours; both quads must still show material 0's code.
+    result, _ = front(found, vertex_colours(tmp_path), tmp_path, 1)
+    image = codes(result)
+    assert image[at(-0.5, 0.5, 1)] == 1
+    assert image[at(0.5, 0.5, 1)] == 1
+    assert set(np.unique(image).tolist()) == {0, 1}
 
 
 def test_identities_decode_duplicate_unnamed_missing_and_blend_materials(
