@@ -412,12 +412,13 @@ def test_the_same_job_renders_byte_identical_files_without_stamps(found, tmp_pat
     path = clip_model(tmp_path)
     first, _ = render(found, path, tmp_path, workspace="first")
     second, _ = render(found, path, tmp_path, workspace="second")
-    one = [buffers["color"] for buffers in first.buffers.values()]
-    other = [buffers["color"] for buffers in second.buffers.values()]
-    assert [p.name for p in one] == [f"{i:06d}.png" for i in range(8)]
-    for a, b in zip(one, other, strict=True):
-        assert a.read_bytes() == b.read_bytes()
-        assert not {"tEXt", "zTXt", "iTXt", "tIME"} & set(png_chunks(a))
+    for name in ("color", "matid", "shade"):
+        one = [buffers[name] for buffers in first.buffers.values()]
+        other = [buffers[name] for buffers in second.buffers.values()]
+        assert [p.name for p in one] == [f"{i:06d}.png" for i in range(8)]
+        for a, b in zip(one, other, strict=True):
+            assert a.read_bytes() == b.read_bytes()
+            assert not {"tEXt", "zTXt", "iTXt", "tIME"} & set(png_chunks(a))
 
 
 def test_the_result_records_the_renderer_and_studio_light(found, tmp_path):
@@ -426,10 +427,30 @@ def test_the_result_records_the_renderer_and_studio_light(found, tmp_path):
         "blender": found.version,
         "renderer": "workbench",
         "studio_light": "Default",
+        "shade": {
+            "technique": "cycles-ambient-occlusion",
+            "samples_per_pixel": 1,
+            "seed": 0,
+            "pixel_filter": "BOX",
+            "filter_width_px": 0.01,
+            "ao_distance_m": 0.3,
+            "ao_samples": 64,
+            "occlusion_weight": 0.25,
+            "convexity_weight": 1.0,
+        },
     }
     phase = tmp_path / "work" / "render"
     listing = sorted(p.relative_to(phase).as_posix() for p in phase.rglob("*"))
-    assert listing == ["color", "color/000000.png", "job.json", "result.json"]
+    assert listing == [
+        "color",
+        "color/000000.png",
+        "job.json",
+        "matid",
+        "matid/000000.png",
+        "result.json",
+        "shade",
+        "shade/000000.png",
+    ]
 
 
 # Edge cases of the frame
