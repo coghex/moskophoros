@@ -152,6 +152,24 @@ The subject is the scene named by the file's `scene` property, or scene 0 when
 it is absent. Every mesh in it is rendered. Cameras and lights in the file are
 ignored.
 
+Material identities are read from the glTF JSON on every run, whether or not
+a material library is used (D-3, D-18, owner decisions 2026-10-07). Names
+compare exactly, including case; equal names are one identity. An absent or
+empty material name, or a primitive without a material, has no identity and
+is not an error. Alpha mode is reported as given, defaulting to `OPAQUE`
+when absent; unlisted values are left to Blender's importer. A primitive
+without a material also reports `OPAQUE`.
+
+`gltf.read_material_identities` is a pure reader of decoded JSON;
+`read_glb` exposes its records as `Subject.primitive_materials`. Records
+include the original node, mesh, primitive and material indices, name
+(`None` for no identity) and alpha mode. They include scene roots and all
+their descendants, ordered by ascending node index, then primitive index.
+A shared mesh has separate records for each reached node instance; duplicate
+names retain separate primitive records and material indices, including 0.
+Primitives belonging only to other scenes or unreachable meshes are excluded
+from the result, while input validation applies to the entire document.
+
 Checks, each an input error (exit 3) naming the file and the problem:
 
 - the file cannot be read, or is not binary glTF 2.0
@@ -162,6 +180,13 @@ Checks, each an input error (exit 3) naming the file and the problem:
   (a node with two parents, or a cycle); or an animation sampler's input
   accessor lacks the one-element `min` and `max` that give the clip's range.
   Other glTF rules are left to Blender's importer.
+- a material's present `name` is not a string, or a primitive's present
+  `material` or a node's present `mesh` is not an integer index into the
+  corresponding array (booleans are not indices); present `materials`,
+  `meshes` or a mesh's `primitives` is not an array; or a material, mesh or
+  primitive entry is not an object. These checks apply even to unused
+  entries and other scenes. Optional absent arrays are valid when nothing
+  references them (material styling D-18; structural contract above).
 - the file changes during capture; the [capture contract](#capture-job-and-result-contract)
   defines the digest checks (owner decision 2026-09-30)
 - an animation has no name or an empty name (owner decision 2026-10-01), or
