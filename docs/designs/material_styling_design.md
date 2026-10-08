@@ -600,21 +600,28 @@ the existing reductions:
    pixels' shade values, and only theirs, give the band. The fixed shade range
    `[lo, hi]` (8-bit shade values, `0 ≤ lo < hi ≤ 255`) is split into N equal
    bands (D-7): a shade `v` is clamped into the range and takes band
-   `(v − lo)·N // (hi − lo + 1)`, so `lo` is band 0 and `hi` band N−1. Under
-   `plain`, take the alpha-weighted mean shade `W/A`, clamped, and its band
-   `(W − lo·A)·N // ((hi − lo + 1)·A)`; output `palette[ramp[band]]`. Under
+   `(v − lo)·N // (hi − lo + 1)`, so `lo` is band 0 and, when `N ≤ hi − lo + 1`,
+   `hi` is band N−1 (with `L = hi − lo + 1`, `hi` takes band `((L − 1)·N) // L`;
+   a longer ramp is valid and has unreachable bands, never shortened or
+   rejected). Under `plain`, take the alpha-weighted mean shade `W/A`, clamped
+   after averaging, not rounded: with `Wc = min(max(W, lo·A), hi·A)` its band is
+   `(Wc − lo·A)·N // ((hi − lo + 1)·A)`; output `palette[ramp[band]]`. Under
    `mode`, map each of the winner's pixels to `ramp[band]` and vote by palette
    entry, weighted by colour alpha (D-23). A tie goes to the entry with a band
-   centre nearest the mean shade, over **every** occurrence of that entry in
-   the ramp, then to the smaller palette index. Band `k`'s centre is
-   `lo + (k + ½)·(hi − lo + 1)/N`, compared exactly by scaling both sides by
-   `2·N·A`. Alpha is 255.
+   centre nearest the unrounded mean shade `W/A` of the original shades, over
+   **every** occurrence of that entry in the ramp, then to the smaller palette
+   index. Band `k`'s centre is `lo + (k + ½)·(hi − lo + 1)/N`, compared exactly
+   by scaling both sides by `2·N·A`: occurrence `k` is at distance
+   `|2·N·W − (2·N·lo + (2k + 1)·L)·A|`. Votes use each pixel's clamped shade.
+   Alpha is 255.
 4. Otherwise (no-identity, including `BLEND`; `"ordinary"`; unmapped without
    a default), the block takes the existing look for the chosen reduction and
    palette (D-9).
 
-All arithmetic is exact integer arithmetic, deterministic, and independent of
-the library's key order.
+Coverage, identity votes, shade sums, bands and `mode` tie comparisons are
+exact integer arithmetic, deterministic, and independent of the library's key
+order. The ordinary look keeps its existing arithmetic, including the NumPy
+`float64` OKLab palette mapping, and is unchanged.
 
 ### Recording and reuse (D-19)
 
