@@ -2,13 +2,19 @@
 
 A stage between capture and cleanup. It depends only on the frames it is
 given, never on capture internals, and touches no file or process.
+
+Frames arrive one at a time and may carry named buffers beside their colour;
+`identities`, a `sampling.Identities`, is the asset's identity list that a
+frame's identity buffer indexes. The reductions here read only the colour.
+Each returns ordinary reduced colour frames carrying no buffers, and lets go
+of a frame, with all its buffers, before asking for the next.
 """
 
 from moskophoros import imageops
 from moskophoros.sampling import ImageFrame
 
 
-def plain(frames, factor, palette=None):
+def plain(frames, factor, palette=None, identities=None):
     """Reduce every supersampled frame by `factor`×`factor` blocks.
 
     Returns new `ImageFrame`s with the same addresses, in the same order, each
@@ -26,7 +32,7 @@ def plain(frames, factor, palette=None):
     return tuple(result)
 
 
-def mode(frames, factor, palette=None):
+def mode(frames, factor, palette=None, identities=None):
     """Reduce every supersampled frame by `factor`×`factor` blocks, keeping
     each block's most common colour.
 
