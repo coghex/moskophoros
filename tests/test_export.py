@@ -569,8 +569,16 @@ def test_unfitted_settings_are_rejected():
 # Generator and writing
 
 
+SHADE = {"technique": "cycles-ambient-occlusion", "ao_distance_m": 0.3}
+
+
 def test_the_generator_records_this_tool_and_the_render_provenance():
-    backend = {"blender": "5.2.2", "renderer": "workbench", "studio_light": "rim.sl"}
+    backend = {
+        "blender": "5.2.2",
+        "renderer": "workbench",
+        "studio_light": "rim.sl",
+        "shade": SHADE,
+    }
     assert export.generator(backend) == {
         "tool": "moskophoros",
         "version": moskophoros.__version__,
@@ -580,13 +588,48 @@ def test_the_generator_records_this_tool_and_the_render_provenance():
         "blender": "5.2.2",
         "renderer": "workbench",
         "studio_light": "rim.sl",
+        "shade": SHADE,
     }
-    assert list(export.generator(backend)) == list(GENERATOR)
+    assert list(export.generator(backend)) == [*GENERATOR, "shade"]
 
 
 def test_the_generator_needs_render_provenance():
-    with pytest.raises(ValueError, match="renderer, studio_light"):
+    with pytest.raises(ValueError, match="renderer, studio_light, shade"):
         export.generator({"blender": "5.2.2"})
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"technique": "another"},
+        {"ao_distance_m": 0.25},
+        {"ao_samples": 128},
+        {"seed": 1},
+        {"occlusion_weight": 0.3},
+        {"convexity_weight": 0.5},
+    ],
+)
+def test_a_different_shade_technique_or_parameter_changes_the_fingerprint(change):
+    shade = {
+        "technique": "cycles-ambient-occlusion",
+        "samples_per_pixel": 1,
+        "seed": 0,
+        "pixel_filter": "BOX",
+        "filter_width_px": 0.01,
+        "ao_distance_m": 0.3,
+        "ao_samples": 64,
+        "occlusion_weight": 0.25,
+        "convexity_weight": 1.0,
+    }
+    backend = {"blender": "5.2.2", "renderer": "workbench", "studio_light": "Default"}
+    settings = {"supersample": 2}
+
+    def fingerprint(shade):
+        generator = export.generator({**backend, "shade": shade})
+        return export.fingerprint(generator, settings, "ab" * 32)
+
+    assert fingerprint(shade) != fingerprint(shade | change)
+    assert fingerprint(shade) == fingerprint(dict(shade))
 
 
 def test_write_puts_the_bytes_at_the_given_paths(tmp_path):

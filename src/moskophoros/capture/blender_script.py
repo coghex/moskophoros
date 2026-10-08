@@ -7,14 +7,16 @@ contract, §Clips and sampling, §Root motion, §Scale and ground point and
 §Camera and directions.
 
 Measure mode reports bounds, heights and root travel; render mode renders
-each frame with the accepted Workbench settings. Both share the import,
-subject selection, identity mapping and clip isolation below.
+each frame with the accepted Workbench settings, then its material-ID and
+shade buffers in one auxiliary Cycles render. Both share the import, subject
+selection, identity mapping and clip isolation below.
 
 Identity mapping: the script imports a private copy of the source in which
 every node is renamed `moskophoros.node.<index>` and every animation
 `moskophoros.animation.<index>`. Every mesh node gets its own copy of its
 mesh, named `moskophoros.mesh.<mesh>.node.<node>.data`, whose morph targets
-are named `moskophoros.target.<index>`. Skins, cameras, lights and scenes are renamed
+are named `moskophoros.target.<index>`, and every material
+`moskophoros.material.<index>.data`. Skins, cameras, lights and scenes are renamed
 into namespaces of their own, so no name from the file reaches Blender and
 nothing the importer creates can take a node's name. Blender names objects
 and bones after nodes, mesh data after meshes, shape keys after targets and
@@ -43,6 +45,7 @@ import struct
 import sys
 import tempfile
 import urllib.parse
+import zlib
 from array import array
 
 import bpy
@@ -55,9 +58,11 @@ ANIMATION_NAME = "moskophoros.animation.{}"
 # when it duplicates mesh data.
 MESH_NAME = "moskophoros.mesh.{}.node.{}.data"
 TARGET_NAME = "moskophoros.target.{}"
+MATERIAL_NAME = "moskophoros.material.{}.data"
 PLACEHOLDER = "moskophoros.placeholder"
 _MESH_DATA = re.compile(r"moskophoros\.mesh\.\d+\.node\.(\d+)\.data(?:\.\d+)?")
 _MESH_WEIGHTS = re.compile(r"/meshes/\d+/weights")
+_MATERIAL = re.compile(r"moskophoros\.material\.(\d+)\.data")
 _TARGET_PATH = re.compile(r'key_blocks\["moskophoros\.target\.(\d+)"\]\.value')
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -410,6 +415,8 @@ def private_copy(document, rest, source, scene):
             node["mesh"] = len(meshes) - 1
     # The importer names armatures after skins, objects after cameras and
     # lights, and collections after scenes.
+    for index, material in enumerate(document.get("materials", [])):
+        material["name"] = MATERIAL_NAME.format(index)
     for key, kind in (("skins", "skin"), ("cameras", "camera"), ("scenes", "scene")):
         for index, item in enumerate(document.get(key, [])):
             item["name"] = f"moskophoros.{kind}.{index}.data"
@@ -949,6 +956,253 @@ def frame_size(settings):
     return width, height, max(width, MIN_RESOLUTION), max(height, MIN_RESOLUTION)
 
 
+# The material-ID and shade buffers (design §Capture, material styling design
+# §Spike record (D-10)): one Cycles render per frame, after its colour, with
+# every surface's shader replaced by an emission whose red and blue carry the
+# material-ID code's high and low bytes and whose green carries the shade, so
+# both come from one camera sample at the pixel centre.
+
+ID_BACKGROUND = 0
+NO_MATERIAL_ID = 0xFFFF
+MAX_MATERIALS = NO_MATERIAL_ID - 1
+SHADE = {
+    "technique": "cycles-ambient-occlusion",
+    "samples_per_pixel": 1,
+    "seed": 0,
+    "pixel_filter": "BOX",
+    "filter_width_px": 0.01,
+    "ao_distance_m": 0.3,
+    "ao_samples": 64,
+    "occlusion_weight": 0.25,
+    "convexity_weight": 1.0,
+}
+_AUXILIARY_SETTINGS = (
+    ("render", "engine", "CYCLES"),
+    ("render", "dither_intensity", 0.0),
+    ("cycles", "device", "CPU"),
+    ("cycles", "samples", SHADE["samples_per_pixel"]),
+    ("cycles", "use_adaptive_sampling", False),
+    ("cycles", "seed", SHADE["seed"]),
+    ("cycles", "use_animated_seed", False),
+    ("cycles", "pixel_filter_type", SHADE["pixel_filter"]),
+    ("cycles", "filter_width", SHADE["filter_width_px"]),
+    ("cycles", "max_bounces", 0),
+    ("cycles", "diffuse_bounces", 0),
+    ("cycles", "glossy_bounces", 0),
+    ("cycles", "transmission_bounces", 0),
+    ("cycles", "volume_bounces", 0),
+    ("cycles", "transparent_max_bounces", 8),
+    ("cycles", "use_denoising", False),
+    ("image", "file_format", "TARGA_RAW"),
+    ("image", "color_mode", "RGBA"),
+)
+NO_MATERIAL = "moskophoros.no-material"
+
+
+def material_codes(document):
+    """{glTF material index: ID code}, and the result's table of every code."""
+    count = len(document.get("materials", []))
+    if count > MAX_MATERIALS:
+        raise ScriptError(
+            f"the model has {count} materials; the material-ID buffer holds "
+            f"{MAX_MATERIALS}"
+        )
+    codes = {index: index + 1 for index in range(count)}
+    table = [{"id": code, "material": index} for index, code in codes.items()]
+    table.append({"id": NO_MATERIAL_ID, "material": None})
+    return codes, table
+
+
+def _linear(byte):
+    """The linear value the `Standard` sRGB transform encodes as `byte`."""
+    value = byte / 255
+    return value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+
+
+class Auxiliary:
+    """Applies the auxiliary render's settings and shaders, and restores every
+    one of them exactly, so the next colour render is as if it never ran."""
+
+    def __init__(self, scene, objects, codes):
+        self.scene = scene
+        self.objects = objects
+        self.codes = codes
+        self.saved = []
+        self.trees = []
+        self.slots = []
+        self.appended = []
+        self.stand_in = None
+
+    def _set(self, owner, name, value):
+        old = getattr(owner, name)
+        if not isinstance(old, (str, bytes, int, float, bool)):
+            old = tuple(old)
+        self.saved.append((owner, name, old))
+        setattr(owner, name, value)
+
+    def apply(self, filepath):
+        scene = self.scene
+        owners = {
+            "render": scene.render,
+            "cycles": scene.cycles,
+            "image": scene.render.image_settings,
+        }
+        for owner, name, value in _AUXILIARY_SETTINGS:
+            self._set(owners[owner], name, value)
+        self._set(scene.render, "filepath", filepath)
+        self.stand_in = bpy.data.materials.new(NO_MATERIAL)
+        for material in [*bpy.data.materials]:
+            if material is self.stand_in:
+                code = NO_MATERIAL_ID
+            else:
+                match = _MATERIAL.fullmatch(material.name)
+                if match is None:
+                    # The importer made it; no glTF primitive uses it.
+                    code = NO_MATERIAL_ID
+                else:
+                    code = self.codes[int(match.group(1))]
+            self._inject(material, code)
+        for obj in self.objects:
+            if obj.type != "MESH":
+                continue
+            if not obj.material_slots:
+                obj.data.materials.append(self.stand_in)
+                self.appended.append(obj.data)
+            for slot in obj.material_slots:
+                if slot.material is None:
+                    self.slots.append(slot)
+                    slot.material = self.stand_in
+
+    def _inject(self, material, code):
+        if material.node_tree is None:
+            material.use_nodes = True
+        tree = material.node_tree
+        outputs = [n for n in tree.nodes if n.bl_idname == "ShaderNodeOutputMaterial"]
+        added = []
+
+        def node(kind):
+            created = tree.nodes.new(kind)
+            added.append(created)
+            return created
+
+        output = next((n for n in outputs if n.is_active_output), None)
+        if output is None:
+            output = node("ShaderNodeOutputMaterial")
+        links = [
+            (link.from_socket, link.to_socket)
+            for link in tree.links
+            if link.to_node == output
+        ]
+        for link in [link for link in tree.links if link.to_node == output]:
+            tree.links.remove(link)
+        outside = node("ShaderNodeAmbientOcclusion")
+        inside = node("ShaderNodeAmbientOcclusion")
+        for ao, is_inside in ((outside, False), (inside, True)):
+            ao.samples = SHADE["ao_samples"]
+            ao.inside = is_inside
+            ao.only_local = False
+            ao.inputs["Distance"].default_value = SHADE["ao_distance_m"]
+        occlusion = node("ShaderNodeMath")
+        occlusion.operation = "MULTIPLY"
+        occlusion.inputs[1].default_value = SHADE["occlusion_weight"]
+        tree.links.new(outside.outputs["AO"], occlusion.inputs[0])
+        convexity = node("ShaderNodeMath")
+        convexity.operation = "SUBTRACT"
+        convexity.inputs[0].default_value = 1.0
+        tree.links.new(inside.outputs["AO"], convexity.inputs[1])
+        shade = node("ShaderNodeMath")
+        shade.operation = "MULTIPLY_ADD"
+        shade.use_clamp = True
+        shade.inputs[1].default_value = SHADE["convexity_weight"]
+        tree.links.new(convexity.outputs[0], shade.inputs[0])
+        tree.links.new(occlusion.outputs[0], shade.inputs[2])
+        color = node("ShaderNodeCombineColor")
+        color.inputs[0].default_value = _linear(code >> 8)
+        tree.links.new(shade.outputs[0], color.inputs[1])
+        color.inputs[2].default_value = _linear(code & 0xFF)
+        emission = node("ShaderNodeEmission")
+        emission.inputs["Strength"].default_value = 1.0
+        tree.links.new(color.outputs[0], emission.inputs["Color"])
+        tree.links.new(emission.outputs[0], output.inputs["Surface"])
+        self.trees.append((tree, added, links))
+
+    def restore(self):
+        for tree, added, links in reversed(self.trees):
+            for created in added:
+                tree.nodes.remove(created)
+            for from_socket, to_socket in links:
+                tree.links.new(from_socket, to_socket)
+        for slot in self.slots:
+            slot.material = None
+        for data in self.appended:
+            data.materials.pop()
+        if self.stand_in is not None:
+            bpy.data.materials.remove(self.stand_in)
+        for owner, name, value in reversed(self.saved):
+            setattr(owner, name, value)
+        self.saved, self.trees, self.slots, self.appended = [], [], [], []
+        self.stand_in = None
+
+
+def read_targa(path, width, height):
+    """The rows of an uncompressed 32-bit TGA, top first, as RGBA bytes."""
+    with open(path, "rb") as handle:
+        data = handle.read()
+    if len(data) < 18 or data[2] != 2 or data[16] != 32:
+        raise ScriptError(f"the auxiliary render {path} is not a 32-bit TGA")
+    size = (data[12] | data[13] << 8, data[14] | data[15] << 8)
+    if size != (width, height):
+        raise ScriptError(f"the auxiliary render is {size}, not {(width, height)}")
+    start = 18 + data[0]
+    pixels = bytearray(data[start : start + width * height * 4])
+    if len(pixels) != width * height * 4:
+        raise ScriptError(f"the auxiliary render {path} is truncated")
+    pixels[0::4], pixels[2::4] = pixels[2::4], pixels[0::4]
+    stride = width * 4
+    rows = [pixels[y * stride : (y + 1) * stride] for y in range(height)]
+    if not data[17] & 0x20:
+        rows.reverse()
+    return rows
+
+
+def write_png(path, width, rows):
+    """An 8-bit RGBA PNG of `rows`, with nothing but its pixels."""
+
+    def chunk(kind, body):
+        crc = zlib.crc32(kind + body)
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", crc)
+
+    header = struct.pack(">IIBBBBB", width, len(rows), 8, 6, 0, 0, 0)
+    raw = b"".join(b"\0" + bytes(row) for row in rows)
+    with open(path, "wb") as handle:
+        handle.write(b"\x89PNG\r\n\x1a\n")
+        handle.write(chunk(b"IHDR", header))
+        handle.write(chunk(b"IDAT", zlib.compress(raw, 9)))
+        handle.write(chunk(b"IEND", b""))
+
+
+def split_auxiliary(rows, width, matid_path, shade_path):
+    """Write the material-ID buffer (red the code's high byte, green its low
+    byte, blue 0) and the shade buffer (`R = G = B`) from the render's rows."""
+    zero = bytes(width)
+    ids, shades = [], []
+    for row in rows:
+        alpha = row[3::4]
+        identity = bytearray(width * 4)
+        identity[0::4] = row[0::4]
+        identity[1::4] = row[2::4]
+        identity[2::4] = zero
+        identity[3::4] = alpha
+        shade = bytearray(width * 4)
+        for channel in range(3):
+            shade[channel::4] = row[1::4]
+        shade[3::4] = alpha
+        ids.append(identity)
+        shades.append(shade)
+    write_png(matid_path, width, ids)
+    write_png(shade_path, width, shades)
+
+
 def _sin_cos(degrees):
     """Sine and cosine, exact at quarter turns so axes stay exact."""
     turned = _wrap(degrees)
@@ -1040,7 +1294,8 @@ def reach(objects, depsgraph, ground):
 
 
 def render_frames(job, document, statics):
-    """Render every requested frame to color/NNNNNN.png in request order."""
+    """Render every requested frame to color/NNNNNN.png, and its material-ID
+    and shade buffers to matid/ and shade/, in request order."""
     scene = bpy.context.scene
     fps = scene.render.fps / scene.render.fps_base
     settings = job["settings"]
@@ -1060,7 +1315,12 @@ def render_frames(job, document, statics):
     scene.collection.objects.link(camera)
     scene.camera = camera
     configure_render(scene, settings)
-    os.makedirs(os.path.join(job["output_dir"], "color"), exist_ok=False)
+    codes, table = material_codes(document)
+    auxiliary = Auxiliary(scene, objects, codes)
+    width, height, _, _ = frame_size(settings)
+    for name in ("color", "matid", "shade"):
+        os.makedirs(os.path.join(job["output_dir"], name), exist_ok=False)
+    scratch = tempfile.mkdtemp(prefix="moskophoros-auxiliary-")
 
     ordinals = {}
     for ordinal, frame in enumerate(job["frames"]):
@@ -1077,18 +1337,46 @@ def render_frames(job, document, statics):
             depsgraph = evaluate(scene, fps, frame["address"]["time_s"])
             rotation = (frame["angle_deg"] % 360 + yaw % 360) % 360
             place_camera(camera, settings, rotation, reach(objects, depsgraph, ground))
-            relative = f"color/{ordinal:06d}.png"
-            scene.render.filepath = os.path.join(job["output_dir"], relative)
+            relative = {
+                name: f"{name}/{ordinal:06d}.png"
+                for name in ("color", "matid", "shade")
+            }
+            scene.render.filepath = os.path.join(job["output_dir"], relative["color"])
             bpy.ops.render.render(write_still=True)
+            render_auxiliary(scene, auxiliary, scratch, width, height, job, relative)
             paths[ordinal] = relative
-    return [
-        {"address": frame["address"], "buffers": {"color": paths[ordinal]}}
-        for ordinal, frame in enumerate(job["frames"])
-    ], {
-        "blender": ".".join(map(str, bpy.app.version)),
-        "renderer": RENDERER,
-        "studio_light": scene.display.shading.studio_light,
-    }
+    os.rmdir(scratch)
+    return (
+        [
+            {"address": frame["address"], "buffers": paths[ordinal]}
+            for ordinal, frame in enumerate(job["frames"])
+        ],
+        {
+            "blender": ".".join(map(str, bpy.app.version)),
+            "renderer": RENDERER,
+            "studio_light": scene.display.shading.studio_light,
+            "shade": dict(SHADE),
+        },
+        table,
+    )
+
+
+def render_auxiliary(scene, auxiliary, scratch, width, height, job, relative):
+    """The frame's material-ID and shade buffers, from one Cycles render."""
+    target = os.path.join(scratch, "auxiliary.tga")
+    auxiliary.apply(target)
+    try:
+        bpy.ops.render.render(write_still=True)
+    finally:
+        auxiliary.restore()
+    rows = read_targa(target, width, height)
+    os.remove(target)
+    split_auxiliary(
+        rows,
+        width,
+        os.path.join(job["output_dir"], relative["matid"]),
+        os.path.join(job["output_dir"], relative["shade"]),
+    )
 
 
 def main(argv):
@@ -1118,7 +1406,7 @@ def main(argv):
             frames, roots = measure(job, document, record_statics())
             backend = {"blender": ".".join(map(str, bpy.app.version))}
         else:
-            frames, backend = render_frames(job, document, record_statics())
+            frames, backend, materials = render_frames(job, document, record_statics())
 
     result = {
         "schema": RESULT_SCHEMA,
@@ -1130,6 +1418,8 @@ def main(argv):
     }
     if job["mode"] == "measure":
         result["roots"] = roots
+    else:
+        result["materials"] = materials
     output = os.path.join(job["output_dir"], "result.json")
     temporary = output + ".partial"
     with open(temporary, "w", encoding="utf-8") as handle:

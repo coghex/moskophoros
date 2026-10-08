@@ -481,13 +481,38 @@ def raw_png(path, width, height, bit_depth, color_type, channels, extra=()):
     )
 
 
+SHADE = {
+    "technique": "cycles-ambient-occlusion",
+    "samples_per_pixel": 1,
+    "seed": 0,
+    "pixel_filter": "BOX",
+    "filter_width_px": 0.01,
+    "ao_distance_m": 0.3,
+    "ao_samples": 64,
+    "occlusion_weight": 0.25,
+    "convexity_weight": 1.0,
+}
+# Material 0's code, with red its high byte and green its low byte.
+MATID = (0, 1, 0, 255)
+SHADED = (137, 137, 137, 255)
+
+
 def render_document(job, phase_dir):
-    """A valid render result, writing its 8×6 buffers: a 4×3 cell at 2×."""
+    """A valid render result, writing its 8×6 buffers: a 4×3 cell at 2×.
+    Every pixel shows material 0, shaded 137."""
     records = []
     for ordinal, frame in enumerate(job["frames"]):
-        path = f"color/{ordinal:06d}.png"
-        png(phase_dir / path)
-        records.append({"address": dict(frame["address"]), "buffers": {"color": path}})
+        paths = {
+            name: f"{name}/{ordinal:06d}.png" for name in ("color", "matid", "shade")
+        }
+        png(phase_dir / paths["color"])
+        Image.new("RGBA", (8, 6), MATID).save(
+            phase_dir / _parent(phase_dir, paths["matid"])
+        )
+        Image.new("RGBA", (8, 6), SHADED).save(
+            phase_dir / _parent(phase_dir, paths["shade"])
+        )
+        records.append({"address": dict(frame["address"]), "buffers": paths})
     return {
         "schema": "moskophoros.capture-result/1",
         "mode": "render",
@@ -497,9 +522,16 @@ def render_document(job, phase_dir):
             "blender": "5.2.2",
             "renderer": "workbench",
             "studio_light": "Default",
+            "shade": dict(SHADE),
         },
         "frames": records,
+        "materials": [{"id": 1, "material": 0}, {"id": 65535, "material": None}],
     }
+
+
+def _parent(phase_dir, relative):
+    (phase_dir / relative).parent.mkdir(parents=True, exist_ok=True)
+    return relative
 
 
 def test_a_valid_render_result(tmp_path):
@@ -509,12 +541,18 @@ def test_a_valid_render_result(tmp_path):
         "blender": "5.2.2",
         "renderer": "workbench",
         "studio_light": "Default",
+        "shade": SHADE,
     }
     assert result.measurements is None and result.roots is None
     root = tmp_path.resolve()
     assert list(result.buffers.values()) == [
-        {"color": root / f"color/{ordinal:06d}.png"} for ordinal in range(6)
+        {
+            name: root / f"{name}/{ordinal:06d}.png"
+            for name in ("color", "matid", "shade")
+        }
+        for ordinal in range(6)
     ]
+    assert result.materials == {1: 0, 65535: None}
 
 
 def _outside_link(document, phase_dir):
@@ -641,7 +679,7 @@ def test_a_valid_extra_buffer_is_accepted(tmp_path):
     document["frames"][0]["buffers"]["depth"] = "depth/000000.png"
     result = validate_result(job, tmp_path, encode(document))
     first = next(iter(result.buffers.values()))
-    assert set(first) == {"color", "depth"}
+    assert set(first) == {"color", "matid", "shade", "depth"}
 
 
 def test_pillow_s_size_guard_does_not_refuse_an_expected_size(tmp_path, monkeypatch):

@@ -318,6 +318,34 @@ def test_a_measure_phase(tmp_path):
     assert len(result.measurements) == 1
 
 
+SHADE = {
+    "technique": "cycles-ambient-occlusion",
+    "samples_per_pixel": 1,
+    "seed": 0,
+    "pixel_filter": "BOX",
+    "filter_width_px": 0.01,
+    "ao_distance_m": 0.3,
+    "ao_samples": 64,
+    "occlusion_weight": 0.25,
+    "convexity_weight": 1.0,
+}
+RENDER_BUFFERS = {name: f"{name}/000000.png" for name in ("color", "matid", "shade")}
+
+
+def copy_buffers(tmp_path, color):
+    """Fake-capture code writing the one frame's buffers: `color`, and a
+    material-ID and shade buffer showing "no material" shaded 137."""
+    sources = {"color": color}
+    for name, pixel in (("matid", (255, 255, 0, 255)), ("shade", (137,) * 3 + (255,))):
+        sources[name] = tmp_path / f"{name}.png"
+        Image.new("RGBA", (8, 6), pixel).save(sources[name])
+    return "import shutil\n" + "".join(
+        f"pathlib.Path({name!r}).mkdir()\n"
+        f"shutil.copy({str(sources[name])!r}, {RENDER_BUFFERS[name]!r})\n"
+        for name in RENDER_BUFFERS
+    )
+
+
 def test_a_render_phase(tmp_path):
     workspace, job = make_job(tmp_path, "render")
     color = tmp_path / "color.png"
@@ -332,22 +360,23 @@ def test_a_render_phase(tmp_path):
                 "blender": "5.2.2",
                 "renderer": "workbench",
                 "studio_light": "Default",
+                "shade": SHADE,
             },
             "frames": [
-                {"address": frame["address"], "buffers": {"color": "color/000000.png"}}
+                {"address": frame["address"], "buffers": RENDER_BUFFERS}
                 for frame in job["frames"]
             ],
+            "materials": [{"id": 65535, "material": None}],
         }
     )
-    capture = (
-        "import shutil\n"
-        "pathlib.Path('color').mkdir()\n"
-        f"shutil.copy({str(color)!r}, 'color/000000.png')\n" + write_result(result_text)
-    )
+    capture = copy_buffers(tmp_path, color) + write_result(result_text)
     fake = fake_blender(tmp_path / "bin" / "blender", capture)
     result = blender.run_phase(fake_found(fake), workspace, job)
     (buffers,) = result.buffers.values()
-    assert buffers == {"color": (workspace / "render/color/000000.png").resolve()}
+    assert buffers == {
+        name: (workspace / "render" / path).resolve()
+        for name, path in RENDER_BUFFERS.items()
+    }
 
 
 def test_a_relative_blender_runs_from_the_phase_directory(tmp_path, monkeypatch):
@@ -550,18 +579,19 @@ def test_an_undecodable_buffer_is_a_backend_error_with_diagnostics(tmp_path):
                 "blender": "5.2.2",
                 "renderer": "workbench",
                 "studio_light": "Default",
+                "shade": SHADE,
             },
             "frames": [
-                {"address": frame["address"], "buffers": {"color": "color/000000.png"}}
+                {"address": frame["address"], "buffers": RENDER_BUFFERS}
                 for frame in job["frames"]
             ],
+            "materials": [{"id": 65535, "material": None}],
         }
     )
     capture = (
-        "import shutil\n"
         "print('rendered 1 frame')\n"
-        "pathlib.Path('color').mkdir()\n"
-        f"shutil.copy({str(color)!r}, 'color/000000.png')\n" + write_result(result_text)
+        + copy_buffers(tmp_path, color)
+        + write_result(result_text)
     )
     fake = fake_blender(tmp_path / "bin" / "blender", capture)
     with pytest.raises(BackendError, match="does not decode") as raised:

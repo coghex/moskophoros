@@ -15,9 +15,10 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
-from moskophoros import fit, sampling, views
+from moskophoros import fit, imageops, sampling, views
 
 INTERNAL_ERROR = 1
 BACKEND_ERROR = 5
@@ -32,6 +33,29 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 _VERSION = re.compile(r"\d+\.\d+(?:\.\d+)?")
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _PNG_RGBA = 6
+
+# The material-ID buffer: red holds a code's high byte, green its low byte,
+# blue 0, alpha 255; background is (0, 0, 0, 0). A glTF material of index i
+# has code i + 1, and a primitive without a material NO_MATERIAL_ID.
+ID_BACKGROUND = 0
+NO_MATERIAL_ID = 0xFFFF
+MAX_MATERIALS = NO_MATERIAL_ID - 1
+# The fixed shade range [lo, hi] new renders take bands over, chosen from the
+# D-10 spike's measurements (material styling design §Spike record).
+DEFAULT_SHADE_RANGE = (84, 191)
+# The fields of a render result's `backend.shade`, and their checks.
+SHADE_FIELDS = {
+    "technique": "name",
+    "samples_per_pixel": "count",
+    "seed": "index",
+    "pixel_filter": "name",
+    "filter_width_px": "positive",
+    "ao_distance_m": "positive",
+    "ao_samples": "count",
+    "occlusion_weight": "number",
+    "convexity_weight": "number",
+}
+AUXILIARY_BUFFERS = ("matid", "shade")
 
 
 class MalformedJob(Exception):
@@ -99,17 +123,36 @@ class RootTravel:
 class CaptureResult:
     """A validated result.
 
-    `backend` holds `blender`, and for a render also `renderer` and
-    `studio_light`. A measure result has `measurements`, keyed by frame
-    address in request order, and `roots`; a render result has `buffers`,
-    mapping each address to its absolute buffer paths by name.
+    `backend` holds `blender`, and for a render also `renderer`,
+    `studio_light` and `shade`. A measure result has `measurements`, keyed by
+    frame address in request order, and `roots`; a render result has
+    `buffers`, mapping each address to its absolute buffer paths by name, and
+    `materials`, mapping each material-ID code to its glTF material index, or
+    to None for "no material".
     """
 
     mode: str
-    backend: dict[str, str]
+    backend: dict[str, object]
     measurements: dict[sampling.FrameAddress, fit.Measurement] | None
     roots: tuple[RootTravel, ...] | None
     buffers: dict[sampling.FrameAddress, dict[str, Path]] | None
+    materials: dict[int, int | None] | None = None
+
+
+@dataclass(frozen=True)
+class MaterialLookup:
+    """A render's material-ID codes joined with the asset's identities.
+
+    `identities` is the asset's identity list; `codes` an `int32` array of
+    65536 entries giving each code's index into it, `sampling.BACKGROUND` for
+    the background code, and `UNKNOWN_CODE` for codes not in the table.
+    """
+
+    identities: sampling.Identities
+    codes: object
+
+
+UNKNOWN_CODE = -2
 
 
 def canonical_json(document):
@@ -423,8 +466,7 @@ def _nonnegative(value, where):
 def _result(job, phase_dir, document):
     mode = job["mode"]
     keys = ["schema", "mode", "job_sha256", "source_sha256", "backend", "frames"]
-    if mode == "measure":
-        keys.append("roots")
+    keys.append("roots" if mode == "measure" else "materials")
     _object(document, keys, "the result")
     if document["schema"] != RESULT_SCHEMA:
         raise _Invalid(f"schema is {document['schema']!r}, not {RESULT_SCHEMA!r}")
@@ -474,6 +516,7 @@ def _result(job, phase_dir, document):
         roots = _roots(document["roots"], job)
         return CaptureResult(mode, backend, measurements, roots, None)
 
+    materials = _materials(document["materials"])
     settings = job["settings"]
     scale = settings["supersample"]
     size = (settings["cell"]["width"] * scale, settings["cell"]["height"] * scale)
@@ -481,30 +524,199 @@ def _result(job, phase_dir, document):
     for ordinal, (record, address) in enumerate(zip(records, addresses, strict=True)):
         where = f"frame {ordinal}"
         named = record["buffers"]
-        if not isinstance(named, dict) or "color" not in named:
-            raise _Invalid(f"{where} has no color buffer")
+        for name in ("color", *AUXILIARY_BUFFERS):
+            if not isinstance(named, dict) or name not in named:
+                raise _Invalid(f"{where} has no {name} buffer")
         buffers[address] = {
             name: _buffer(phase_dir, path, size, f"{where} {name} buffer")
             for name, path in named.items()
         }
-        if named["color"] != f"color/{ordinal:06d}.png":
+        for name in ("color", *AUXILIARY_BUFFERS):
+            if named[name] != f"{name}/{ordinal:06d}.png":
+                raise _Invalid(
+                    f"{where} {name} buffer is {named[name]!r}, not "
+                    f"'{name}/{ordinal:06d}.png'"
+                )
+        _auxiliary(buffers[address], materials, where)
+    return CaptureResult(mode, backend, None, None, buffers, materials)
+
+
+def _materials(entries):
+    """The material table: {code: glTF material index or None}."""
+    if not isinstance(entries, list):
+        raise _Invalid("materials is not a list")
+    table = {}
+    for ordinal, entry in enumerate(entries):
+        where = f"materials entry {ordinal}"
+        _object(entry, ["id", "material"], where)
+        code, material = entry["id"], entry["material"]
+        if not _is_int(code) or not ID_BACKGROUND <= code <= NO_MATERIAL_ID:
+            raise _Invalid(f"{where} id is not a material-ID code: {code!r}")
+        if code == ID_BACKGROUND:
+            raise _Invalid(f"{where} maps the background code {ID_BACKGROUND}")
+        if code in table:
+            raise _Invalid(f"{where} repeats code {code}")
+        if material is not None and not (_is_int(material) and material >= 0):
+            raise _Invalid(f"{where} material is not a material index: {material!r}")
+        table[code] = material
+    return table
+
+
+def _auxiliary(paths, materials, where):
+    """Check a frame's material-ID and shade buffers against each other and
+    against the material table (design §Capture job and result contract)."""
+    ids, shade = _pixels(paths["matid"]), _pixels(paths["shade"])
+    problems = (
+        (
+            ~np.isin(ids[..., 3], (0, 255))
+            | ((ids[..., 3] == 0) & ids[..., :3].any(axis=-1))
+            | ((ids[..., 3] == 255) & (ids[..., 2] != 0))
+            | ((ids[..., 3] == 255) & ~ids[..., :2].any(axis=-1)),
+            "material-ID pixel {} is {}, not an encoded value",
+            ids,
+        ),
+        (
+            (shade[..., 0] != shade[..., 1]) | (shade[..., 1] != shade[..., 2]),
+            "shade pixel {} is {}, whose red, green and blue differ",
+            shade,
+        ),
+        (
+            ~np.isin(shade[..., 3], (0, 255)),
+            "shade pixel {} is {}, whose alpha is neither 0 nor 255",
+            shade,
+        ),
+        (
+            ((ids[..., 3] == 0) & shade.any(axis=-1))
+            | ((ids[..., 3] == 255) & (shade[..., 3] != 255)),
+            "shade pixel {} is {}, but the material-ID pixel there is {}",
+            shade,
+        ),
+    )
+    for wrong, message, image in problems:
+        if wrong.any():
+            y, x = (int(i) for i in np.argwhere(wrong)[0])
+            values = tuple(int(v) for v in image[y, x])
             raise _Invalid(
-                f"{where} color buffer is {named['color']!r}, not "
-                f"'color/{ordinal:06d}.png'"
+                f"{where}: "
+                + message.format((x, y), values, tuple(int(v) for v in ids[y, x]))
             )
-    return CaptureResult(mode, backend, None, None, buffers)
+    codes = ids[..., 0].astype(np.int32) << 8 | ids[..., 1]
+    used = np.unique(codes[ids[..., 3] == 255])
+    unknown = [int(code) for code in used if int(code) not in materials]
+    if unknown:
+        raise _Invalid(f"{where}: material-ID code {unknown[0]} is not in the table")
+
+
+def _pixels(path):
+    """The pixels of a buffer `_buffer` has accepted, whose size it checked,
+    so Pillow's guard against large images is not needed."""
+    limit = Image.MAX_IMAGE_PIXELS
+    Image.MAX_IMAGE_PIXELS = None
+    try:
+        with Image.open(path, formats=["PNG"]) as image:
+            return np.asarray(image, dtype=np.uint8)
+    finally:
+        Image.MAX_IMAGE_PIXELS = limit
+
+
+def identities(primitive_materials):
+    """The asset's identity list from its `gltf.PrimitiveMaterial` records,
+    and {glTF material index: identity index} for every material they use.
+
+    The list holds each distinct name of an `OPAQUE` or `MASK` material, in
+    order of its lowest material index; a `BLEND` material (or any other
+    alpha mode), an unnamed one and a missing one are the no-identity class.
+    """
+    eligible = sorted(
+        {
+            (record.material_index, record.name)
+            for record in primitive_materials
+            if record.material_index is not None
+            and record.name is not None
+            and record.alpha_mode in ("OPAQUE", "MASK")
+        }
+    )
+    names = []
+    for _, name in eligible:
+        if name not in names:
+            names.append(name)
+    listed = sampling.Identities(tuple(names))
+    indices = {
+        record.material_index: listed.no_identity
+        for record in primitive_materials
+        if record.material_index is not None
+    }
+    for material_index, name in eligible:
+        indices[material_index] = names.index(name)
+    return listed, indices
+
+
+def material_lookup(result, subject):
+    """Join a render `result`'s material table with `subject`'s materials.
+
+    Raises `BackendError` if the table names a material the model does not
+    have.
+    """
+    listed, indices = identities(subject.primitive_materials)
+    codes = np.full(NO_MATERIAL_ID + 1, UNKNOWN_CODE, dtype=np.int32)
+    codes[ID_BACKGROUND] = sampling.BACKGROUND
+    for code, material in sorted(result.materials.items()):
+        if material is not None and material >= subject.material_count:
+            raise BackendError(
+                f"the render result is invalid: material-ID code {code} maps "
+                f"material {material}, but the model has {subject.material_count}"
+            )
+        # A material no primitive of the subject uses never shows.
+        codes[code] = indices.get(material, listed.no_identity)
+    return MaterialLookup(listed, codes)
+
+
+def decode_frame(paths, lookup):
+    """A frame's identity and shade arrays (design §Frames into stylize) from
+    its validated `matid` and `shade` buffers in `paths`."""
+    ids = imageops.load_png(paths["matid"])
+    identity = lookup.codes[ids[..., 0].astype(np.int32) << 8 | ids[..., 1]]
+    identity[ids[..., 3] == 0] = sampling.BACKGROUND
+    del ids
+    if (identity == UNKNOWN_CODE).any():
+        raise BackendError(
+            f"the render result is invalid: {paths['matid']} holds a code that "
+            "is not in the material table"
+        )
+    shade = imageops.load_png(paths["shade"])[..., 0].copy()
+    return identity, shade
 
 
 def _backend(value, mode):
-    keys = ["blender"] if mode == "measure" else ["blender", "renderer", "studio_light"]
+    keys = ["blender"]
+    if mode == "render":
+        keys += ["renderer", "studio_light", "shade"]
     _object(value, keys, "backend")
     if not isinstance(value["blender"], str) or not _VERSION.fullmatch(
         value["blender"]
     ):
         raise _Invalid(f"backend.blender is not a version: {value['blender']!r}")
-    for key in keys[1:]:
-        if not isinstance(value[key], str) or not value[key]:
+    for key in ("renderer", "studio_light"):
+        if key in keys and (not isinstance(value[key], str) or not value[key]):
             raise _Invalid(f"backend.{key} is not a name: {value[key]!r}")
+    result = dict(value)
+    if mode == "render":
+        result["shade"] = _shade(value["shade"])
+    return result
+
+
+def _shade(value):
+    _object(value, list(SHADE_FIELDS), "backend.shade")
+    checks = {
+        "name": lambda v: isinstance(v, str) and bool(v),
+        "count": lambda v: _is_int(v) and v >= 1,
+        "index": lambda v: _is_int(v) and v >= 0,
+        "positive": lambda v: _is_number(v) and v > 0,
+        "number": _is_number,
+    }
+    for key, kind in SHADE_FIELDS.items():
+        if not checks[kind](value[key]):
+            raise _Invalid(f"backend.shade.{key} is invalid: {value[key]!r}")
     return dict(value)
 
 

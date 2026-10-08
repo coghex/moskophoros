@@ -65,9 +65,12 @@ class Preview:
 
 def generator(backend):
     """The sheet's `generator`: this tool and its libraries, and the Blender
-    version, renderer and studio light a render result's `backend` reports."""
+    version, renderer and studio light of the colour, and the shade technique
+    and its fixed parameters, that a render result's `backend` reports."""
     missing = [
-        key for key in ("blender", "renderer", "studio_light") if key not in backend
+        key
+        for key in ("blender", "renderer", "studio_light", "shade")
+        if key not in backend
     ]
     if missing:
         raise ValueError(f"the render provenance lacks {', '.join(missing)}")
@@ -80,6 +83,7 @@ def generator(backend):
         "blender": backend["blender"],
         "renderer": backend["renderer"],
         "studio_light": backend["studio_light"],
+        "shade": dict(backend["shade"]),
     }
 
 

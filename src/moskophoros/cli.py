@@ -453,6 +453,12 @@ def _command(options):
     outfile = options.outfile
     json_path = outfile.with_name(outfile.name.removesuffix(".png") + ".json")
     source, subject = _read_source(options.infile)
+    if subject.material_count > backend.MAX_MATERIALS:
+        raise gltf.InputError(
+            options.infile,
+            f"has {subject.material_count} materials; the material-ID buffer "
+            f"holds at most {backend.MAX_MATERIALS}",
+        )
     selected = gltf.select_clips(subject, options.clip or (), options.once)
     preview_paths = (
         () if options.no_preview else export.preview_paths(outfile, selected)
@@ -503,6 +509,7 @@ def _command(options):
                 str(workspace / "render"),
             ),
         )
+        lookup = backend.material_lookup(rendered, subject)
         generator = export.generator(rendered.backend)
         metadata = {
             "fingerprint": export.fingerprint(
@@ -514,15 +521,18 @@ def _command(options):
         # Loaded one at a time as stylize reduces them, so only one
         # supersampled frame is held at once.
         captured = (
-            _load_frame(address, paths, metadata)
+            _load_frame(address, paths, metadata, lookup)
             for address, paths in rendered.buffers.items()
         )
         reduce = {"plain": stylize.plain, "mode": stylize.mode}[options.reduce]
         colors = options.palette.colors if options.palette is not None else None
+        identities = lookup.identities
         reduced = (
-            reduce(captured, settings.supersample)
+            reduce(captured, settings.supersample, identities=identities)
             if colors is None
-            else reduce(captured, settings.supersample, palette=colors)
+            else reduce(
+                captured, settings.supersample, palette=colors, identities=identities
+            )
         )
         frames = cleanup.passthrough(reduced)
 
@@ -550,11 +560,20 @@ def _command(options):
     publish(outputs)
 
 
-def _load_frame(address, paths, metadata):
+def _load_frame(address, paths, metadata, lookup):
     """The captured frame at `address` with every named buffer in `paths`:
-    `color` as its pixels, and each other buffer under its own name."""
-    buffers = {name: imageops.load_png(path) for name, path in paths.items()}
-    return sampling.ImageFrame(address, buffers.pop("color"), metadata, buffers)
+    `color` as its pixels, `matid` and `shade` decoded through `lookup` into
+    its identity and shade arrays, and each other buffer under its own name."""
+    pixels = imageops.load_png(paths["color"])
+    identity, shade = backend.decode_frame(paths, lookup)
+    buffers = {
+        name: imageops.load_png(path)
+        for name, path in paths.items()
+        if name not in ("color", *backend.AUXILIARY_BUFFERS)
+    }
+    buffers[sampling.IDENTITY] = identity
+    buffers[sampling.SHADE] = shade
+    return sampling.ImageFrame(address, pixels, metadata, buffers)
 
 
 def _read_source(path):

@@ -102,6 +102,22 @@ else:
             image.paste((0, 0, 0, 0), (0, 0, size[0] // 2, size[1] // 2))
         image.save(f"color/{{i:06d}}.png")
     buffers = [{{"color": f"color/{{i:06d}}.png"}} for i in range(len(job["frames"]))]
+    # Every pixel shows the configured material-ID code, shaded 137; a
+    # "bad_aux" frame's shade disagrees with its material-ID.
+    os.mkdir("matid")
+    os.mkdir("shade")
+    code = config.get("code", 65535)
+    for i, named in enumerate(buffers):
+        Image.new("RGBA", size, (code >> 8, code & 255, 0, 255)).save(
+            f"matid/{{i:06d}}.png"
+        )
+        shade = (0, 0, 0, 0) if config.get("bad_aux") == i else (137, 137, 137, 255)
+        Image.new("RGBA", size, shade).save(f"shade/{{i:06d}}.png")
+        named["matid"] = f"matid/{{i:06d}}.png"
+        named["shade"] = f"shade/{{i:06d}}.png"
+    result["materials"] = config.get(
+        "materials", [{{"id": 65535, "material": None}}]
+    )
     if config.get("extra"):
         # A further named buffer, unlike the colour in every channel.
         os.mkdir("extra")
@@ -111,7 +127,7 @@ else:
             Image.frombytes("RGBA", size, data).save(f"extra/{{i:06d}}.png")
             named["extra"] = f"extra/{{i:06d}}.png"
     result["backend"] = {{"blender": "5.2.2", "renderer": "workbench",
-                          "studio_light": "Default"}}
+                          "studio_light": "Default", "shade": config["shade"]}}
     result["frames"] = [
         {{"address": f["address"], "buffers": named}}
         for f, named in zip(job["frames"], buffers)
@@ -121,14 +137,31 @@ if step.get("bad_result"):
 pathlib.Path("result.json").write_text(json.dumps(result))
 """
 
+SHADE = {
+    "technique": "cycles-ambient-occlusion",
+    "samples_per_pixel": 1,
+    "seed": 0,
+    "pixel_filter": "BOX",
+    "filter_width_px": 0.01,
+    "ao_distance_m": 0.3,
+    "ao_samples": 64,
+    "occlusion_weight": 0.25,
+    "convexity_weight": 1.0,
+}
 DEFAULT_CONFIG = {
+    "shade": SHADE,
     "bounds": {"L": 0.25, "R": 0.25, "U": 0.75, "D": 0.0},
     "height": 1.0,
     "travel": {},
     "pixels": "solid",
 }
 OPTIONS = ["--once", "attack", "--supersample", "1", "--cell", "16x16", "--fps", "4"]
-BACKEND = {"blender": "5.2.2", "renderer": "workbench", "studio_light": "Default"}
+BACKEND = {
+    "blender": "5.2.2",
+    "renderer": "workbench",
+    "studio_light": "Default",
+    "shade": SHADE,
+}
 MODES = ("measure", "render")
 
 
@@ -270,10 +303,10 @@ def test_the_fingerprint_reaches_the_frames_before_stylize(setup, capsys, monkey
     seen = []
     real_plain = stylize.plain
 
-    def recording_plain(frames, factor):
+    def recording_plain(frames, factor, **kwargs):
         frames = tuple(frames)
         seen.extend(frames)
-        return real_plain(frames, factor)
+        return real_plain(frames, factor, **kwargs)
 
     monkeypatch.setattr(stylize, "plain", recording_plain)
     argv = setup.argv("--ppm", "10", "--ground-px", "8,15")
@@ -329,7 +362,8 @@ def test_each_captured_frame_is_reduced_before_the_next_is_loaded(
     monkeypatch.setattr(imageops, "load_png", load)
     monkeypatch.setattr(imageops, "reduce_blocks", reduce)
     assert run(capsys, setup.argv())[0] == 0
-    assert events == ["load", "reduce"] * ((4 + 3) * 8)
+    # Each frame's colour, material-ID and shade buffers, then its reduction.
+    assert events == ["load", "load", "load", "reduce"] * ((4 + 3) * 8)
 
 
 def test_two_runs_give_identical_outputs(setup, capsys, tmp_path):
@@ -489,7 +523,8 @@ def test_mode_reduces_each_captured_frame_before_the_next_is_loaded(
     monkeypatch.setattr(imageops, "reduce_blocks", plain)
     setup.configure(pixels="speckled")
     assert run(capsys, speckled_argv(setup, "--reduce", "mode"))[0] == 0
-    assert events == ["load", "reduce"] * ((4 + 3) * 8)
+    # Each frame's colour, material-ID and shade buffers, then its reduction.
+    assert events == ["load", "load", "load", "reduce"] * ((4 + 3) * 8)
 
 
 def test_settings_reuse_with_an_explicit_override(setup, capsys):
