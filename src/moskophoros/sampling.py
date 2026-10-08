@@ -5,8 +5,10 @@ its identity in every stage. `frames` enumerates a request in sheet order:
 clips in selection order, then directions in index order, then samples in
 time order. Everything here is pure.
 
-After capture, stages pass `ImageFrame`s: an address, its pixels and the
-metadata attached to it.
+After capture, stages pass `ImageFrame`s: an address, its pixels, the
+metadata attached to it and any further named buffers. `IDENTITY`, `SHADE`,
+`BACKGROUND` and `Identities` define the identity and shade buffers stylize
+receives beside the colour (design §Pipeline, Frames into stylize).
 """
 
 import math
@@ -18,6 +20,13 @@ from moskophoros import views
 
 # Slice 1 has one variant.
 VARIANT = "default"
+
+# The names of a frame's identity and shade buffers.
+IDENTITY = "identity"
+SHADE = "shade"
+
+# The identity array's value where no surface was hit; never an index.
+BACKGROUND = -1
 
 
 @dataclass(frozen=True)
@@ -57,11 +66,41 @@ class ImageFrame:
     `(height, width, 4)`, straight-alpha RGBA. `metadata` is whatever the
     caller attaches, such as the sheet fingerprint; every stage passes it on
     unchanged. A stage never changes a frame's pixels in place.
+
+    `buffers` maps names to the frame's further per-frame arrays, of the
+    same height and width as `pixels`; only frames going into stylize carry
+    any. Under `IDENTITY`, an `int32` array of shape `(height, width)` holds
+    each pixel's index into the asset's `Identities`, or `BACKGROUND`; under
+    `SHADE`, a `uint8` array of shape `(height, width)` holds its shade. The
+    command decodes and validates them; stylize trusts them. A buffer under
+    any other name is a capture buffer as loaded, an image like `pixels`.
     """
 
     address: FrameAddress
     pixels: Any
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    buffers: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Identities:
+    """An asset's identity list, which a frame's `IDENTITY` array indexes.
+
+    `names` are the distinct names of its eligible (`OPAQUE` or `MASK`)
+    materials, each placed by its lowest glTF material index. The list is
+    `names` followed by the no-identity class, so index `i` names `names[i]`
+    for `i < len(names)`, and `no_identity`, which is `len(names)`, is the
+    no-identity class.
+    """
+
+    names: tuple[str, ...]
+
+    @property
+    def no_identity(self):
+        return len(self.names)
+
+    def __len__(self):
+        return len(self.names) + 1
 
 
 def sample(selected, fps):

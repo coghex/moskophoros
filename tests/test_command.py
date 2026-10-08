@@ -101,11 +101,20 @@ else:
             image = Image.new("RGBA", size, (37 * i % 256, 91 * i % 256, 128, 255))
             image.paste((0, 0, 0, 0), (0, 0, size[0] // 2, size[1] // 2))
         image.save(f"color/{{i:06d}}.png")
+    buffers = [{{"color": f"color/{{i:06d}}.png"}} for i in range(len(job["frames"]))]
+    if config.get("extra"):
+        # A further named buffer, unlike the colour in every channel.
+        os.mkdir("extra")
+        for i, named in enumerate(buffers):
+            rng = random.Random(1000 + i)
+            data = bytes(rng.randrange(256) for _ in range(size[0] * size[1] * 4))
+            Image.frombytes("RGBA", size, data).save(f"extra/{{i:06d}}.png")
+            named["extra"] = f"extra/{{i:06d}}.png"
     result["backend"] = {{"blender": "5.2.2", "renderer": "workbench",
                           "studio_light": "Default"}}
     result["frames"] = [
-        {{"address": f["address"], "buffers": {{"color": f"color/{{i:06d}}.png"}}}}
-        for i, f in enumerate(job["frames"])
+        {{"address": f["address"], "buffers": named}}
+        for f, named in zip(job["frames"], buffers)
     ]
 if step.get("bad_result"):
     result["job_sha256"] = "0" * 64

@@ -397,6 +397,36 @@ between stages keyed by frame address. Capture writes files because it runs in
 Blender's process; in slice 1 the later stages pass arrays in memory. Per-stage
 caching is deferred.
 
+#### Frames into stylize
+
+A frame going into stylize carries its colour pixels and, beside them, any
+further named buffers of the same height and width (`ImageFrame.buffers`).
+The command loads every buffer the capture result names for a frame: `color`
+becomes the frame's pixels, and each other buffer is carried under its own
+name as an 8-bit RGBA array. Capture writes only `color` today, so frames
+carry no other buffer yet. Existing reductions read only the colour.
+
+Two buffer names are reserved for material identity and shade, with this
+interface:
+
+- Per asset, an **identity list** (`sampling.Identities`): each distinct name
+  of an eligible (`OPAQUE` or `MASK`) material, in a fixed order (by its
+  lowest glTF material index), then the no-identity class. Index `i` names
+  the `i`th material name; the last index, `Identities.no_identity`, which
+  equals the number of names, is the no-identity class. Stylize receives the
+  list through its `identities` argument.
+- Per frame, under `identity` (`sampling.IDENTITY`), an **identity array**:
+  `int32`, shape `(height, width)`, each value an index into the identity
+  list or `sampling.BACKGROUND` (−1), which is never an index. Under `shade`
+  (`sampling.SHADE`), a **shade array**: `uint8`, shape `(height, width)`.
+- The command decodes and validates both arrays; stylize never does.
+
+Frames are loaded one at a time, as stylize reduces them. Stylize returns an
+ordinary reduced colour frame with no buffers, and releases a frame's
+supersampled colour and every other buffer once it is reduced, before the
+next frame is loaded, so at most one frame's supersampled buffers are held.
+Cleanup and export receive only the reduced colour frames.
+
 ### Capture
 
 The CLI calls Blender twice, each time as a separate process:
