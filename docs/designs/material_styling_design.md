@@ -659,7 +659,16 @@ Decided 2026-10-07. The owner approved the [Delivery plan](#delivery-plan)'s
 eight slices, replacing the earlier M1–M5 shape. The two added foundations are
 multi-buffer frames (MAT-1) and reading glTF material identities (MAT-2);
 generated ramps (MAT-8) follow the owner's review. Each slice is one pull
-request.
+request, except MAT-7.
+
+*Exception, decided 2026-10-08 (owner, relayed by laz, #moskophoros
+`xw77kpgu6p5468n94ddnec8u9s`):* MAT-7 is a documentation-only owner
+acceptance step with no pull request. Its review library and its renders are
+review inputs and outputs kept outside the repository (D-16, `AGENTS.md`
+§Files). Its only repository artifact is `docs/acceptance/material-styling.md`,
+published with `docs-push`. The issue is complete when that record holds the
+owner's verdict. The exception changes how MAT-7 is delivered and nothing
+else: the owner's library sign-off and visual verdict are still required.
 
 ### D-15. Textured materials keep the ordinary look; unused entries are silent
 
@@ -1217,6 +1226,8 @@ the same day without changing the slices.*
 - **Relevant decisions:** D-4, D-16, D-17, D-22, D-25.
 - **Acceptance signals:** the owner signs off on the review library's ramps
   before rendering, then records a verdict on the sheets.
+- **Delivery:** documentation only, with no pull request (the D-14
+  exception): the acceptance record is published with `docs-push`.
 - **Out of scope:** tuning beyond what the verdict asks; owner-made models.
 - **Open questions:** None.
 
