@@ -10,6 +10,7 @@ from PIL import Image
 from test_command import Setup, run, speckled_argv
 
 from moskophoros import cleanup, imageops, stylize
+from moskophoros.capture import backend
 from moskophoros.sampling import (
     BACKGROUND,
     IDENTITY,
@@ -167,7 +168,7 @@ def test_an_extra_capture_buffer_reaches_stylize_intact(setup, capsys, monkeypat
     assert run(capsys, setup.argv("--work-dir", str(work))) == (0, "", "")
     assert len(seen) == (4 + 3) * 8
     for i, (pixels, named) in enumerate(seen):
-        assert set(named) == {"extra"}
+        assert set(named) == {"extra", IDENTITY, SHADE}
         with Image.open(work / "render" / "extra" / f"{i:06d}.png") as image:
             np.testing.assert_array_equal(named["extra"], np.asarray(image))
         with Image.open(work / "render" / "color" / f"{i:06d}.png") as image:
@@ -214,6 +215,13 @@ def test_the_command_loads_frames_lazily_and_releases_each_before_the_next(
         held.setdefault(frame, []).append(weakref.ref(pixels))
         return pixels
 
+    def decode_frame(paths, lookup):
+        # The decoded identity and shade arrays are released like the rest.
+        identity, shade = real_decode(paths, lookup)
+        frame = int(Path(paths["matid"]).stem)
+        held[frame] += [weakref.ref(identity), weakref.ref(shade)]
+        return identity, shade
+
     def reduce_blocks(pixels, factor):
         events.append("reduce")
         return real_reduce(pixels, factor)
@@ -226,12 +234,15 @@ def test_the_command_loads_frames_lazily_and_releases_each_before_the_next(
         return real_passthrough(frames)
 
     real_passthrough = cleanup.passthrough
+    real_decode = backend.decode_frame
     monkeypatch.setattr(imageops, "load_png", load)
+    monkeypatch.setattr(backend, "decode_frame", decode_frame)
     monkeypatch.setattr(imageops, reductions[reduce], reduce_blocks)
     monkeypatch.setattr(cleanup, "passthrough", passthrough)
     setup.configure(extra=True)
     argv = speckled_argv(setup, *look_argv(setup, reduce, paletted))
     assert run(capsys, argv) == (0, "", "")
     frames = (4 + 3) * 8
-    assert events == [("load", "color"), ("load", "extra"), "reduce"] * frames
+    loads = [("load", name) for name in ("color", "matid", "shade", "extra")]
+    assert events == [*loads, "reduce"] * frames
     assert len(held) == frames

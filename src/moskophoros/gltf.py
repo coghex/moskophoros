@@ -74,6 +74,7 @@ class Subject:
     scene_index: int
     clips: tuple[Clip, ...]
     primitive_materials: tuple[PrimitiveMaterial, ...] = ()
+    material_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -248,7 +249,12 @@ class _Reader:
         else:
             clips = (Clip(None, STATIC_CLIP, 0.0, 0.0, ()),)
         return Subject(
-            self.path, self.path.stem, scene_index, clips, primitive_materials
+            self.path,
+            self.path.stem,
+            scene_index,
+            clips,
+            primitive_materials,
+            len(self.array(self.document, "materials", "materials")),
         )
 
     def material_identities(self, nodes, roots):

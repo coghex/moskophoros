@@ -424,14 +424,14 @@ caching is deferred.
 
 #### Frames into stylize
 
-A frame going into stylize carries its colour pixels and, beside them, any
+A frame going into stylize carries its colour pixels and, beside them,
 further named buffers of the same height and width (`ImageFrame.buffers`).
 The command loads every buffer the capture result names for a frame: `color`
-becomes the frame's pixels, and each other buffer is carried under its own
-name as an 8-bit RGBA array. Capture writes only `color` today, so frames
-carry no other buffer yet. The reductions read only the colour, unless they
-are given a material library, which also reads the identity and shade
-buffers (see [Material ramps](#material-ramps)).
+becomes the frame's pixels; `matid` and `shade` are decoded into the
+identity and shade arrays below; and any other buffer is carried under its
+own name as an 8-bit RGBA array. The reductions read only the colour, unless
+they are given a material library, which also reads the identity and shade
+arrays (see [Material ramps](#material-ramps)).
 
 Two buffer names are reserved for material identity and shade, with this
 interface:
@@ -446,7 +446,17 @@ interface:
   `int32`, shape `(height, width)`, each value an index into the identity
   list or `sampling.BACKGROUND` (−1), which is never an index. Under `shade`
   (`sampling.SHADE`), a **shade array**: `uint8`, shape `(height, width)`.
-- The command decodes and validates both arrays; stylize never does.
+- The command decodes and validates both arrays; stylize never does. It
+  joins the render result's material table
+  ([result format](#result-format)) with the glTF material identities
+  ([Input contract](#input-contract)): the identity list holds each distinct
+  name of an `OPAQUE` or `MASK` material that a primitive of the selected
+  scene uses, by lowest material index. A pixel of background (alpha 0)
+  decodes to `BACKGROUND`; a pixel showing a `BLEND` material (or any other
+  alpha mode), an unnamed material or a primitive without one decodes to
+  the no-identity class. The shade array is the shade buffer's red channel.
+  A table entry naming a material the model does not have is a backend
+  error (exit 5), like any invalid capture result.
 
 Frames are loaded one at a time, as stylize reduces them. Stylize returns an
 ordinary reduced colour frame with no buffers, and releases a frame's
@@ -467,7 +477,8 @@ The CLI calls Blender twice, each time as a separate process:
    sample's bounds (L, R, U, D). It renders nothing. The CLI then checks root
    motion and resolves scale, cell and ground pixel.
 2. **Render.** Renders every frame at supersampled size `(W·s) × (H·s)`, with
-   the ground point projected to `(gx·s, gy·s)`.
+   the ground point projected to `(gx·s, gy·s)`: its colour, then its
+   material-ID and shade buffers in one auxiliary render (below).
 
 The job JSON carries all settings, sample times and the output directory.
 Blender writes a manifest JSON listing each frame's address and file.
@@ -494,12 +505,56 @@ clip may carry into the next one. This implements the rule in
 - No shadows, cavity, outline or depth of field.
 - Film transparent. View transform `Standard`, look `None`, exposure 0, gamma 1.
 
-**Capture output:** one 8-bit sRGB RGBA PNG per frame, straight alpha, holding
-Workbench's antialiased coverage. Every `use_stamp_*` render setting is off,
-so Blender writes no date or render-time metadata and identical frames are
-identical files. Slice 1 captures only this color buffer. The
-manifest format lists buffers by name, so depth, normal and base-color buffers
-can be added without changing it.
+**Capture output:** three 8-bit RGBA PNGs per frame, whether or not a
+material library is used (material styling D-13): the colour, the
+material-ID buffer and the shade buffer. The colour holds Workbench's
+antialiased coverage in sRGB with straight alpha. Every `use_stamp_*` render
+setting is off, so Blender writes no date or render-time metadata and
+identical frames are identical files. The manifest format lists buffers by
+name, so further buffers can be added without changing it.
+
+**Material-ID and shade buffers** (material styling design D-10, D-11,
+D-22, D-25, D-26, and its §Spike record, which holds the measurements). After
+each frame's colour, one Cycles render gives both buffers from **one shared
+camera sample per pixel**, so each shade pixel holds the light of exactly the
+surface its ID names and no pixel blends two surfaces. Every setting,
+shader and material slot it changes is restored exactly before the next
+colour render, so a frame's colour does not depend on whether auxiliary
+renders ran before it. The colour itself is unchanged.
+
+- *Sampling:* Cycles on the CPU, 1 sample per pixel, adaptive sampling off,
+  seed 0 (not animated), pixel filter Box of width 0.01 px (the sample sits
+  at the pixel centre), every light bounce 0, transparent bounces 8,
+  denoising off, dither 0, film transparent, and the colour's view transform
+  (`Standard`, look `None`, exposure 0, gamma 1, sRGB).
+- *Surfaces:* every material's shader is replaced by an emission; a
+  primitive without a material gets a stand-in. Its red and blue carry the
+  surface's material-ID code and its green the shade. No material property
+  (colour, texture, metallic, roughness, normal map) reaches either. `MASK`
+  materials have no cutouts (D-26): the colour shows them opaque over their
+  whole surface, and so do the ID and shade.
+- *Shade* (D-22, D-25), occlusion and curvature only: linear
+  `clamp(0.25 · AO_out + 1.0 · (1 − AO_in), 0, 1)`, where `AO_out` and
+  `AO_in` are Cycles ambient occlusion looking outside and inside the
+  surface, distance 0.3 m, 64 samples. Creases and nooks are darker, convex
+  curves lighter; a flat open surface is 0.25, encoded 137. No light,
+  direction or material property enters it. The buffer has `R = G = B` =
+  the sRGB-encoded shade (`Standard`, as the colour), alpha 255 where a
+  surface was sampled and `(0, 0, 0, 0)` elsewhere.
+- *Material-ID codes:* a glTF material of index `i` has code `i + 1`; a
+  primitive without a material has the largest code, 65535; background is
+  0. The buffer holds a code's high byte in red and its low byte in green,
+  blue 0 and alpha 255, and background as `(0, 0, 0, 0)`. A model with more
+  than 65534 materials cannot be encoded: an input error (exit 3) before any
+  Blender invocation, including the version probe.
+- *Default shade range:* `[84, 191]` (`backend.DEFAULT_SHADE_RANGE`): new
+  renders take bands over it (material styling design, Mapping a block),
+  chosen from the spike's measurements so that a flat open surface, a crease
+  and an isolated convex curve take different bands.
+
+Blender writes the material-ID and shade PNGs itself from the render's
+pixels, with nothing but those pixels in them, since Cycles adds render-time
+text to the files it saves.
 
 **Finding Blender:** `--blender`, then `$MOSKOPHOROS_BLENDER`, then `blender`
 on `PATH`, then `/Applications/Blender.app/Contents/MacOS/Blender` on macOS.
@@ -562,12 +617,13 @@ never interprets human-readable stdout as a manifest.
 | `mode` | Must match the submitted job. |
 | `job_sha256` | Hash of the submitted job encoded as canonical JSON with sorted keys, compact separators, ASCII escapes and non-finite numbers forbidden. This binds a result to its complete request, not just its source. |
 | `source_sha256` | Must match the job's source digest. |
-| `backend` | Actual Blender version; render results also record the actual renderer and studio light used. The version is parsed according to the owning supported-version contract. |
+| `backend` | Actual Blender version; render results also record the actual renderer and studio light of the colour, and `shade`: the shade technique and its fixed parameters (`technique`, `samples_per_pixel`, `seed`, `pixel_filter`, `filter_width_px`, `ao_distance_m`, `ao_samples`, `occlusion_weight`, `convexity_weight`). The version is parsed according to the owning supported-version contract. |
 | `frames` | Exactly one record per requested address, in request order. No missing, duplicate or unexpected address is accepted. |
 | `frames[].bounds_m` | Measure only: finite, nonnegative `L`, `R`, `U`, `D` as defined by the product design. |
 | `frames[].height_m` | Measure only: evaluated subject height along the glTF vertical axis, for the accepted unit warning. |
 | `roots` | Measure only: one entry per requested clip/root pair, with `clip`, `node_index`, `node_name` and nonnegative finite `travel_m`. Include zero travel. Evaluate the clip endpoints, even when the loop's render samples omit its endpoint. |
-| `frames[].buffers` | Render only: map from buffer name to relative file path. `color` is mandatory; extra named buffers can be described without changing the frame structure, although slice 1 produces only color. |
+| `frames[].buffers` | Render only: map from buffer name to relative file path. `color`, `matid` and `shade` are mandatory; extra named buffers can be described without changing the frame structure. |
+| `materials` | Render only: the asset's material table, one entry per material-ID code used, each `{"id": code, "material": index}` mapping a code to a glTF material index, or to `null` for "no material". Background (0) is never in it. |
 
 Every result frame includes its full `address`. Sample indices and angles
 remain caller-owned lookup data; they do not replace the address as identity.
@@ -575,12 +631,25 @@ Measure mode writes no color buffers. Render mode writes no new fitting or
 root-motion verdict: the caller has already accepted the measurement.
 
 The color path is `color/000000.png`, with a six-digit ordinal in
-request order; the ordinal can grow beyond six digits. Clip and subject names
+request order; the ordinal can grow beyond six digits. The material-ID and
+shade paths are `matid/000000.png` and `shade/000000.png` alike. Clip and subject names
 never become capture filenames. Each file is the accepted high-resolution
 color buffer. The launcher validates that referenced files exist, remain
 within the phase directory, have the required dimensions and decode in the
 required color mode before passing them to later stages. Paths may not be
 absolute, contain parent traversal or escape through a symlink.
+
+The launcher also rejects, as a backend error (exit 5):
+
+- a material-ID pixel that is not exactly an encoded value (alpha other than
+  0 or 255, background other than `(0, 0, 0, 0)`, blue other than 0, or
+  code 0 at alpha 255), or a code missing from the table;
+- a table entry that maps the background code, repeats a code, or is not a
+  material of the model (checked by the command against the glTF);
+- a shade pixel whose red, green and blue differ, or whose alpha is other
+  than 0 or 255;
+- a pixel where the two disagree: a background ID must have shade
+  `(0, 0, 0, 0)`, and every other ID shade alpha 255.
 
 The caller combines actual render provenance with its generator, source and
 resolved settings to compute the accepted sheet fingerprint. It attaches that
@@ -935,7 +1004,11 @@ through unchanged.
   "generator": {
     "tool": "moskophoros", "version": "0.1.0",
     "python": "3.x.y", "numpy": "x.y.z", "pillow": "x.y.z",
-    "blender": "x.y.z", "renderer": "workbench", "studio_light": "..."
+    "blender": "x.y.z", "renderer": "workbench", "studio_light": "...",
+    "shade": { "technique": "cycles-ambient-occlusion", "samples_per_pixel": 1,
+               "seed": 0, "pixel_filter": "BOX", "filter_width_px": 0.01,
+               "ao_distance_m": 0.3, "ao_samples": 64,
+               "occlusion_weight": 0.25, "convexity_weight": 1.0 }
   },
   "source": { "file": "hero.glb", "sha256": "..." },
   "subject": "hero",
@@ -1034,8 +1107,8 @@ contract.
 (V-2)
 
 Given the same input bytes, settings and generator (tool, Python, numpy,
-Pillow and Blender versions, renderer), the sheet PNG and JSON are
-byte-identical. To make that true:
+Pillow and Blender versions, renderer, shade technique), the sheet PNG and
+JSON are byte-identical. To make that true:
 
 - sample times are exact
 - no timestamps are written anywhere
