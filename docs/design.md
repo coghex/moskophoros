@@ -429,7 +429,9 @@ further named buffers of the same height and width (`ImageFrame.buffers`).
 The command loads every buffer the capture result names for a frame: `color`
 becomes the frame's pixels, and each other buffer is carried under its own
 name as an 8-bit RGBA array. Capture writes only `color` today, so frames
-carry no other buffer yet. Existing reductions read only the colour.
+carry no other buffer yet. The reductions read only the colour, unless they
+are given a material library, which also reads the identity and shade
+buffers (see [Material ramps](#material-ramps)).
 
 Two buffer names are reserved for material identity and shade, with this
 interface:
@@ -788,8 +790,9 @@ snapshot, so a caller can hash exactly the bytes it parsed, and
 `materials.validate_library(document, colors, source=...)` validates an
 already-parsed library without reading anything or changing its input. All
 three return the same result for the same library. No command option reads a
-library yet; resolving materials and mapping frames onto ramps are separate,
-later slices.
+library yet; `stylize` maps frames onto a library's ramps
+([Material ramps](#material-ramps)), and the command option that chooses a
+library is a later slice.
 
 A library is a UTF-8 JSON object:
 
@@ -839,6 +842,75 @@ oversized ramp, a non-integer or out-of-palette index, an entry of none or
 several forms, an empty name, or a reference to an undefined ramp. Errors
 after parsing name the field, ramp or material and the position in a ramp,
 such as `materials["steel"].ramp[2]`. The module neither prints nor exits.
+
+#### Material ramps
+
+`stylize.plain` and `stylize.mode` take three further arguments, none used
+unless `library` is given: `library`, a validated `materials.Library`;
+`identities`, the asset's `sampling.Identities`; and `shade_range`, the pair
+`(lo, hi)` of 8-bit shade values with `0 ≤ lo < hi ≤ 255` (owner decisions
+2026-10-07, D-6, D-7, D-9, D-11, D-15, D-17, D-18, D-20, D-22, D-23 and D-25
+in [the material design](designs/material_styling_design.md#decisions)). The
+range is a parameter: stylize never chooses or normalises it. A library needs
+a palette, and each frame must carry the `identity` and `shade` buffers
+([Frames into stylize](#frames-into-stylize)), or stylize raises
+`ValueError` naming the frame. Without a library both reductions behave
+exactly as above and read only the colour. Frames are handled one at a time;
+a frame's colour, identity and shade arrays are released once it is reduced,
+and the result is an ordinary reduced colour frame with no buffers.
+
+**Resolution.** `stylize.resolve(library, name)` gives the ramp a material
+name takes: its own entry (its `ramp`, or the ramp it `uses`; `"ordinary"`
+gives none), then the library's default ramp, then none, which is the
+ordinary look. The no-identity class (unnamed, missing and `BLEND`
+materials) always takes the ordinary look.
+
+**Mapping a block.** For each `s×s` block, every weight is the colour
+buffer's alpha, as in the reductions above:
+
+1. **Coverage** is decided exactly as above, from the colour buffer's alpha.
+   Transparent blocks stay `(0, 0, 0, 0)`; a pixel with colour alpha but
+   background identity counts towards coverage and casts no vote.
+2. **Identity.** Each pixel with an identity votes for it with its colour
+   alpha. Materials sharing a name pool their votes as one identity (D-18); the
+   no-identity class is one candidate; background pixels cast no vote. The most
+   votes wins; a tie goes to the identity with the smallest lowest glTF
+   material index, the no-identity class last (D-23). No vote at all means the
+   ordinary look.
+3. **Band.** If the winner resolves to a ramp of `N` entries, only the winner's
+   pixels give the band; shades of losing identities and of background never
+   do. Let `L = hi − lo + 1`. The range is split into `N` equal bands, and a
+   shade `v`, clamped into `[lo, hi]`, takes band `(v − lo)·N // L`. Let
+   `A` be the sum of the winner's colour alphas and `W` the sum of alpha times
+   the original shade.
+   - **Plain:** the mean `W/A` is clamped, not its samples and not rounded
+     first: with `Wc = min(max(W, lo·A), hi·A)`, the band is
+     `(Wc − lo·A)·N // (L·A)`, and the output is `palette[ramp[band]]`.
+   - **Mode:** each winner pixel with alpha above zero votes for the palette
+     entry `ramp[band]` of its clamped shade, with its alpha as the weight, so
+     repeated ramp entries pool their votes. A tie goes to the entry nearest
+     the unrounded mean `W/A`, taken over **every** occurrence of that entry
+     in the ramp, voted for or not: band `k` is centred at
+     `lo + (k + ½)·L/N`, and occurrence `k` is at distance
+     `|2·N·W − (2·N·lo + (2k + 1)·L)·A|` (scaled by `2·N·A`), minimised over
+     the entry's occurrences. A tie at equal distance goes to the smaller
+     palette index.
+   - The output alpha is 255.
+4. **Otherwise** (no-identity, `"ordinary"`, unmapped without a default, or no
+   vote) the block takes the existing look for the chosen reduction and
+   palette over the whole block, including losing identities and background
+   pixels (D-9).
+
+`hi` is band `N − 1` only when `N ≤ L`: in general it takes band
+`((L − 1)·N) // L`. Over `lo = 100`, `hi = 101` a three-entry ramp uses its
+first two entries; longer ramps are valid, and their later bands are
+unreachable.
+
+Coverage, votes, shade sums, bands and `mode` ties use exact integer
+arithmetic, so they are deterministic and do not depend on the library's key
+order. The ordinary look keeps its own arithmetic, including the NumPy
+`float64` OKLab palette mapping above, and is unchanged. Dithering and eased
+bands are out of scope (D-7).
 
 ### Cleanup (slice 1: none)
 
@@ -992,7 +1064,7 @@ src/moskophoros/
     backend.py            the capture boundary: job in, manifest out
     blender.py            finds and runs Blender, checks its version
     blender_script.py     runs inside Blender; the only bpy code
-  stylize.py              plain and most-common-colour reductions
+  stylize.py              plain and most-common-colour reductions, material ramps
   cleanup.py              pass-through
   export.py               sheet, JSON, previews
   imageops.py             shared image operations
