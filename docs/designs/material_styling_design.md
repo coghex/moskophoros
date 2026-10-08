@@ -302,9 +302,10 @@ approximation of the antialiased colour, and its limits are deliberate:
 - At `--supersample 1` a block is one pixel, so its material is that pixel's
   ID, or the ordinary look when the ID is background.
 
-**Cutouts and translucency.** Materials with glTF alpha mode `MASK` discard
-pixels; the ID and shade passes must keep the same cutouts, so surfaces
-behind a hole are identified as in the colour. `MASK` materials are eligible
+**Cutouts and translucency.** Materials with glTF alpha mode `MASK` are
+captured opaque, with no cutouts, in the colour and therefore in the ID and
+shade passes too (D-26): every pixel's identity is the surface the colour
+shows, and no surface behind a `MASK` texel is identified. `MASK` materials are eligible
 for ramps like `OPAQUE` ones. `BLEND` (translucent) materials are out of
 scope: coverage stays as today, and they keep the ordinary look. That is
 decided from the glTF, not inferred from pixels: MAT-2 reports each
@@ -506,8 +507,9 @@ every setting above, and for N = 4 at all but 20 px/m.
 
 **Outcome:** the chosen method is world-space, not screen-space, and meets
 the shared-sample ID and shade contract and D-25's signal on these
-fixtures. **One finding blocks MAT-3:** the colour capture does not cut out
-`MASK` materials ([Q-26](#q-26-how-do-mask-cutouts-relate-between-the-colour-and-the-id-and-shade-buffers)).
+fixtures. **One finding blocked MAT-3:** the colour capture does not cut out
+`MASK` materials ([Q-26](#q-26-how-do-mask-cutouts-relate-between-the-colour-and-the-id-and-shade-buffers));
+resolved by D-26: the ID and shade match the colour, with no cutouts.
 
 **Provenance.** The result's `backend` reports the shade technique and the
 parameters above, and the sheet's `generator` gains them beside `renderer`
@@ -951,12 +953,25 @@ live. The sprite carries what live lighting cannot: each material's
 band; the owner accepts that. How Blender produces occlusion and curvature
 deterministically is D-10's spike.
 
+### D-26. `MASK` materials are captured opaque, with no cutouts
+
+Decided 2026-10-08 (resolves Q-26, option A; owner, relayed by laz,
+#moskophoros `nubgv9twjfegt38t7dm5iredee`): "alpha will not be supported until
+i get further along in the project." The ID and shade buffers match the colour
+as it is captured today: a `MASK` material is drawn over its whole surface,
+its transparent texels opaque, with no cutouts, so every pixel's identity and
+shade are those of the surface the colour shows and the three buffers stay
+aligned. No surface behind a `MASK` texel is identified. Honouring `MASK`
+cutouts in the colour (Q-26's option C) is a separate, deferred follow-up that
+needs its own explicit owner request; until then nothing here changes the
+colour output or implies alpha support.
+
 ## Open questions
 
 Open: Q-24, deferred to MAT-8's start; and Q-11, which belongs to the later
 lighting-sheet arc and blocks no slice here. Q-21, Q-22 and Q-23, raised by an
 outside review on 2026-10-07, are resolved by D-22, D-23 and D-24; Q-25,
-raised by D-22, by D-25.
+raised by D-22, by D-25; Q-26, raised by the D-10 spike, by D-26.
 
 Resolved: Q-1, Q-2, Q-3, Q-5, Q-6, Q-7, Q-9, Q-10, Q-12, Q-14, Q-15, Q-16,
 Q-17, Q-18, Q-19 and Q-20 by D-5 (since superseded by D-11), D-7, D-8, D-6,
@@ -1069,8 +1084,8 @@ shade from the winner's pixels, `plain` averages then quantises. Tie order and
 ### Q-17. How do transparency and coverage work?
 
 **Resolved by D-20**: coverage and binary alpha as today; translucent
-(`BLEND`) materials out of scope. `MASK` cutouts are a capture requirement
-([Capture](#capture-d-10-d-11-d-13)).
+(`BLEND`) materials out of scope. `MASK` materials are captured opaque, with
+no cutouts (D-26; [Capture](#capture-d-10-d-11-d-13)).
 
 ### Q-18. What are the acceptance inputs?
 
@@ -1210,7 +1225,7 @@ D-10's spike. Affects MAT-3, MAT-5 and MAT-7.
 
 ### Q-26. How do `MASK` cutouts relate between the colour and the ID and shade buffers?
 
-**Open; blocks MAT-3.** Found by the D-10 spike (2026-10-08). §Capture and
+**Resolved by D-26** (option A, 2026-10-08). Found by the D-10 spike (2026-10-08). §Capture and
 MAT-3 require the ID and shade passes to keep `MASK` cutouts "so surfaces
 behind a hole are identified as in the colour", assuming the colour discards
 them. It does not: Workbench ignores the alpha the glTF importer builds for a
@@ -1251,8 +1266,9 @@ the importer's alpha. Affects MAT-3, and through it MAT-5 and MAT-7.
   its default maps; joint ID and shade validation; independence from library
   key order; determinism.
 - **The spike's cases** ([Capture](#capture-d-10-d-11-d-13)) become Blender
-  tests in MAT-3: material edges, thin features, a `MASK` cutout over a
-  second material, occlusion, and the smallest and largest supersample.
+  tests in MAT-3: material edges, thin features, a `MASK` material in front of a
+  second (captured opaque with no cutout, matching the colour, D-26),
+  occlusion, and the smallest and largest supersample.
 - **Blender tests** (`@pytest.mark.blender`, generated `.glb` fixtures): the
   ID buffer is exact and its table maps to the right glTF materials,
   including duplicate and missing names; repeat renders are byte-identical;
