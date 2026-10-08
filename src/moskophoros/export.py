@@ -1,4 +1,4 @@
-"""The sheet PNG, its `moskophoros.sheet/2` JSON and the animated previews,
+"""The sheet PNG, its `moskophoros.sheet/3` JSON and the animated previews,
 following design §Export.
 
 `encode` lays the plain frames out on the sheet, describes them and returns
@@ -27,7 +27,7 @@ import moskophoros
 from moskophoros import sampling, views
 from moskophoros.capture.backend import settings_document
 
-SCHEMA = "moskophoros.sheet/2"
+SCHEMA = "moskophoros.sheet/3"
 USAGE_ERROR = 2
 PREVIEW_SCALE = 4
 PREVIEW_BACKGROUND = (128, 128, 128)

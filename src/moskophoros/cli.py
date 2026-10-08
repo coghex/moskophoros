@@ -13,8 +13,8 @@ reads a selected palette snapshot; these reads precede any Blender invocation.
 
 `capture_settings` gives the settings capture and export share, and
 `style_record` the style the sheet records beside them, following design
-§Export: the reduction and the palette. The style never reaches the capture
-job.
+§Export: the reduction, the palette, the material library and the shade range.
+The style never reaches the capture job.
 
 `main` runs the whole command, following design §CLI and §Pipeline: read and
 measure the model, check root motion, fit, render, stylize, clean up and
@@ -48,6 +48,7 @@ from moskophoros import (
     fit,
     gltf,
     imageops,
+    materials,
     palette,
     sampling,
     stylize,
@@ -90,8 +91,11 @@ CUSTOM_VIEW = "custom"
 ROOT_MOTION_MODES = ("error", "keep")
 # The values --reduce accepts; the first is the default.
 REDUCTIONS = ("plain", "mode")
-SHEET_SCHEMA = "moskophoros.sheet/2"
-# An older sheet, still reused; it reads as the plain reduction with no palette.
+SHEET_SCHEMA = "moskophoros.sheet/3"
+# Older sheets, still reused. A `/2` sheet reads as having no material library
+# and the current default shade range; a `/1` sheet also as the plain
+# reduction with no palette.
+PREVIOUS_SHEET_SCHEMA = "moskophoros.sheet/2"
 LEGACY_SHEET_SCHEMA = "moskophoros.sheet/1"
 _MAX_DIGITS = 4300
 _VIEW_FIELDS = ("view", "pitch", "directions", "start_angle")
@@ -106,6 +110,15 @@ class PaletteRecord:
     source: str
     sha256: str
     colors: tuple[tuple[int, int, int], ...]
+
+
+@dataclass(frozen=True)
+class MaterialsRecord:
+    """A material library snapshot; reuse never needs its original file."""
+
+    source: str
+    sha256: str
+    library: materials.Library
 
 
 @dataclass(frozen=True)
@@ -145,6 +158,10 @@ class Options:
     palette_file: Path | None = None
     no_palette: bool = False
     palette: PaletteRecord | None = None
+    materials_file: Path | None = None
+    no_materials: bool = False
+    materials: MaterialsRecord | None = None
+    shade_range: tuple[int, int] = backend.DEFAULT_SHADE_RANGE
 
 
 class UsageError(SystemExit):
@@ -167,6 +184,8 @@ def parse_args(argv: Sequence[str]) -> Options:
     args = parser.parse_args(_prepare(parser, argv, value_options, flags), namespace)
     if args.palette is not None and args.no_palette:
         parser.error("--palette and --no-palette cannot be given together")
+    if args.materials is not None and args.no_materials:
+        parser.error("--materials and --no-materials cannot be given together")
 
     once = tuple(args.once or ())
     clip = None if args.clip is None else tuple(args.clip)
@@ -206,6 +225,8 @@ def parse_args(argv: Sequence[str]) -> Options:
         explicit=explicit,
         palette_file=args.palette,
         no_palette=args.no_palette,
+        materials_file=args.materials,
+        no_materials=args.no_materials,
     )
 
 
@@ -232,12 +253,24 @@ class ReusedSettings:
     root_motion: str
     reduce: str
     palette: PaletteRecord | None = None
+    materials: MaterialsRecord | None = None
+    shade_range: tuple[int, int] = backend.DEFAULT_SHADE_RANGE
 
 
 def resolve_settings(options: Options) -> Options:
-    """Validate reuse before overrides, then resolve palette bytes before Blender."""
+    """Validate reuse before overrides, then resolve the palette and material
+    library bytes, and check the combination, before Blender."""
+    reused_colors = None
     if options.settings_from is not None:
-        options = apply_settings(options, read_settings(options.settings_from))
+        reused = read_settings(options.settings_from)
+        options = apply_settings(options, reused)
+        if reused.palette is not None:
+            reused_colors = reused.palette.colors
+    options = _resolve_palette(options)
+    return _resolve_materials(options, reused_colors)
+
+
+def _resolve_palette(options: Options) -> Options:
     if options.palette_file is not None:
         path = options.palette_file
         try:
@@ -263,19 +296,78 @@ def resolve_settings(options: Options) -> Options:
     return options
 
 
+def _resolve_materials(options: Options, reused_colors) -> Options:
+    """Settle the material library: an explicit file is read once and
+    validated against the palette in force, `--no-materials` drops a reused
+    library, and a reused library is kept only with the palette colours it
+    was recorded for (design §CLI, D-24).
+
+    `reused_colors` are the ordered colours of the reused palette, if any,
+    before an explicit option replaced it. A dropped or replaced library is
+    never checked against the palette in force.
+    """
+    parser = _build_parser()[0]
+    colors = None if options.palette is None else options.palette.colors
+    if options.materials_file is not None:
+        path = options.materials_file
+        if colors is None:
+            parser.error(
+                f"--materials {str(path)!r}: a library needs a palette; give "
+                "--palette FILE or reuse a sheet with one"
+            )
+        try:
+            source = _palette_source(path.name)
+        except argparse.ArgumentTypeError as error:
+            parser.error(f"--materials {str(path)!r}: {error}")
+        try:
+            data = path.read_bytes()
+        except OSError as error:
+            parser.error(
+                f"--materials {str(path)!r}: cannot be read: {error.strerror or error}"
+            )
+        try:
+            library = materials.read_library_bytes(data, colors, source=path)
+        except materials.LibraryError as error:
+            parser.error(f"--materials {error}")
+        return replace(
+            options,
+            materials=MaterialsRecord(
+                source, hashlib.sha256(data).hexdigest(), library
+            ),
+        )
+    if options.no_materials:
+        return replace(options, materials=None)
+    if options.materials is None:
+        return options
+    if colors is None:
+        parser.error(
+            "--no-palette: the reused material library needs a palette; also "
+            "give --no-materials to drop it"
+        )
+    if colors != reused_colors:
+        parser.error(
+            f"--palette {str(options.palette_file)!r}: its colours differ from "
+            "the reused palette the reused material library was written for; "
+            "also give --materials FILE, or --no-materials to drop the library"
+        )
+    return options
+
+
 def read_settings(path) -> ReusedSettings:
     """Read and check the reusable `settings` of the sheet description at
     `path`. Reading that file is the only effect.
 
     Raises `UsageError`, reported as `parse_args` reports one, naming the
     file and the problem: the file cannot be read, is not UTF-8 JSON, repeats
-    a key, is not a `moskophoros.sheet/2` or `moskophoros.sheet/1` document
-    with a `settings` object, or its `settings` has a missing, unknown or
+    a key, is not a `moskophoros.sheet/3`, `/2` or `/1` document with a
+    `settings` object, or its `settings` has a missing, unknown or
     unacceptable field. Every field is checked as its option checks it,
-    including fields an explicit option will replace. A `/2` sheet's
-    `settings.style` is checked the same way; a `/1` sheet has none and reads
-    as the plain reduction. Nothing beyond `schema` and `settings` is read,
-    and `settings.clips` is ignored.
+    including fields an explicit option will replace. A `/3` or `/2` sheet's
+    `settings.style` is checked the same way, and a recorded material library
+    against the recorded palette; a `/2` sheet reads as having no library and
+    the default shade range, and a `/1` sheet has no style and also reads as
+    the plain reduction. Nothing beyond `schema` and `settings` is read, and
+    `settings.clips` is ignored.
     """
     path = Path(path)
     try:
@@ -309,6 +401,8 @@ def read_settings(path) -> ReusedSettings:
     problems = []
     shape = _SHAPES[schema]
     checked = _check_shape(shape, document["settings"], "settings", problems)
+    if not problems and "style" in shape:
+        checked["style"] = _style(checked["style"], problems)
     if problems:
         _settings_error(path, "; ".join(problems))
     view, cell, ground, ground_px = (
@@ -329,6 +423,12 @@ def read_settings(path) -> ReusedSettings:
         root_motion=checked["root_motion"],
         reduce=checked["style"]["reduce"] if "style" in shape else REDUCTIONS[0],
         palette=checked["style"]["palette"] if "style" in shape else None,
+        materials=checked["style"].get("materials") if "style" in shape else None,
+        shade_range=(
+            checked["style"].get("shade_range", backend.DEFAULT_SHADE_RANGE)
+            if "style" in shape
+            else backend.DEFAULT_SHADE_RANGE
+        ),
     )
 
 
@@ -374,7 +474,9 @@ def capture_settings(options: Options) -> backend.Settings:
 
 
 def style_record(options: Options) -> dict:
-    """The sheet's ordered look record, independent of capture settings."""
+    """The sheet's ordered look record, independent of capture settings:
+    `reduce`, `palette`, `materials` (the library snapshot, or `None`) and
+    `shade_range`, in that order."""
     record = options.palette
     return {
         "reduce": options.reduce,
@@ -385,6 +487,31 @@ def style_record(options: Options) -> dict:
             "sha256": record.sha256,
             "colors": ["#" + bytes(color).hex() for color in record.colors],
         },
+        "materials": None
+        if options.materials is None
+        else _materials_document(options.materials),
+        "shade_range": list(options.shade_range),
+    }
+
+
+def _materials_document(record: MaterialsRecord) -> dict:
+    """The library snapshot as the sheet records it: its source base name and
+    digest, then its ramps, default and entries in name order."""
+    library = record.library
+    entries = {}
+    for name, entry in library.materials.items():
+        if entry.ramp is not None:
+            entries[name] = {"ramp": list(entry.ramp)}
+        elif entry.uses is not None:
+            entries[name] = {"uses": entry.uses}
+        else:
+            entries[name] = materials.ORDINARY
+    return {
+        "source": record.source,
+        "sha256": record.sha256,
+        "ramps": {name: list(ramp) for name, ramp in library.ramps.items()},
+        "default": library.default,
+        "materials": entries,
     }
 
 
@@ -470,6 +597,11 @@ def _command(options):
     requested = sampling.frames(subject.name, selected, view, options.fps)
     settings = capture_settings(options)
     sheet_style = style_record(options)
+    if options.materials is not None:
+        for warning in materials.warnings(
+            subject.primitive_materials, options.materials.library
+        ):
+            _report("warning", warning)
     found = blender.locate(options.blender, options.any_blender)
 
     with _workspace(options.work_dir) as workspace:
@@ -527,13 +659,21 @@ def _command(options):
         reduce = {"plain": stylize.plain, "mode": stylize.mode}[options.reduce]
         colors = options.palette.colors if options.palette is not None else None
         identities = lookup.identities
-        reduced = (
-            reduce(captured, settings.supersample, identities=identities)
-            if colors is None
-            else reduce(
+        if colors is None:
+            reduced = reduce(captured, settings.supersample, identities=identities)
+        elif options.materials is None:
+            reduced = reduce(
                 captured, settings.supersample, palette=colors, identities=identities
             )
-        )
+        else:
+            reduced = reduce(
+                captured,
+                settings.supersample,
+                palette=colors,
+                identities=identities,
+                library=options.materials.library,
+                shade_range=options.shade_range,
+            )
         frames = cleanup.passthrough(reduced)
 
     sheet = export.encode(
@@ -1091,6 +1231,18 @@ def _build_parser():
         "--no-palette", action=_Flag, help="drop a reused palette (default: off)"
     )
     single(
+        "--materials",
+        "FILE",
+        _path,
+        None,
+        "draw materials from the ramps of a JSON material library; needs a palette",
+    )
+    parser.add_argument(
+        "--no-materials",
+        action=_Flag,
+        help="drop a reused material library (default: off)",
+    )
+    single(
         "--settings-from",
         "FILE",
         _path,
@@ -1122,7 +1274,7 @@ def _build_parser():
         action=_Flag,
         help="allow a Blender version other than the supported one (default: off)",
     )
-    flags = {*_HELP, "--no-preview", "--any-blender", "--no-palette"}
+    flags = {*_HELP, "--no-preview", "--any-blender", "--no-palette", "--no-materials"}
     return parser, frozenset(value_options), frozenset(flags)
 
 
@@ -1246,9 +1398,18 @@ def _one_of(*choices):
 
 # The sheet's `settings` object, member by member. `clips` is recognized but
 # never read: clip selection comes from the current command line. A member
-# that may be null or a palette record is `_PALETTE`.
+# that may be null or a palette record is `_PALETTE`, and one that may be null
+# or a material library record `_MATERIALS`.
 _IGNORED = None
 _PALETTE = object()
+_MATERIALS = object()
+
+
+class _Nullable:
+    """A member that may be null, or else is checked as `shape`."""
+
+    def __init__(self, shape):
+        self.shape = shape
 
 
 def _palette_source(value):
@@ -1291,6 +1452,46 @@ _PALETTE_FIELDS = {
     "sha256": _palette_digest,
     "colors": _palette_colors,
 }
+
+
+def _anything(value):
+    return value
+
+
+def _ramp_name(value):
+    if not isinstance(value, str) or not value:
+        raise argparse.ArgumentTypeError(
+            f"expected a nonempty ramp name or null, got {_shown(value)}"
+        )
+    return value
+
+
+def _shade_range(value):
+    if (
+        not isinstance(value, list)
+        or len(value) != 2
+        or any(isinstance(bound, bool) or not isinstance(bound, int) for bound in value)
+    ):
+        raise argparse.ArgumentTypeError(
+            f"expected two integers [lo, hi], got {_shown(value)}"
+        )
+    lo, hi = value
+    if not 0 <= lo < hi <= 255:
+        raise argparse.ArgumentTypeError(
+            f"expected 0 <= lo < hi <= 255, got {_shown(value)}"
+        )
+    return lo, hi
+
+
+# A material library record, whose ramps, default and entries the library
+# module checks once the palette is known (`_style`).
+_MATERIALS_FIELDS = {
+    "source": _palette_source,
+    "sha256": _palette_digest,
+    "ramps": _anything,
+    "default": _Nullable(_ramp_name),
+    "materials": _anything,
+}
 _LEGACY_SETTINGS = {
     "view": {
         "preset": _one_of(*PRESETS, CUSTOM_VIEW),
@@ -1309,15 +1510,26 @@ _LEGACY_SETTINGS = {
     "root_motion": _one_of(*ROOT_MOTION_MODES),
     "clips": _IGNORED,
 }
-_SETTINGS = {
+_PREVIOUS_SETTINGS = {
     name: _LEGACY_SETTINGS[name] for name in _LEGACY_SETTINGS if name != "clips"
 }
-_SETTINGS |= {
+_PREVIOUS_SETTINGS |= {
     "style": {"reduce": _one_of(*REDUCTIONS), "palette": _PALETTE},
     "clips": _IGNORED,
 }
+_SETTINGS = {name: _PREVIOUS_SETTINGS[name] for name in _PREVIOUS_SETTINGS}
+_SETTINGS["style"] = {
+    "reduce": _one_of(*REDUCTIONS),
+    "palette": _PALETTE,
+    "materials": _MATERIALS,
+    "shade_range": _shade_range,
+}
 # Each reusable schema's `settings`, newest first.
-_SHAPES = {SHEET_SCHEMA: _SETTINGS, LEGACY_SHEET_SCHEMA: _LEGACY_SETTINGS}
+_SHAPES = {
+    SHEET_SCHEMA: _SETTINGS,
+    PREVIOUS_SHEET_SCHEMA: _PREVIOUS_SETTINGS,
+    LEGACY_SHEET_SCHEMA: _LEGACY_SETTINGS,
+}
 
 
 def _check_shape(shape, value, name, problems):
@@ -1329,6 +1541,14 @@ def _check_shape(shape, value, name, problems):
         before = len(problems)
         checked = _check_shape(_PALETTE_FIELDS, value, name, problems)
         return PaletteRecord(**checked) if len(problems) == before else None
+    if shape is _MATERIALS:
+        if value is None:
+            return None
+        return _check_shape(_MATERIALS_FIELDS, value, name, problems)
+    if isinstance(shape, _Nullable):
+        if value is None:
+            return None
+        return _check_shape(shape.shape, value, name, problems)
     if value is None:
         problems.append(f"{name}: must be set, got null")
         return None
@@ -1355,3 +1575,36 @@ def _check_shape(shape, value, name, problems):
         f"{name}.{member}: unknown field" for member in value if member not in shape
     )
     return checked
+
+
+def _style(style, problems):
+    """`style` with its recorded material library, if any, validated against
+    the recorded palette and made a `MaterialsRecord`.
+
+    A library needs a palette (design §CLI, D-6), so a record beside a null
+    palette is a problem under `settings.style.materials`.
+    """
+    record = style.get("materials")
+    if record is None:
+        return style
+    where = "settings.style.materials"
+    if style["palette"] is None:
+        problems.append(f"{where}: a library needs a palette, but the palette is null")
+        return style
+    document = {
+        "schema": materials.SCHEMA,
+        "ramps": record["ramps"],
+        "materials": record["materials"],
+    }
+    if record["default"] is not None:
+        document["default"] = record["default"]
+    try:
+        library = materials.validate_library(
+            document, style["palette"].colors, source=where
+        )
+    except materials.LibraryError as error:
+        problems.append(f"{where}: {error.problem}")
+        return style
+    return style | {
+        "materials": MaterialsRecord(record["source"], record["sha256"], library)
+    }

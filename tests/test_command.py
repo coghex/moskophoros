@@ -155,6 +155,12 @@ DEFAULT_CONFIG = {
     "travel": {},
     "pixels": "solid",
 }
+PLAIN_STYLE = {
+    "reduce": "plain",
+    "palette": None,
+    "materials": None,
+    "shade_range": list(backend.DEFAULT_SHADE_RANGE),
+}
 OPTIONS = ["--once", "attack", "--supersample", "1", "--cell", "16x16", "--fps", "4"]
 BACKEND = {
     "blender": "5.2.2",
@@ -258,8 +264,8 @@ def test_a_run_writes_the_sheet_its_json_and_a_preview_per_clip(setup, capsys):
         "hero.walk.gif",
     ]
     description = json.loads(setup.json.read_text())
-    assert description["schema"] == "moskophoros.sheet/2"
-    assert description["settings"]["style"] == {"reduce": "plain", "palette": None}
+    assert description["schema"] == "moskophoros.sheet/3"
+    assert description["settings"]["style"] == PLAIN_STYLE
     assert description["image"]["file"] == "hero.png"
     assert [(c["name"], c["loop"]) for c in description["clips"]] == [
         ("walk", True),
@@ -329,7 +335,7 @@ def test_the_fingerprint_reaches_the_frames_before_stylize(setup, capsys, monkey
         "ground_m": {"x": 0.0, "y": 0.0, "z": 0.0},
         "ground_px": {"x": 8, "y": 15},
         "root_motion": "error",
-        "style": {"reduce": "plain", "palette": None},
+        "style": PLAIN_STYLE,
         "clips": [{"name": "walk", "loop": True}, {"name": "attack", "loop": False}],
     }
     expected = export.fingerprint(
@@ -463,12 +469,12 @@ def test_reduce_mode_keeps_each_block_s_most_common_colour(setup, capsys):
     assert run(capsys, speckled_argv(setup, "--reduce", "mode"))[0] == 0
     assert sheet_colours(setup.png) == {SPECKLE_MOST, UNUSED}
     mode = json.loads(setup.json.read_text())
-    assert mode["settings"]["style"] == {"reduce": "mode", "palette": None}
+    assert mode["settings"]["style"] == PLAIN_STYLE | {"reduce": "mode"}
 
     assert run(capsys, speckled_argv(setup))[0] == 0
     assert sheet_colours(setup.png) == {SPECKLE_MEAN, UNUSED}
     plain = json.loads(setup.json.read_text())
-    assert plain["settings"]["style"] == {"reduce": "plain", "palette": None}
+    assert plain["settings"]["style"] == PLAIN_STYLE
     assert mode["fingerprint"] != plain["fingerprint"]
     assert {k: v for k, v in mode["settings"].items() if k != "style"} == {
         k: v for k, v in plain["settings"].items() if k != "style"
@@ -498,7 +504,7 @@ def test_a_reused_mode_sheet_selects_mode_unless_overridden(setup, capsys):
     assert run(capsys, ["--reduce", "plain", *argv, str(reused)])[0] == 0
     assert sheet_colours(reused) == {SPECKLE_MEAN, UNUSED}
     style = json.loads((setup.out / "reused.json").read_text())["settings"]["style"]
-    assert style == {"reduce": "plain", "palette": None}
+    assert style == PLAIN_STYLE
 
 
 def test_mode_reduces_each_captured_frame_before_the_next_is_loaded(
@@ -969,7 +975,10 @@ def test_a_bad_settings_file_is_a_usage_error(setup, capsys):
     bad.write_text("{}")
     status, _, err = run(capsys, setup.argv("--settings-from", str(bad)))
     assert status == 2
-    assert "is not a moskophoros.sheet/2 or moskophoros.sheet/1 document" in err
+    assert (
+        "is not a moskophoros.sheet/3 or moskophoros.sheet/2 or "
+        "moskophoros.sheet/1 document"
+    ) in err
     assert setup.listing() == earlier
 
 

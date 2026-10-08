@@ -2,7 +2,9 @@
 
 A library is a JSON file the tool only reads (material design D-8). Its ramps
 index the shared palette (D-6, D-7); it holds named generic ramps, an optional
-default naming one of them, and material entries (D-15, D-17).
+default naming one of them, and material entries (D-15, D-17). `warnings`
+names what a library leaves to its fallbacks for a given model (D-3, D-9,
+D-17, D-18).
 """
 
 import json
@@ -14,6 +16,9 @@ from types import MappingProxyType
 SCHEMA = "moskophoros.materials/1"
 ORDINARY = "ordinary"
 MAX_RAMP = 256
+# The glTF alpha modes whose materials can take a ramp; any other (`BLEND`) is
+# translucent and always takes the ordinary look.
+RAMP_ALPHA_MODES = ("OPAQUE", "MASK")
 _FIELDS = ("schema", "ramps", "default", "materials")
 _REQUIRED = ("schema", "ramps", "materials")
 
@@ -118,6 +123,67 @@ def validate_library(document, colors, *, source):
             value, f"materials[{_name(name)}]", ramps, size, source
         )
     return Library(MappingProxyType(ramps), default, MappingProxyType(materials))
+
+
+def warnings(records, library):
+    """The warnings for a model under `library`, as messages in a fixed order.
+
+    `records` are the model's `gltf.PrimitiveMaterial`s. Each distinct named
+    material the library has no entry for is named once, saying whether it
+    took the default ramp or the ordinary look (D-9, D-17); a translucent
+    material takes the ordinary look whatever the default. One further
+    warning counts the parts with no name (unnamed or missing materials,
+    D-18), and each library entry used only by translucent materials is named.
+    Entries and ramps the model never uses are silent (D-15).
+    """
+    parts = {}
+    unnamed = 0
+    for record in records:
+        if record.material_index is None or record.name is None:
+            unnamed += 1
+            continue
+        entry = parts.setdefault(
+            record.name, {"index": record.material_index, "ramp": False, "other": False}
+        )
+        entry["index"] = min(entry["index"], record.material_index)
+        entry["ramp" if record.alpha_mode in RAMP_ALPHA_MODES else "other"] = True
+    messages = []
+    fallback = (
+        "the default ramp " + _name(library.default)
+        if library.default is not None
+        else "the ordinary look"
+    )
+    for name, used in sorted(
+        parts.items(), key=lambda item: (item[1]["index"], item[0])
+    ):
+        if name in library.materials:
+            continue
+        head = f"material {_name(name)} has no entry in the material library"
+        if not used["ramp"]:
+            messages.append(
+                f"{head}; it is translucent (BLEND) and takes the ordinary look"
+            )
+        elif used["other"]:
+            messages.append(
+                f"{head} and takes {fallback}; its translucent (BLEND) parts take "
+                "the ordinary look"
+            )
+        else:
+            messages.append(f"{head} and takes {fallback}")
+    if unnamed:
+        messages.append(
+            f"{unnamed} {'part has' if unnamed == 1 else 'parts have'} no material "
+            "name (an unnamed or missing material) and "
+            f"{'takes' if unnamed == 1 else 'take'} the ordinary look"
+        )
+    for name in sorted(library.materials):
+        used = parts.get(name)
+        if used is not None and not used["ramp"]:
+            messages.append(
+                f"the library entry {_name(name)} names only translucent (BLEND) "
+                "materials, which take the ordinary look"
+            )
+    return messages
 
 
 def _named(mapping, location, source):

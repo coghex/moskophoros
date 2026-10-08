@@ -32,10 +32,19 @@ SETTINGS = {
     "ground_m": {"x": 0.1, "y": -0.2, "z": 0.3},
     "ground_px": {"x": 24, "y": 37},
     "root_motion": "keep",
-    "style": {"reduce": "plain", "palette": None},
+    "style": {
+        "reduce": "plain",
+        "palette": None,
+        "materials": None,
+        "shade_range": [84, 191],
+    },
     "clips": [{"name": "walk", "loop": True}, {"name": "attack", "loop": False}],
 }
-# The same settings as an older `/1` sheet records them: without a style.
+# The same settings as an older `/2` sheet records them: a style without a
+# material library or shade range.
+PREVIOUS_SETTINGS = copy.deepcopy(SETTINGS)
+PREVIOUS_SETTINGS["style"] = {"reduce": "plain", "palette": None}
+# And as an older `/1` sheet records them: without a style.
 LEGACY_SETTINGS = {name: SETTINGS[name] for name in SETTINGS if name != "style"}
 REUSED = {
     "view": "side",
@@ -56,7 +65,7 @@ REUSED = {
 
 def write_sheet(tmp_path, settings=None, name="old.json", **document):
     path = tmp_path / name
-    contents = {"schema": "moskophoros.sheet/2"} | document
+    contents = {"schema": "moskophoros.sheet/3"} | document
     contents["settings"] = copy.deepcopy(SETTINGS if settings is None else settings)
     path.write_text(json.dumps(contents, ensure_ascii=False), encoding="utf-8")
     return path
@@ -88,6 +97,12 @@ def rejected(capsys, path, *options):
     prefix = f"--settings-from {str(path)!r}: "
     assert raised.value.message.startswith(prefix)
     return raised.value.message.removeprefix(prefix)
+
+
+def write_previous_sheet(tmp_path, settings=None, name="old.json"):
+    """A `moskophoros.sheet/2` sheet, with `PREVIOUS_SETTINGS` by default."""
+    settings = PREVIOUS_SETTINGS if settings is None else settings
+    return write_sheet(tmp_path, settings, name, schema="moskophoros.sheet/2")
 
 
 def write_legacy_sheet(tmp_path, settings=None, name="old.json"):
@@ -274,7 +289,7 @@ def test_reused_clips_may_be_absent(tmp_path):
 def test_a_document_with_only_schema_and_settings_is_enough(tmp_path):
     path = tmp_path / "minimal.json"
     settings = edited(removed=["clips"])
-    path.write_text(json.dumps({"schema": "moskophoros.sheet/2", "settings": settings}))
+    path.write_text(json.dumps({"schema": "moskophoros.sheet/3", "settings": settings}))
     assert values(reuse(path)) == REUSED
 
 
@@ -357,7 +372,10 @@ def test_a_repeated_key_anywhere_is_rejected(tmp_path, capsys, text, key):
     assert rejected(capsys, path) == f"repeats the key {key!r}"
 
 
-NOT_A_SHEET = "is not a moskophoros.sheet/2 or moskophoros.sheet/1 document"
+NOT_A_SHEET = (
+    "is not a moskophoros.sheet/3 or moskophoros.sheet/2 or moskophoros.sheet/1 "
+    "document"
+)
 
 
 @pytest.mark.parametrize(
@@ -366,8 +384,8 @@ NOT_A_SHEET = "is not a moskophoros.sheet/2 or moskophoros.sheet/1 document"
         ([], f"{NOT_A_SHEET}: not a JSON object"),
         ({}, f"{NOT_A_SHEET}: schema is missing"),
         (
-            {"schema": "moskophoros.sheet/3"},
-            f'{NOT_A_SHEET}: schema is "moskophoros.sheet/3"',
+            {"schema": "moskophoros.sheet/4"},
+            f'{NOT_A_SHEET}: schema is "moskophoros.sheet/4"',
         ),
         (
             {"schema": "moskophoros.sheet/0"},
@@ -604,7 +622,7 @@ def test_a_long_value_is_shown_cut_short(tmp_path, capsys):
 def test_a_mode_sheet_reuses_mode(tmp_path):
     options = reuse(write_sheet(tmp_path, edited({"style.reduce": "mode"})))
     assert values(options) == REUSED | {"reduce": "mode"}
-    assert cli.style_record(options) == {"reduce": "mode", "palette": None}
+    assert cli.style_record(options) == PLAIN | {"reduce": "mode"}
 
 
 @pytest.mark.parametrize(("sheet", "explicit"), [("mode", "plain"), ("plain", "mode")])
@@ -616,7 +634,7 @@ def test_an_explicit_reduce_overrides_the_reused_one(tmp_path, sheet, explicit):
 
 def test_a_legacy_sheet_with_an_explicit_mode_records_mode(tmp_path):
     options = reuse(write_legacy_sheet(tmp_path), "--reduce", "mode")
-    assert cli.style_record(options) == {"reduce": "mode", "palette": None}
+    assert cli.style_record(options) == PLAIN | {"reduce": "mode"}
 
 
 # Older `/1` sheets
@@ -625,7 +643,7 @@ def test_a_legacy_sheet_with_an_explicit_mode_records_mode(tmp_path):
 def test_a_legacy_sheet_reuses_as_plain(tmp_path):
     options = reuse(write_legacy_sheet(tmp_path))
     assert values(options) == REUSED
-    assert cli.style_record(options) == {"reduce": "plain", "palette": None}
+    assert cli.style_record(options) == PLAIN
 
 
 def test_a_legacy_sheet_with_an_explicit_reduce_records_it(tmp_path):
@@ -755,7 +773,12 @@ ORIGINALS = {
 }
 
 
-PLAIN = {"reduce": "plain", "palette": None}
+PLAIN = {
+    "reduce": "plain",
+    "palette": None,
+    "materials": None,
+    "shade_range": [84, 191],
+}
 
 
 def _encode(settings, clip_names, once_names, style=PLAIN):
@@ -954,12 +977,12 @@ def test_a_reused_legacy_sheet_gives_the_same_sheet_as_plain(tmp_path, options):
 
     again = _rerun(path, *options)
 
-    assert json.loads(again.json)["schema"] == "moskophoros.sheet/2"
+    assert json.loads(again.json)["schema"] == "moskophoros.sheet/3"
     assert again.json == original.json
 
 
 def test_a_reused_mode_sheet_round_trips_and_differs_from_plain(tmp_path):
-    mode = {"reduce": "mode", "palette": None}
+    mode = PLAIN | {"reduce": "mode"}
     original = _encode(ORIGINALS["iso"], (), (), mode)
     path = tmp_path / "hero.json"
     path.write_bytes(original.json)

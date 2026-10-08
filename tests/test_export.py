@@ -49,7 +49,12 @@ RUN = SelectedClip(Clip(0, "läuft", 0.0, 1.0, ()), one_shot=False)
 STRIKE = SelectedClip(Clip(1, "攻撃", 0.5, 1.5, ()), one_shot=True)
 POSE = SelectedClip(Clip(2, "pose", 0.25, 0.25, ()), one_shot=False)
 SOURCE = Source(Path("/work/models/héros.glb"), SHA, 0)
-PLAIN = {"reduce": "plain", "palette": None}
+PLAIN = {
+    "reduce": "plain",
+    "palette": None,
+    "materials": None,
+    "shade_range": [84, 191],
+}
 
 # Sample times worked out by hand from design §Clips and sampling:
 # läuft: d = 1, n = floor(1 · 3 + 0.5) = 3 frames at k/3, each 1/3 long.
@@ -70,7 +75,8 @@ CANONICAL = (
     '{"loop":true,"name":"pose"}],'
     '"fps":3.0,"ground_m":{"x":0.0,"y":0.0,"z":0.0},"ground_px":{"x":1,"y":2},'
     '"model_yaw_deg":0.0,"pixels_per_meter":24.5,"root_motion":"error",'
-    '"style":{"palette":null,"reduce":"plain"},"supersample":4,"view":{"directions":2,"pitch_deg":0.0,"preset":"side",'
+    '"style":{"materials":null,"palette":null,"reduce":"plain",'
+    '"shade_range":[84,191]},"supersample":4,"view":{"directions":2,"pitch_deg":0.0,"preset":"side",'
     '"projection":"orthographic","start_angle_deg":90.0}},'
     '"source":{"sha256":"' + SHA + '"}}'
 )
@@ -142,7 +148,7 @@ EXPECTED_FRAMES = ",\n".join(
 
 EXPECTED_JSON = (
     """{
-  "schema": "moskophoros.sheet/2",
+  "schema": "moskophoros.sheet/3",
   "generator": {
     "tool": "moskophoros",
     "version": "0.1.0",
@@ -187,7 +193,12 @@ EXPECTED_JSON = (
     "root_motion": "error",
     "style": {
       "reduce": "plain",
-      "palette": null
+      "palette": null,
+      "materials": null,
+      "shade_range": [
+        84,
+        191
+      ]
     },
     "clips": [
       {
@@ -277,7 +288,7 @@ def test_the_fingerprint_hashes_the_canonical_mirrored_object():
         "ground_m": {"x": 0.0, "y": 0.0, "z": 0.0},
         "ground_px": {"x": 1, "y": 2},
         "root_motion": "error",
-        "style": {"reduce": "plain", "palette": None},
+        "style": PLAIN,
         "clips": [
             {"name": "läuft", "loop": True},
             {"name": "攻撃", "loop": False},
