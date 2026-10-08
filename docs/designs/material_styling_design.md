@@ -649,13 +649,34 @@ explicit one is, even when an explicit option replaces it (the existing reuse
 contract). Explicit options combine with reused ones as D-24 sets out;
 `--no-materials` drops a reused library.
 
+*Clarified on MAT-6's review:* under schema `moskophoros.sheet/3`,
+`settings.style` is `reduce`, `palette`, `materials` and `shade_range`, in that
+order. `materials` is `null`, or the library inline: its `source` base name and
+`sha256`, then its `ramps`, `default` (`null` for none) and `materials`, the
+named ones in name order. `shade_range` is exactly two JSON integers (not
+booleans or floats) with `0 ≤ lo < hi ≤ 255`, validated whenever a `/3` sheet
+is reused, even when the library is `null`, dropped or replaced; only `/1` and
+`/2` sheets obtain the default. The original reused library is validated
+against its original inline palette before any override, and the final library
+against the final palette: an invalid recorded library is an error even when
+it is dropped or replaced, a discarded library is never checked against a
+replacement palette, and a valid one may be dropped with `--no-materials`
+beside `--no-palette`. The sheet PNG and previews of the four existing looks
+stay byte-identical without a library; their JSON changes only by the schema,
+these `style` fields and the fingerprint.
+
 ### Failure behaviour
 
 - Unreadable or malformed library, an index outside the palette, a library
   without a palette: usage errors (exit 2) before Blender starts, naming the
   file and material (D-6, D-8).
 - A model material absent from the library, or a library entry the model never
-  uses: not an error. The first is a warning naming the material and whether
+  uses: not an error. (*Clarified on MAT-6's review:* the warnings apply
+  whenever a library is active, including a reused one. Each distinct name warns
+  once with its actual outcome, so a `BLEND` material keeps the ordinary look
+  even beside a default ramp. The count of parts with no identity comes from the
+  selected scene's primitive records, not the decoded no-identity class, which
+  also holds named `BLEND` materials.) The first is a warning naming the material and whether
   it took the default ramp or the ordinary look (D-9, D-17); the second, like
   an unused named ramp, is silent (D-15).
 - An entry or default naming a ramp the library does not define: a usage
