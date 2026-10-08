@@ -194,7 +194,12 @@ def test_two_mode_runs_give_byte_identical_outputs(capsys, found, model, tmp_pat
         assert (status, err) == (0, "")
     assert listing(first) == listing(second)
     description = json.loads((first / "hero.json").read_text())
-    assert description["settings"]["style"] == {"reduce": "mode", "palette": None}
+    assert description["settings"]["style"] == {
+        "reduce": "mode",
+        "palette": None,
+        "materials": None,
+        "shade_range": list(backend.DEFAULT_SHADE_RANGE),
+    }
 
 
 def test_settings_reuse_with_an_explicit_override(capsys, found, model, earlier, out):
