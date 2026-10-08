@@ -198,9 +198,176 @@ def reduce_blocks_mode(pixels, factor):
     return result.reshape(rows, columns, 4)
 
 
-def _blocks(pixels, factor):
-    """Check `reduce_blocks`'s arguments; return the image as `int64` blocks
-    of shape `(H, s, W, s, 4)`."""
+def map_ramps(
+    pixels, identity, shade, factor, ramps, colors, lo, hi, *, by_mode, pool=None
+):
+    """Give each block of a supersampled frame its winning material's ramp
+    entry, following design §Stylize (Material ramps).
+
+    `pixels` is an `(H·s)×(W·s)` RGBA image, `identity` an integer array and
+    `shade` a `uint8` array of the same height and width. `ramps` holds, for
+    each identity index, a tuple of indices into the palette `colors`, or
+    `None` where that identity takes the ordinary look. `[lo, hi]` is the
+    shade range, `0 ≤ lo < hi ≤ 255`. Equal identity indices are one identity;
+    `pool`, if given, maps each index to the one it is pooled into (materials
+    sharing a name are one identity), and a tie between identities goes to the
+    smaller pooled index.
+
+    Returns `(result, mapped)`: `mapped`, an `H×W` boolean array, marks the
+    blocks that took a ramp entry, and `result`, `H×W×4`, holds that entry's
+    colour with alpha 255 there and `(0, 0, 0, 0)` elsewhere. Every other
+    block, including a block of no vote and one whose winner has no ramp, is
+    left to the caller's ordinary look; coverage is `reduce_blocks`'s.
+
+    Coverage, identity votes, shade sums, bands and `by_mode` tie comparisons
+    are exact integer arithmetic. Nothing is changed in place.
+
+    Raises `TypeError` and `ValueError` for malformed arguments, as
+    `reduce_blocks` does.
+    """
+    factor = _check_image(pixels, factor)
+    palette = np.asarray(validate_colors(colors, source="palette"), dtype=np.uint8)
+    height, width = pixels.shape[:2]
+    for name, array in (("identity", identity), ("shade", shade)):
+        if not isinstance(array, np.ndarray):
+            raise TypeError(f"{name} must be a NumPy array")
+        if array.shape != (height, width):
+            raise ValueError(
+                f"{name} must have shape {(height, width)}, not {array.shape}"
+            )
+    if not np.issubdtype(identity.dtype, np.integer):
+        raise TypeError(f"identity must be an integer array, not {identity.dtype}")
+    if shade.dtype != np.uint8:
+        raise TypeError(f"shade must be uint8, not {shade.dtype}")
+    for bound in (lo, hi):
+        if isinstance(bound, bool) or not isinstance(bound, int | np.integer):
+            raise TypeError(f"the shade range must be integers, not {bound!r}")
+    lo, hi = int(lo), int(hi)
+    if not 0 <= lo < hi <= 255:
+        raise ValueError(
+            f"the shade range must satisfy 0 <= lo < hi <= 255: {lo}, {hi}"
+        )
+    identities = len(ramps)
+    for ramp in ramps:
+        if ramp is None:
+            continue
+        if len(ramp) == 0 or not all(0 <= index < len(palette) for index in ramp):
+            raise ValueError(
+                f"a ramp must be non-empty indices into the {len(palette)}-colour "
+                f"palette, not {tuple(ramp)}"
+            )
+    if identity.min() < -1 or identity.max() >= identities:
+        raise ValueError(f"identity must hold -1 or an index below {identities}")
+    if pool is not None:
+        pool = np.asarray(pool, dtype=np.int64)
+        if pool.shape != (identities,) or pool.min() < 0 or pool.max() >= identities:
+            raise ValueError("pool must hold one identity index for each identity")
+        identity = np.where(identity < 0, -1, pool[np.maximum(identity, 0)])
+
+    rows, columns = height // factor, width // factor
+    count = rows * columns
+    alpha = _by_block(pixels[..., 3], factor)
+    ident = _by_block(identity, factor)
+    shades = _by_block(shade, factor)
+    result = np.zeros((count, 4), dtype=np.uint8)
+    mapped = np.zeros(count, dtype=bool)
+
+    # Identity: each pixel with an identity votes with its colour alpha.
+    voting = (alpha > 0) & (ident >= 0)
+    covered = ~_transparent(alpha.sum(axis=1), factor)
+    if voting.any():
+        block = np.broadcast_to(np.arange(count)[:, np.newaxis], ident.shape)
+        keys = block[voting] * identities + ident[voting]
+        order = np.argsort(keys, kind="stable")
+        keys, weights = keys[order], alpha[voting][order]
+        starts = np.flatnonzero(np.diff(keys, prepend=-1))
+        votes = np.add.reduceat(weights, starts)
+        keys = keys[starts]
+        owner, candidate = keys // identities, keys % identities
+        # By block, then most votes, then the smallest identity index.
+        ranked = np.lexsort((candidate, -votes, owner))
+        first = ranked[np.flatnonzero(np.diff(owner[ranked], prepend=-1))]
+        winner = np.full(count, -1, dtype=np.int64)
+        winner[owner[first]] = candidate[first]
+        winner[~covered] = -1
+        for index, ramp in enumerate(ramps):
+            if ramp is None:
+                continue
+            chosen = np.flatnonzero(winner == index)
+            if len(chosen) == 0:
+                continue
+            own = (ident[chosen] == index) & (alpha[chosen] > 0)
+            entries = _ramp_entries(
+                alpha[chosen] * own,
+                shades[chosen],
+                np.asarray(ramp, dtype=np.int64),
+                lo,
+                hi,
+                len(palette),
+                by_mode,
+            )
+            result[chosen, :3] = palette[entries]
+            result[chosen, 3] = 255
+            mapped[chosen] = True
+    return result.reshape(rows, columns, 4), mapped.reshape(rows, columns)
+
+
+# The most tied (block, entry) candidates compared against a ramp at once.
+_TIE_BATCH = 4096
+
+
+def _ramp_entries(weight, shade, ramp, lo, hi, size, by_mode):
+    """The palette index of each block of one winning identity.
+
+    `weight` and `shade` hold, for each block, the colour alpha and shade of
+    each of its pixels, the weight 0 where a pixel is not the winner's.
+    Every block has some weight. `ramp` holds N palette indices.
+    """
+    bands, span = len(ramp), hi - lo + 1
+    total = weight.sum(axis=1)
+    mean = (weight * shade).sum(axis=1)
+    if not by_mode:
+        # Clamp the mean, not its samples: the band is exact in W and A.
+        clamped = np.minimum(np.maximum(mean, lo * total), hi * total)
+        return ramp[((clamped - lo * total) * bands) // (span * total)]
+
+    band = ((np.clip(shade, lo, hi) - lo) * bands) // span
+    voting = weight > 0
+    block = np.broadcast_to(np.arange(len(weight))[:, np.newaxis], weight.shape)
+    keys = block[voting] * size + ramp[band[voting]]
+    order = np.argsort(keys, kind="stable")
+    keys, weights = keys[order], weight[voting][order]
+    starts = np.flatnonzero(np.diff(keys, prepend=-1))
+    votes = np.add.reduceat(weights, starts)
+    keys = keys[starts]
+    owner, entry = keys // size, keys % size
+
+    # The leading entries of each block: more than one is a tie.
+    firsts = np.flatnonzero(np.diff(owner, prepend=-1))
+    run = np.diff(np.append(firsts, len(owner)))
+    leading = votes == np.repeat(np.maximum.reduceat(votes, firsts), run)
+    shared = np.repeat(np.add.reduceat(leading.astype(np.int64), firsts), run) > 1
+    distance = np.zeros(len(owner), dtype=np.int64)
+    tied = np.flatnonzero(leading & shared)
+    centres = 2 * bands * lo + (2 * np.arange(bands) + 1) * span
+    for start in range(0, len(tied), _TIE_BATCH):
+        part = tied[start : start + _TIE_BATCH]
+        # |2·N·W − centre·A| is the distance from the unrounded mean W / A to
+        # a band centre, scaled by 2·N·A. An entry repeated in the ramp has
+        # several bands, and every one counts, voted for or not.
+        gaps = np.abs(
+            2 * bands * mean[owner[part], np.newaxis]
+            - centres * total[owner[part], np.newaxis]
+        )
+        gaps[ramp != entry[part, np.newaxis]] = np.iinfo(np.int64).max
+        distance[part] = gaps.min(axis=1)
+    # By block, then most votes, nearest a band, smallest palette index.
+    ranked = np.lexsort((entry, distance, -votes, owner))
+    return entry[ranked[np.flatnonzero(np.diff(owner[ranked], prepend=-1))]]
+
+
+def _check_image(pixels, factor):
+    """Check a block reduction's arguments; return `factor` as an `int`."""
     if not isinstance(pixels, np.ndarray):
         raise TypeError(f"pixels must be a NumPy array, not {type(pixels).__name__}")
     if pixels.dtype != np.uint8:
@@ -221,8 +388,28 @@ def _blocks(pixels, factor):
         raise ValueError(
             f"a {width}x{height} image does not divide into {factor}x{factor} blocks"
         )
+    return factor
+
+
+def _blocks(pixels, factor):
+    """Check `reduce_blocks`'s arguments; return the image as `int64` blocks
+    of shape `(H, s, W, s, 4)`."""
+    factor = _check_image(pixels, factor)
+    height, width = pixels.shape[:2]
     return pixels.astype(np.int64).reshape(
         height // factor, factor, width // factor, factor, 4
+    )
+
+
+def _by_block(plane, factor):
+    """An `(H·s)×(W·s)` plane as one row of `s²` `int64` values for each
+    block, the blocks in raster order."""
+    height, width = plane.shape
+    return (
+        plane.astype(np.int64)
+        .reshape(height // factor, factor, width // factor, factor)
+        .transpose(0, 2, 1, 3)
+        .reshape(-1, factor * factor)
     )
 
 
