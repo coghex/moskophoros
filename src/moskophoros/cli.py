@@ -514,8 +514,8 @@ def _command(options):
         # Loaded one at a time as stylize reduces them, so only one
         # supersampled frame is held at once.
         captured = (
-            sampling.ImageFrame(address, imageops.load_png(buffers["color"]), metadata)
-            for address, buffers in rendered.buffers.items()
+            _load_frame(address, paths, metadata)
+            for address, paths in rendered.buffers.items()
         )
         reduce = {"plain": stylize.plain, "mode": stylize.mode}[options.reduce]
         colors = options.palette.colors if options.palette is not None else None
@@ -548,6 +548,13 @@ def _command(options):
             preview_paths, (preview.gif for preview in previews), strict=True
         )
     publish(outputs)
+
+
+def _load_frame(address, paths, metadata):
+    """The captured frame at `address` with every named buffer in `paths`:
+    `color` as its pixels, and each other buffer under its own name."""
+    buffers = {name: imageops.load_png(path) for name, path in paths.items()}
+    return sampling.ImageFrame(address, buffers.pop("color"), metadata, buffers)
 
 
 def _read_source(path):
