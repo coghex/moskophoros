@@ -720,6 +720,71 @@ processes one supersampled frame at a time. Palette data never enters capture
 settings or jobs. Without a palette, both reductions produce the same bytes
 as before palette mapping was added.
 
+#### Material libraries
+
+A material library defines each material's look once, as a ramp of indices
+into the shared palette, for reuse across subjects (owner decisions
+2026-10-07, D-6, D-7, D-8, D-15 and D-17 in
+[the material design](designs/material_styling_design.md#decisions)). The
+standalone `materials.read_library(path, colors)` library function reads only
+the named file and validates it against the palette `colors`.
+`materials.read_library_bytes(data, colors, source=...)` parses a byte
+snapshot, so a caller can hash exactly the bytes it parsed, and
+`materials.validate_library(document, colors, source=...)` validates an
+already-parsed library without reading anything or changing its input. All
+three return the same result for the same library. No command option reads a
+library yet; resolving materials and mapping frames onto ramps are separate,
+later slices.
+
+A library is a UTF-8 JSON object:
+
+```json
+{
+  "schema": "moskophoros.materials/1",
+  "ramps": {
+    "metal": [12, 13, 14, 15, 47],
+    "cloth": [80, 81, 82]
+  },
+  "default": "cloth",
+  "materials": {
+    "steel":     {"uses": "metal"},
+    "cloth.red": {"ramp": [80, 81, 82]},
+    "face":      "ordinary"
+  }
+}
+```
+
+- `schema` is exactly `moskophoros.materials/1`. `schema`, `ramps` and
+  `materials` are required; `ramps` and `materials` are objects and may be
+  empty. No other field is allowed at any level.
+- `ramps` holds named generic ramps. A ramp is a non-empty list of at most
+  256 JSON integers, never booleans or numbers such as `3.0`, each an index
+  from `0` to one less than the palette's length. A one-entry ramp is a flat
+  material; indices may repeat. "Darkest first", band 0 being the least
+  light, is the authoring convention and is not checked.
+- `default`, optional, names one ramp in `ramps`; `null` is not allowed.
+- Each `materials` entry is exactly one of `{"ramp": [...]}`, its own ramp;
+  `{"uses": NAME}`, a ramp in `ramps`; or the string `"ordinary"`.
+- Names are non-empty strings, kept and compared exactly, case and
+  whitespace included. A reference to an undefined ramp is an error. Entries
+  and ramps no model uses are valid and not reported.
+
+The result is an immutable `materials.Library`: `ramps` maps each name to a
+tuple of indices, `default` is a ramp name or `None`, and `materials` maps
+each name to a `materials.Entry` holding its own `ramp` or the name it
+`uses`; an entry with neither is `"ordinary"`. Both mappings are read-only
+and ordered by name, so the result does not depend on the file's key order,
+and checks run in name order, so neither does the first error reported.
+
+Every failure raises `materials.LibraryError`, naming the file or
+caller-supplied source and the problem: unreadable files, invalid UTF-8,
+malformed JSON, non-JSON constants such as `NaN`, repeated keys, a wrong or
+missing field, an unknown field, a value of the wrong type, an empty or
+oversized ramp, a non-integer or out-of-palette index, an entry of none or
+several forms, an empty name, or a reference to an undefined ramp. Errors
+after parsing name the field, ramp or material and the position in a ramp,
+such as `materials["steel"].ramp[2]`. The module neither prints nor exits.
+
 ### Cleanup (slice 1: none)
 
 A stage that receives addressed frames and returns them. Slice 1 passes them
@@ -877,6 +942,7 @@ src/moskophoros/
   export.py               sheet, JSON, previews
   imageops.py             shared image operations
   palette.py              ordered exact RGB palette reading and validation
+  materials.py            material library reading and validation
 tests/
 ```
 
