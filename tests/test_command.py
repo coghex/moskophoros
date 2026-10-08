@@ -951,6 +951,44 @@ def test_a_bad_model_is_an_input_error(setup, capsys):
     assert setup.calls() == []
 
 
+@pytest.mark.parametrize(
+    ("edit", "problem"),
+    [
+        ("name", "material 0's name is not a string"),
+        ("material", "mesh 0's primitive 0's material names no material"),
+        ("mesh", "node 0's mesh names mesh True, which does not exist"),
+    ],
+)
+def test_bad_material_input_fails_before_blender_without_a_library(
+    setup, capsys, monkeypatch, edit, problem
+):
+    earlier = earlier_outputs(setup, *EARLIER)
+    model = GlbWriter()
+    model.scene([model.node(mesh=True)])
+    model.document["materials"] = [{"name": "steel"}]
+    primitive = model.document["meshes"][0]["primitives"][0]
+    primitive["material"] = 0
+    if edit == "name":
+        model.document["materials"][0]["name"] = None
+    elif edit == "material":
+        primitive["material"] = None
+    else:
+        model.document["nodes"][0]["mesh"] = True
+    setup.model.write_bytes(model.to_bytes())
+
+    def unexpected_blender(*args, **kwargs):
+        pytest.fail("invalid material input reached Blender discovery or capture")
+
+    monkeypatch.setattr(blender, "locate", unexpected_blender)
+    monkeypatch.setattr(blender, "run_phase", unexpected_blender)
+    status, out, err = run(capsys, setup.argv())
+    assert status == 3
+    assert out == ""
+    assert err == f"moskophoros: error: {setup.model}: {problem}\n"
+    assert setup.listing() == earlier
+    assert setup.calls() == []
+
+
 def test_an_overflowing_fixed_configuration_is_exit_4(setup, capsys):
     earlier = earlier_outputs(setup, *EARLIER)
     status, _, err = run(capsys, setup.argv("--ppm", "100"))

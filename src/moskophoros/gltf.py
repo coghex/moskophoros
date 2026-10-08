@@ -52,11 +52,28 @@ class Clip:
 
 
 @dataclass(frozen=True)
+class PrimitiveMaterial:
+    """One primitive instance, with original glTF indices and material data.
+
+    Shared meshes have one record per node instance. Empty/absent names and
+    missing materials have name None; alpha_mode preserves any JSON value.
+    """
+
+    node_index: int
+    mesh_index: int
+    primitive_index: int
+    material_index: int | None
+    name: str | None
+    alpha_mode: object
+
+
+@dataclass(frozen=True)
 class Subject:
     path: Path
     name: str
     scene_index: int
     clips: tuple[Clip, ...]
+    primitive_materials: tuple[PrimitiveMaterial, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -73,6 +90,19 @@ def read_glb(path):
     except OSError as error:
         raise InputError(path, f"cannot be read: {error.strerror or error}") from None
     return _Reader(path, _document(path, data)).subject()
+
+
+def read_material_identities(document, *, path="<glTF>"):
+    """Pure JSON reader: selected-scene primitives in node/primitive order.
+
+    Select the document's scene (default 0), including descendants. Validate
+    structure, references and material names document-wide, as read_glb does.
+    `path` is only a diagnostic label; no file is read or written.
+    """
+    reader = _Reader(path, document)
+    scenes, nodes, scene_index = reader.scene_nodes()
+    reader.parents(nodes)
+    return reader.material_identities(nodes, scenes[scene_index].get("nodes", []))
 
 
 def select_clips(subject, clip_names, once_names):
@@ -186,17 +216,25 @@ class _Reader:
             self.fail(f"{what} names {target} {value!r}, which does not exist")
         return value
 
-    def subject(self):
+    def scene_nodes(self):
         scenes = self.array(self.document, "scenes", "scenes")
         if not scenes:
             self.fail("has no scenes")
         nodes = self.objects(self.array(self.document, "nodes", "nodes"), "node")
         scene_index = self.document.get("scene", 0)
         self.index(scene_index, len(scenes), "the scene property", "scene")
-        for i, scene in enumerate(self.objects(scenes, "scene")):
+        scenes = self.objects(scenes, "scene")
+        for i, scene in enumerate(scenes):
             for node in self.array(scene, "nodes", f"scene {i}'s nodes"):
                 self.index(node, len(nodes), f"scene {i}", "node")
+        return scenes, nodes, scene_index
+
+    def subject(self):
+        scenes, nodes, scene_index = self.scene_nodes()
         parents = self.parents(nodes)
+        primitive_materials = self.material_identities(
+            nodes, scenes[scene_index].get("nodes", [])
+        )
         names = []
         for i, node in enumerate(nodes):
             name = node.get("name")
@@ -209,7 +247,69 @@ class _Reader:
             clips = self.clips(animations, accessors, len(nodes), parents, names)
         else:
             clips = (Clip(None, STATIC_CLIP, 0.0, 0.0, ()),)
-        return Subject(self.path, self.path.stem, scene_index, clips)
+        return Subject(
+            self.path, self.path.stem, scene_index, clips, primitive_materials
+        )
+
+    def material_identities(self, nodes, roots):
+        materials = self.objects(
+            self.array(self.document, "materials", "materials"), "material"
+        )
+        for i, material in enumerate(materials):
+            if "name" in material and not isinstance(material["name"], str):
+                self.fail(f"material {i}'s name is not a string")
+        meshes = self.objects(self.array(self.document, "meshes", "meshes"), "mesh")
+        mesh_materials = []
+        for i, mesh in enumerate(meshes):
+            primitives = self.objects(
+                self.array(mesh, "primitives", f"mesh {i}'s primitives"),
+                f"mesh {i}'s primitive",
+            )
+            mesh_materials.append(
+                tuple(
+                    self.index(
+                        primitive["material"],
+                        len(materials),
+                        f"mesh {i}'s primitive {p}'s material",
+                        "material",
+                    )
+                    if "material" in primitive
+                    else None
+                    for p, primitive in enumerate(primitives)
+                )
+            )
+        for i, node in enumerate(nodes):
+            if "mesh" in node:
+                self.index(node["mesh"], len(meshes), f"node {i}'s mesh", "mesh")
+
+        reached = set()
+        pending = list(roots)
+        while pending:
+            node_index = pending.pop()
+            if node_index not in reached:
+                reached.add(node_index)
+                pending.extend(nodes[node_index].get("children", []))
+        records = []
+        for node_index in sorted(reached):
+            node = nodes[node_index]
+            if "mesh" not in node:
+                continue
+            mesh_index = node["mesh"]
+            for primitive_index, material_index in enumerate(
+                mesh_materials[mesh_index]
+            ):
+                material = {} if material_index is None else materials[material_index]
+                records.append(
+                    PrimitiveMaterial(
+                        node_index,
+                        mesh_index,
+                        primitive_index,
+                        material_index,
+                        material.get("name") or None,
+                        material.get("alphaMode", "OPAQUE"),
+                    )
+                )
+        return tuple(records)
 
     def parents(self, nodes):
         """Map each child to its parent, failing unless the nodes form a forest."""
