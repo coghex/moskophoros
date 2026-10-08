@@ -385,6 +385,130 @@ cannot meet the shared-sample ID and shade contract, or D-25's signal, the
 spike stops and brings the gap to the owner; MAT-3 does not proceed on a
 relaxed contract without a new decision.
 
+#### Spike record (D-10)
+
+Recorded 2026-10-08 by MAT-3's solver ([#66]), before any capture change. The
+spike's code is not delivered. Blender 5.2.2 LTS on macOS (Apple silicon);
+Cycles on the CPU.
+
+**Fixtures** (generated glTF, one node each):
+
+- *edges*: two materials meeting along a vertical edge; a strip of a third
+  0.01 m wide (0.4 px at 40 px/m); a `MASK` material (an 8×8 nearest-filtered
+  texture of cells with alpha 0 or 255, cutoff 0.5) 0.2 m in front of a
+  fourth; a cube of a fifth in front of a sixth; two materials both named
+  `steel`; an unnamed material; a primitive without a material.
+- *form*: a floor (y = 0, 3 × 2.5 m), a wall meeting it at a 90° crease
+  (z = −1, 1.5 m high) and an isolated smooth UV sphere (radius 0.35 m,
+  24 × 48 segments, centre (0.7, 0.75, 0.4)), all one grey.
+- *appearance*: the *form* geometry with materials that differ in base
+  colour, base-colour texture, metallic (0, 0.5, 1) and roughness (0 to 0.3).
+- *many*: 256 quads, each its own material.
+
+**Render settings:** render jobs as the command builds them, one direction,
+pitch 30° (also 0° and 60°), 40 px/m (also 20 and 80), cell 128 × 112
+(scaled with px/m), supersample 1 (also 4 and 16); eight directions for the
+sequence checks.
+
+**Measurement regions** (from the ID buffer, in output pixels): *flat* is
+floor or wall at least 12 px from the crease, 8 px from the sphere and 3 px
+from the background; *crease* is floor or wall within max(1, s/2)
+supersampled pixels of the floor–wall boundary, with the same exclusions;
+*sphere* is the sphere's pixels, split into centre, middle and rim by
+distance to its edge.
+
+**Candidates.**
+
+- *Workbench cavity* (flat lighting, one uniform grey of 0.214 linear, 128
+  in sRGB, since on white a ridge cannot get lighter than a flat surface;
+  specular off; antialiasing off; ridge and valley factors 2.0 for
+  curvature, 2.5 for cavity). Both methods are screen-space, deterministic
+  and identical across *appearance*. **Not chosen.**
+  - `SCREEN` (curvature): flat exactly 127; the crease a one-pixel line at
+    0; the sphere 156 at supersample 1, 136 at 4 and 130 at 16, and 177, 156
+    and 143 at 20, 40 and 80 px/m; a dark ring along the sphere's silhouette
+    whose mean varies from 8 to 147 with the direction. It measures the
+    image, not the form: view-dependent enhancement.
+  - `WORLD` (screen-space ambient occlusion, 0.2 m, 16 samples): stable with
+    supersample and view (sphere about 147; crease 94, 83 and 72 at 20, 40
+    and 80 px/m), but noisy: a flat surface's pixels vary by ±4 to 7 and
+    straddle two bands.
+- *Cycles, world-space* (**chosen**, below).
+
+**Chosen method.** After each frame's unchanged colour render, one Cycles
+render in which every material's surface is temporarily replaced by an
+emission whose colour carries the frame's ID and shade, so both come from
+**one shared camera sample per pixel**; then every setting and material is
+restored exactly before the next colour render.
+
+- Cycles fixed parameters: CPU; 1 sample per pixel; adaptive sampling off;
+  seed 0, not animated; pixel filter Box, width 0.01 px (the sample sits at
+  the pixel centre); every light bounce 0; transparent bounces 8; denoising
+  off; film transparent; view transform `Standard`, look `None`, exposure 0,
+  gamma 1, sRGB display; dither 0.
+- **Shade** (linear, clamped to [0, 1]):
+  `0.25 · AO_out + 1.0 · (1 − AO_in)`, where `AO_out` and `AO_in` are
+  Cycles Ambient Occlusion nodes with distance 0.3 m and 64 samples, looking
+  outside and inside the surface respectively (not local-only). `AO_out`
+  darkens creases and nooks; `1 − AO_in`, how much surface lies within
+  0.3 m behind the point, lightens convex curves. A flat open surface is
+  exactly 0.25 linear, 137 encoded. No light, no material property and no
+  direction enters it. Encoded as the colour is (sRGB, `Standard`), with
+  `R = G = B`, alpha 255 where a surface was sampled and 0 elsewhere.
+- **ID:** a 16-bit value in two bytes; 0 with alpha 0 is background; the
+  spike assigned 1, 2, … in material order. All 256 values of each byte
+  come out exact: the 256 materials of *many* give exactly their 256 values
+  and no other.
+
+**Measurements** (shade bytes of the chosen method on *form*: mean ± standard
+deviation, 5th to 95th percentile, and the band of the mean for N = 3, 4 and
+5 over the range chosen below):
+
+| Setting | Flat | Crease | Sphere (centre) | Bands N = 3 / 4 / 5 (crease, flat, sphere) |
+|---|---|---|---|---|
+| s = 1, 40 px/m, 30° | 137 ± 0 | 106.8 ± 5.0 (101–115) | 175.7 ± 4.5 (168–185) | 0,1,2 / 0,1,3 / 1,2,4 |
+| s = 4 | 137 ± 0 | 102.1 ± 2.9 (98–106) | 175.5 ± 5.2 (168–185) | 0,1,2 / 0,1,3 / 0,2,4 |
+| s = 16 | 137 ± 0 | 101.3 ± 2.8 (96–106) | 176.0 ± 4.8 (168–182) | 0,1,2 / 0,1,3 / 0,2,4 |
+| 20 px/m | 137 ± 0 | 112.9 ± 8.0 (103–126) | 174.5 ± 2.6 (171–177) | 0,1,2 / **1,1**,3 / 1,2,4 |
+| 80 px/m | 137 ± 0 | 103.1 ± 3.2 (98–109) | 174.5 ± 4.5 (165–179) | 0,1,2 / 0,1,3 / 0,2,4 |
+| pitch 60° | 137 ± 0 | 106.8 ± 6.2 (98–116) | 175.8 ± 4.2 (171–185) | 0,1,2 / 0,1,3 / 1,2,4 |
+| pitch 0° | 134.5 ± 6.2 (wall) | not visible | 176.2 ± 2.5 (171–179) | –, 1, 2 / –, 1, 3 / –, 2, 4 |
+
+The crease's value depends on how much of its 0.3 m darkening a pixel
+covers, so at 20 px/m (5 cm pixels) its mean shares N = 4's band with flat;
+the sphere's rim and middle match its centre within 1.
+
+**Other cases.**
+
+- *Determinism:* ID and shade pixels identical on repeat and with 1, 3 and
+  the default number of threads. Cycles' own PNG files carry render-time
+  text metadata, so the delivery writes the ID and shade PNGs itself from
+  the pixels.
+- *Appearance:* ID and shade pixels identical for *form* and *appearance*.
+- *Edges, supersample 1 and 16:* each pixel's ID is the material an
+  unfiltered flat Workbench render shows there, except on the primitive
+  without a material: Cycles renders an empty material slot mostly
+  transparent, with a few stray values, so the pass needs a stand-in
+  material for it. The 0.01 m strip is missed at supersample 1 and present
+  at 16, as accepted. The importer renames duplicate and unnamed materials
+  (`steel.001`, `Material_6`), so the delivery names materials by glTF index
+  in its private copy.
+- *Colour independence:* with every setting restored exactly, all colour
+  frames of two eight-direction sequences are byte-identical with and
+  without the auxiliary renders before them.
+- *Time:* about 1 s per frame at 128 × 112 and 4 s at 2048 × 1792
+  (supersample 16).
+
+**Default shade range: `[84, 191]`.** For N = 3 its band edges fall at the
+midpoints between the measured crease (about 102), flat (137) and sphere
+(about 176) values; the same range keeps the three apart for N = 3 and 5 at
+every setting above, and for N = 4 at all but 20 px/m.
+
+**Outcome:** the chosen method is world-space, not screen-space, and meets
+the shared-sample ID and shade contract and D-25's signal on these
+fixtures. **One finding blocks MAT-3:** the colour capture does not cut out
+`MASK` materials ([Q-26](#q-26-how-do-mask-cutouts-relate-between-the-colour-and-the-id-and-shade-buffers)).
+
 **Provenance.** The result's `backend` reports the shade technique and the
 parameters above, and the sheet's `generator` gains them beside `renderer`
 and `studio_light` (`export.generator`), so they are in the fingerprint and
@@ -1076,6 +1200,37 @@ is very flat; B alone ignores creases. C gives a soft top-to-bottom
 gradient plus contact shading, neither of which a live directional light
 supplies, so nothing is applied twice. Its technique and determinism are
 D-10's spike. Affects MAT-3, MAT-5 and MAT-7.
+
+### Q-26. How do `MASK` cutouts relate between the colour and the ID and shade buffers?
+
+**Open; blocks MAT-3.** Found by the D-10 spike (2026-10-08). §Capture and
+MAT-3 require the ID and shade passes to keep `MASK` cutouts "so surfaces
+behind a hole are identified as in the colour", assuming the colour discards
+them. It does not: Workbench ignores the alpha the glTF importer builds for a
+`MASK` material, so a transparent texel renders as the texture's colour,
+opaque (the *edges* fixture's holes are `(54, 54, 54, 255)`), and the
+material behind never shows. Setting the legacy `blend_method` to `CLIP` or
+`BLEND`, or `surface_render_method` to `BLENDED`, changes nothing.
+
+- **A. Match the colour as captured:** the ID and shade show the `MASK`
+  material over its whole surface, as the colour does. Every pixel's
+  identity is the surface the colour shows; no surface behind a hole is
+  identified. Contradicts the literal "cutouts are kept".
+- **B. Cut out the ID and shade only:** surfaces behind a hole are
+  identified, while the colour there shows the `MASK` material's
+  transparent texels, so those pixels vote for one material and show
+  another's colour.
+- **C. Make the colour honour cutouts first:** a separate change that alters
+  existing sheets of `MASK` models (no longer byte-identical) and needs its
+  own technique, since Workbench settings alone do not do it; the ID and
+  shade then keep the same cutouts.
+
+**Recommendation: A for MAT-3, and C as its own issue.** A keeps every
+pixel's identity the surface the colour shows, which is what a block's vote
+needs; B makes those pixels disagree. The colour ignoring cutouts is a
+defect of its own, for foliage, hair cards and fences; when C lands, the ID
+and shade passes keep the same cutouts, which the Cycles method can do from
+the importer's alpha. Affects MAT-3, and through it MAT-5 and MAT-7.
 
 ## Verification strategy
 
