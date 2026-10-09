@@ -29,10 +29,22 @@ A run writes, beside each other:
 - `hero.<clip>.gif`, an animated preview of each clip in every direction,
   unless `--no-preview` is given.
 
+`--cell WxH` sets the size of every frame. Unless `--ppm N` gives the scale or
+`--settings-from` reuses one, the model is scaled to fit the cell, so a smaller
+cell gives smaller, chunkier sprites. With neither `--cell` nor `--ppm`, and no
+reused settings, the cell is 64×64. `--ppm` alone sizes the cell to fit the
+model instead, and `--cell` with `--ppm` fixes both. For 48×48 frames:
+
+```
+moskophoros --clip walk --cell 48x48 hero.glb out/hero-small.png
+```
+
 Outputs are published only when the whole run succeeds, so a failed run leaves
 earlier outputs as they were. `--settings-from hero.json` reuses an earlier
 sheet's view, scale, cell, ground point and style, so new clips line up with
-it. `--reduce mode` keeps the most common colour in each supersampled block.
+it: the scale, cell and ground pixel are fixed rather than fitted again, and a
+new frame that does not fit the cell is an overflow error (exit 4).
+`--reduce mode` keeps the most common colour in each supersampled block.
 `--palette colours.hex` (also `.gpl` or `.png`) adds palette mapping: plain maps
 after averaging; mode maps before voting, so nearby shades pool their votes.
 An earlier sheet's palette is reused from its JSON without the original file;

@@ -45,7 +45,7 @@ moskophoros [options] <infile.glb> <outfile.png>
 | `--once NAME` | none | Repeatable. Marks a selected clip as one-shot; all others loop. |
 | `--fps N` | `12` | Target sampling rate, greater than 0. |
 | `--ppm N` | auto | Pixels per meter, greater than 0. |
-| `--cell WxH` | auto | Cell size in pixels, each 1 to 4096. |
+| `--cell WxH` | reused by `--settings-from`, else fitted to the model with `--ppm`, else 64×64 | Cell size in pixels, each 1 to 4096. Without a given or reused `--ppm`, the model is scaled to fit the cell. See [Scale and ground point](#scale-and-ground-point). |
 | `--ground X,Y,Z` | `0,0,0` | Ground point in subject coordinates, meters. |
 | `--ground-px X,Y` | auto | Cell pixel corner the ground point lands on. |
 | `--root-motion MODE` | `error` | `error` or `keep`. See [Root motion](#root-motion). |
