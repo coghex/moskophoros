@@ -518,8 +518,14 @@ def test_help_names_every_option_with_its_default(capsys, flag):
     text = " ".join(out.split())
     entries = sorted((text.index(f" {entry} "), entry) for entry in DESIGN_OPTIONS)
     ends = [start for start, _ in entries[1:]] + [len(text)]
+    help_texts = {}
     for (start, entry), end in zip(entries, ends, strict=True):
+        help_texts[entry] = text[start:end]
         assert f"(default: {DESIGN_OPTIONS[entry]})" in text[start:end], entry
+    assert (
+        "unless --ppm is given or reused, the model is scaled to fit the cell"
+        in help_texts["--cell WxH"]
+    )
 
 
 # No effects
