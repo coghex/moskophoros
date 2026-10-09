@@ -1187,7 +1187,10 @@ def _build_parser():
         "WxH",
         _cell,
         None,
-        "cell size in pixels, each 1 to 4096 (default: auto)",
+        "cell size in pixels, each 1 to 4096; unless --ppm is given or reused, "
+        "the model is scaled to fit the cell, so a smaller cell gives smaller, "
+        "chunkier sprites; --cell with --ppm fixes both (default: reused by "
+        "--settings-from, else fitted to the model with --ppm, else 64x64)",
     )
     single(
         "--ground",

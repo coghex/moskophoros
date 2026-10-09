@@ -492,7 +492,8 @@ DESIGN_OPTIONS = {
     "--once NAME": "none",
     "--fps N": "12",
     "--ppm N": "auto",
-    "--cell WxH": "auto",
+    "--cell WxH": "reused by --settings-from, else fitted to the model with --ppm, "
+    "else 64x64",
     "--ground X,Y,Z": "0,0,0",
     "--ground-px X,Y": "auto",
     "--root-motion MODE": "error",
