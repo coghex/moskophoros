@@ -31,7 +31,7 @@ probably ready, go ahead and mark it so if you agree". The agent agreed:
 - [x] SET-1. Load layered YAML settings for the existing options — [#84]
 - [x] SET-2. Make the global shading values settings and command-line options — [#85]
 - [x] SET-3. Let each material override the shading values — [#86]
-- [ ] SET-5. Set a clip's frame count, retiming it to the fps
+- [x] SET-5. Set a clip's frame count, retiming it to the fps — [#87]
 - [deferred] SET-4. Recolour shading without a re-render. Waits until iteration speed becomes a problem and the owner asks for it (D-18).
 
 ## Epic contract
