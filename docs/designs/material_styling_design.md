@@ -328,7 +328,9 @@ written as an 8-bit RGBA PNG with `R = G = B`, alpha 255 where a surface was
 sampled and 0 elsewhere; the shade value is that byte over 255, encoded as the
 colour buffer is (sRGB, the `Standard` view transform). Bands are taken over one
 **fixed shade range**, the same for every frame, subject and material, never
-normalised per frame or per subject. MAT-5's mapper takes the range as a
+normalised per frame or per subject. (*Amended by settings design D-9 and D-20,
+2026-10-11:* a material's library entry may give its own range, the same for
+every frame and subject; the others take the global range.) MAT-5's mapper takes the range as a
 parameter and never chooses it; MAT-3 chooses the default for new renders
 from the spike's measurements; MAT-6 records and reuses it
 ([Recording and reuse](#recording-and-reuse-d-19)).
@@ -751,7 +753,10 @@ Decided 2026-10-07 (resolved Q-2 for this arc). A material is an ordered ramp
 of N palette indices; **N is the material's flatness control**. The shade is
 quantised linearly into N bands. Dithering, eased spacing and the baked/live
 range are deferred. Generated ramps add to this model later (D-12); they do
-not replace it.
+not replace it. **Amended by settings design D-9 and D-20 (owner,
+2026-10-11):** the bands are taken over the global shade range unless a
+material's library entry gives its own `shade.range`, which that material is
+banded over instead; there is no longer one range for every material.
 
 ### D-8. The library is a JSON file the tool only reads
 
