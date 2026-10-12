@@ -1,8 +1,8 @@
 {
-  "digest": "sha256:bd5c86d77492a0173f5427b7c3eb0c4bc26e8737d78a0a97bae38cca58811a88",
+  "digest": "sha256:e448fb3a2e64a0b1659604074dd30007dd18aad5788ecb7b69c14cb9b3120488",
   "pytest": "9.1.1",
   "python": "3.13.15",
-  "recipe_fingerprint": "873a1410b6dee18001af31064e2b611f4f488052a60892a4aad08fdbdba0aa8e",
+  "recipe_fingerprint": "4a260a38bde84c578fb0b088c9e8f45c39ffd27ca1c554507935a395d4e2df9a",
   "reference": "ghcr.io/coghex/moskophoros-ci",
   "ruff": "0.16.9",
   "schema_version": 1
