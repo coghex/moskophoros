@@ -9,7 +9,7 @@ shading constants behind the R1 and R2 renders. The design also has to make
 room for many more settings, for per-material settings, and later for a UI
 that edits the same settings (owner, 2026-10-11).
 
-Design state: `exploring`
+Design state: `ready for issue processing`
 
 Status legend: `[ ]` unprocessed · `[#N]` linked to issue N · `[no-issue]`
 reviewed and deliberately not tracked separately · `[deferred]` blocked on a
@@ -17,8 +17,14 @@ concrete precondition
 
 ## Processing status
 
-The owner signed off this slice list on 2026-10-11 (D-21). The design stays
-`exploring` until the owner's own review of this document is done.
+The owner signed off this slice list on 2026-10-11 (D-21). After three
+reviews the owner declared the design ready the same day: "i think its
+probably ready, go ahead and mark it so if you agree". The agent agreed:
+
+- no question is open;
+- every slice is one pull request, in dependency order;
+- no tracker epic duplicates this one (the open epics are #3, #24 and #63);
+- SET-0 is already filed as #82.
 
 - [ ] EPIC. Configure moskophoros from layered YAML settings and command-line overrides
 - [#82] SET-0. Read material libraries from YAML instead of JSON
@@ -1303,3 +1309,5 @@ The owner's words, 2026-10-11, in this design conversation:
 - **Round 13, the owner's third review:** three contract gaps and a
   validation rule.
 - **Round 14:** "all four approved"
+- **Round 15:** "i think its probably ready, go ahead and mark it so if you
+  agree."
