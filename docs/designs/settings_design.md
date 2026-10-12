@@ -906,7 +906,64 @@ Affects every slice.
 
 ## Open questions
 
-None.
+Raised by the owner's third review (of 81a6083), 2026-10-11.
+
+### Q-25. What does a clip's `frames: auto` mean, and how is "no override" written?
+
+With a global `frames: 8` and `Jump: {frames: auto}`, does Jump take 8 frames
+or today's duration-based sampling? D-26 is ambiguous.
+
+**Proposal:** a clip's `frames` takes one of three values.
+
+- **A count** is the clip's own count. It beats the global count (D-26).
+- **`auto`** is duration-based sampling for that clip, today's behaviour. It
+  also beats the global count.
+- **`null`**, or leaving the key out, is no override: the clip takes the
+  global value. In a higher layer, `null` clears a lower layer's override,
+  matching D-22's "`null` means none".
+
+The sheet records the global value as a count or `auto`, and each clip's own
+value as a count, `auto` or `null`. So a reload reproduces exactly, and a
+`--frames` given over a loaded sheet reaches every clip whose value is `null`.
+This amends D-26's "`frames: auto` clears its count".
+
+### Q-26. How does the command line reset an automatic value?
+
+D-22 lets any layer set `auto`, but `--cell WxH` rejects `auto` today
+(`cli.py:1033–1043`), and `--frames N` takes only a number.
+
+**Proposal:** `--cell auto` and `--frames auto` are accepted, so the command
+line can clear an inherited fixed value. `--no-palette` and `--no-materials`
+already reset those two. Per-clip and per-material values have no options
+(D-17).
+
+### Q-27. What is `time_scale` when nothing is retimed?
+
+D-13's factor `d·fps/N` is defined only for explicit counts, and is wrong for
+one-shots, whose `N` samples span `N − 1` intervals.
+
+**Proposal:** `time_scale` is the sample spacing divided by the frame
+duration: how fast the motion plays relative to its authored speed.
+
+- An explicit count on a loop: `d·fps/N`.
+- An explicit count on a one-shot with `N ≥ 2`: `d·fps/(N − 1)`.
+- Automatic sampling: exactly `1`, since the spacing and the frame duration
+  are both `d/n`.
+- A clip with one frame (zero duration, `static`, or a one-shot with
+  `N` = 1): `1`.
+
+Tests cover each case. This corrects D-13's one-shot factor.
+
+### Q-28. How are frame counts validated?
+
+**Proposal:**
+
+- A frame count is a whole number from 1 upward, or `auto`.
+- In YAML it must be an integer: never `8.0`, `"8"` or a boolean. On the
+  command line it must be a decimal integer or `auto`.
+- There is no separate upper bound, as `--fps` has none. The existing sheet
+  and GIF limits still apply and fail loudly.
+- An invalid count is a usage error (exit 2) before any Blender invocation.
 
 ## Resolved questions
 
@@ -1076,7 +1133,7 @@ its own pull request, because tests read design.md.
   - the `--once` cases over a loaded sheet;
   - tests never read the real user file.
 - **Out of scope:** shading values, frames and per-material overrides.
-- **Open questions:** None.
+- **Open questions:** Q-26 (`--cell auto`).
 
 ### SET-2. Make the global shading values settings and command-line options
 
@@ -1158,7 +1215,7 @@ its own pull request, because tests read design.md.
   - output without `frames` byte-identical;
   - the reproduction test extended.
 - **Out of scope:** root-motion extraction; per-clip fps.
-- **Open questions:** None.
+- **Open questions:** Q-25, Q-26, Q-27, Q-28.
 
 ### SET-4. Recolour shading without a re-render
 
