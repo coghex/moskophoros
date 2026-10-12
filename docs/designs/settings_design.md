@@ -260,9 +260,9 @@ through to the layer below:
 
 ```yaml
 version: 1
-cell: 48x48            # width x height in pixels; unset: fit the model to 64x64
+cell: 48x48            # width x height in pixels; auto: today's automatic sizing
 fps: 12
-frames: 8              # optional; unset: each clip's frames follow fps and its length
+frames: 8              # auto: each clip's frames follow fps and its length
 clips:                 # per-clip overrides, by clip name
   Jump:
     frames: 6
@@ -319,6 +319,45 @@ Lowest to highest:
 - Today's reuse rules carry over unchanged inside the sheet layer. An explicit
   `--view` still replaces the whole reused view, and a reused library still
   stays with its palette (design §Scale and ground point, *Reuse*).
+
+### Merge rules (P-8)
+
+The owner's review asked these to be explicit. They are proposed, not signed
+off.
+
+1. **Automatic is a value.** The defaults file gives every setting a value.
+   Where today's default is computed, the value is `auto`: `cell: auto` and
+   `frames: auto`.
+   - Any layer may set `auto` to return to the automatic behaviour.
+   - `cell: auto` is today's rule: fitted with the pixels per meter when one
+     is in force (from a loaded sheet or `--ppm`), else 64×64 with auto-fit.
+   - So the defaults file never turns `--ppm`-only sizing into a fixed cell.
+2. **`null` means none**, for the palette and the library, as `--no-palette`
+   and `--no-materials` do.
+3. **A `--config` value acts exactly as the same explicit option would**,
+   including today's reuse rules against a loaded sheet.
+   - `cell` in a `--config` over a loaded sheet behaves like `--cell` after
+     `--settings-from`.
+   - A palette or library from a `--config` follows the material styling D-24
+     table.
+   - A value from the user file or the shipped defaults is only a default. The
+     sheet sits above both, so they never change a loaded sheet's values.
+4. **Mappings merge key by key.** Each `shade` value is separate, and `clips`
+   entries merge by clip name. A clip entry's `frames: auto` clears an
+   inherited count.
+5. **Lists replace whole,** such as `range: [lo, hi]`.
+6. **Files replace whole.** The library is one setting, a path. Per-material
+   overrides live inside it (D-20), so they never merge across layers.
+   Nothing needs clearing, and a user file cannot inject overrides into a
+   loaded sheet: the sheet records its library inline and sits above the
+   user file.
+7. **A library is validated against the palette in force,** wherever each
+   came from, before any Blender invocation.
+8. **Compound settings.** The view is not in the first scope. It comes only
+   from a loaded sheet or the command line, with today's rules: `--view`
+   replaces the whole reused view. When the view becomes a setting later, a
+   layer's preset will replace the pitch, directions and start angle below
+   it, as `--view` does. That is designed then.
 
 ### Files and errors (D-17, P-2)
 
@@ -379,6 +418,25 @@ Lowest to highest:
 - **P-6:** each slice that adds recorded settings bumps the sheet schema, as
   `/2` and `/3` did. Older sheets still load, taking the defaults for what they
   lack.
+- **P-9, the recorded schema:**
+  - SET-2's sheet schema adds `settings.shade`: `ao_distance_m`,
+    `ao_samples`, `occlusion_weight`, `convexity_weight` and `range`, after
+    `root_motion`.
+  - `settings.style` drops `shade_range`, and `generator.shade` keeps only
+    the technique fields: `technique`, `samples_per_pixel`, `seed`,
+    `pixel_filter` and `filter_width_px`.
+  - SET-3 adds an optional `shade` to entries in the inline library record.
+  - SET-5 adds `settings.frames` (`auto` or a count) and a `frames` on each
+    `settings.clips` entry, and a `time_scale` (the retiming factor) on each
+    top-level `clips` entry.
+- **P-9, loading older sheets:**
+  - A `/3` sheet takes `shade.range` from `style.shade_range`, and the four
+    capture values from its `generator.shade`. That record holds what made
+    the sheet, so the R1 and R2 spike sheets reload as R1 and R2. A missing
+    or invalid `generator.shade` is a usage error, like any invalid reused
+    field.
+  - `/2` and `/1` sheets take today's defaults, as they already do for the
+    range.
 - **The reproduction test (D-16):** generate a sheet, then rerun with
   `--settings-from` that sheet, the same model and no other options. The PNG,
   JSON and previews must be byte-identical. Each slice extends the test to its
@@ -711,8 +769,24 @@ Affects every slice.
 
 ## Open questions
 
-None. The owner's review of this document, with another agent, comes before
-readiness (D-21).
+### Q-17. Does a global value from a higher layer beat a material's override?
+
+For example, the library gives `Grey` its own `convexity_weight: 0.5`, and the
+command line says `--convexity-weight 0`.
+
+- **(a)** The material's override always wins, whatever layer the global came
+  from: specific beats general, as a library entry beats its default ramp. The
+  command line then changes only materials without an override. A warning
+  names the materials that kept their own value, so the result is not a
+  surprise.
+- **(b)** A command-line global also replaces every material's override for
+  that value.
+
+The agent recommends (a). Affects SET-3. Resolved by the owner.
+
+### Q-18. Do the merge rules (P-8) and the recorded schema (P-9) stand?
+
+Raised by the owner's review on 2026-10-11. Resolved by the owner.
 
 ## Resolved questions
 
@@ -744,6 +818,25 @@ Each kept with its identifier. The owner's words are under *Source notes*.
 - **Q-16.** Where per-material overrides live. **Resolved by D-20:** in the
   library.
 - **Q-9.** The slice plan and file shape. **Resolved by D-21.**
+
+### The owner's review, 2026-10-11
+
+The owner had another agent review the document. Its line numbers match
+1460e55, the round-6 version. Disposition against the current text:
+
+1. **Precedence contradicted D-8:** fixed in 9b5d1e9. Every section now uses
+   D-8's order, and per-material values follow D-9 and D-20.
+2. **Merge rules for absent, automatic and reset values and compound
+   options:** a real gap. P-8 is proposed (Q-18).
+3. **Per-material storage and inheritance:** storage is settled by D-20, with
+   a YAML example under Design, *File shape*. Injection from the user file is
+   impossible (P-8, rule 6). Global against override is Q-17.
+4. **Frame count had no semantics or slice:** settled by D-13, delivered by
+   SET-5.
+5. **The reproduction promise exceeded reuse:** the clip selection is D-19. The
+   recorded schema and the migration of older sheets are P-9 (Q-18).
+6. **SET-1's dependencies contradicted D-7:** fixed in 9b5d1e9. SET-1 depends
+   on SET-0, and the pin is only in SET-0.
 
 ## Verification strategy
 
@@ -829,6 +922,7 @@ its own pull request, because tests read design.md.
 - **Depends on:** SET-0.
 - **Ordering:** critical path.
 - **Relevant decisions:** D-2, D-5, D-8, D-14, D-15, D-16, D-17, D-19, D-21.
+  P-8 is pending (Q-18).
 - **Acceptance signals:**
   - precedence and error tests;
   - byte identity with no settings files;
@@ -864,7 +958,7 @@ its own pull request, because tests read design.md.
   - the reproduction test extended;
   - R1 and R2 reproduction for the owner.
 - **Out of scope:** per-material values; recolouring without a re-render.
-- **Open questions:** None.
+- **Open questions:** Q-18 (P-9, the recorded schema).
 
 ### SET-3. Let each material override the shading values
 
@@ -889,7 +983,7 @@ its own pull request, because tests read design.md.
   - the reproduction test extended;
   - output without overrides byte-identical.
 - **Out of scope:** generated ramps (MAT-8); AO samples per material.
-- **Open questions:** None.
+- **Open questions:** Q-17.
 
 ### SET-5. Set a clip's frame count, retiming it to the fps
 
