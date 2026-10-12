@@ -15,6 +15,7 @@ from moskophoros import fit, sampling, views
 from moskophoros.capture.backend import (
     BackendError,
     MalformedJob,
+    MaterialShade,
     RootTravel,
     Settings,
     Shade,
@@ -129,6 +130,7 @@ def expected_settings(ppm, cell, ground_px):
             "ao_samples": 64,
             "occlusion_weight": 0.25,
             "convexity_weight": 1.0,
+            "materials": [],
         },
         "clips": [{"name": "walk", "loop": True}, {"name": "attack", "loop": False}],
     }
@@ -293,6 +295,54 @@ def test_frames_must_be_the_ones_the_clips_and_settings_give(name):
             "shade.convexity_weight '1'",
         ),
         ({"settings": replace(MEASURE_SETTINGS, shade=None)}, "shade None"),
+        (
+            {
+                "settings": replace(
+                    MEASURE_SETTINGS,
+                    shade=replace(
+                        MEASURE_SETTINGS.shade,
+                        materials=(MaterialShade(0, 0.0, 0.5, 0.5),),
+                    ),
+                )
+            },
+            r"shade.materials\[0\].ao_distance_m 0.0",
+        ),
+        (
+            {
+                "settings": replace(
+                    MEASURE_SETTINGS,
+                    shade=replace(
+                        MEASURE_SETTINGS.shade,
+                        materials=(MaterialShade(0, 1.0, -0.5, 0.5),),
+                    ),
+                )
+            },
+            r"shade.materials\[0\].occlusion_weight -0.5",
+        ),
+        (
+            {
+                "settings": replace(
+                    MEASURE_SETTINGS,
+                    shade=replace(
+                        MEASURE_SETTINGS.shade,
+                        materials=(
+                            MaterialShade(2, 1.0, 0.5, 0.5),
+                            MaterialShade(1, 1.0, 0.5, 0.5),
+                        ),
+                    ),
+                )
+            },
+            "are not distinct, ascending",
+        ),
+        (
+            {
+                "settings": replace(
+                    MEASURE_SETTINGS,
+                    shade=replace(MEASURE_SETTINGS.shade, materials=[1]),
+                )
+            },
+            "shade.materials",
+        ),
         ({"mode": "render"}, "ppm is not resolved"),
         ({"clips": ()}, "no clips"),
         ({"clips": (CLIPS[0], CLIPS[0])}, "twice"),
@@ -821,6 +871,7 @@ def test_the_job_carries_the_capture_values_and_not_the_range():
         "ao_samples": 128,
         "occlusion_weight": 0.5,
         "convexity_weight": 0.0,
+        "materials": [],
     }
     assert list(job["settings"])[-2:] == ["shade", "clips"]
 

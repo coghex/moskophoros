@@ -665,6 +665,65 @@ _MISSING = object()
         (_shade("convexity_weight", "1"), "settings.shade.convexity_weight"),
         (_shade("range", [84, 191]), "settings.shade is missing [] or has unknown"),
         (_shade("ao_samples", _MISSING), "settings.shade is missing ['ao_samples']"),
+        (_shade("materials", {}), "settings.shade.materials"),
+        (
+            _shade(
+                "materials",
+                [
+                    {
+                        "material": 0,
+                        "ao_distance_m": 0,
+                        "occlusion_weight": 0.5,
+                        "convexity_weight": 0.5,
+                    }
+                ],
+            ),
+            "settings.shade.materials[0].ao_distance_m",
+        ),
+        (
+            _shade(
+                "materials",
+                [
+                    {
+                        "material": 0,
+                        "ao_distance_m": 1,
+                        "occlusion_weight": -1,
+                        "convexity_weight": 0.5,
+                    }
+                ],
+            ),
+            "settings.shade.materials[0].occlusion_weight",
+        ),
+        (
+            _shade(
+                "materials",
+                [
+                    {
+                        "material": 0,
+                        "ao_distance_m": 1,
+                        "occlusion_weight": 0.5,
+                        "convexity_weight": 0.5,
+                        "ao_samples": 8,
+                    }
+                ],
+            ),
+            "settings.shade.materials entry is missing [] or has unknown ['ao_samples']",
+        ),
+        (
+            _shade(
+                "materials",
+                [
+                    {
+                        "material": index,
+                        "ao_distance_m": 1,
+                        "occlusion_weight": 0.5,
+                        "convexity_weight": 0.5,
+                    }
+                    for index in (2, 1)
+                ],
+            ),
+            "settings.shade.materials is not in ascending, distinct material order",
+        ),
     ],
     ids=[
         "static clip with a range",
@@ -681,6 +740,11 @@ _MISSING = object()
         "string weight",
         "the range in the job",
         "no samples",
+        "materials not a list",
+        "a material's zero distance",
+        "a material's negative weight",
+        "a material's samples",
+        "materials out of order",
     ],
 )
 def test_an_inconsistent_job_fails_before_importing(found, tmp_path, change, message):

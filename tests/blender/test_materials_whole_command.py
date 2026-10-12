@@ -20,7 +20,7 @@ FAST = ["--supersample", "4", "--cell", "24x24", "--fps", "4", "--view", "side"]
 COLORS = ((20, 20, 30), (200, 60, 50), (60, 180, 90), (230, 220, 120), (250, 250, 250))
 LIBRARY = """\
 # Ramps index COLORS, dark to light.
-schema: moskophoros.materials/1
+schema: moskophoros.materials/2
 ramps:
   metal: [1, 2, 3, 4]
   cloth: [2, 3]
@@ -116,6 +116,70 @@ shade:
   convexity_weight: 0.0
   range: [120, 188]
 """
+
+
+OVERRIDING_LIBRARY = LIBRARY.replace(
+    "  steel: {uses: metal}\n",
+    "  steel:\n    uses: metal\n"
+    "    shade: {convexity_weight: 0.0, occlusion_weight: 0.6, range: [100, 230]}\n",
+)
+
+
+@pytest.mark.parametrize("look", ["plain", "mode"])
+def test_a_materials_own_values_are_used_recorded_and_reproduced(
+    capsys, found, tmp_path, look
+):
+    """Settings design D-9, D-16, D-36 and D-37: steel's own values change its
+    look, the sheet records them inline, and the sheet reproduces byte for
+    byte from --settings-from without the library or palette files."""
+    model = subject_a(tmp_path)
+    files = tmp_path / "files"
+    files.mkdir()
+    palette = files / "palette.hex"
+    palette.write_text("".join(bytes(color).hex() + "\n" for color in COLORS))
+    plain, overriding = files / "plain.yaml", files / "overriding.yaml"
+    plain.write_text(LIBRARY)
+    overriding.write_text(OVERRIDING_LIBRARY)
+    first, shaded, again = (tmp_path / name for name in ("first", "shaded", "again"))
+    for directory in (first, shaded, again):
+        directory.mkdir()
+    base = ["--no-user-config", "--reduce", look, "--palette", str(palette)]
+    assert (
+        run(capsys, found, model, first / "a.png", *base, "--materials", str(plain))[0]
+        == 0
+    )
+    status, _, err = run(
+        capsys, found, model, shaded / "a.png", *base, "--materials", str(overriding)
+    )
+    assert status == 0, err
+    assert (shaded / "a.png").read_bytes() != (first / "a.png").read_bytes()
+    record = json.loads((shaded / "a.json").read_text())["settings"]["style"][
+        "materials"
+    ]
+    assert record["materials"]["steel"] == {
+        "uses": "metal",
+        "shade": {
+            "occlusion_weight": 0.6,
+            "convexity_weight": 0.0,
+            "range": [100, 230],
+        },
+    }
+
+    for path in (palette, plain, overriding):
+        path.unlink()
+    status = cli.run(
+        [
+            "--settings-from",
+            str(shaded / "a.json"),
+            "--no-user-config",
+            "--blender",
+            str(found.path),
+            str(model),
+            str(again / "a.png"),
+        ]
+    )
+    assert status == 0, capsys.readouterr().err
+    assert listing(again) == listing(shaded)
 
 
 @pytest.mark.parametrize("look", ["plain", "mode"])

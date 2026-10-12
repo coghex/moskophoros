@@ -60,7 +60,8 @@ not know takes its default ramp or the ordinary look, named in a warning.
 The library is recorded in the sheet's JSON and reused with `--settings-from`
 without the original file; `--materials FILE` replaces it and `--no-materials`
 drops it. See [docs/design.md](docs/design.md#material-libraries) for the file
-format.
+format. A library is `schema: moskophoros.materials/2`; a `/1` library only
+needs that line changed.
 
 With a library, each material's shade comes from ambient occlusion and the
 surface's own curvature. `--ao-distance M` (default 0.3), `--ao-samples N`
@@ -68,7 +69,16 @@ surface's own curvature. `--ao-distance M` (default 0.3), `--ao-samples N`
 `--convexity-weight W` (default 1.0) tune it, and `--shade-range LO,HI`
 (default 84,191) sets the shade values a ramp spans. For example,
 `--convexity-weight 0` drops the curvature term. The sheet records the values,
-so `--settings-from` reproduces the look.
+so `--settings-from` reproduces the look. A library entry may give its
+material its own values, which beat the global ones (a warning says so when
+you set a global it overrides); AO samples stay global:
+
+```yaml
+materials:
+  Grey:
+    uses: stone
+    shade: {range: [120, 255], convexity_weight: 0.5}
+```
 
 The cell, fps, palette, library, previews and shading values can also come
 from YAML settings files. `~/.config/moskophoros/config.yaml` (or

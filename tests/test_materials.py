@@ -7,9 +7,13 @@ import sys
 import pytest
 import yaml
 
+from moskophoros.gltf import PrimitiveMaterial
 from moskophoros.materials import (
     Entry,
     LibraryError,
+    Shade,
+    capture_overrides,
+    override_warnings,
     read_library,
     read_library_bytes,
     validate_library,
@@ -20,7 +24,7 @@ COLORS = tuple((i, i, i) for i in range(16))
 
 def library(**changes):
     document = {
-        "schema": "moskophoros.materials/1",
+        "schema": "moskophoros.materials/2",
         "ramps": {"metal": [12, 13, 14, 15, 7], "cloth": [8, 9, 10]},
         "default": "cloth",
         "materials": {
@@ -40,7 +44,7 @@ def library(**changes):
 # The same library as `library()`, as the owner might write it.
 LIBRARY_TEXT = """\
 # Ramps run dark to light, as indices into the palette.
-schema: moskophoros.materials/1
+schema: moskophoros.materials/2
 ramps:
   metal: [12, 13, 14, 15, 7]
   cloth: [8, 9, 10]
@@ -212,7 +216,7 @@ def test_a_json_library_and_its_yaml_conversion_give_an_equal_library(tmp_path):
 
 def test_aliases_reuse_a_ramp(tmp_path):
     text = (
-        "schema: moskophoros.materials/1\n"
+        "schema: moskophoros.materials/2\n"
         "ramps:\n  metal: &metal [1, 2, 3]\n"
         "materials:\n  steel: {ramp: *metal}\n  iron: {ramp: *metal}\n"
     )
@@ -226,7 +230,7 @@ def test_aliases_reuse_a_ramp(tmp_path):
 @pytest.mark.parametrize("name", ["on", "no", "yes", "off", "true1", "1.5.2"])
 def test_yaml_words_are_kept_as_names(tmp_path, name):
     text = (
-        "schema: moskophoros.materials/1\n"
+        "schema: moskophoros.materials/2\n"
         f"ramps: {{{name}: [1]}}\n"
         f"default: {name}\n"
         f"materials: {{{name}: {{uses: {name}}}}}\n"
@@ -241,7 +245,7 @@ def test_yaml_words_are_kept_as_names(tmp_path, name):
     ("name", "shown"), [("1", "1"), ("true", "true"), ("null", "null"), ("~", "null")]
 )
 def test_an_unquoted_name_that_is_not_a_string_is_refused(tmp_path, name, shown):
-    base = "schema: moskophoros.materials/1\nramps: {}\n"
+    base = "schema: moskophoros.materials/2\nramps: {}\n"
     problem = refused(tmp_path, base + f"materials:\n  {name}: ordinary\n")
     assert problem == f"materials: key {shown} is not a string"
     quoted = read_library(
@@ -345,8 +349,8 @@ def test_two_documents(tmp_path):
     ("text", "where"),
     [
         ("{", "line 1, column 2"),
-        ("schema: moskophoros.materials/1\nramps: {metal: [1, 2}\n", "line 2"),
-        ("schema: moskophoros.materials/1\nramps:\n\tmetal: [1]\n", "line 3"),
+        ("schema: moskophoros.materials/2\nramps: {metal: [1, 2}\n", "line 2"),
+        ("schema: moskophoros.materials/2\nramps:\n\tmetal: [1]\n", "line 3"),
         ("schema: x\n ramps: {}\n", "line 2"),
     ],
     ids=["unclosed", "mismatched", "tab", "indentation"],
@@ -420,19 +424,19 @@ def test_a_missing_field(tmp_path, field):
 @pytest.mark.parametrize(
     ("schema", "shown"),
     [
-        ("moskophoros.materials/2", '"moskophoros.materials/2"'),
-        ("Moskophoros.materials/1", '"Moskophoros.materials/1"'),
-        ("moskophoros.materials/1 ", '"moskophoros.materials/1 "'),
+        ("moskophoros.materials/3", '"moskophoros.materials/3"'),
+        ("Moskophoros.materials/2", '"Moskophoros.materials/2"'),
+        ("moskophoros.materials/2 ", '"moskophoros.materials/2 "'),
         (1, "1"),
         (None, "null"),
-        (["moskophoros.materials/1"], '["moskophoros.materials/1"]'),
+        (["moskophoros.materials/2"], '["moskophoros.materials/2"]'),
     ],
 )
 def test_a_wrong_schema(tmp_path, schema, shown):
     document = library()
     document["schema"] = schema
     problem = refused_document(tmp_path, document)
-    assert problem == f'schema: expected "moskophoros.materials/1", got {shown}'
+    assert problem == f'schema: expected "moskophoros.materials/2", got {shown}'
 
 
 @pytest.mark.parametrize(
@@ -631,3 +635,215 @@ def test_the_first_error_does_not_depend_on_key_order(tmp_path):
     forward = library(ramps=bad, default=None, materials={})
     backward = library(ramps=dict(reversed(bad.items())), default=None, materials={})
     assert refused_document(tmp_path, forward) == refused_document(tmp_path, backward)
+
+
+# Per-material shading values (settings design D-9, D-20, D-23, D-29, D-30)
+
+SHADED_TEXT = """\
+schema: moskophoros.materials/2
+ramps:
+  stone: [15, 14, 12, 10, 9]
+default: stone
+materials:
+  Grey:
+    shade: {range: [120, 255], convexity_weight: 0.5}
+    uses: stone
+  Rock:
+    ramp: [1, 2, 3]
+    shade:
+      range: [10, 20]
+      occlusion_weight: 0
+      ao_distance_m: 1.2
+  Plain: {uses: stone}
+  Glass: ordinary
+"""
+
+
+def test_entries_may_give_their_own_shading_values(tmp_path):
+    parsed = read_library(write(tmp_path, SHADED_TEXT), COLORS)
+    assert parsed.materials == {
+        "Glass": Entry(),
+        "Grey": Entry(
+            uses="stone", shade=Shade(convexity_weight=0.5, range=(120, 255))
+        ),
+        "Plain": Entry(uses="stone"),
+        "Rock": Entry(
+            ramp=(1, 2, 3),
+            shade=Shade(ao_distance_m=1.2, occlusion_weight=0.0, range=(10, 20)),
+        ),
+    }
+    # Given in a fixed order, whatever the file's.
+    assert parsed.materials["Rock"].shade.given() == (
+        ("ao_distance_m", 1.2),
+        ("occlusion_weight", 0.0),
+        ("range", (10, 20)),
+    )
+
+
+def test_an_empty_shade_gives_no_values(tmp_path):
+    document = library(ramps={"m": [1]}, default=None)
+    document["materials"] = {"steel": {"uses": "m", "shade": {}}}
+    parsed = read_library(write(tmp_path, dump(document)), COLORS)
+    assert parsed.materials["steel"] == Entry(uses="m")
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "expected"),
+    [
+        ("ao_distance_m", 1e-9, 1e-9),
+        ("ao_distance_m", 5, 5.0),
+        ("occlusion_weight", 0, 0.0),
+        ("occlusion_weight", 3.5, 3.5),
+        ("convexity_weight", 0.0, 0.0),
+        ("range", [0, 1], (0, 1)),
+        ("range", [254, 255], (254, 255)),
+    ],
+)
+def test_each_override_inside_its_bounds(tmp_path, key, value, expected):
+    document = library(ramps={"m": [1]}, default=None)
+    document["materials"] = {"steel": {"uses": "m", "shade": {key: value}}}
+    parsed = read_library(write(tmp_path, dump(document)), COLORS)
+    assert getattr(parsed.materials["steel"].shade, key) == expected
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "problem"),
+    [
+        ("ao_distance_m", 0, "expected a finite number greater than 0, got 0"),
+        ("ao_distance_m", -1.5, "expected a finite number greater than 0, got -1.5"),
+        ("ao_distance_m", "0.3", 'expected a finite number greater than 0, got "0.3"'),
+        ("ao_distance_m", True, "expected a finite number greater than 0, got true"),
+        ("occlusion_weight", -0.01, "expected a finite number 0 or greater, got -0.01"),
+        ("convexity_weight", None, "expected a finite number 0 or greater, got null"),
+        ("range", [191, 84], "expected [lo, hi], two integers with 0 <= lo < hi"),
+        ("range", [84, 256], "expected [lo, hi], two integers with 0 <= lo < hi"),
+        ("range", [84.0, 191], "got [84.0, 191]"),
+        ("range", [True, 191], "got [true, 191]"),
+        ("range", "84,191", 'got "84,191"'),
+        ("range", [84], "got [84]"),
+    ],
+)
+def test_each_override_outside_its_bounds_names_the_entry(
+    tmp_path, key, value, problem
+):
+    document = library(ramps={"m": [1]}, default=None)
+    document["materials"] = {"steel": {"uses": "m", "shade": {key: value}}}
+    message = refused_document(tmp_path, document)
+    assert message.startswith(f'materials["steel"].shade.{key}: ')
+    assert problem in message
+
+
+def test_ao_samples_is_global_only(tmp_path):
+    document = library(ramps={"m": [1]}, default=None)
+    document["materials"] = {"steel": {"uses": "m", "shade": {"ao_samples": 8}}}
+    assert refused_document(tmp_path, document) == (
+        'materials["steel"].shade.ao_samples: AO samples is a global setting only; '
+        "set it with --ao-samples or shade.ao_samples in a settings file"
+    )
+
+
+@pytest.mark.parametrize(
+    ("shade", "problem"),
+    [
+        ({"glossiness": 1}, 'materials["steel"].shade: unknown field "glossiness"'),
+        (
+            [1, 2],
+            'materials["steel"].shade: expected a mapping of shading values, got [1, 2]',
+        ),
+        (
+            0.5,
+            'materials["steel"].shade: expected a mapping of shading values, got 0.5',
+        ),
+    ],
+)
+def test_a_malformed_shade_is_refused(tmp_path, shade, problem):
+    document = library(ramps={"m": [1]}, default=None)
+    document["materials"] = {"steel": {"uses": "m", "shade": shade}}
+    assert refused_document(tmp_path, document) == problem
+
+
+def test_a_shade_needs_a_ramp_or_uses(tmp_path):
+    document = library(ramps={"m": [1]}, default=None)
+    document["materials"] = {"steel": {"shade": {"range": [1, 2]}}}
+    assert refused_document(tmp_path, document) == (
+        'materials["steel"]: expected exactly one of "ramp" and "uses"'
+    )
+
+
+def test_a_version_1_library_is_refused_with_the_schema_hint(tmp_path):
+    text = LIBRARY_TEXT.replace("moskophoros.materials/2", "moskophoros.materials/1")
+    assert refused(tmp_path, text) == (
+        'schema: "moskophoros.materials/1" libraries no longer load; change the '
+        'schema line to "moskophoros.materials/2", the only edit the library needs'
+    )
+
+
+def record(index, name, alpha="OPAQUE", node=0):
+    return PrimitiveMaterial(node, 0, index, index, name, alpha)
+
+
+SHADED = validate_library(yaml.safe_load(SHADED_TEXT), COLORS, source="s")
+GLOBALS = {"ao_distance_m": 0.3, "occlusion_weight": 0.25, "convexity_weight": 1.0}
+
+
+def test_a_materials_own_capture_values_beat_the_globals():
+    records = [
+        record(0, "Rock"),
+        record(1, "Grey"),
+        record(2, "Plain"),
+        record(3, "Unknown"),
+        record(4, "Glass"),
+        record(5, None),
+        record(6, "Grey"),
+        record(None, None),
+    ]
+    assert capture_overrides(records, SHADED, GLOBALS) == [
+        (0, 1.2, 0.0, 1.0),
+        (1, 0.3, 0.25, 0.5),
+        # Materials sharing a name share their entry.
+        (6, 0.3, 0.25, 0.5),
+    ]
+
+
+def test_a_translucent_material_keeps_the_globals():
+    records = [record(0, "Rock", "BLEND"), record(1, "Grey", "MASK")]
+    assert capture_overrides(records, SHADED, GLOBALS) == [(1, 0.3, 0.25, 0.5)]
+
+
+def test_a_range_alone_overrides_no_capture_value():
+    library_ = validate_library(
+        {
+            "schema": "moskophoros.materials/2",
+            "ramps": {"m": [1]},
+            "materials": {"a": {"uses": "m", "shade": {"range": [1, 2]}}},
+        },
+        COLORS,
+        source="s",
+    )
+    assert capture_overrides([record(0, "a")], library_, GLOBALS) == []
+
+
+def test_an_override_warns_only_for_an_explicit_global():
+    records = [
+        record(0, "Rock"),
+        record(1, "Grey"),
+        record(2, "Grey"),
+        record(3, "Plain"),
+    ]
+    explicit = {"convexity_weight": 0.0, "range": (84, 191), "occlusion_weight": 0.9}
+    assert override_warnings(records, SHADED, explicit) == [
+        'material "Rock" keeps its own shade.occlusion_weight, 0.0, from the material '
+        "library; the global 0.9 applies to materials without their own",
+        'material "Rock" keeps its own shade.range, [10, 20], from the material '
+        "library; the global [84, 191] applies to materials without their own",
+        'material "Grey" keeps its own shade.convexity_weight, 0.5, from the '
+        "material library; the global 0.0 applies to materials without their own",
+        'material "Grey" keeps its own shade.range, [120, 255], from the material '
+        "library; the global [84, 191] applies to materials without their own",
+    ]
+    assert override_warnings(records, SHADED, {}) == []
+
+
+def test_unused_and_translucent_overrides_warn_nothing():
+    records = [record(0, "Rock", "BLEND"), record(1, "Plain")]
+    assert override_warnings(records, SHADED, {"range": (84, 191)}) == []

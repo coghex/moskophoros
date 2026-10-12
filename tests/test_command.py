@@ -259,7 +259,7 @@ def test_a_run_writes_the_sheet_its_json_and_a_preview_per_clip(setup, capsys):
         "hero.walk.gif",
     ]
     description = json.loads(setup.json.read_text())
-    assert description["schema"] == "moskophoros.sheet/5"
+    assert description["schema"] == "moskophoros.sheet/6"
     assert description["settings"]["style"] == PLAIN_STYLE
     assert description["image"]["file"] == "hero.png"
     assert [(c["name"], c["loop"]) for c in description["clips"]] == [
@@ -444,6 +444,7 @@ def test_the_capture_jobs_are_byte_identical_to_the_baseline(options):
             "ao_samples": 64,
             "occlusion_weight": 0.25,
             "convexity_weight": 1.0,
+            "materials": [],
         }
         text = blender._job_text(job)
         assert hashlib.sha256(text.encode()).hexdigest() == JOB_BASELINES[mode]
@@ -986,7 +987,7 @@ def test_a_bad_settings_file_is_a_usage_error(setup, capsys):
     bad.write_text("{}")
     status, _, err = run(capsys, setup.argv("--settings-from", str(bad)))
     assert status == 2
-    assert "is not a moskophoros.sheet/5 document" in err
+    assert "is not a moskophoros.sheet/6 document" in err
     assert setup.listing() == earlier
 
 

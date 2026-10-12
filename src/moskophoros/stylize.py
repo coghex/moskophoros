@@ -88,6 +88,13 @@ def resolve(library, name):
     return None
 
 
+def _own_range(library, name):
+    entry = library.materials.get(name)
+    if entry is None or entry.shade is None:
+        return None
+    return entry.shade.range
+
+
 def _materials(factor, palette, identities, library, shade_range, *, by_mode):
     """The per-frame material step for `library`, or `None` without one.
 
@@ -111,6 +118,12 @@ def _materials(factor, palette, identities, library, shade_range, *, by_mode):
         resolve(library, name) if pooled[index] == index else None
         for index, name in enumerate(names)
     ) + (None,)
+    # Each material's own shade range, where its entry gives one (settings
+    # design D-9); the others take the global range.
+    ranges = tuple(
+        _own_range(library, name) if pooled[index] == index else None
+        for index, name in enumerate(names)
+    ) + (None,)
 
     def step(frame, ordinary):
         for name in (IDENTITY, SHADE):
@@ -129,6 +142,7 @@ def _materials(factor, palette, identities, library, shade_range, *, by_mode):
             hi,
             by_mode=by_mode,
             pool=pooled,
+            ranges=ranges,
         )
         ordinary[mapped] = ramped[mapped]
         return ordinary

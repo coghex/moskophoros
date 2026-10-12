@@ -60,7 +60,7 @@ moskophoros [options] <infile.glb> <outfile.png>
 | `--occlusion-weight W` | `0.25` | How much occlusion by other surfaces lightens the shade, finite and 0 or greater. A [settings file](#settings-files) may set it. |
 | `--convexity-weight W` | `1.0` | How much a surface's own convexity lightens the shade, finite and 0 or greater. A [settings file](#settings-files) may set it. |
 | `--shade-range LO,HI` | `84,191` | The 8-bit shade values a material's ramp spans, two integers with `0 ≤ LO < HI ≤ 255`. See [Material ramps](#material-ramps). A [settings file](#settings-files) may set it. |
-| `--settings-from FILE` | none | Load every recorded setting of an earlier `moskophoros.sheet/5` sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
+| `--settings-from FILE` | none | Load every recorded setting of an earlier `moskophoros.sheet/6` sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
 | `--config FILE` | none | Repeatable. Read settings from a YAML file; later files win, and its values act as the options would. See [Settings files](#settings-files). |
 | `--no-user-config` | off | Skip the user settings file. |
 | `--preview` | on | Write the animated previews, also over a sheet or settings file without them; cannot accompany `--no-preview`. |
@@ -545,8 +545,8 @@ D-27):
   the model no longer has is an input error (exit 3) naming the clip. A clip
   that `--clip` replaced need not exist.
 
-Only the current sheet schema, `moskophoros.sheet/5`, loads (owner decision
-2026-10-11, settings design D-24). A sheet of any other schema, `/1` to `/4`
+Only the current sheet schema, `moskophoros.sheet/6`, loads (owner decision
+2026-10-11, settings design D-24). A sheet of any other schema, `/1` to `/5`
 included, is a usage error naming its schema and the supported one. A file
 that is unreadable, or not a sheet document, is a usage error.
 
@@ -744,7 +744,13 @@ renders ran before it. The colour itself is unchanged.
   flat open surface is 0.25, encoded 137. A convexity weight of 0 removes the
   curvature term. AO samples stop at 128, the most Blender 5.2's Ambient
   Occlusion node takes: it silently clamps more, so the command refuses it
-  first. No light, direction or material property enters the shade. The buffer has `R = G = B` =
+  first. A material whose library entry gives its own `ao_distance_m`,
+  `occlusion_weight` or `convexity_weight` has its replacement shader use
+  them, and the global values for the others; AO samples are global only
+  (settings design D-9, D-36). An importer's copy of a glTF material takes
+  that material's values, and a surface without a material, a translucent
+  one and one taking the ordinary look take the global values. No light,
+  direction or material property enters the shade. The buffer has `R = G = B` =
   the sRGB-encoded shade (`Standard`, as the colour), alpha 255 where a
   surface was sampled and `(0, 0, 0, 0)` elsewhere.
 - *Material-ID codes:* a glTF material of index `i` has code `i + 1`; a
@@ -794,7 +800,7 @@ keys, missing required fields and invalid numeric values are rejected.
 | `mode` | `measure` or `render`. |
 | `source` | Absolute `path` to the original GLB, its `sha256` and the selected original glTF `scene` index. |
 | `subject`, `variant` | Input stem and `default`, matching every requested frame address. |
-| `settings` | The accepted sheet settings, using resolved option values. In measure mode, `pixels_per_meter`, `cell` and `ground_px` are null: fitting belongs to the caller. In render mode all three are resolved, fixed values. `shade` carries the shade's capture values, exactly `ao_distance_m` (finite, greater than 0), `ao_samples` (an integer, 1 to 128), `occlusion_weight` and `convexity_weight` (finite, 0 or greater), which both the launcher and the script check. The sheet's `style`, `previews` and shade range are left out: they act after capture, so the job, and its `job_sha256`, are the same whatever they are (owner decisions 2026-10-04, 2026-10-12). |
+| `settings` | The accepted sheet settings, using resolved option values. In measure mode, `pixels_per_meter`, `cell` and `ground_px` are null: fitting belongs to the caller. In render mode all three are resolved, fixed values. `shade` carries the shade's capture values, exactly `ao_distance_m` (finite, greater than 0), `ao_samples` (an integer, 1 to 128), `occlusion_weight` and `convexity_weight` (finite, 0 or greater), and `materials`: for each glTF material whose library entry gives its own `ao_distance_m`, `occlusion_weight` or `convexity_weight`, in ascending material order, exactly `material` (its glTF index) and its three resolved capture values, each its own or the global. Both the launcher and the script check them. Of the style, the job carries only those per-material values (owner decision 2026-10-11, settings design D-36, amending the rule below): the sheet's ramps, palette, reduction, default ramp, `previews` and shade ranges are left out, as they act after capture, so the job and its `job_sha256` are the same whatever they are (owner decisions 2026-10-04, 2026-10-12). |
 | `clips` | Selected clips in sheet order. Each carries its original `animation_index`, `name`, `t0_s`, `t1_s` and candidate `roots`. The synthetic `static` clip has a null animation index, zero endpoints and no animated roots. |
 | `clips[].roots` | Each candidate root's original `node_index` and optional original `node_name`, determined using the accepted ancestry rule. Indices identify nodes; names are diagnostics, never assumed unique. |
 | `frames` | The exact requested samples in sheet order: clip, direction, then sample. Each carries an `address`, sample `index` and direction `angle_deg`. The address has `subject`, `variant`, `clip`, `direction` and `time_s`. |
@@ -1080,7 +1086,7 @@ libraries are YAML. `read_library_bytes` and `validate_library` never inspect
 
 ```yaml
 # Ramps run darkest first, as indices into the palette.
-schema: moskophoros.materials/1
+schema: moskophoros.materials/2
 ramps:
   metal: [12, 13, 14, 15, 47]
   cloth: [80, 81, 82]
@@ -1089,10 +1095,14 @@ materials:
   steel: {uses: metal}
   cloth.red:
     ramp: [80, 81, 82]
+    shade: {range: [120, 255], convexity_weight: 0.5}   # its own values
   face: ordinary
 ```
 
-- `schema` is exactly `moskophoros.materials/1`. `schema`, `ramps` and
+- `schema` is exactly `moskophoros.materials/2`. A `moskophoros.materials/1`
+  library, from before per-material shading, is refused, saying to change its
+  `schema` line to `moskophoros.materials/2`, the only edit it needs (owner
+  decision 2026-10-11, settings design D-29). `schema`, `ramps` and
   `materials` are required; `ramps` and `materials` are mappings and may be
   empty. No other field is allowed at any level.
 - `ramps` holds named generic ramps. A ramp is a non-empty list of at most
@@ -1103,6 +1113,19 @@ materials:
 - `default`, optional, names one ramp in `ramps`; `null` is not allowed.
 - Each `materials` entry is exactly one of `{"ramp": [...]}`, its own ramp;
   `{"uses": NAME}`, a ramp in `ramps`; or the string `"ordinary"`.
+- An entry with `ramp` or `uses` may carry a `shade` mapping, its material's
+  own shading values (owner decisions 2026-10-11, settings design D-4, D-9,
+  D-20 and D-23): any of `ao_distance_m` (finite, greater than 0),
+  `occlusion_weight` and `convexity_weight` (finite, 0 or greater) and `range`
+  (`[lo, hi]`, two integers with `0 ≤ lo < hi ≤ 255`), checked with the
+  global values' limits. `ao_samples` there is an error saying AO samples is
+  global only; any other key is an unknown field. The `"ordinary"` form, named
+  ramps and the default carry none. A material's own value beats the global
+  one from any layer; a value it does not give is the global in force. A
+  material with no entry, taking the default ramp or the ordinary look, or
+  translucent (`BLEND`), takes the global values. Materials sharing a name
+  share their entry and its values. The values live only in the library, so
+  they never merge across settings layers (D-22).
 - Names are non-empty strings, kept and compared exactly, case and
   whitespace included. A reference to an undefined ramp is an error. Entries
   and ramps no model uses are valid and not reported. An unquoted name the
@@ -1147,7 +1170,10 @@ these rules:
 The result is an immutable `materials.Library`: `ramps` maps each name to a
 tuple of indices, `default` is a ramp name or `None`, and `materials` maps
 each name to a `materials.Entry` holding its own `ramp` or the name it
-`uses`; an entry with neither is `"ordinary"`. Both mappings are read-only
+`uses`, and `shade`, a `materials.Shade` of the values it gives or `None`;
+an entry with neither ramp nor `uses` is `"ordinary"`.
+`materials.capture_overrides` gives each glTF material's own capture values,
+and `materials.override_warnings` the warnings below. Both mappings are read-only
 and ordered by name, so the result does not depend on the file's key order,
 and checks run in name order, so neither does the first error reported.
 
@@ -1159,7 +1185,9 @@ recursive alias, a sequence or mapping key, an integer with too many digits
 for Python to convert, an escape beyond U+10FFFF, a wrong or missing field, an
 unknown field, a key that is not a string, a value of the wrong type, an
 empty or oversized ramp, a non-integer or out-of-palette index, an entry of
-none or several forms, an empty name, or a reference to an undefined ramp.
+none or several forms, an empty name, a reference to an undefined ramp, a
+`moskophoros.materials/1` schema, or a `shade` that is not a mapping, holds
+`ao_samples` or an unknown key, or a value outside its limits.
 YAML errors give the line and column, such as `is not valid YAML at line 3,
 column 1: …` or `repeats the key "metal" at line 4, column 3`; only these
 parse failures say YAML. Errors after parsing name the field, ramp or
@@ -1172,7 +1200,11 @@ sheet's inline record. The module neither prints nor exits.
 `stylize.plain` and `stylize.mode` take three further arguments, none used
 unless `library` is given: `library`, a validated `materials.Library`;
 `identities`, the asset's `sampling.Identities`; and `shade_range`, the pair
-`(lo, hi)` of 8-bit shade values with `0 ≤ lo < hi ≤ 255` (owner decisions
+`(lo, hi)` of 8-bit shade values with `0 ≤ lo < hi ≤ 255`, the global range;
+a material whose entry gives its own `range` is banded over that instead,
+throughout: clamping, band boundaries and `mode`'s band centres (owner
+decisions 2026-10-11, settings design D-9; this amends material design D-7's
+one global range) (owner decisions
 2026-10-07, D-6, D-7, D-9, D-11, D-15, D-17, D-18, D-20, D-22, D-23 and D-25
 in [the material design](designs/material_styling_design.md#decisions)). The
 range is a parameter: stylize never chooses or normalises it. A library needs
@@ -1203,7 +1235,8 @@ buffer's alpha, as in the reductions above:
    ordinary look.
 3. **Band.** If the winner resolves to a ramp of `N` entries, only the winner's
    pixels give the band; shades of losing identities and of background never
-   do. Let `L = hi − lo + 1`. The range is split into `N` equal bands, and a
+   do. `[lo, hi]` is the winner's own range if its entry gives one, else the
+   global range. Let `L = hi − lo + 1`. The range is split into `N` equal bands, and a
    shade `v`, clamped into `[lo, hi]`, takes band `(v − lo)·N // L`. Let
    `A` be the sum of the winner's colour alphas and `W` the sum of alpha times
    the original shade.
@@ -1270,6 +1303,14 @@ D-18), before capture starts:
   primitives of the selected scene: an unnamed material, or a primitive without
   one
 - each library entry whose name is used only by `BLEND` materials
+- for each global shading value an option or a `--config` file set, each
+  material of the model taking its entry's ramp that keeps its own value
+  instead, naming the material, the value and the global one, once per
+  material and value, by material then in the order `ao_distance_m`,
+  `occlusion_weight`, `convexity_weight`, `range` (owner decision 2026-10-11,
+  settings design D-23). A global from the shipped defaults, the user file or
+  a loaded sheet warns nothing, nor does an entry the model never uses or a
+  translucent material's
 
 Library entries and named ramps the model never uses are silent (D-15).
 Names are shown as JSON strings, so quotes and whitespace are visible. The
@@ -1295,11 +1336,11 @@ through unchanged.
 - Cells are packed with no gaps; unused cells are fully transparent.
 - Output is an 8-bit RGBA PNG written by Pillow with no text or time chunks.
 
-**JSON (`moskophoros.sheet/5`).**
+**JSON (`moskophoros.sheet/6`).**
 
 ```json
 {
-  "schema": "moskophoros.sheet/5",
+  "schema": "moskophoros.sheet/6",
   "generator": {
     "tool": "moskophoros", "version": "0.1.0",
     "python": "3.x.y", "numpy": "x.y.z", "pillow": "x.y.z",
@@ -1352,7 +1393,12 @@ through unchanged.
   or an object with `source` (the library file's base filename), `sha256`
   (SHA-256 of its bytes), `ramps` (each named ramp, a list of palette indices,
   in name order), `default` (a ramp name, or `null`) and `materials` (each
-  entry in name order: `{"ramp": [...]}`, `{"uses": NAME}` or `"ordinary"`).
+  entry in name order: `{"ramp": [...]}`, `{"uses": NAME}` or `"ordinary"`,
+  and an entry giving its own shading values has a `shade` after its `ramp`
+  or `uses`, holding only the values the library gives, in the fixed order
+  `ao_distance_m`, `occlusion_weight`, `convexity_weight`, `range`, whatever
+  the file's order (settings design D-37); an entry without them has no
+  `shade`).
   It sits between `shade` and `clips`. Export writes and fingerprints the record the
   command resolved without interpreting it, so a new look changes neither
   export nor capture (owner decisions 2026-10-04, 2026-10-07).
@@ -1365,10 +1411,12 @@ through unchanged.
   `previews` and `style`, inside the fingerprint (owner decisions 2026-10-11
   and 2026-10-12, settings design D-24 and D-35). `generator.shade` keeps only
   the fixed technique: `technique`, `samples_per_pixel`, `seed`,
-  `pixel_filter` and `filter_width_px`. `moskophoros.sheet/4` recorded the
+  `pixel_filter` and `filter_width_px`. `moskophoros.sheet/5` is the same
+  document without per-material shading in the inline library record, and
+  `moskophoros.sheet/4` recorded the
   capture values in `generator.shade` and the range as
   `settings.style.shade_range`; [reuse](#scale-and-ground-point) loads only
-  `/5` (settings design D-24).
+  `/6` (settings design D-24).
 - `fingerprint` is the SHA-256 of the canonical JSON (sorted keys, no
   whitespace, UTF-8) of `generator`, `source.sha256` and `settings`. The
   hashed object mirrors the sheet's own structure:

@@ -199,7 +199,18 @@ def reduce_blocks_mode(pixels, factor):
 
 
 def map_ramps(
-    pixels, identity, shade, factor, ramps, colors, lo, hi, *, by_mode, pool=None
+    pixels,
+    identity,
+    shade,
+    factor,
+    ramps,
+    colors,
+    lo,
+    hi,
+    *,
+    by_mode,
+    pool=None,
+    ranges=None,
 ):
     """Give each block of a supersampled frame its winning material's ramp
     entry, following design §Stylize (Material ramps).
@@ -211,7 +222,10 @@ def map_ramps(
     shade range, `0 ≤ lo < hi ≤ 255`. Equal identity indices are one identity;
     `pool`, if given, maps each index to the one it is pooled into (materials
     sharing a name are one identity), and a tie between identities goes to the
-    smaller pooled index.
+    smaller pooled index. `ranges`, if given, holds for each identity index
+    its own shade range `(lo, hi)`, or None where `[lo, hi]` applies: a
+    material is banded over its own range throughout, clamping, band
+    boundaries and `by_mode`'s band centres included.
 
     Returns `(result, mapped)`: `mapped`, an `H×W` boolean array, marks the
     blocks that took a ramp entry, and `result`, `H×W×4`, holds that entry's
@@ -239,15 +253,16 @@ def map_ramps(
         raise TypeError(f"identity must be an integer array, not {identity.dtype}")
     if shade.dtype != np.uint8:
         raise TypeError(f"shade must be uint8, not {shade.dtype}")
-    for bound in (lo, hi):
-        if isinstance(bound, bool) or not isinstance(bound, int | np.integer):
-            raise TypeError(f"the shade range must be integers, not {bound!r}")
-    lo, hi = int(lo), int(hi)
-    if not 0 <= lo < hi <= 255:
-        raise ValueError(
-            f"the shade range must satisfy 0 <= lo < hi <= 255: {lo}, {hi}"
-        )
+    lo, hi = _shade_range(lo, hi)
     identities = len(ramps)
+    if ranges is None:
+        ranges = (None,) * identities
+    ranges = tuple(ranges)
+    if len(ranges) != identities:
+        raise ValueError("ranges must hold one shade range or None per identity")
+    ranges = tuple(
+        (lo, hi) if bounds is None else _shade_range(*bounds) for bounds in ranges
+    )
     for ramp in ramps:
         if ramp is None:
             continue
@@ -301,8 +316,7 @@ def map_ramps(
                 alpha[chosen] * own,
                 shades[chosen],
                 np.asarray(ramp, dtype=np.int64),
-                lo,
-                hi,
+                *ranges[index],
                 len(palette),
                 by_mode,
             )
@@ -310,6 +324,18 @@ def map_ramps(
             result[chosen, 3] = 255
             mapped[chosen] = True
     return result.reshape(rows, columns, 4), mapped.reshape(rows, columns)
+
+
+def _shade_range(lo, hi):
+    for bound in (lo, hi):
+        if isinstance(bound, bool) or not isinstance(bound, int | np.integer):
+            raise TypeError(f"the shade range must be integers, not {bound!r}")
+    lo, hi = int(lo), int(hi)
+    if not 0 <= lo < hi <= 255:
+        raise ValueError(
+            f"the shade range must satisfy 0 <= lo < hi <= 255: {lo}, {hi}"
+        )
+    return lo, hi
 
 
 # The most tied (block, entry) candidates compared against a ramp at once.
