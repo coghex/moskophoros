@@ -401,7 +401,7 @@ The owner's review asked these to be explicit. The owner signed them off
   `blender_script.py` no longer holds them as constants. Per-material values
   go into each material's replacement shader, which capture already builds.
   The range is a stylize parameter, as now.
-- **Validation (D-30):** distance > 0; samples a whole number from 1 to 1024;
+- **Validation (D-30, D-42):** distance > 0; samples a whole number from 1 to 128;
   weights finite and ≥ 0; the range two integers with `0 ≤ lo < hi ≤ 255`, as
   reuse already checks.
 - Material styling D-10's range rationale and the fixture's distinct-band
@@ -916,7 +916,7 @@ the remaining proposals:
   in the code that a UI can read.
 - **Limits and paths (P-2):**
   - AO distance > 0;
-  - AO samples a whole number from 1 to 1024;
+  - AO samples a whole number from 1 to 128 (D-42 amends the original 1 to 1024);
   - weights finite and ≥ 0;
   - the range two integers with `0 ≤ lo < hi ≤ 255`;
   - paths resolve relative to their file, with a leading `~` expanded.
@@ -1087,6 +1087,24 @@ recommended for both". This makes D-25's and D-26's warnings exact.
   either kind.
 
 Affects SET-5.
+
+### D-42. AO samples run from 1 to 128
+
+Decided by the owner on 2026-10-12, during SET-2 implementation, option (a).
+D-30 allowed 1 to 1024 samples. Blender 5.2.2 LTS, the supported version,
+hard-limits the Ambient Occlusion node's `samples` to 1..128 and silently
+clamps any higher value to 128 (checked under the Blender lock: 129 → 128,
+1024 → 128).
+
+- AO samples are a whole number from 1 to 128, in every layer and for every
+  material. The default stays 64.
+- A value outside 1..128 is a usage error (exit 2) before any Blender
+  invocation. It names the option, or the file, key path and line, and states
+  the limit.
+- If a later supported Blender raises the node's limit, raising this limit is
+  a new decision.
+
+Affects SET-2 and SET-3.
 
 ## Open questions
 
