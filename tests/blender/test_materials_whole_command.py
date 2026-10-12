@@ -17,12 +17,16 @@ pytestmark = pytest.mark.blender
 
 FAST = ["--supersample", "4", "--cell", "24x24", "--fps", "4", "--view", "side"]
 COLORS = ((20, 20, 30), (200, 60, 50), (60, 180, 90), (230, 220, 120), (250, 250, 250))
-LIBRARY = {
-    "schema": "moskophoros.materials/1",
-    "ramps": {"metal": [1, 2, 3, 4], "cloth": [2, 3]},
-    "default": "cloth",
-    "materials": {"steel": {"uses": "metal"}},
-}
+LIBRARY = """\
+# Ramps index COLORS, dark to light.
+schema: moskophoros.materials/1
+ramps:
+  metal: [1, 2, 3, 4]
+  cloth: [2, 3]
+default: cloth
+materials:
+  steel: {uses: metal}
+"""
 
 
 @pytest.fixture(scope="module")
@@ -38,8 +42,8 @@ def inputs(tmp_path_factory):
     directory = tmp_path_factory.mktemp("inputs")
     palette = directory / "palette.hex"
     palette.write_text("".join(bytes(color).hex() + "\n" for color in COLORS))
-    library = directory / "materials.json"
-    library.write_text(json.dumps(LIBRARY))
+    library = directory / "materials.yaml"
+    library.write_text(LIBRARY)
     return palette, library
 
 
@@ -118,19 +122,19 @@ def test_a_library_gives_byte_identical_outputs_on_repeat_and_on_reuse(
     assert listing(out) == first
     description = json.loads(first["a.json"])
     style = description["settings"]["style"]
-    assert style["materials"]["source"] == "materials.json"
+    assert style["materials"]["source"] == "materials.yaml"
     assert style["shade_range"] == list(backend.DEFAULT_SHADE_RANGE)
 
     # Reuse needs neither file.
     palette.rename(palette.with_name("moved.hex"))
-    library.rename(library.with_name("moved.json"))
+    library.rename(library.with_name("moved.yaml"))
     try:
         reuse = ["--settings-from", str(out / "a.json")]
         assert run(capsys, found, model, out / "a.png", *reuse)[0] == 0
         assert listing(out) == first
     finally:
         palette.with_name("moved.hex").rename(palette)
-        library.with_name("moved.json").rename(library)
+        library.with_name("moved.yaml").rename(library)
 
     # Only ramp entries and the transparent background appear.
     allowed = {(0, 0, 0, 0)} | {(*COLORS[i], 255) for i in (1, 2, 3, 4)}

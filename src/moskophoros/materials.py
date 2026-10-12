@@ -1,6 +1,7 @@
 """Material libraries: named ramps of palette indices, read and validated.
 
-A library is a JSON file the tool only reads (material design D-8). Its ramps
+A library is a YAML file the tool only reads (material design D-8, settings
+design D-7), parsed by the strict reader in `yamlfile`. Its ramps
 index the shared palette (D-6, D-7); it holds named generic ramps, an optional
 default naming one of them, and material entries (D-15, D-17). `warnings`
 names what a library leaves to its fallbacks for a given model (D-3, D-9,
@@ -13,9 +14,13 @@ from numbers import Integral
 from pathlib import Path
 from types import MappingProxyType
 
+from moskophoros import yamlfile
+
 SCHEMA = "moskophoros.materials/1"
 ORDINARY = "ordinary"
 MAX_RAMP = 256
+# A library file's name ends in one of these, in any case (settings D-11).
+SUFFIXES = (".yaml", ".yml")
 # The glTF alpha modes whose materials can take a ramp; any other (`BLEND`) is
 # translucent and always takes the ordinary look.
 RAMP_ALPHA_MODES = ("OPAQUE", "MASK")
@@ -51,12 +56,23 @@ class Library:
     materials: MappingProxyType
 
 
+def check_path(path):
+    """Refuse a library path whose name does not end in `.yaml` or `.yml`,
+    before anything is read (settings D-11)."""
+    if Path(path).suffix.lower() not in SUFFIXES:
+        raise LibraryError(
+            path,
+            "material libraries are YAML; the file name must end in .yaml or .yml",
+        )
+
+
 def read_library(path, colors):
     """Read and validate the library at `path` against the palette `colors`.
 
     Raises `LibraryError` for bad input. Reading this file is the only effect.
     """
     path = Path(path)
+    check_path(path)
     try:
         data = path.read_bytes()
     except OSError as error:
@@ -66,26 +82,14 @@ def read_library(path, colors):
 
 def read_library_bytes(data, colors, *, source):
     """Parse a library snapshot, so its contents and digest describe the same
-    bytes. The JSON must be UTF-8, repeat no key and use no non-JSON constant.
+    bytes. The bytes are one strict YAML document (`yamlfile.load`). `source`
+    only labels diagnostics; a caller reading a file checks its name first
+    (`check_path`).
     """
     try:
-        document = json.loads(
-            data.decode("utf-8"),
-            object_pairs_hook=_unique_keys,
-            parse_constant=_no_constant,
-        )
-    except UnicodeDecodeError as error:
-        raise LibraryError(
-            source, f"is not UTF-8: {error.reason} at byte {error.start}"
-        ) from None
-    except _DuplicateKey as error:
-        raise LibraryError(source, str(error)) from None
-    except ValueError as error:
-        raise LibraryError(source, f"is not valid JSON: {error}") from None
-    except RecursionError:
-        raise LibraryError(
-            source, "is not valid JSON: it is nested too deeply"
-        ) from None
+        document = yamlfile.load(data)
+    except yamlfile.YamlError as error:
+        raise LibraryError(source, error.problem) from None
     return validate_library(document, colors, source=source)
 
 
@@ -96,7 +100,7 @@ def validate_library(document, colors, *, source):
     diagnostics; nothing is read and `document` is not changed.
     """
     if not isinstance(document, dict):
-        raise LibraryError(source, "expected a JSON object")
+        raise LibraryError(source, "expected a mapping")
     _check_keys(document, source)
     unknown = sorted(key for key in document if key not in _FIELDS)
     if unknown:
@@ -187,9 +191,9 @@ def warnings(records, library):
 
 
 def _named(mapping, location, source):
-    """Yield a name-keyed object's items in name order, checking each name."""
+    """Yield a name-keyed mapping's items in name order, checking each name."""
     if not isinstance(mapping, dict):
-        raise LibraryError(source, f"{location}: expected an object")
+        raise LibraryError(source, f"{location}: expected a mapping")
     _check_keys(mapping, source, location)
     for name in sorted(mapping):
         if name == "":
@@ -198,11 +202,12 @@ def _named(mapping, location, source):
 
 
 def _check_keys(mapping, source, location=None):
-    # JSON keys are always strings; an already-parsed library might not be.
+    # An unquoted YAML key such as `1` or `true` is not a string, and an
+    # already-parsed library might hold any key.
     for key in mapping:
         if not isinstance(key, str):
             where = f"{location}: " if location else ""
-            raise LibraryError(source, f"{where}key {key!r} is not a string")
+            raise LibraryError(source, f"{where}key {_shown(key)} is not a string")
 
 
 def _ramp(value, location, size, source):
@@ -270,20 +275,3 @@ def _shown(value):
         return json.dumps(value, ensure_ascii=False, allow_nan=False)
     except (TypeError, ValueError):
         return repr(value)
-
-
-class _DuplicateKey(ValueError):
-    pass
-
-
-def _unique_keys(pairs):
-    document = {}
-    for key, value in pairs:
-        if key in document:
-            raise _DuplicateKey(f"repeats the key {_name(key)}")
-        document[key] = value
-    return document
-
-
-def _no_constant(name):
-    raise ValueError(f"{name} is not a JSON value")
