@@ -320,10 +320,10 @@ Lowest to highest:
   `--view` still replaces the whole reused view, and a reused library still
   stays with its palette (design §Scale and ground point, *Reuse*).
 
-### Merge rules (P-8)
+### Merge rules (D-22)
 
-The owner's review asked these to be explicit. They are proposed, not signed
-off.
+The owner's review asked these to be explicit. The owner signed them off
+(D-22).
 
 1. **Automatic is a value.** The defaults file gives every setting a value.
    Where today's default is computed, the value is `auto`: `cell: auto` and
@@ -416,9 +416,8 @@ off.
   overrides and frame counts are recorded too.
 - Where each value came from is never stored.
 - **P-6:** each slice that adds recorded settings bumps the sheet schema, as
-  `/2` and `/3` did. Older sheets still load, taking the defaults for what they
-  lack.
-- **P-9, the recorded schema:**
+  `/2` and `/3` did. Under D-24, the previous schema then stops loading.
+- **The recorded schema (D-24):**
   - SET-2's sheet schema adds `settings.shade`: `ao_distance_m`,
     `ao_samples`, `occlusion_weight`, `convexity_weight` and `range`, after
     `root_motion`.
@@ -429,14 +428,8 @@ off.
   - SET-5 adds `settings.frames` (`auto` or a count) and a `frames` on each
     `settings.clips` entry, and a `time_scale` (the retiming factor) on each
     top-level `clips` entry.
-- **P-9, loading older sheets:**
-  - A `/3` sheet takes `shade.range` from `style.shade_range`, and the four
-    capture values from its `generator.shade`. That record holds what made
-    the sheet, so the R1 and R2 spike sheets reload as R1 and R2. A missing
-    or invalid `generator.shade` is a usage error, like any invalid reused
-    field.
-  - `/2` and `/1` sheets take today's defaults, as they already do for the
-    range.
+- **Only the current sheet schema loads (D-24).** A sheet of any other schema
+  is a usage error (exit 2) naming its schema and the one supported.
 - **The reproduction test (D-16):** generate a sheet, then rerun with
   `--settings-from` that sheet, the same model and no other options. The PNG,
   JSON and previews must be byte-identical. Each slice extends the test to its
@@ -652,8 +645,7 @@ extends D-8.
 - The sheet's `settings` block records every resolved setting, including the
   shading values, per-material overrides and frame counts. The capture knobs
   move from `generator.shade` into `settings`. This is a new sheet schema
-  version. Older sheets still load, taking today's defaults for what they
-  lack.
+  version. *Amended by D-24:* older sheets no longer load.
 - Where each value came from is not stored in the sheet, so identical
   settings give identical bytes. It may be printed on request.
 - The owner: "all these would override the client settings at once … this is
@@ -767,26 +759,66 @@ in the doc".
 
 Affects every slice.
 
+### D-22. The merge rules
+
+Decided by the owner on 2026-10-11, round 10. This resolves the first part of
+Q-18 and adopts P-8 as proposed: "that is fine". The rules are under Design,
+*Merge rules*:
+
+- `auto` is a value;
+- `null` means none;
+- a `--config` value acts as the explicit option;
+- mappings merge by key, while lists and files replace whole;
+- the library is validated against the palette in force;
+- the view keeps today's rules until it becomes a setting.
+
+Affects SET-1, SET-2, SET-3 and SET-5.
+
+### D-23. A material's own value beats any global value
+
+Decided by the owner on 2026-10-11, round 10. This resolves Q-17 with option
+(a).
+
+- A per-material override in the library wins over the global value, whatever
+  layer the global came from. An option such as `--convexity-weight 0`
+  changes only the materials without their own value.
+- When a global value is set explicitly, by a `--config` file or an option,
+  and a material in use overrides it, a warning names that material and the
+  value it kept. The warning is not an error, and the output does not change
+  with it.
+
+Affects SET-3.
+
+### D-24. Only the current sheet schema loads; the recorded fields as proposed
+
+Decided by the owner on 2026-10-11, round 10. This resolves the rest of Q-18:
+"it doesnt matter, we are developing still though, none of my current sheets
+matter, just dont support old formats."
+
+- `--settings-from`, and later a UI, loads only the current sheet schema. Any
+  other schema is a usage error naming it and the supported one.
+- Reading `/1` and `/2` sheets is removed in SET-1. After that, each schema
+  bump stops the previous one loading.
+- This replaces D-15's "older sheets still load" and the older-sheet rules in
+  design §Scale and ground point (*Reuse*).
+- The owner left the field layout to the design ("it doesnt matter"), so the
+  proposed layout is adopted. It is under Design, *Recording and loading*.
+
+Affects SET-1, SET-2, SET-3 and SET-5.
+
 ## Open questions
 
-### Q-17. Does a global value from a higher layer beat a material's override?
+### Q-19. Does a `moskophoros.materials/1` library still load after SET-3?
 
-For example, the library gives `Grey` its own `convexity_weight: 0.5`, and the
-command line says `--convexity-weight 0`.
+SET-3 introduces `moskophoros.materials/2`, a superset that adds the optional
+`shade` mapping. D-24 drops old sheet formats, but says nothing about the
+library.
 
-- **(a)** The material's override always wins, whatever layer the global came
-  from: specific beats general, as a library entry beats its default ramp. The
-  command line then changes only materials without an override. A warning
-  names the materials that kept their own value, so the result is not a
-  surprise.
-- **(b)** A command-line global also replaces every material's override for
-  that value.
+The agent proposes the same rule: after SET-3, only `/2` loads, and a `/1`
+library is a usage error saying to change its `schema` line. That is the only
+edit a `/1` library needs.
 
-The agent recommends (a). Affects SET-3. Resolved by the owner.
-
-### Q-18. Do the merge rules (P-8) and the recorded schema (P-9) stand?
-
-Raised by the owner's review on 2026-10-11. Resolved by the owner.
+Affects SET-3. Resolved by the owner.
 
 ## Resolved questions
 
@@ -818,6 +850,10 @@ Each kept with its identifier. The owner's words are under *Source notes*.
 - **Q-16.** Where per-material overrides live. **Resolved by D-20:** in the
   library.
 - **Q-9.** The slice plan and file shape. **Resolved by D-21.**
+- **Q-17.** A global value against a material's override. **Resolved by
+  D-23:** the material wins.
+- **Q-18.** The merge rules and the recorded schema. **Resolved by D-22 and
+  D-24.**
 
 ### The owner's review, 2026-10-11
 
@@ -827,14 +863,14 @@ The owner had another agent review the document. Its line numbers match
 1. **Precedence contradicted D-8:** fixed in 9b5d1e9. Every section now uses
    D-8's order, and per-material values follow D-9 and D-20.
 2. **Merge rules for absent, automatic and reset values and compound
-   options:** a real gap. P-8 is proposed (Q-18).
+   options:** a real gap. **Resolved by D-22.**
 3. **Per-material storage and inheritance:** storage is settled by D-20, with
    a YAML example under Design, *File shape*. Injection from the user file is
-   impossible (P-8, rule 6). Global against override is Q-17.
+   impossible (D-22, rule 6). Global against override is **D-23**.
 4. **Frame count had no semantics or slice:** settled by D-13, delivered by
    SET-5.
 5. **The reproduction promise exceeded reuse:** the clip selection is D-19. The
-   recorded schema and the migration of older sheets are P-9 (Q-18).
+   recorded schema is **D-24**, and older sheets are not supported.
 6. **SET-1's dependencies contradicted D-7:** fixed in 9b5d1e9. SET-1 depends
    on SET-0, and the pin is only in SET-0.
 
@@ -922,7 +958,7 @@ its own pull request, because tests read design.md.
 - **Depends on:** SET-0.
 - **Ordering:** critical path.
 - **Relevant decisions:** D-2, D-5, D-8, D-14, D-15, D-16, D-17, D-19, D-21.
-  P-8 is pending (Q-18).
+  Also D-22 and D-24 (removing `/1` and `/2` reuse).
 - **Acceptance signals:**
   - precedence and error tests;
   - byte identity with no settings files;
@@ -945,11 +981,12 @@ its own pull request, because tests read design.md.
   - `backend.DEFAULT_SHADE_RANGE` gives way to the setting;
   - design §Capture (*Shade* and *Default shade range*), §Export (the
     overridden "No command option sets the shade range") and §CLI;
-  - reuse of older sheets.
+  - the new schema, with the previous one no longer loading (D-24).
 - **Phase:** 2.
 - **Depends on:** SET-1.
 - **Ordering:** critical path.
-- **Relevant decisions:** D-3, D-6, D-9 (global values), D-12, D-15, D-16.
+- **Relevant decisions:** D-3, D-6, D-9 (global values), D-12, D-15, D-16,
+  D-22, D-24.
 - **Acceptance signals:**
   - a Blender test that non-default values reach the shade buffer and the
     record;
@@ -958,7 +995,7 @@ its own pull request, because tests read design.md.
   - the reproduction test extended;
   - R1 and R2 reproduction for the owner.
 - **Out of scope:** per-material values; recolouring without a re-render.
-- **Open questions:** Q-18 (P-9, the recorded schema).
+- **Open questions:** None.
 
 ### SET-3. Let each material override the shading values
 
@@ -975,7 +1012,7 @@ its own pull request, because tests read design.md.
 - **Phase:** 3.
 - **Depends on:** SET-0, SET-2.
 - **Ordering:** critical path for per-material control.
-- **Relevant decisions:** D-4, D-9, D-15, D-16, D-20.
+- **Relevant decisions:** D-4, D-9, D-15, D-16, D-20, D-22, D-23, D-24.
 - **Acceptance signals:**
   - a Blender test with two materials of different weights and distance in
     one frame;
@@ -983,7 +1020,7 @@ its own pull request, because tests read design.md.
   - the reproduction test extended;
   - output without overrides byte-identical.
 - **Out of scope:** generated ramps (MAT-8); AO samples per material.
-- **Open questions:** Q-17.
+- **Open questions:** Q-19.
 
 ### SET-5. Set a clip's frame count, retiming it to the fps
 
@@ -999,7 +1036,7 @@ its own pull request, because tests read design.md.
 - **Depends on:** SET-1.
 - **Ordering:** independent of SET-2 and SET-3. Each sheet-schema bump takes
   the next version, whichever slice lands first.
-- **Relevant decisions:** D-13, D-14, D-15, D-16, D-17.
+- **Relevant decisions:** D-13, D-14, D-15, D-16, D-17, D-22, D-24.
 - **Acceptance signals:**
   - pure sampling tests for loop, one-shot and `N` = 1;
   - frame duration exactly `1/fps`;
@@ -1063,3 +1100,8 @@ The owner's words, 2026-10-11, in this design conversation:
   options all look right to me, write it in the doc, i will will review the
   doc with another agent first before getting back to you, so dont mark it
   ready yet"
+- **Round 9, the owner's review:** an outside agent's six findings,
+  dispositioned under *Resolved questions*.
+- **Round 10:** "1) that is fine, 2) (a) 3) it doesnt matter, we are
+  developing still though, none of my current sheets matter, just dont
+  support old formats."
