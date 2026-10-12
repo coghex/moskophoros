@@ -820,6 +820,88 @@ edit a `/1` library needs.
 
 Affects SET-3. Resolved by the owner.
 
+### Q-20. What does a frame count do to a zero-duration or `static` clip?
+
+Raised by the owner's second review. With `frames: 8` and `d = 0`, all eight
+samples share one time, so they share one frame address (V-9), which the
+pipeline rejects.
+
+**Proposal:**
+
+- A clip with `d = 0`, or the synthetic `static` clip, always has exactly one
+  frame, at `t0`, lasting `1/fps`, as today.
+- A global count does not apply to it, silently. A per-clip count of more
+  than 1 naming such a clip gives a warning naming the clip.
+- Acceptance cases cover a global count over a `static` model, a per-clip
+  count on a zero-duration clip, and a count of 1.
+
+Affects SET-5. Resolved by the owner.
+
+### Q-21. Does a clip's own count beat a global count from a higher layer?
+
+Raised by the owner's second review. For example, the user file sets
+`clips.Jump.frames: 6`, and the command says `--frames 12`.
+
+**Proposal**, mirroring D-23: a clip's own count wins, whatever layer the
+global came from.
+
+- `--frames 12` changes only clips without their own count. When the global
+  is set explicitly, a warning names each clip that kept its own count.
+- A layer clears a clip's count with `frames: auto` on that clip's entry
+  (D-22).
+- The sheet records the counts as given: `settings.frames` is the global
+  count or `auto`, and each `settings.clips` entry carries the clip's own
+  count or `auto`. Resolved per-clip totals are never stored as overrides, so
+  an option over a loaded sheet still reaches every clip without its own
+  count.
+
+Affects SET-5. Resolved by the owner.
+
+### Q-22. What does `--once` do over a loaded sheet without `--clip`?
+
+Raised by the owner's second review. D-19 covers an explicit `--clip`, but not
+`--settings-from sheet.json --once Jump`.
+
+**Proposal:** an explicit `--once` replaces the loaded one-shot marks, so
+exactly the named clips are one-shots.
+
+- Each name must be in the loaded clip list. A name that is not there is a
+  usage error.
+- Without `--once`, the loaded marks stay.
+- To make every clip loop again, give the clip list with `--clip`.
+- SET-1 tests each case.
+
+Affects SET-1. Resolved by the owner.
+
+### Q-23. Are previews part of the reproduction promise?
+
+Raised by the owner's second review. D-16 promises identical previews, but
+`--no-preview` is not recorded. Reusing a sheet made with it writes previews
+the original omitted, and can fail on the GIF size and delay limits.
+
+- **(a) Record it (recommended):** `previews: true | false` joins the first
+  scope as a setting, recorded in `settings`, with `--no-preview` and a new
+  `--preview` to override a loaded value. It then enters the fingerprint like
+  any setting.
+- **(b) Narrow the promise:** the reproduction test covers the sheet PNG and
+  JSON, plus the previews only when that run writes them. Previews stay
+  outside the sheet contract, as design §Export says today.
+
+Affects SET-1. Resolved by the owner.
+
+### Q-24. Do the remaining proposals stand?
+
+These are unsigned and implementation-shaping:
+
+- **P-1:** one plain settings structure with one schema table in the code.
+- **P-2:**
+  - the validation limits: AO distance > 0, AO samples 1 to 1024, weights
+    finite and ≥ 0, `0 ≤ lo < hi ≤ 255`;
+  - paths resolve relative to their file, with `~` expanded.
+- **P-6:** each slice that adds recorded settings bumps the sheet schema.
+
+Resolved by the owner.
+
 ## Resolved questions
 
 Each kept with its identifier. The owner's words are under *Source notes*.
@@ -854,6 +936,17 @@ Each kept with its identifier. The owner's words are under *Source notes*.
   D-23:** the material wins.
 - **Q-18.** The merge rules and the recorded schema. **Resolved by D-22 and
   D-24.**
+
+### The owner's second review, 2026-10-11
+
+The review read 948b91f. It found the scope, the material inheritance, the
+schema retirement and the delivery plan sound, with targeted gaps:
+
+1. **Frame counts on zero-duration clips:** Q-20.
+2. **A per-clip count against a global count:** Q-21.
+3. **`--once` without `--clip` over a loaded sheet:** Q-22.
+4. **`--no-preview` and the reproduction promise:** Q-23.
+5. **Q-19** is still open. SET-3 is gated on it.
 
 ### The owner's review, 2026-10-11
 
@@ -966,7 +1059,7 @@ its own pull request, because tests read design.md.
   - tests never read the real user file.
 - **Out of scope:** shading values, frames, per-material overrides, and
   schema changes to the sheet.
-- **Open questions:** None.
+- **Open questions:** Q-22, Q-23, Q-24.
 
 ### SET-2. Make the global shading values settings and command-line options
 
@@ -1044,7 +1137,7 @@ its own pull request, because tests read design.md.
   - output without `frames` byte-identical;
   - the reproduction test extended.
 - **Out of scope:** root-motion extraction; per-clip fps.
-- **Open questions:** None.
+- **Open questions:** Q-20, Q-21.
 
 ### SET-4. Recolour shading without a re-render
 
