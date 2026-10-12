@@ -493,7 +493,87 @@ parts of Q-7, as recommended: "yes, that is fine".
 
 Affects SET-2.
 
+### D-13. Frame count is a setting that retimes the clip
+
+Decided by the owner on 2026-10-11, round 6. This resolves Q-11 and adopts
+P-5: "yes, it should act as any other setting, following the override path
+we laid out earlier".
+
+- `fps` is a setting.
+- `frames` is an optional setting, with a global value and per-clip
+  overrides keyed by clip name. Both follow the D-8 layers like any other
+  setting.
+- Without `frames`, sampling is exactly today's, so existing sheets
+  reproduce.
+- With `frames` = `N` and `fps` = `F`, the tool samples `N` poses evenly over
+  the authored motion. Each frame lasts `1/F`, so the clip plays for `N/F`
+  seconds, retimed by the factor `d·F/N`. The sheet records each clip's frame
+  duration and retiming factor.
+- For a one-shot, `N` counts every cell, the final pose included, so the
+  samples fall at `t0 + k·d/(N − 1)`, for k = 0 … N − 1. An `N` of 1 shows
+  `t0`.
+
+This amends design §Clips and sampling. Affects SET-1, or the slice that
+carries frames (Q-9).
+
+### D-14. The first settings scope
+
+Decided by the owner on 2026-10-11, round 6. This resolves Q-1's scope: "yes".
+
+- The first settings are:
+  - the cell (image size, any size);
+  - `fps`;
+  - `frames` (D-13);
+  - the four shading values, global with per-material overrides (D-9), plus
+    the global AO sample count;
+  - the palette path;
+  - the material library path.
+- The inventory's other settings follow later, each when it is simple and
+  gives value (owner, round 2).
+- How this scope splits into pull requests is Q-9.
+
+### D-15. A sheet records every setting and loads them as one in-memory layer
+
+Decided by the owner on 2026-10-11, round 6. This resolves Q-5: "yes". It
+extends D-8.
+
+- The sheet's `settings` block records every resolved setting, including the
+  shading values, per-material overrides and frame counts. The capture knobs
+  move from `generator.shade` into `settings`. This is a new sheet schema
+  version. Older sheets still load, taking today's defaults for what they
+  lack.
+- Where each value came from is not stored in the sheet, so identical
+  settings give identical bytes. It may be printed on request.
+- The owner: "all these would override the client settings at once … this is
+  not saved to disk, just loaded into the program, we dont overwrite the
+  user's yaml settings, just the values for the generation." Loading a sheet
+  supplies one layer, in memory, for that generation only. The tool never
+  writes the user file or any `--config` file.
+- Which recorded settings a loaded sheet applies is still open: everything,
+  or only those that "effect more than just the sprite in question" (Q-14).
+
+Affects SET-1 and SET-2.
+
 ## Open questions
+
+### Q-14. Which recorded settings does a loaded sheet apply?
+
+The owner (round 6): "the sheet should store a settings block with the
+settings that effect more than just the sprite in question, as well as per
+material settings."
+
+Two readings:
+
+- **(a)** The sheet stores and loads every setting except clip selection,
+  which comes from the command, as today. Model yaw and the ground point load
+  too. That suits reloading the same sprite in a UI. Regenerating a different
+  model from it needs explicit overrides.
+- **(b)** The sheet stores every setting, for the record, but loading
+  applies only the shared ones: cell, scale, fps and frames, shading,
+  palette, library and per-material settings. Model-specific values (model
+  yaw, the ground point) come from the current command.
+
+Resolved by the owner.
 
 ### Q-1. Which settings exist, and which stay command-line only?
 
@@ -620,7 +700,7 @@ options. Under P-4:
   different files give different bytes (V-2).
 
 This affects the sheet schema version (`/4`) and reuse of `/3` sheets.
-Resolved by the owner.
+**Resolved by D-15**, apart from Q-14.
 
 The owner's round-2 answer to Q-4 bears on this question: loading a sheet must
 restore every setting. Reuse today reads only `settings`, never `generator`
@@ -748,7 +828,7 @@ Still open:
 - whether `frames` is per clip, global, or both;
 - whether a one-shot's `N` includes its final pose (today it adds one).
 
-Amends design §Clips and sampling.
+Amends design §Clips and sampling. **Resolved by D-13.**
 
 ### Q-8. Recolouring without a re-render: a slice, a deferral, or dropped?
 
