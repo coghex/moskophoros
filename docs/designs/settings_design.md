@@ -20,7 +20,7 @@ concrete precondition
 The slices below are a **proposal** awaiting the owner's signoff (Q-9).
 
 - [ ] EPIC. Configure moskophoros from layered YAML settings and command-line overrides
-- [ ] SET-0. Read material libraries from YAML instead of JSON
+- [#82] SET-0. Read material libraries from YAML instead of JSON
 - [ ] SET-1. Load layered YAML settings for the existing options
 - [ ] SET-2. Make the shading constants settings and command-line options
 - [ ] SET-3. Add per-material settings
@@ -474,8 +474,24 @@ Decided by the owner on 2026-10-11, round 4. This resolves the rest of Q-13:
 is a usage error (exit 2) before Blender starts, saying that libraries are
 YAML. No conversion command is provided. Affects SET-0.
 
-The owner also approved the SET-0 issue draft on 2026-10-11 (round 4). Filing
-it waits for the owner's word on who files it.
+The owner approved the SET-0 issue draft on 2026-10-11 (round 4). On the
+owner's word in round 5 ("file it now, i am the authority"), it was filed as
+#82 ahead of the epic. The owner manages its approval.
+
+### D-12. Today's shading values stay the shipped defaults
+
+Decided by the owner on 2026-10-11, round 5. This resolves the first and third
+parts of Q-7, as recommended: "yes, that is fine".
+
+- The shipped defaults are AO distance 0.3 m, 64 AO samples, occlusion
+  weight 0.25, convexity weight 1.0 and shade range [84, 191].
+- A command that sets no new value keeps giving byte-identical output.
+- Material styling D-10's range rationale and the fixture's distinct-band
+  guarantee (design §Capture; `tests/blender/test_material_capture.py:203–242`)
+  stay bound to these defaults only. Values the owner sets, R1 and R2
+  included, are judged by eye (V-12).
+
+Affects SET-2.
 
 ## Open questions
 
@@ -689,6 +705,50 @@ No frame-count option exists today: a clip gets
 - either of those set per clip.
 
 Resolved by the owner.
+
+**Owner input, 2026-10-11 (round 5):** "when i think about an animation, its
+frame count, and fps, with the total duration being determined by those two
+characteristics, but this doesnt really work with blender does it? if it does
+then thats what i want, if not, then just fps is fine, the important thing is
+that we can generate animations of arbitrary fps and length."
+
+**Verified facts** (design §Clips and sampling):
+
+- A clip's authored length `d` comes from the model: its glTF keyframe
+  range, `t1 − t0`.
+- The tool chooses its own sample times, and Blender evaluates each at its
+  exact time, not on a timeline frame. So the tool is not bound to the
+  timeline grid or the authored frame rate.
+- Today the output always plays at the authored speed. `n` frames are spaced
+  `d/n` apart, and each lasts `d/n`, so `fps` only picks `n`.
+
+**Agent analysis.** The owner's model works. With a frame count `N` and an
+fps `F`:
+
+- sample `N` poses evenly over the authored motion, at `t0 + k·d/N`;
+- give each frame `1/F`.
+
+The clip then plays for `N/F` seconds. When that differs from `d`, the motion
+is retimed: played faster or slower than authored, by the factor `d·F/N`. A
+loop still closes seamlessly, because the samples cover the whole cycle.
+Nothing in Blender has to change, and the model need not be re-exported to
+change the length.
+
+**Proposal P-5:**
+
+- `fps` stays a global setting.
+- A per-clip `frames` setting is optional.
+- Without `frames`, today's behaviour holds exactly, so existing sheets
+  reproduce.
+- With `frames`, the clip is sampled as above, and the sheet records its
+  frame duration (`1/F`) and its retiming factor.
+
+Still open:
+
+- whether `frames` is per clip, global, or both;
+- whether a one-shot's `N` includes its final pose (today it adds one).
+
+Amends design §Clips and sampling.
 
 ### Q-8. Recolouring without a re-render: a slice, a deferral, or dropped?
 
