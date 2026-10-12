@@ -17,7 +17,8 @@ concrete precondition
 
 ## Processing status
 
-The owner has not yet signed off this slice list (Q-9).
+The owner signed off this slice list on 2026-10-11 (D-21). The design stays
+`exploring` until the owner's own review of this document is done.
 
 - [ ] EPIC. Configure moskophoros from layered YAML settings and command-line overrides
 - [#82] SET-0. Read material libraries from YAML instead of JSON
@@ -207,7 +208,7 @@ From the owner's words (2026-10-11):
 
 ### In scope
 
-- The settings model: names, types, units, defaults and validation (P-1, P-7).
+- The settings model: names, types, units, defaults and validation (P-1, D-21).
 - The layers and their precedence, including a loaded sheet (D-2, D-8, D-17).
 - Shipped defaults as a YAML file in the package.
 - The D-14 settings: cell, fps, frames, the shading values with per-material
@@ -252,10 +253,10 @@ the owner has not signed off.
   sheet never changes them (D-16). Examples are local and UI preferences,
   `--work-dir` and the Blender path.
 
-### Proposed file shape (P-7)
+### File shape (D-21)
 
-This sketch is part of Q-9's signoff. It shows a user or `--config` file. Any
-key may be left out, and an omitted key falls through to the layer below:
+A user or `--config` file. Any key may be left out, and an omitted key falls
+through to the layer below:
 
 ```yaml
 version: 1
@@ -282,8 +283,18 @@ New options: `--config FILE` (repeatable), `--no-user-config`,
 
 A `clips` entry naming a clip the model does not have is silently unused.
 That follows the precedent of unused library entries (material styling D-15),
-so one user file can serve many models. Where per-material overrides live is
-Q-16.
+so one user file can serve many models. Per-material overrides live in the
+library (D-20):
+
+```yaml
+schema: moskophoros.materials/2
+ramps:
+  stone: [15, 14, 12, 10, 9]
+materials:
+  Grey:
+    uses: stone
+    shade: {range: [120, 255], convexity_weight: 0.5}
+```
 
 ### Layers and precedence (D-2, D-8, D-17)
 
@@ -295,7 +306,8 @@ Lowest to highest:
    `~/.config/moskophoros/config.yaml`. It is optional, and is skipped under
    `--no-user-config`.
 3. **A loaded sheet:** `--settings-from FILE`, or a sheet loaded in a future
-   UI. Every recorded setting that affects the output (D-16).
+   UI. Every recorded setting that affects the output (D-16), including the
+   clip selection and one-shot marks (D-19).
 4. **`--config FILE`**, repeatable, later files winning.
 5. **Command-line options.**
 
@@ -429,7 +441,7 @@ light or direction. Affects SET-2.
 ### D-4. Per-material settings belong in the settings
 
 "per material will definitely be in the settings". What they are is D-9. Where
-they live is Q-16. Affects SET-3.
+they live is D-20. Affects SET-3.
 
 ### D-5. A UI comes later and must not be ruled out
 
@@ -572,7 +584,7 @@ Decided by the owner on 2026-10-11, round 6. This resolves Q-1's scope: "yes".
   - the material library path.
 - The inventory's other settings follow later, each when it is simple and
   gives value (owner, round 2).
-- How this scope splits into pull requests is Q-9.
+- How this scope splits into pull requests is D-21.
 
 ### D-15. A sheet records every setting and loads them as one in-memory layer
 
@@ -612,7 +624,7 @@ users, but the generation needs to be identical. so (a)".
   options, and requires byte-identical output. Each slice extends it.
 - Clip selection and one-shot marks also affect the output, but today's design
   always takes them from the command line. Loading them is confirmed
-  separately (Q-15).
+  separately: D-19 confirms it.
 
 Affects SET-1, SET-2, SET-3 and SET-5.
 
@@ -643,45 +655,64 @@ recommended: "defer".
 - The analysis stays under Design, *Deferred*, and goes into design §Deferred
   when this arc amends design.md.
 
-## Open questions
+### D-19. A loaded sheet supplies the clip selection
 
-### Q-15. Does a loaded sheet supply the clip selection?
+Decided by the owner on 2026-10-11, round 8. This resolves Q-15, as proposed:
+"proposal approved".
 
-D-16 loads everything that affects the output. The clip list and the one-shot
-marks do (`settings.clips` already records each clip's name and loop flag).
-Today's design says "Clip selection and `--once` always come from the current
-command line" (design §Scale and ground point, *Reuse*).
-
-**Proposal:**
-
-- A loaded sheet supplies the clip list and one-shot marks.
+- A loaded sheet supplies the clip list and one-shot marks from
+  `settings.clips`.
 - An explicit `--clip` replaces the whole list, and `--once` then comes from
   the command line, as now.
-- A recorded clip the model no longer has is an input error (exit 3), as an
-  unknown `--once` is today.
+- A recorded clip that the model no longer has is an input error (exit 3), as
+  an unknown `--once` is today.
+- This replaces design §Scale and ground point (*Reuse*): "Clip selection and
+  `--once` always come from the current command line."
 
-Affects SET-1. Resolved by the owner.
+Affects SET-1.
 
-### Q-16. Where do per-material shading overrides live?
+### D-20. Per-material shading overrides live in the library
 
-D-9 lets any material override any shading value except AO samples.
+Decided by the owner on 2026-10-11, round 8. This resolves Q-16 with option
+(a): "(a) sounds better when you put it that way, lets go (a)".
 
-- **(a) In the library file**, as an optional `shade` mapping on a material
-  entry, under a new library schema (`moskophoros.materials/2`). The library
-  stays the one place that defines a material's look, shared across subjects
-  (material styling D-3). The sheet already records the library inline, so
-  overrides reload with it. To vary one material for one generation, you edit
-  or copy the library.
-- **(b) In settings files**, as `materials: {Grey: {shade: …}}`, merged by name
-  across the layers. A `--config` can then override one material, but a
-  material's look is split between two files.
+- A material entry in the YAML library may carry an optional `shade` mapping.
+  It may override any of `ao_distance_m`, `occlusion_weight`,
+  `convexity_weight` and `range`, but not `ao_samples`.
+- The entry still has exactly one of `ramp` or `uses`. The `"ordinary"` form
+  carries no `shade`, since the ordinary look does not use the shade.
+- A material without an override, or taking the default ramp, uses the global
+  values.
+- This is a new library schema, `moskophoros.materials/2`. The library stays
+  the one place that defines a material's look, shared across models
+  (material styling D-3).
+- The sheet already records the library inline, so the overrides reload with
+  it. To vary one material for one generation, the owner edits or copies the
+  library.
 
-The agent recommends (a). Affects SET-3. Resolved by the owner.
+Affects SET-3.
 
-### Q-9. Is the slice plan right?
+### D-21. The slice plan, file shape, formats and options
 
-Does the owner sign off the delivery plan below, its order and boundaries, and
-the file shape in P-7? Resolved by the owner.
+Decided by the owner on 2026-10-11, round 8. This resolves Q-9: "the slice
+plane and file shape and formats and options all look right to me, write it
+in the doc".
+
+- **The slices,** in order: SET-0 (#82), SET-1, SET-2, SET-3 and SET-5. SET-4
+  is deferred (D-18).
+- **The file shape** is under Design, *File shape*.
+- **The new options** are `--config FILE` (repeatable), `--no-user-config`,
+  `--frames N`, `--ao-distance M`, `--ao-samples N`, `--occlusion-weight W`,
+  `--convexity-weight W` and `--shade-range LO,HI`.
+- **Readiness:** the owner will review this document with another agent
+  before marking it ready, so its state stays `exploring` until then.
+
+Affects every slice.
+
+## Open questions
+
+None. The owner's review of this document, with another agent, comes before
+readiness (D-21).
 
 ## Resolved questions
 
@@ -693,7 +724,8 @@ Each kept with its identifier. The owner's words are under *Source notes*.
   AO samples. **Resolved by D-9.** Ramps stay in the library.
 - **Q-3.** How do per-material settings relate to the library? The library
   becomes YAML (**D-7**), JSON libraries are refused (**D-11**), and the sheet
-  stays JSON (**D-10**). Where the overrides live is **Q-16**.
+  stays JSON (**D-10**). The overrides live in the library
+  (**D-20**).
 - **Q-4.** Where does a loaded sheet sit among the layers? **Resolved by D-8.**
 - **Q-5.** What does the sheet record? **Resolved by D-15**; what loading
   applies is **D-16**.
@@ -707,6 +739,11 @@ Each kept with its identifier. The owner's words are under *Source notes*.
 - **Q-12.** Global or per material. **Resolved by D-9:** both.
 - **Q-13.** What "everything YAML" covers. **Resolved by D-10 and D-11.**
 - **Q-14.** What a loaded sheet applies. **Resolved by D-16.**
+- **Q-15.** Whether a loaded sheet supplies the clip selection. **Resolved by
+  D-19:** yes.
+- **Q-16.** Where per-material overrides live. **Resolved by D-20:** in the
+  library.
+- **Q-9.** The slice plan and file shape. **Resolved by D-21.**
 
 ## Verification strategy
 
@@ -740,8 +777,8 @@ Each kept with its identifier. The owner's words are under *Source notes*.
 
 ## Delivery plan
 
-The owner has not yet signed off this plan (Q-9). Every slice amends design.md
-in its own pull request, because tests read design.md.
+Signed off by the owner on 2026-10-11 (D-21). Every slice amends design.md in
+its own pull request, because tests read design.md.
 
 ### SET-0. Read material libraries from YAML instead of JSON
 
@@ -784,14 +821,14 @@ in its own pull request, because tests read design.md.
   - user-file discovery and `--no-user-config`;
   - path resolution;
   - errors (D-17);
-  - the clip selection from a loaded sheet, if Q-15 confirms it;
+  - the clip selection from a loaded sheet (D-19);
   - design §CLI, §Option validation, §Scale and ground point (*Reuse*),
     §Reproducibility and §Project layout;
   - the README.
 - **Phase:** 1.
 - **Depends on:** SET-0.
 - **Ordering:** critical path.
-- **Relevant decisions:** D-2, D-5, D-8, D-14, D-15, D-16, D-17.
+- **Relevant decisions:** D-2, D-5, D-8, D-14, D-15, D-16, D-17, D-19, D-21.
 - **Acceptance signals:**
   - precedence and error tests;
   - byte identity with no settings files;
@@ -799,7 +836,7 @@ in its own pull request, because tests read design.md.
   - tests never read the real user file.
 - **Out of scope:** shading values, frames, per-material overrides, and
   schema changes to the sheet.
-- **Open questions:** Q-15.
+- **Open questions:** None.
 
 ### SET-2. Make the global shading values settings and command-line options
 
@@ -836,14 +873,15 @@ in its own pull request, because tests read design.md.
   replacement shader, and stylize bands each material over its own range.
   The overrides are recorded and reloaded.
 - **Scope:**
-  - where the overrides live, per Q-16;
+  - the `shade` mapping on library entries, under `moskophoros.materials/2`
+    (D-20);
   - capture and stylize changes;
   - design §Material libraries, §Material ramps and §Capture;
   - the amendment to material styling D-7 ("one global range").
 - **Phase:** 3.
 - **Depends on:** SET-0, SET-2.
 - **Ordering:** critical path for per-material control.
-- **Relevant decisions:** D-4, D-9, D-15, D-16.
+- **Relevant decisions:** D-4, D-9, D-15, D-16, D-20.
 - **Acceptance signals:**
   - a Blender test with two materials of different weights and distance in
     one frame;
@@ -851,7 +889,7 @@ in its own pull request, because tests read design.md.
   - the reproduction test extended;
   - output without overrides byte-identical.
 - **Out of scope:** generated ramps (MAT-8); AO samples per material.
-- **Open questions:** Q-16.
+- **Open questions:** None.
 
 ### SET-5. Set a clip's frame count, retiming it to the fps
 
@@ -926,3 +964,8 @@ The owner's words, 2026-10-11, in this design conversation:
   settings with the same model should generate identical output, we should
   have a test for that. if there are client settings that done effect output,
   we dont change those … so (a) 2) that's all fine, 3) defer"
+- **Round 8:** "1) proposal approved, 2) (a) sounds better when you put it
+  that way, lets go (a) 3) the slice plane and file shape and formats and
+  options all look right to me, write it in the doc, i will will review the
+  doc with another agent first before getting back to you, so dont mark it
+  ready yet"
