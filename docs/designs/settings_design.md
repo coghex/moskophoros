@@ -415,8 +415,9 @@ The owner's review asked these to be explicit. The owner signed them off
   - a one-shot samples `t0 + k·d/(N − 1)`, for k = 0 … N − 1;
   - `N` = 1 samples `t0`.
 - Each frame lasts exactly `1/fps`, and the sheet records the clip's
-  `time_scale` (D-33): `d·fps/N` for a loop, `d·fps/(N − 1)` for a one-shot,
-  and `1` for automatic sampling and for one-frame clips.
+  `time_scale` (D-33): `d·fps/N` for a loop of `N ≥ 2`, `d·fps/(N − 1)` for
+  a one-shot of `N ≥ 2`, and `1` for automatic sampling and for every
+  one-frame clip. One frame is a still (D-38).
 - **A clip's value (D-31):** a count, `auto` (duration-based) or `null`
   (take the global value). `--frames auto` and `--cell auto` reset from the
   command line (D-32).
@@ -427,8 +428,10 @@ The owner's review asked these to be explicit. The owner signed them off
   does not apply to it. A per-clip count above 1 naming it gives a warning.
 - **Precedence (D-26).** A clip's own count beats the global count from any
   layer. An explicit global gives a warning naming the clips that kept their
-  own count. The sheet records counts as given (a number, `auto` or `null`),
-  never the resolved totals.
+  own value (D-41). The sheet records counts as given (a number, `auto` or
+  `null`), never the resolved totals.
+- **Over a loaded sheet (D-39),** an explicit `--clip` replaces the selection
+  and one-shot marks only. Per-clip counts still merge by clip name.
 - Previews follow the recorded frame durations, as now.
 
 ### Recording and loading (D-15, D-16, D-28, D-30)
@@ -451,9 +454,10 @@ The owner's review asked these to be explicit. The owner signed them off
     `pixel_filter` and `filter_width_px`.
   - SET-3 adds an optional `shade` to entries in the inline library record,
     as the library gives it (D-37).
-  - SET-5 adds `settings.frames` (`auto` or a count) and a `frames` on each
-    `settings.clips` entry (a count, `auto` or `null`; D-31), and a `time_scale` (the retiming factor) on each
-    top-level `clips` entry.
+  - SET-5 adds `settings.frames` (`auto` or a count) directly after `fps`,
+    a `frames` after `loop` on each `settings.clips` entry (a count, `auto`
+    or `null`; D-31), and a `time_scale` (the retiming factor) after
+    `frame_duration_s` on each top-level `clips` entry (D-40).
 - **Only the current sheet schema loads (D-24).** A sheet of any other schema
   is a usage error (exit 2) naming its schema and the one supported.
 - **The reproduction test (D-16):** generate a sheet, then rerun with
@@ -741,7 +745,8 @@ Decided by the owner on 2026-10-11, round 8. This resolves Q-15, as proposed:
 - A loaded sheet supplies the clip list and one-shot marks from
   `settings.clips`.
 - An explicit `--clip` replaces the whole list, and `--once` then comes from
-  the command line, as now.
+  the command line, as now. *Amended by D-39:* per-clip frame counts are not
+  part of that list; they merge by clip name.
 - A recorded clip that the model no longer has is an input error (exit 3), as
   an unknown `--once` is today.
 - This replaces design §Scale and ground point (*Reuse*): "Clip selection and
@@ -960,6 +965,9 @@ and corrects D-13's factor for one-shots.
 | automatic sampling | exactly `1` |
 | one frame (zero duration, `static`, or a one-shot with `N` = 1) | `1` |
 
+*Amended by D-38:* the one-frame row covers any clip with `N` = 1, looping
+or one-shot, and the loop row applies from `N` = 2.
+
 Tests cover each case. Affects SET-5.
 
 ### D-34. Frame-count validation
@@ -1021,6 +1029,64 @@ D-36.
   does for ramps.
 
 Affects SET-3.
+
+### D-38. One frame is a still
+
+Decided by the owner on 2026-10-11, during issue processing: "frames: 1
+means a static image", then "choose your recommended for both". The
+*Frames* section's "one-frame clips" and D-33's one-frame row disagreed on
+a looping clip with a count of 1.
+
+- Any clip with one frame is a still image. Its frame is at `t0`, lasts
+  `1/fps`, and the sheet records `time_scale: 1`.
+- That covers a count of 1, looping or one-shot, a zero-duration clip and
+  `static`.
+- D-33's one-frame row becomes "zero duration, `static`, or any clip with
+  `N` = 1". The loop row `d·fps/N` applies from `N` = 2.
+
+Affects SET-5.
+
+### D-39. An explicit `--clip` replaces only the clip selection
+
+Decided by the owner on 2026-10-11, during issue processing, option (a).
+D-19's "`--clip` replaces the whole list" and the merge rule "`clips`
+entries merge by clip name" disagreed on a loaded sheet's per-clip counts.
+
+- Over a loaded sheet, an explicit `--clip` replaces the clip list and the
+  one-shot marks (D-19), but not the per-clip frame counts.
+- Per-clip counts merge by clip name across layers, the loaded sheet's
+  included. So a re-selected clip keeps its loaded count, and `--frames`
+  reaches only the clips whose value is `null` (D-31).
+
+Affects SET-5.
+
+### D-40. Where the frame fields sit in the sheet
+
+Decided by the owner on 2026-10-11, during issue processing, option (a).
+The design named SET-5's fields but not their positions.
+
+- `settings.frames` comes directly after `settings.fps`.
+- Each `settings.clips` entry runs `name`, `loop`, `frames`.
+- Each top-level `clips` entry gains `time_scale` directly after
+  `frame_duration_s`.
+
+Affects SET-5.
+
+### D-41. Which clips the frame-count warning names
+
+Decided by the owner on 2026-10-11, during issue processing: "choose your
+recommended for both". This makes D-25's and D-26's warnings exact.
+
+- When the global count is set explicitly, by `--frames` or a `--config`
+  file, as a count or as `auto`, the warning names every selected clip whose
+  own value (a count or `auto`) beats it. It fires even when the two values
+  are equal, as SET-3's material warning does (D-23).
+- Zero-duration and `static` clips are left out of that warning. They give
+  only D-25's warning, and only when their own count is above 1.
+- A `clips` entry naming a clip that is not selected gives no warning of
+  either kind.
+
+Affects SET-5.
 
 ## Open questions
 
@@ -1277,7 +1343,7 @@ its own pull request, because tests read design.md.
 - **Ordering:** independent of SET-2 and SET-3. Each sheet-schema bump takes
   the next version, whichever slice lands first.
 - **Relevant decisions:** D-13, D-14, D-15, D-16, D-17, D-22, D-24, D-25,
-  D-26, D-31, D-32, D-33, D-34.
+  D-26, D-31, D-32, D-33, D-34, D-38, D-39, D-40, D-41.
 - **Acceptance signals:**
   - pure sampling tests for loop, one-shot and `N` = 1;
   - zero-duration and `static` clips keep one frame, with the warning for a
