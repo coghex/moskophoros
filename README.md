@@ -62,8 +62,16 @@ without the original file; `--materials FILE` replaces it and `--no-materials`
 drops it. See [docs/design.md](docs/design.md#material-libraries) for the file
 format.
 
-The cell, fps, palette, library and previews can also come from YAML settings
-files. `~/.config/moskophoros/config.yaml` (or
+With a library, each material's shade comes from ambient occlusion and the
+surface's own curvature. `--ao-distance M` (default 0.3), `--ao-samples N`
+(1 to 128, default 64), `--occlusion-weight W` (default 0.25) and
+`--convexity-weight W` (default 1.0) tune it, and `--shade-range LO,HI`
+(default 84,191) sets the shade values a ramp spans. For example,
+`--convexity-weight 0` drops the curvature term. The sheet records the values,
+so `--settings-from` reproduces the look.
+
+The cell, fps, palette, library, previews and shading values can also come
+from YAML settings files. `~/.config/moskophoros/config.yaml` (or
 `$XDG_CONFIG_HOME/moskophoros/config.yaml`) holds your own defaults, and
 `--config look.yaml`, repeatable, applies a file as if its values were given
 as options; command-line options still win. Paths in a file are relative to
@@ -75,6 +83,11 @@ fps: 12
 palette: ~/palettes/vince-128.gpl
 materials: robot-library.yaml
 previews: false
+shade:             # set any of them; the rest keep their defaults
+  ao_distance_m: 1.2
+  occlusion_weight: 0.5
+  convexity_weight: 0.0
+  range: [120, 188]
 ```
 
 Your own file never changes a sheet loaded with `--settings-from`, while a

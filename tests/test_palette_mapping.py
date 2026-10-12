@@ -346,7 +346,7 @@ def test_palette_reuse_and_overrides_do_not_need_original_file(tmp_path):
             )
         )
 
-    unmaterialed = {"materials": None, "shade_range": [84, 191]}
+    unmaterialed = {"materials": None}
     assert (
         cli.style_record(resolve())
         == {

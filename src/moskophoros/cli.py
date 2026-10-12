@@ -14,10 +14,11 @@ the shipped defaults, the user file, a loaded sheet (`--settings-from`) and
 the selected palette and material library snapshots; these reads precede any
 Blender invocation.
 
-`capture_settings` gives the settings capture and export share, and
-`style_record` the style the sheet records beside them, following design
-§Export: the reduction, the palette, the material library and the shade range.
-The style never reaches the capture job.
+`capture_settings` gives the settings capture and export share, the
+shade's capture values among them, and `style_record` the style the sheet
+records beside them, following design §Export: the reduction, the palette and
+the material library. The style and the shade range never reach the capture
+job.
 
 `main` runs the whole command, following design §CLI and §Pipeline: read and
 measure the model, check root motion, fit, render, stylize, clean up and
@@ -96,10 +97,21 @@ ROOT_MOTION_MODES = ("error", "keep")
 # The values --reduce accepts; the first is the default.
 REDUCTIONS = ("plain", "mode")
 # The only sheet schema `--settings-from` loads (settings design D-24).
-SHEET_SCHEMA = "moskophoros.sheet/4"
+SHEET_SCHEMA = "moskophoros.sheet/5"
 _MAX_DIGITS = 4300
 _VIEW_FIELDS = ("view", "pitch", "directions", "start_angle")
 _REPEATABLE = frozenset({"--clip", "--once", "--config"})
+# The `Options` field of each file setting whose name differs, which is also
+# its option's name in `explicit`.
+_SETTING_FIELDS = MappingProxyType(
+    {
+        "shade.ao_distance_m": "ao_distance",
+        "shade.ao_samples": "ao_samples",
+        "shade.occlusion_weight": "occlusion_weight",
+        "shade.convexity_weight": "convexity_weight",
+        "shade.range": "shade_range",
+    }
+)
 # The file settings that are paths, with the `Options` fields a path and a
 # null set; the others set the field of their own name. Each one's names in
 # `explicit` are its own and, for a path, the null's flag.
@@ -173,7 +185,11 @@ class Options:
     materials_file: Path | None = None
     no_materials: bool = False
     materials: MaterialsRecord | None = None
-    shade_range: tuple[int, int] = backend.DEFAULT_SHADE_RANGE
+    shade_range: tuple[int, int] = layered.DEFAULTS["shade.range"]
+    ao_distance: float = layered.DEFAULTS["shade.ao_distance_m"]
+    ao_samples: int = layered.DEFAULTS["shade.ao_samples"]
+    occlusion_weight: float = layered.DEFAULTS["shade.occlusion_weight"]
+    convexity_weight: float = layered.DEFAULTS["shade.convexity_weight"]
     configs: tuple[Path, ...] = ()
     no_user_config: bool = False
     origins: MappingProxyType = MappingProxyType({})
@@ -251,6 +267,11 @@ def parse_args(argv: Sequence[str]) -> Options:
         no_palette=args.no_palette,
         materials_file=args.materials,
         no_materials=args.no_materials,
+        ao_distance=args.ao_distance,
+        ao_samples=args.ao_samples,
+        occlusion_weight=args.occlusion_weight,
+        convexity_weight=args.convexity_weight,
+        shade_range=args.shade_range,
         configs=tuple(args.configs or ()),
         no_user_config=args.no_user_config,
     )
@@ -282,9 +303,13 @@ class ReusedSettings:
     clip: tuple[str, ...]
     once: tuple[str, ...]
     reduce: str
+    shade_range: tuple[int, int]
+    ao_distance: float
+    ao_samples: int
+    occlusion_weight: float
+    convexity_weight: float
     palette: PaletteRecord | None = None
     materials: MaterialsRecord | None = None
-    shade_range: tuple[int, int] = backend.DEFAULT_SHADE_RANGE
 
 
 def resolve_settings(options: Options, environ=None) -> Options:
@@ -352,10 +377,11 @@ def _apply_layer(options, values, sources, mark=True):
     origins = dict(options.origins)
     for name, value in values.items():
         if name not in _PATH_FIELDS:
-            if name not in explicit:
-                changes[name] = value
+            field = _SETTING_FIELDS.get(name, name)
+            if field not in explicit:
+                changes[field] = value
                 if mark:
-                    explicit.add(name)
+                    explicit.add(field)
             continue
         path_field, none_field = _PATH_FIELDS[name]
         if explicit & {name, none_field}:
@@ -550,8 +576,9 @@ def read_settings(path) -> ReusedSettings:
         checked["style"] = _style(checked["style"], problems)
     if problems:
         _settings_error(path, "; ".join(problems))
-    view, cell, ground, ground_px, style = (
-        checked[name] for name in ("view", "cell", "ground_m", "ground_px", "style")
+    view, cell, ground, ground_px, shade, style = (
+        checked[name]
+        for name in ("view", "cell", "ground_m", "ground_px", "shade", "style")
     )
     return ReusedSettings(
         view=view["preset"],
@@ -570,9 +597,13 @@ def read_settings(path) -> ReusedSettings:
         clip=tuple(entry["name"] for entry in checked["clips"]),
         once=tuple(entry["name"] for entry in checked["clips"] if not entry["loop"]),
         reduce=style["reduce"],
+        shade_range=shade["range"],
+        ao_distance=shade["ao_distance_m"],
+        ao_samples=shade["ao_samples"],
+        occlusion_weight=shade["occlusion_weight"],
+        convexity_weight=shade["convexity_weight"],
         palette=style["palette"],
         materials=style["materials"],
-        shade_range=style["shade_range"],
     )
 
 
@@ -632,13 +663,19 @@ def capture_settings(options: Options) -> backend.Settings:
         ground=options.ground,
         ground_px=options.ground_px,
         root_motion=options.root_motion,
+        shade=backend.Shade(
+            ao_distance_m=options.ao_distance,
+            ao_samples=options.ao_samples,
+            occlusion_weight=options.occlusion_weight,
+            convexity_weight=options.convexity_weight,
+        ),
     )
 
 
 def style_record(options: Options) -> dict:
     """The sheet's ordered look record, independent of capture settings:
-    `reduce`, `palette`, `materials` (the library snapshot, or `None`) and
-    `shade_range`, in that order."""
+    `reduce`, `palette` and `materials` (the library snapshot, or `None`), in
+    that order. The shade range is a setting, recorded in `settings.shade`."""
     record = options.palette
     return {
         "reduce": options.reduce,
@@ -652,7 +689,6 @@ def style_record(options: Options) -> dict:
         "materials": None
         if options.materials is None
         else _materials_document(options.materials),
-        "shade_range": list(options.shade_range),
     }
 
 
@@ -807,7 +843,11 @@ def _command(options):
             "fingerprint": export.fingerprint(
                 generator,
                 export.sheet_settings(
-                    settings, selected, sheet_style, previews=options.previews
+                    settings,
+                    selected,
+                    sheet_style,
+                    shade_range=options.shade_range,
+                    previews=options.previews,
                 ),
                 source.sha256,
             )
@@ -845,6 +885,7 @@ def _command(options):
         subject=subject.name,
         settings=settings,
         style=sheet_style,
+        shade_range=options.shade_range,
         previews=options.previews,
         selected_clips=selected,
         image_path=outfile,
@@ -1195,6 +1236,37 @@ def _positive(text):
     return value
 
 
+def _weight(text):
+    value = _number(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"must be 0 or greater, got {text!r}")
+    return value
+
+
+def _ao_samples(text):
+    value = _integer(text)
+    if not 1 <= value <= backend.MAX_AO_SAMPLES:
+        raise argparse.ArgumentTypeError(
+            f"must be from 1 to {backend.MAX_AO_SAMPLES}, the most Blender's "
+            f"ambient occlusion takes, got {text!r}"
+        )
+    return value
+
+
+def _shade_range_option(text):
+    """`LO,HI` as `(LO, HI)`: two integers with `0 <= LO < HI <= 255`."""
+    parts = text.split(",")
+    try:
+        lo, hi = (int(part) for part in parts)
+    except ValueError:
+        lo = hi = None
+    if lo is None or not 0 <= lo < hi <= 255:
+        raise argparse.ArgumentTypeError(
+            f"expected LO,HI, two integers with 0 <= LO < HI <= 255, got {text!r}"
+        )
+    return lo, hi
+
+
 _pitch = _from_to(_number, 0, 90)
 _directions = _from_to(_integer, 1, 64)
 _supersample = _from_to(_integer, 1, 16)
@@ -1399,6 +1471,47 @@ def _build_parser():
         REDUCTIONS[0],
         f"pixel reduction: {', '.join(REDUCTIONS)} (default: {REDUCTIONS[0]})",
         choices=REDUCTIONS,
+    )
+    defaults = layered.DEFAULTS
+    single(
+        "--ao-distance",
+        "M",
+        _positive,
+        defaults["shade.ao_distance_m"],
+        "how far ambient occlusion looks for other surfaces, in meters, greater "
+        "than 0 (default: 0.3)",
+    )
+    single(
+        "--ao-samples",
+        "N",
+        _ao_samples,
+        defaults["shade.ao_samples"],
+        f"ambient occlusion samples per pixel, 1 to {backend.MAX_AO_SAMPLES} "
+        "(default: 64)",
+    )
+    single(
+        "--occlusion-weight",
+        "W",
+        _weight,
+        defaults["shade.occlusion_weight"],
+        "how much occlusion by other surfaces lightens the shade, 0 or greater "
+        "(default: 0.25)",
+    )
+    single(
+        "--convexity-weight",
+        "W",
+        _weight,
+        defaults["shade.convexity_weight"],
+        "how much a surface's own convexity lightens the shade, 0 or greater "
+        "(default: 1.0)",
+    )
+    single(
+        "--shade-range",
+        "LO,HI",
+        _shade_range_option,
+        defaults["shade.range"],
+        "the 8-bit shade values a material's ramp spans, 0 <= LO < HI <= 255 "
+        "(default: 84,191)",
     )
     single(
         "--palette",
@@ -1762,11 +1875,17 @@ _SETTINGS = {
     "ground_px": {axis: _reused(_whole_number) for axis in "xy"},
     "root_motion": _one_of(*ROOT_MOTION_MODES),
     "previews": _previews,
+    "shade": {
+        "ao_distance_m": _reused(_positive),
+        "ao_samples": _reused(_ao_samples),
+        "occlusion_weight": _reused(_weight),
+        "convexity_weight": _reused(_weight),
+        "range": _shade_range,
+    },
     "style": {
         "reduce": _one_of(*REDUCTIONS),
         "palette": _PALETTE,
         "materials": _MATERIALS,
-        "shade_range": _shade_range,
     },
     "clips": _clips,
 }

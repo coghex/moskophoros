@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from PIL import Image
+from shading import DEFAULT_SHADE
 
 from moskophoros import export, sampling, views
 from moskophoros.capture.backend import Settings
@@ -27,6 +28,7 @@ def _settings(directions, cell, fps=2.0):
         ground=(0.0, 0.0, 0.0),
         ground_px=(0, 0),
         root_motion="keep",
+        shade=DEFAULT_SHADE,
     )
 
 

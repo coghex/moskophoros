@@ -8,6 +8,7 @@ import json
 import pytest
 from material_models import GREY, Model, cube, quad_xy
 from PIL import Image
+from shading import DEFAULT_RANGE
 
 from moskophoros import cli, stylize
 from moskophoros.capture import backend, blender
@@ -105,6 +106,76 @@ def colours(path):
         return set(image.get_flattened_data())
 
 
+# Shading values from a settings file (settings design D-3, D-16, D-22, D-42)
+
+SHADE_CONFIG = """\
+shade:
+  ao_distance_m: 1.2
+  ao_samples: 128
+  occlusion_weight: 0.5
+  convexity_weight: 0.0
+  range: [120, 188]
+"""
+
+
+@pytest.mark.parametrize("look", ["plain", "mode"])
+def test_shading_values_from_a_config_are_used_recorded_and_reproduced(
+    capsys, found, inputs, tmp_path, look
+):
+    palette, library = inputs
+    model = subject_a(tmp_path)
+    config = tmp_path / "look.yaml"
+    config.write_text(SHADE_CONFIG)
+    base = ["--no-user-config", "--reduce", look, "--palette", str(palette)]
+    base += ["--materials", str(library)]
+    default, shaded, again = (
+        tmp_path / name for name in ("default", "shaded", "again")
+    )
+    for directory in (default, shaded, again):
+        directory.mkdir()
+    assert run(capsys, found, model, default / "a.png", *base)[0] == 0
+    status, _, err = run(
+        capsys, found, model, shaded / "a.png", *base, "--config", str(config)
+    )
+    assert status == 0, err
+
+    sheet = json.loads((shaded / "a.json").read_text())
+    assert sheet["settings"]["shade"] == {
+        "ao_distance_m": 1.2,
+        "ao_samples": 128,
+        "occlusion_weight": 0.5,
+        "convexity_weight": 0.0,
+        "range": [120, 188],
+    }
+    assert list(sheet["generator"]["shade"]) == [
+        "technique",
+        "samples_per_pixel",
+        "seed",
+        "pixel_filter",
+        "filter_width_px",
+    ]
+    assert "shade_range" not in sheet["settings"]["style"]
+    # The values change the look.
+    assert (shaded / "a.png").read_bytes() != (default / "a.png").read_bytes()
+
+    # Loaded from the sheet with the same model and nothing else, it
+    # reproduces byte for byte, without the settings file.
+    config.unlink()
+    status = cli.run(
+        [
+            "--settings-from",
+            str(shaded / "a.json"),
+            "--no-user-config",
+            "--blender",
+            str(found.path),
+            str(model),
+            str(again / "a.png"),
+        ]
+    )
+    assert status == 0, capsys.readouterr().err
+    assert listing(again) == listing(shaded)
+
+
 @pytest.mark.parametrize("look", ["plain", "mode"])
 def test_a_library_gives_byte_identical_outputs_on_repeat_and_on_reuse(
     capsys, found, inputs, tmp_path, look
@@ -123,7 +194,7 @@ def test_a_library_gives_byte_identical_outputs_on_repeat_and_on_reuse(
     description = json.loads(first["a.json"])
     style = description["settings"]["style"]
     assert style["materials"]["source"] == "materials.yaml"
-    assert style["shade_range"] == list(backend.DEFAULT_SHADE_RANGE)
+    assert description["settings"]["shade"]["range"] == list(DEFAULT_RANGE)
 
     # Reuse needs neither file.
     palette.rename(palette.with_name("moved.hex"))

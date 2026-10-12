@@ -40,21 +40,18 @@ _PNG_RGBA = 6
 ID_BACKGROUND = 0
 NO_MATERIAL_ID = 0xFFFF
 MAX_MATERIALS = NO_MATERIAL_ID - 1
-# The fixed shade range [lo, hi] new renders take bands over, chosen from the
-# D-10 spike's measurements (material styling design §Spike record).
-DEFAULT_SHADE_RANGE = (84, 191)
-# The fields of a render result's `backend.shade`, and their checks.
+# The fields of a render result's `backend.shade`, the fixed shade
+# technique, and their checks. The capture values are the job's.
 SHADE_FIELDS = {
     "technique": "name",
     "samples_per_pixel": "count",
     "seed": "index",
     "pixel_filter": "name",
     "filter_width_px": "positive",
-    "ao_distance_m": "positive",
-    "ao_samples": "count",
-    "occlusion_weight": "number",
-    "convexity_weight": "number",
 }
+# The most samples Blender's Ambient Occlusion node takes; it silently clamps
+# more (settings design D-42).
+MAX_AO_SAMPLES = 128
 AUXILIARY_BUFFERS = ("matid", "shade")
 
 
@@ -90,11 +87,25 @@ class Source:
 
 
 @dataclass(frozen=True)
+class Shade:
+    """The capture values of the shade (design §Capture, Shade): the ambient
+    occlusion distance and samples, and the weights of occlusion by other
+    surfaces and of a surface's own convexity. The shade range acts after
+    capture, so it is not here."""
+
+    ao_distance_m: float
+    ao_samples: int
+    occlusion_weight: float
+    convexity_weight: float
+
+
+@dataclass(frozen=True)
 class Settings:
     """Resolved settings, as the sheet's `settings` object records them.
 
     `view` is a preset name or `custom`. `ppm`, `cell` and `ground_px` are
-    None until fitting resolves them.
+    None until fitting resolves them. `shade` holds the capture values of
+    the shade.
     """
 
     view: str
@@ -109,6 +120,7 @@ class Settings:
     ground: tuple[float, float, float]
     ground_px: tuple[int, int] | None
     root_motion: str
+    shade: Shade
 
 
 @dataclass(frozen=True)
@@ -249,6 +261,12 @@ def settings_document(settings, selected_clips, fitted=True):
             None if ground_px is None else {"x": ground_px[0], "y": ground_px[1]}
         ),
         "root_motion": settings.root_motion,
+        "shade": {
+            "ao_distance_m": float(settings.shade.ao_distance_m),
+            "ao_samples": settings.shade.ao_samples,
+            "occlusion_weight": float(settings.shade.occlusion_weight),
+            "convexity_weight": float(settings.shade.convexity_weight),
+        },
         "clips": [
             {"name": selected.clip.name, "loop": not selected.one_shot}
             for selected in selected_clips
@@ -338,6 +356,7 @@ def _check_settings(settings, mode):
         problems.append(f"ground {settings.ground!r}")
     if settings.root_motion not in ROOT_MOTION_MODES:
         problems.append(f"root_motion {settings.root_motion!r}")
+    problems += _shade_problems(settings.shade)
     fitted = {
         "ppm": settings.ppm is None or (_is_number(settings.ppm) and settings.ppm > 0),
         "cell": settings.cell is None or _is_pair(settings.cell, 1, MAX_CELL),
@@ -703,6 +722,24 @@ def _backend(value, mode):
     if mode == "render":
         result["shade"] = _shade(value["shade"])
     return result
+
+
+def _shade_problems(shade):
+    """What is wrong with the capture values `shade`: the distance finite and
+    greater than 0, the samples 1 to `MAX_AO_SAMPLES`, the weights finite and
+    0 or greater."""
+    if not isinstance(shade, Shade):
+        return [f"shade {shade!r}"]
+    problems = []
+    if not (_is_number(shade.ao_distance_m) and shade.ao_distance_m > 0):
+        problems.append(f"shade.ao_distance_m {shade.ao_distance_m!r}")
+    if not (_is_int(shade.ao_samples) and 1 <= shade.ao_samples <= MAX_AO_SAMPLES):
+        problems.append(f"shade.ao_samples {shade.ao_samples!r}")
+    for name in ("occlusion_weight", "convexity_weight"):
+        value = getattr(shade, name)
+        if not (_is_number(value) and value >= 0):
+            problems.append(f"shade.{name} {value!r}")
+    return problems
 
 
 def _shade(value):

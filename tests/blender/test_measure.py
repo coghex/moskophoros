@@ -11,6 +11,7 @@ import subprocess
 
 import pytest
 from glb_writer import GlbWriter
+from shading import DEFAULT_SHADE
 
 from moskophoros import gltf, sampling, views
 from moskophoros.capture import backend, blender
@@ -60,6 +61,7 @@ def measure(
         ground,
         None,
         "error",
+        DEFAULT_SHADE,
     )
     view = views.View(pitch, directions, start, yaw)
     frames = sampling.frames(subject.name, clips, view, fps)
@@ -528,7 +530,19 @@ def valid_job_text(found, tmp_path):
     subject = gltf.read_glb(path)
     clips = gltf.select_clips(subject, (), ())
     settings = backend.Settings(
-        "custom", 0.0, 1, 0.0, 0.0, 4.0, 1, None, None, (0, 0, 0), None, "error"
+        "custom",
+        0.0,
+        1,
+        0.0,
+        0.0,
+        4.0,
+        1,
+        None,
+        None,
+        (0, 0, 0),
+        None,
+        "error",
+        DEFAULT_SHADE,
     )
     frames = sampling.frames(subject.name, clips, views.View(0.0, 1, 0.0), 4.0)
     job = backend.build_job(
@@ -621,6 +635,19 @@ def _boolean_index(job):
     job["frames"][1]["index"] = True
 
 
+def _shade(key, value):
+    def change(job):
+        if value is _MISSING:
+            del job["settings"]["shade"][key]
+        else:
+            job["settings"]["shade"][key] = value
+
+    return change
+
+
+_MISSING = object()
+
+
 @pytest.mark.parametrize(
     ("change", "message"),
     [
@@ -629,6 +656,15 @@ def _boolean_index(job):
         (_wrong_angle, "angle is 1.0, not 0.0"),
         (_wrong_index, "are not indexed"),
         (_boolean_index, "a frame's index"),
+        (_shade("ao_samples", 129), "settings.shade.ao_samples 129 is not 1 to 128"),
+        (_shade("ao_samples", 0), "settings.shade.ao_samples 0 is not 1 to 128"),
+        (_shade("ao_samples", True), "settings.shade.ao_samples True is not"),
+        (_shade("ao_samples", 64.0), "settings.shade.ao_samples 64.0 is not"),
+        (_shade("ao_distance_m", 0), "settings.shade.ao_distance_m"),
+        (_shade("occlusion_weight", -0.5), "settings.shade.occlusion_weight"),
+        (_shade("convexity_weight", "1"), "settings.shade.convexity_weight"),
+        (_shade("range", [84, 191]), "settings.shade is missing [] or has unknown"),
+        (_shade("ao_samples", _MISSING), "settings.shade is missing ['ao_samples']"),
     ],
     ids=[
         "static clip with a range",
@@ -636,6 +672,15 @@ def _boolean_index(job):
         "wrong angle",
         "wrong index",
         "boolean index",
+        "129 samples",
+        "0 samples",
+        "boolean samples",
+        "float samples",
+        "zero distance",
+        "negative weight",
+        "string weight",
+        "the range in the job",
+        "no samples",
     ],
 )
 def test_an_inconsistent_job_fails_before_importing(found, tmp_path, change, message):
@@ -999,7 +1044,19 @@ def test_the_script_refuses_what_the_input_contract_rejects(
         gltf.read_glb(path)
     clips = (gltf.SelectedClip(gltf.Clip(0, clip, 0.0, 1.0, ()), one_shot=False),)
     settings = backend.Settings(
-        "custom", 0.0, 1, 0.0, 0.0, 4.0, 1, None, None, (0, 0, 0), None, "error"
+        "custom",
+        0.0,
+        1,
+        0.0,
+        0.0,
+        4.0,
+        1,
+        None,
+        None,
+        (0, 0, 0),
+        None,
+        "error",
+        DEFAULT_SHADE,
     )
     frames = sampling.frames(path.stem, clips, views.View(0.0, 1, 0.0), 4.0)
     workspace = tmp_path / "work"

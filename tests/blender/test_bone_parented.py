@@ -19,6 +19,7 @@ import math
 import pytest
 from glb_writer import GlbWriter
 from PIL import Image
+from shading import DEFAULT_SHADE
 
 from moskophoros import gltf, sampling, views
 from moskophoros.capture import backend, blender
@@ -181,6 +182,7 @@ def run(found, path, tmp_path, mode, **fitted):
         (0.0, 0.0, 0.0),
         fitted.get("ground_px"),
         "error",
+        DEFAULT_SHADE,
     )
     frames = sampling.frames(
         subject.name, clips, views.View(0.0, 1, 0.0, 0.0), settings.fps

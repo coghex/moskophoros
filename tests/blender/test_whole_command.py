@@ -12,6 +12,7 @@ import shutil
 import pytest
 from glb_writer import GlbWriter
 from PIL import Image
+from shading import DEFAULT_RANGE
 
 from moskophoros import cli
 from moskophoros.capture import backend, blender
@@ -198,8 +199,8 @@ def test_two_mode_runs_give_byte_identical_outputs(capsys, found, model, tmp_pat
         "reduce": "mode",
         "palette": None,
         "materials": None,
-        "shade_range": list(backend.DEFAULT_SHADE_RANGE),
     }
+    assert description["settings"]["shade"]["range"] == list(DEFAULT_RANGE)
 
 
 def test_settings_reuse_with_an_explicit_override(capsys, found, model, earlier, out):

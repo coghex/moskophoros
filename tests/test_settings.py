@@ -34,7 +34,19 @@ def refused(data):
 
 
 def test_the_schema_holds_this_slices_settings():
-    assert list(settings.SCHEMA) == ["cell", "fps", "palette", "materials", "previews"]
+    assert list(settings.SCHEMA) == [
+        "cell",
+        "fps",
+        "palette",
+        "materials",
+        "previews",
+        "shade.ao_distance_m",
+        "shade.ao_samples",
+        "shade.occlusion_weight",
+        "shade.convexity_weight",
+        "shade.range",
+    ]
+    assert settings.GROUPS == {"shade"}
     for name, setting in settings.SCHEMA.items():
         assert setting.kind, name
         assert callable(setting.check), name
@@ -50,6 +62,12 @@ def test_the_defaults_file_and_the_schema_table_agree():
         "palette": None,
         "materials": None,
         "previews": True,
+        # Today's shading values stay the defaults (settings design D-12).
+        "shade.ao_distance_m": 0.3,
+        "shade.ao_samples": 64,
+        "shade.occlusion_weight": 0.25,
+        "shade.convexity_weight": 1.0,
+        "shade.range": (84, 191),
     }
 
 
@@ -58,9 +76,13 @@ def test_the_defaults_file_gives_every_default_as_the_table_writes_it():
     from moskophoros import yamlfile
 
     document = yamlfile.load(text.encode("utf-8"))
-    assert document == {"version": 1} | {
-        name: setting.default for name, setting in settings.SCHEMA.items()
-    }
+    expected = {"version": 1}
+    for name, setting in settings.SCHEMA.items():
+        group, _, member = name.rpartition(".")
+        (expected.setdefault(group, {}) if group else expected)[member] = (
+            setting.default
+        )
+    assert document == expected
 
 
 def test_the_defaults_file_is_installed_with_the_package():
@@ -174,15 +196,135 @@ def test_an_overlong_integer_fps_is_refused_with_its_line():
     )
 
 
-@pytest.mark.parametrize("key", ["shade", "frames", "clips", "view", "Cell", "fps "])
+@pytest.mark.parametrize("key", ["frames", "clips", "view", "Cell", "fps ", "Shade"])
 def test_an_unknown_key_is_refused_naming_it_and_its_line(key):
     text = f"version: 1\nfps: 12\n'{key}': {{a: 1}}\n"
     assert refused(text) == f"{key}: unknown key at line 3, column 1"
 
 
 def test_a_key_from_a_later_slice_is_an_unknown_key():
-    text = "fps: 12\nshade:\n  ao_distance_m: 0.3\n"
-    assert refused(text) == "shade: unknown key at line 2, column 1"
+    text = "fps: 12\nframes: 8\n"
+    assert refused(text) == "frames: unknown key at line 2, column 1"
+
+
+# The shade group (settings design D-3, D-9, D-12, D-22, D-30, D-42)
+
+
+def test_a_shade_group_gives_one_setting_per_key():
+    assert layer(
+        "shade:\n  ao_distance_m: 1.2\n  ao_samples: 128\n  occlusion_weight: 0.5\n"
+        "  convexity_weight: 0\n  range: [120, 188]\n"
+    ) == {
+        "shade.ao_distance_m": 1.2,
+        "shade.ao_samples": 128,
+        "shade.occlusion_weight": 0.5,
+        "shade.convexity_weight": 0.0,
+        "shade.range": (120, 188),
+    }
+    assert layer("shade: {occlusion_weight: 0.5}\n") == {"shade.occlusion_weight": 0.5}
+    assert layer("shade: {}\n") == {}
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "expected"),
+    [
+        ("ao_distance_m", "1e-9", 1e-9),
+        ("ao_distance_m", "100", 100.0),
+        ("ao_samples", "1", 1),
+        ("ao_samples", "128", 128),
+        ("occlusion_weight", "0", 0.0),
+        ("occlusion_weight", "7.5", 7.5),
+        ("convexity_weight", "0.0", 0.0),
+        ("range", "[0, 1]", (0, 1)),
+        ("range", "[254, 255]", (254, 255)),
+        ("range", "[0, 255]", (0, 255)),
+    ],
+)
+def test_each_shade_value_inside_its_bounds(key, value, expected):
+    assert layer(f"shade:\n  {key}: {value}\n") == {f"shade.{key}": expected}
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "problem"),
+    [
+        ("ao_distance_m", "0", "expected a finite number greater than 0, got 0"),
+        ("ao_distance_m", "-0.3", "expected a finite number greater than 0, got -0.3"),
+        ("ao_distance_m", "1e400", "expected a finite number greater than 0, got inf"),
+        ("ao_distance_m", ".inf", "expected a number greater than 0, got '.inf'"),
+        ("ao_distance_m", "true", "expected a number greater than 0, got true"),
+        (
+            "ao_samples",
+            "129",
+            "expected a whole number from 1 to 128, the most Blender's ambient "
+            "occlusion takes, got 129",
+        ),
+        (
+            "ao_samples",
+            "0",
+            "expected a whole number from 1 to 128, the most Blender's ambient "
+            "occlusion takes, got 0",
+        ),
+        ("ao_samples", "1024", "expected a whole number from 1 to 128"),
+        ("ao_samples", "64.0", "expected a whole number from 1 to 128"),
+        ("ao_samples", "true", "expected a whole number from 1 to 128"),
+        (
+            "occlusion_weight",
+            "-0.01",
+            "expected a finite number 0 or greater, got -0.01",
+        ),
+        ("convexity_weight", "-1", "expected a finite number 0 or greater, got -1"),
+        ("convexity_weight", "'1'", "expected a number 0 or greater, got '1'"),
+        ("range", "[191, 84]", "expected [lo, hi], two integers with 0 <= lo < hi"),
+        ("range", "[84, 84]", "expected [lo, hi], two integers with 0 <= lo < hi"),
+        ("range", "[-1, 84]", "expected [lo, hi], two integers with 0 <= lo < hi"),
+        ("range", "[84, 256]", "expected [lo, hi], two integers with 0 <= lo < hi"),
+        ("range", "[84.0, 191]", "got [84.0, 191]"),
+        ("range", "[true, 191]", "got [true, 191]"),
+        ("range", "[84]", "got [84]"),
+        ("range", "[84, 120, 191]", "got [84, 120, 191]"),
+        ("range", "84,191", "got '84,191'"),
+    ],
+)
+def test_a_shade_value_out_of_bounds_names_its_key_path_and_line(key, value, problem):
+    message = refused(f"version: 1\nfps: 12\nshade:\n  {key}: {value}\n")
+    assert message.startswith(f"shade.{key}: ")
+    assert problem in message
+    assert message.endswith(" at line 4, column 3")
+
+
+def test_an_unknown_shade_key_names_its_key_path_and_line():
+    assert refused("shade:\n  ao_samples: 8\n  ao_quality: high\n") == (
+        "shade.ao_quality: unknown key at line 3, column 3"
+    )
+
+
+@pytest.mark.parametrize(("value", "shown"), [("0.3", "0.3"), ("[0.3]", "a list")])
+def test_shade_must_be_a_mapping(value, shown):
+    assert refused(f"fps: 1\nshade: {value}\n") == (
+        f"shade: expected a mapping of settings, got {shown} at line 2, column 1"
+    )
+
+
+def test_a_shade_key_that_is_not_a_name_is_refused():
+    assert refused("shade:\n  1: 2\n") == (
+        "shade: the key 1 is not a setting name at line 2, column 3"
+    )
+
+
+def test_shade_values_merge_key_by_key_and_the_range_replaces_whole():
+    defaults = dict(settings.DEFAULTS)
+    user = layer("shade: {ao_distance_m: 1.2, range: [120, 255]}\n")
+    config = layer("shade: {convexity_weight: 0.5, range: [100, 200]}\n")
+    merged = merge(defaults, user, config)
+    assert {
+        key: value for key, value in merged.items() if key.startswith("shade.")
+    } == {
+        "shade.ao_distance_m": 1.2,
+        "shade.ao_samples": 64,
+        "shade.occlusion_weight": 0.25,
+        "shade.convexity_weight": 0.5,
+        "shade.range": (100, 200),
+    }
 
 
 @pytest.mark.parametrize("version", ["2", "0", "true", "'1'", "1.0", "null"])
@@ -356,12 +498,10 @@ def test_a_later_layer_wins_key_by_key_and_an_omitted_key_falls_through():
     user = {"fps": 6.0, "cell": (48, 48)}
     first = {"fps": 24.0, "palette": Path("/p.gpl")}
     second = {"fps": 30.0}
-    assert merge(defaults, user, first, second) == {
+    assert merge(defaults, user, first, second) == dict(settings.DEFAULTS) | {
         "cell": (48, 48),
         "fps": 30.0,
         "palette": Path("/p.gpl"),
-        "materials": None,
-        "previews": True,
     }
 
 

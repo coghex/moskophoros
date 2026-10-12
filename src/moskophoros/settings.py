@@ -2,7 +2,10 @@
 (settings design D-2, D-5, D-8, D-17, D-22 and D-30).
 
 A settings file is a YAML mapping read by `yamlfile`, with an optional
-`version: 1` and any of the settings in `SCHEMA`. Reading one gives a layer:
+`version: 1` and any of the settings in `SCHEMA`. A group such as `shade` is
+a nested mapping whose settings are named by their dotted key paths, such as
+`shade.ao_distance_m`, so a file may set one and inherit the rest; a list
+such as `shade.range` is one value and replaces whole. Reading one gives a layer:
 a partial mapping from setting names to checked values, with each path
 resolved against the file's directory. `merge` lays layers over each other,
 later layers winning key by key; a key a layer leaves out falls through.
@@ -23,6 +26,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 from moskophoros import yamlfile
+from moskophoros.capture.backend import MAX_AO_SAMPLES
 
 VERSION = 1
 DEFAULTS_FILE = "defaults.yaml"
@@ -114,16 +118,67 @@ def _check_cell(value):
     return cell
 
 
-def _check_fps(value):
+def _finite(value, wanted):
+    """`value` as a finite float, or `_Bad` saying it should be `wanted`."""
     if isinstance(value, bool) or not isinstance(value, int | float):
-        raise _Bad(f"expected a number greater than 0, got {_shown(value)}")
+        raise _Bad(f"expected a number {wanted}, got {_shown(value)}")
     try:
         number = float(value)
     except OverflowError:
         number = math.inf
-    if not math.isfinite(number) or number <= 0:
+    if not math.isfinite(number):
+        raise _Bad(f"expected a finite number {wanted}, got {_shown(value)}")
+    return number
+
+
+def _check_fps(value):
+    number = _finite(value, "greater than 0")
+    if number <= 0:
         raise _Bad(f"expected a finite number greater than 0, got {_shown(value)}")
     return number
+
+
+def _check_distance(value):
+    number = _finite(value, "greater than 0")
+    if number <= 0:
+        raise _Bad(f"expected a finite number greater than 0, got {_shown(value)}")
+    return number
+
+
+def _check_samples(value):
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 1 <= value <= MAX_AO_SAMPLES
+    ):
+        raise _Bad(
+            f"expected a whole number from 1 to {MAX_AO_SAMPLES}, the most "
+            f"Blender's ambient occlusion takes, got {_shown(value)}"
+        )
+    return value
+
+
+def _check_weight(value):
+    number = _finite(value, "0 or greater")
+    if number < 0:
+        raise _Bad(f"expected a finite number 0 or greater, got {_shown(value)}")
+    return number
+
+
+def _check_range(value):
+    if (
+        isinstance(value, list)
+        and len(value) == 2
+        and all(type(bound) is int for bound in value)
+        and 0 <= value[0] < value[1] <= 255
+    ):
+        return tuple(value)
+    shown = (
+        "[" + ", ".join(map(_shown, value)) + "]"
+        if isinstance(value, list)
+        else _shown(value)
+    )
+    raise _Bad(f"expected [lo, hi], two integers with 0 <= lo < hi <= 255, got {shown}")
 
 
 def _check_path(value):
@@ -204,8 +259,42 @@ SCHEMA = MappingProxyType(
         "previews": Setting(
             "whether the animated previews are written", None, True, _check_previews
         ),
+        "shade.ao_distance_m": Setting(
+            "how far ambient occlusion looks for other surfaces, greater than 0",
+            "meters",
+            0.3,
+            _check_distance,
+        ),
+        "shade.ao_samples": Setting(
+            f"ambient occlusion samples per pixel, 1 to {MAX_AO_SAMPLES}",
+            "samples",
+            64,
+            _check_samples,
+        ),
+        "shade.occlusion_weight": Setting(
+            "how much occlusion by other surfaces lightens the shade, 0 or greater",
+            None,
+            0.25,
+            _check_weight,
+        ),
+        "shade.convexity_weight": Setting(
+            "how much a surface's own convexity lightens the shade, 0 or greater",
+            None,
+            1.0,
+            _check_weight,
+        ),
+        "shade.range": Setting(
+            "the 8-bit shade values a material's ramp spans, [lo, hi] with "
+            "0 <= lo < hi <= 255",
+            None,
+            [84, 191],
+            _check_range,
+        ),
     }
 )
+# The groups of settings a file writes as a nested mapping, such as `shade`;
+# each of its keys is a setting of its own, merged key by key.
+GROUPS = frozenset(name.split(".")[0] for name in SCHEMA if "." in name)
 # Each setting's default, as the command holds it.
 DEFAULTS = MappingProxyType(
     {name: setting.check(setting.default) for name, setting in SCHEMA.items()}
@@ -245,24 +334,41 @@ def read_bytes(data, *, source, directory):
         version = document["version"]
         if type(version) is not int or version != VERSION:
             refuse(("version",), f"expected {VERSION}, got {_shown(version)}")
-    layer = Layer()
+    entries = []
     for key, value in document.items():
         if key == "version":
             continue
+        if key not in GROUPS:
+            entries.append(((key,), value))
+            continue
+        if not isinstance(value, dict):
+            refuse((key,), f"expected a mapping of settings, got {_shown(value)}")
+        for member, member_value in value.items():
+            if not isinstance(member, str):
+                line, column = yamlfile.locate(marks, (key, member))
+                raise SettingsError(
+                    source,
+                    f"{key}: the key {_shown(member)} is not a setting name at "
+                    f"line {line}, column {column}",
+                )
+            entries.append(((key, member), member_value))
+    layer = Layer()
+    for path, value in entries:
+        key = ".".join(path)
         setting = SCHEMA.get(key)
         if setting is None:
-            refuse((key,), "unknown key")
+            refuse(path, "unknown key")
         try:
             checked = setting.check(value)
         except _Bad as error:
-            refuse((key,), error.problem)
+            refuse(path, error.problem)
         if setting.path and checked is not None:
             try:
                 checked = resolve_path(checked, directory)
             except _Bad as error:
-                refuse((key,), error.problem)
+                refuse(path, error.problem)
         layer[key] = checked
-        layer.where[key] = yamlfile.locate(marks, (key,))
+        layer.where[key] = yamlfile.locate(marks, path)
     return layer
 
 

@@ -148,6 +148,9 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
             *["--clip", "a", "--once", "a", "--fps", "24", "--ppm", "64"],
             *["--cell", "32x48", "--ground", "1,2,3", "--ground-px", "16,40"],
             *["--root-motion", "keep", "--supersample", "4", "--reduce", "plain"],
+            *["--ao-distance", "1.2", "--ao-samples", "128"],
+            *["--occlusion-weight", "0.5", "--convexity-weight", "0"],
+            *["--shade-range", "120,188"],
             *["--settings-from", "old.json", "--no-preview"],
             *["--config", "a.yaml", "--config", "b.yaml", "--no-user-config"],
             *["--work-dir", "work", "--blender", "/opt/blender", "--any-blender"],
@@ -165,7 +168,6 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         "materials_file",
         "materials",
         "no_materials",
-        "shade_range",
         "origins",
     }
     assert options == cli.Options(
@@ -194,6 +196,11 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         explicit=options.explicit,
         configs=(Path("a.yaml"), Path("b.yaml")),
         no_user_config=True,
+        ao_distance=1.2,
+        ao_samples=128,
+        occlusion_weight=0.5,
+        convexity_weight=0.0,
+        shade_range=(120, 188),
     )
 
 
@@ -224,6 +231,17 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         ("--root-motion", "keep", "root_motion", "keep"),
         ("--reduce", "plain", "reduce", "plain"),
         ("--reduce", "mode", "reduce", "mode"),
+        ("--ao-distance", "1e-9", "ao_distance", 1e-9),
+        ("--ao-distance", "1.2", "ao_distance", 1.2),
+        ("--ao-samples", "1", "ao_samples", 1),
+        ("--ao-samples", "128", "ao_samples", 128),
+        ("--occlusion-weight", "0", "occlusion_weight", 0.0),
+        ("--occlusion-weight", "2.5", "occlusion_weight", 2.5),
+        ("--convexity-weight", "0", "convexity_weight", 0.0),
+        ("--convexity-weight", "1e3", "convexity_weight", 1000.0),
+        ("--shade-range", "0,1", "shade_range", (0, 1)),
+        ("--shade-range", "254,255", "shade_range", (254, 255)),
+        ("--shade-range", "120,188", "shade_range", (120, 188)),
     ],
 )
 def test_range_boundaries_are_accepted(option, value, field, expected):
@@ -257,6 +275,21 @@ def test_range_boundaries_are_accepted(option, value, field, expected):
         ("--reduce", "Mode", "invalid choice"),
         ("--reduce", "Plain", "invalid choice"),
         ("--reduce", "", "invalid choice"),
+        ("--ao-distance", "0", "must be greater than 0"),
+        ("--ao-distance", "nan", "expected a finite number"),
+        ("--ao-samples", "0", "must be from 1 to 128, the most Blender's ambient"),
+        ("--ao-samples", "129", "must be from 1 to 128, the most Blender's ambient"),
+        ("--ao-samples", "64.0", "expected an integer"),
+        ("--occlusion-weight", "-0.001", "must be 0 or greater"),
+        ("--convexity-weight", "-1", "must be 0 or greater"),
+        ("--convexity-weight", "inf", "expected a finite number"),
+        ("--shade-range", "191,84", "expected LO,HI"),
+        ("--shade-range", "84,84", "expected LO,HI"),
+        ("--shade-range", "-1,84", "expected LO,HI"),
+        ("--shade-range", "84,256", "expected LO,HI"),
+        ("--shade-range", "84", "expected LO,HI"),
+        ("--shade-range", "84,120,191", "expected LO,HI"),
+        ("--shade-range", "84.0,191", "expected LO,HI"),
     ],
 )
 def test_the_nearest_invalid_value_is_rejected(capsys, option, value, message):

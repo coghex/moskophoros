@@ -9,9 +9,10 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from shading import DEFAULT_RANGE, DEFAULT_SHADE
 
 from moskophoros import cli, export, fit, gltf, sampling, views
-from moskophoros.capture.backend import Settings, Source
+from moskophoros.capture.backend import Settings, Shade, Source
 
 USAGE_LINE = "usage: moskophoros [options] <infile.glb> <outfile.png>"
 
@@ -33,11 +34,17 @@ SETTINGS = {
     "ground_px": {"x": 24, "y": 37},
     "root_motion": "keep",
     "previews": False,
+    "shade": {
+        "ao_distance_m": 1.2,
+        "ao_samples": 32,
+        "occlusion_weight": 0.5,
+        "convexity_weight": 0.0,
+        "range": [120, 188],
+    },
     "style": {
         "reduce": "plain",
         "palette": None,
         "materials": None,
-        "shade_range": [84, 191],
     },
     "clips": [{"name": "walk", "loop": True}, {"name": "attack", "loop": False}],
 }
@@ -58,12 +65,17 @@ REUSED = {
     "clip": ("walk", "attack"),
     "once": ("attack",),
     "reduce": "plain",
+    "shade_range": (120, 188),
+    "ao_distance": 1.2,
+    "ao_samples": 32,
+    "occlusion_weight": 0.5,
+    "convexity_weight": 0.0,
 }
 
 
 def write_sheet(tmp_path, settings=None, name="old.json", **document):
     path = tmp_path / name
-    contents = {"schema": "moskophoros.sheet/4"} | document
+    contents = {"schema": "moskophoros.sheet/5"} | document
     contents["settings"] = copy.deepcopy(SETTINGS if settings is None else settings)
     path.write_text(json.dumps(contents, ensure_ascii=False), encoding="utf-8")
     return path
@@ -170,6 +182,11 @@ def test_read_settings_returns_the_reused_values(tmp_path):
         ("--start-angle", "45", {"start_angle": 45.0, "view": "custom"}),
         ("--preview", None, {"previews": True}),
         ("--cell", "auto", {"cell": None}),
+        ("--ao-distance", "0.3", {"ao_distance": 0.3}),
+        ("--ao-samples", "128", {"ao_samples": 128}),
+        ("--occlusion-weight", "0.25", {"occlusion_weight": 0.25}),
+        ("--convexity-weight", "1", {"convexity_weight": 1.0}),
+        ("--shade-range", "84,191", {"shade_range": (84, 191)}),
     ],
 )
 def test_each_explicit_option_overrides_its_reused_value(
@@ -354,7 +371,7 @@ def test_previews_must_be_a_boolean(tmp_path, capsys, value):
 
 def test_a_document_with_only_schema_and_settings_is_enough(tmp_path):
     path = tmp_path / "minimal.json"
-    path.write_text(json.dumps({"schema": "moskophoros.sheet/4", "settings": SETTINGS}))
+    path.write_text(json.dumps({"schema": "moskophoros.sheet/5", "settings": SETTINGS}))
     assert values(reuse(path)) == REUSED
 
 
@@ -422,7 +439,7 @@ def test_a_deeply_nested_file_is_rejected(tmp_path, capsys):
     ("text", "key"),
     [
         (
-            '{"schema": "moskophoros.sheet/4", "schema": "moskophoros.sheet/4"}',
+            '{"schema": "moskophoros.sheet/5", "schema": "moskophoros.sheet/5"}',
             "schema",
         ),
         ('{"settings": {"fps": 12, "fps": 12}}', "fps"),
@@ -437,11 +454,11 @@ def test_a_repeated_key_anywhere_is_rejected(tmp_path, capsys, text, key):
     assert rejected(capsys, path) == f"repeats the key {key!r}"
 
 
-NOT_A_SHEET = "is not a moskophoros.sheet/4 document"
+NOT_A_SHEET = "is not a moskophoros.sheet/5 document"
 
 
 def older(schema):
-    return f"is a {schema} sheet; only moskophoros.sheet/4 sheets load, so generate it again"
+    return f"is a {schema} sheet; only moskophoros.sheet/5 sheets load, so generate it again"
 
 
 @pytest.mark.parametrize(
@@ -452,24 +469,25 @@ def older(schema):
         ({"schema": "moskophoros.sheet/3"}, older("moskophoros.sheet/3")),
         ({"schema": "moskophoros.sheet/2"}, older("moskophoros.sheet/2")),
         ({"schema": "moskophoros.sheet/1"}, older("moskophoros.sheet/1")),
-        ({"schema": "moskophoros.sheet/5"}, older("moskophoros.sheet/5")),
+        ({"schema": "moskophoros.sheet/4"}, older("moskophoros.sheet/4")),
+        ({"schema": "moskophoros.sheet/6"}, older("moskophoros.sheet/6")),
         (
             {"schema": " moskophoros.sheet/4"},
             f'{NOT_A_SHEET}: schema is " moskophoros.sheet/4"',
         ),
         ({"schema": 1}, f"{NOT_A_SHEET}: schema is 1"),
         (
-            {"schema": ["moskophoros.sheet/4"]},
-            f'{NOT_A_SHEET}: schema is ["moskophoros.sheet/4"]',
+            {"schema": ["moskophoros.sheet/5"]},
+            f'{NOT_A_SHEET}: schema is ["moskophoros.sheet/5"]',
         ),
         ({"schema": None}, f"{NOT_A_SHEET}: schema is null"),
-        ({"schema": "moskophoros.sheet/4"}, "settings: missing"),
+        ({"schema": "moskophoros.sheet/5"}, "settings: missing"),
         (
-            {"schema": "moskophoros.sheet/4", "settings": None},
+            {"schema": "moskophoros.sheet/5", "settings": None},
             "settings: must be set, got null",
         ),
         (
-            {"schema": "moskophoros.sheet/4", "settings": []},
+            {"schema": "moskophoros.sheet/5", "settings": []},
             "settings: expected an object, got []",
         ),
     ],
@@ -505,11 +523,16 @@ REUSED_FIELDS = [
     "ground_px.y",
     "root_motion",
     "previews",
+    "shade",
+    "shade.ao_distance_m",
+    "shade.ao_samples",
+    "shade.occlusion_weight",
+    "shade.convexity_weight",
+    "shade.range",
     "style",
     "style.reduce",
     "style.palette",
     "style.materials",
-    "style.shade_range",
     "clips",
 ]
 
@@ -575,6 +598,31 @@ def test_a_missing_field_is_rejected(tmp_path, capsys, field):
         ("style.palette", [], "expected an object, got []"),
         ("style.palette", "", 'expected an object, got ""'),
         ("style.palette", False, "expected an object, got false"),
+        ("shade", [], "expected an object, got []"),
+        ("shade.ao_distance_m", 0, "must be greater than 0, got '0'"),
+        ("shade.ao_distance_m", -1.0, "must be greater than 0, got '-1.0'"),
+        ("shade.ao_distance_m", "0.3", 'expected a number, got "0.3"'),
+        (
+            "shade.ao_samples",
+            129,
+            "must be from 1 to 128, the most Blender's ambient occlusion takes, "
+            "got '129'",
+        ),
+        (
+            "shade.ao_samples",
+            0,
+            "must be from 1 to 128, the most Blender's ambient occlusion takes, "
+            "got '0'",
+        ),
+        ("shade.ao_samples", 64.0, "expected an integer, got '64.0'"),
+        ("shade.ao_samples", True, "expected a number, got true"),
+        ("shade.occlusion_weight", -0.25, "must be 0 or greater, got '-0.25'"),
+        ("shade.convexity_weight", -1, "must be 0 or greater, got '-1'"),
+        ("shade.convexity_weight", False, "expected a number, got false"),
+        ("shade.range", [191, 84], "expected 0 <= lo < hi <= 255, got [191, 84]"),
+        ("shade.range", [84, 256], "expected 0 <= lo < hi <= 255, got [84, 256]"),
+        ("shade.range", [84.0, 191], "expected two integers [lo, hi], got [84.0, 191]"),
+        ("shade.range", "84,191", 'expected two integers [lo, hi], got "84,191"'),
     ],
 )
 def test_an_unacceptable_value_is_rejected(tmp_path, capsys, field, value, problem):
@@ -614,7 +662,9 @@ def test_other_null_fields_are_rejected(tmp_path, capsys, field):
         "cell.depth",
         "ground_px.z",
         "ground_m.w",
+        "shade.ao_quality",
         "style.dither",
+        "style.shade_range",
     ],
 )
 def test_an_unknown_field_is_rejected(tmp_path, capsys, field):
@@ -698,7 +748,13 @@ def test_an_explicit_reduce_overrides_the_reused_one(tmp_path, sheet, explicit):
 
 
 @pytest.mark.parametrize(
-    "schema", ["moskophoros.sheet/3", "moskophoros.sheet/2", "moskophoros.sheet/1"]
+    "schema",
+    [
+        "moskophoros.sheet/4",
+        "moskophoros.sheet/3",
+        "moskophoros.sheet/2",
+        "moskophoros.sheet/1",
+    ],
 )
 @pytest.mark.parametrize("options", [(), ("--reduce", "plain"), ("--clip", "walk")])
 def test_an_older_sheet_is_a_usage_error_whatever_overrides_it(
@@ -781,6 +837,7 @@ ORIGINALS = {
         ground=(0.0, 0.0, 0.0),
         ground_px=(1, 1),
         root_motion="error",
+        shade=DEFAULT_SHADE,
     ),
     "iso-true": Settings(
         view="iso-true",
@@ -795,6 +852,7 @@ ORIGINALS = {
         ground=(0.5, -1e-3, 2.0),
         ground_px=(0, 9),
         root_motion="keep",
+        shade=Shade(1.2, 128, 0.5, 0.0),
     ),
     "custom": Settings(
         view="custom",
@@ -809,6 +867,7 @@ ORIGINALS = {
         ground=(1.0, 2.0, 3.0),
         ground_px=(1, 1),
         root_motion="error",
+        shade=DEFAULT_SHADE,
     ),
 }
 
@@ -817,11 +876,17 @@ PLAIN = {
     "reduce": "plain",
     "palette": None,
     "materials": None,
-    "shade_range": [84, 191],
 }
 
 
-def _encode(settings, clip_names, once_names, style=PLAIN, previews=True):
+def _encode(
+    settings,
+    clip_names,
+    once_names,
+    style=PLAIN,
+    previews=True,
+    shade_range=DEFAULT_RANGE,
+):
     selected = gltf.select_clips(SUBJECT, clip_names, once_names)
     view = views.View(
         settings.pitch, settings.directions, settings.start_angle, settings.model_yaw
@@ -839,6 +904,7 @@ def _encode(settings, clip_names, once_names, style=PLAIN, previews=True):
         settings=settings,
         style=style,
         previews=previews,
+        shade_range=shade_range,
         selected_clips=selected,
         image_path=Path("hero.png"),
     )
@@ -853,6 +919,7 @@ def _rerun(path, *options):
         resolved.once,
         cli.style_record(resolved),
         resolved.previews,
+        resolved.shade_range,
     )
 
 
@@ -897,7 +964,11 @@ def test_loading_a_sheet_with_no_options_reproduces_it(tmp_path, selection, prev
     clip selection, its one-shot marks and the previews flag included."""
     parsed = cli.parse_args([*selection, "in.glb", "out.png"])
     original = _encode(
-        ORIGINALS["iso-true"], parsed.clip or (), parsed.once, previews=previews
+        ORIGINALS["iso-true"],
+        parsed.clip or (),
+        parsed.once,
+        previews=previews,
+        shade_range=(120, 255),
     )
     path = tmp_path / "hero.json"
     path.write_bytes(original.json)

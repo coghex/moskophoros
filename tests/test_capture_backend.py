@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from PIL import Image
+from shading import DEFAULT_SHADE
 
 from moskophoros import fit, sampling, views
 from moskophoros.capture.backend import (
@@ -16,6 +17,7 @@ from moskophoros.capture.backend import (
     MalformedJob,
     RootTravel,
     Settings,
+    Shade,
     Source,
     build_job,
     canonical_json,
@@ -42,6 +44,7 @@ MEASURE_SETTINGS = Settings(
     ground=(0.0, 0.0, 0.0),
     ground_px=None,
     root_motion="error",
+    shade=DEFAULT_SHADE,
 )
 RENDER_SETTINGS = replace(MEASURE_SETTINGS, ppm=10.0, cell=(4, 3), ground_px=(2, 2))
 VIEW = views.View(30.0, 2, 10.0, 0.0)
@@ -121,6 +124,12 @@ def expected_settings(ppm, cell, ground_px):
         "ground_m": {"x": 0.0, "y": 0.0, "z": 0.0},
         "ground_px": ground_px,
         "root_motion": "error",
+        "shade": {
+            "ao_distance_m": 0.3,
+            "ao_samples": 64,
+            "occlusion_weight": 0.25,
+            "convexity_weight": 1.0,
+        },
         "clips": [{"name": "walk", "loop": True}, {"name": "attack", "loop": False}],
     }
 
@@ -251,6 +260,39 @@ def test_frames_must_be_the_ones_the_clips_and_settings_give(name):
         ({"settings": replace(MEASURE_SETTINGS, view="front")}, "view"),
         ({"settings": replace(MEASURE_SETTINGS, root_motion="drop")}, "root_motion"),
         ({"settings": replace(MEASURE_SETTINGS, cell=(4097, 3))}, "cell"),
+        (
+            {"settings": replace(MEASURE_SETTINGS, shade=Shade(0.3, 129, 0.25, 1.0))},
+            "shade.ao_samples 129",
+        ),
+        (
+            {"settings": replace(MEASURE_SETTINGS, shade=Shade(0.3, 0, 0.25, 1.0))},
+            "shade.ao_samples 0",
+        ),
+        (
+            {"settings": replace(MEASURE_SETTINGS, shade=Shade(0.3, True, 0.25, 1.0))},
+            "shade.ao_samples True",
+        ),
+        (
+            {"settings": replace(MEASURE_SETTINGS, shade=Shade(0.0, 64, 0.25, 1.0))},
+            "shade.ao_distance_m 0.0",
+        ),
+        (
+            {
+                "settings": replace(
+                    MEASURE_SETTINGS, shade=Shade(float("inf"), 64, 0.25, 1.0)
+                )
+            },
+            "shade.ao_distance_m inf",
+        ),
+        (
+            {"settings": replace(MEASURE_SETTINGS, shade=Shade(0.3, 64, -0.1, 1.0))},
+            "shade.occlusion_weight -0.1",
+        ),
+        (
+            {"settings": replace(MEASURE_SETTINGS, shade=Shade(0.3, 64, 0.25, "1"))},
+            "shade.convexity_weight '1'",
+        ),
+        ({"settings": replace(MEASURE_SETTINGS, shade=None)}, "shade None"),
         ({"mode": "render"}, "ppm is not resolved"),
         ({"clips": ()}, "no clips"),
         ({"clips": (CLIPS[0], CLIPS[0])}, "twice"),
@@ -487,10 +529,6 @@ SHADE = {
     "seed": 0,
     "pixel_filter": "BOX",
     "filter_width_px": 0.01,
-    "ao_distance_m": 0.3,
-    "ao_samples": 64,
-    "occlusion_weight": 0.25,
-    "convexity_weight": 1.0,
 }
 # Material 0's code, with red its high byte and green its low byte.
 MATID = (0, 1, 0, 255)
@@ -762,3 +800,51 @@ def test_an_unreadable_buffer_is_rejected(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "open", guarded_open)
     with pytest.raises(BackendError, match="cannot be read: .*Permission denied"):
         validate_result(job, tmp_path, encode(document))
+
+
+# The shade's capture values (settings design D-3, D-9, D-42)
+
+
+def test_the_job_carries_the_capture_values_and_not_the_range():
+    shade = Shade(1.2, 128, 0.5, 0.0)
+    job = build_job(
+        "render",
+        SOURCE,
+        "hero",
+        replace(RENDER_SETTINGS, shade=shade),
+        CLIPS,
+        frames(),
+        "/work/render",
+    )
+    assert job["settings"]["shade"] == {
+        "ao_distance_m": 1.2,
+        "ao_samples": 128,
+        "occlusion_weight": 0.5,
+        "convexity_weight": 0.0,
+    }
+    assert list(job["settings"])[-2:] == ["shade", "clips"]
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"ao_distance_m": 1.2},
+        {"ao_samples": 128},
+        {"occlusion_weight": 0.5},
+        {"convexity_weight": 0.0},
+    ],
+)
+def test_each_capture_value_changes_the_job_s_digest(changed):
+    def digest(shade):
+        job = build_job(
+            "render",
+            SOURCE,
+            "hero",
+            replace(RENDER_SETTINGS, shade=shade),
+            CLIPS,
+            frames(),
+            "/work/render",
+        )
+        return job_sha256(job)
+
+    assert digest(replace(DEFAULT_SHADE, **changed)) != digest(DEFAULT_SHADE)

@@ -15,6 +15,7 @@ import struct
 import pytest
 from glb_writer import GlbWriter
 from PIL import Image
+from shading import DEFAULT_SHADE
 
 from moskophoros import gltf, sampling, views
 from moskophoros.capture import backend, blender
@@ -94,6 +95,7 @@ def render(
     supersample=2,
     clip_names=(),
     workspace="work",
+    shade=DEFAULT_SHADE,
 ):
     """Render `path` with a fixed configuration; return (result, job)."""
     subject = gltf.read_glb(path)
@@ -111,6 +113,7 @@ def render(
         ground,
         ground_px,
         "error",
+        shade,
     )
     frames = sampling.frames(
         subject.name, clips, views.View(pitch, directions, start, yaw), fps
@@ -433,10 +436,6 @@ def test_the_result_records_the_renderer_and_studio_light(found, tmp_path):
             "seed": 0,
             "pixel_filter": "BOX",
             "filter_width_px": 0.01,
-            "ao_distance_m": 0.3,
-            "ao_samples": 64,
-            "occlusion_weight": 0.25,
-            "convexity_weight": 1.0,
         },
     }
     phase = tmp_path / "work" / "render"

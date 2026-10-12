@@ -94,9 +94,9 @@ def test_a_missing_user_file_is_not_an_error():
 
 
 def test_a_bad_user_file_is_a_usage_error_naming_it(capsys):
-    path = user_file("fps: 6\nshade: {}\n")
+    path = user_file("fps: 6\nframes: 8\n")
     assert refused(capsys) == (
-        f"the user settings {str(path)!r}: shade: unknown key at line 2, column 1"
+        f"the user settings {str(path)!r}: frames: unknown key at line 2, column 1"
     )
 
 
@@ -420,6 +420,12 @@ def bad_settings(kind, tmp_path):
         "deep": "[" * 100_000,
         "not-utf8": "fps: \udcff\n",
         "missing-palette": "palette: absent.hex\n",
+        "too-many-samples": "shade:\n  ao_samples: 129\n",
+        "zero-distance": "shade:\n  ao_distance_m: 0\n",
+        "negative-weight": "shade:\n  convexity_weight: -1\n",
+        "inverted-range": "shade:\n  range: [191, 84]\n",
+        "unknown-shade-key": "shade:\n  ao_quality: 3\n",
+        "shade-not-a-mapping": "shade: 0.3\n",
         "nul-palette": 'palette: "bad\\0/p.hex"\n',
         "nul-materials": f'palette: {palette_file(tmp_path)}\nmaterials: "lib\\0/m.yaml"\n',
         "library-without-palette": "materials: lib.yaml\n",
@@ -446,6 +452,12 @@ def bad_settings(kind, tmp_path):
         "deep",
         "not-utf8",
         "missing-palette",
+        "too-many-samples",
+        "zero-distance",
+        "negative-weight",
+        "inverted-range",
+        "unknown-shade-key",
+        "shade-not-a-mapping",
         "nul-palette",
         "nul-materials",
         "library-without-palette",
@@ -581,6 +593,187 @@ def test_every_unusable_settings_path_is_exit_2_naming_file_key_and_line(
     assert not setup.png.exists()
 
 
+# The shading values (settings design D-3, D-9, D-12, D-22, D-30, D-42)
+
+SHADE_FIELDS = {
+    "ao_distance_m": ("ao_distance", "--ao-distance", "1.5", 1.5),
+    "ao_samples": ("ao_samples", "--ao-samples", "16", 16),
+    "occlusion_weight": ("occlusion_weight", "--occlusion-weight", "0.75", 0.75),
+    "convexity_weight": ("convexity_weight", "--convexity-weight", "0.25", 0.25),
+    "range": ("shade_range", "--shade-range", "100,200", (100, 200)),
+}
+FILE_VALUES = {
+    "ao_distance_m": ("0.9", 0.9),
+    "ao_samples": ("8", 8),
+    "occlusion_weight": ("0.6", 0.6),
+    "convexity_weight": ("0.4", 0.4),
+    "range": ("[90, 230]", (90, 230)),
+}
+# The shared sheet's recorded values (test_reuse.SETTINGS).
+SHEET_VALUES = {
+    "ao_distance_m": 1.2,
+    "ao_samples": 32,
+    "occlusion_weight": 0.5,
+    "convexity_weight": 0.0,
+    "range": (120, 188),
+}
+
+
+@pytest.mark.parametrize("key", SHADE_FIELDS)
+def test_each_shading_value_follows_the_layers(tmp_path, key):
+    field, option, text, given = SHADE_FIELDS[key]
+    written, from_file = FILE_VALUES[key]
+    default = getattr(resolved("--no-user-config"), field)
+    user_file(f"shade:\n  {key}: {written}\n")
+    assert getattr(resolved(), field) == from_file != default
+    sheet = str(write_sheet(tmp_path))
+    # The user file is only a default: a loaded sheet keeps its value.
+    assert getattr(resolved("--settings-from", sheet), field) == SHEET_VALUES[key]
+    path = config(tmp_path, f"shade:\n  {key}: {written}\n", "look.yaml")
+    # A --config value acts as the option would, over a loaded sheet too.
+    assert getattr(resolved("--config", str(path)), field) == from_file
+    assert (
+        getattr(resolved("--settings-from", sheet, "--config", str(path)), field)
+        == from_file
+    )
+    # An option beats every layer.
+    assert getattr(resolved("--config", str(path), option, text), field) == given
+    assert (
+        getattr(
+            resolved("--settings-from", sheet, "--config", str(path), option, text),
+            field,
+        )
+        == given
+    )
+
+
+def test_one_shade_key_in_a_config_inherits_the_rest(tmp_path):
+    user_file("shade:\n  ao_distance_m: 0.9\n  range: [90, 230]\n")
+    path = config(tmp_path, "shade:\n  convexity_weight: 0.5\n")
+    options = resolved("--config", str(path))
+    assert (
+        options.ao_distance,
+        options.ao_samples,
+        options.occlusion_weight,
+        options.convexity_weight,
+        options.shade_range,
+    ) == (0.9, 64, 0.25, 0.5, (90, 230))
+    over_sheet = resolved(
+        "--settings-from", str(write_sheet(tmp_path)), "--config", str(path)
+    )
+    assert (
+        over_sheet.ao_distance,
+        over_sheet.ao_samples,
+        over_sheet.convexity_weight,
+        over_sheet.shade_range,
+    ) == (1.2, 32, 0.5, (120, 188))
+
+
+def test_the_range_replaces_whole(tmp_path):
+    user_file("shade:\n  range: [90, 230]\n")
+    path = config(tmp_path, "shade:\n  range: [10, 20]\n")
+    assert resolved("--config", str(path)).shade_range == (10, 20)
+    assert resolved("--shade-range", "30,40").shade_range == (30, 40)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("--ao-samples", "129"),
+        ("--ao-samples", "1024"),
+        ("--ao-distance", "0"),
+        ("--occlusion-weight", "-0.5"),
+        ("--shade-range", "191,84"),
+    ],
+)
+def test_a_bad_shading_option_is_exit_2_before_any_blender_invocation(
+    setup, capsys, monkeypatch, args
+):
+    forbid_blender(monkeypatch)
+    status, out, err = run(capsys, setup.argv(*args))
+    assert (status, out) == (2, "")
+    assert f"argument {args[0]}: " in err
+    assert setup.calls() == []
+
+
+@pytest.mark.parametrize("where", ["config", "user"])
+def test_129_samples_from_a_file_is_exit_2_naming_file_key_line_and_limit(
+    setup, capsys, monkeypatch, where
+):
+    text = "fps: 4\nshade:\n  ao_samples: 129\n"
+    if where == "config":
+        path = config(setup.tmp_path, text)
+        label, args = f"--config {str(path)!r}", ["--config", str(path)]
+    else:
+        path = user_file(text)
+        label, args = f"the user settings {str(path)!r}", []
+    forbid_blender(monkeypatch)
+    status, _, err = run(capsys, setup.argv(*args))
+    assert status == 2
+    assert err.splitlines()[-1] == (
+        f"moskophoros: error: {label}: shade.ao_samples: expected a whole number "
+        "from 1 to 128, the most Blender's ambient occlusion takes, got 129 at "
+        "line 3, column 3"
+    )
+    assert setup.calls() == []
+
+
+def test_the_jobs_carry_the_capture_values_and_the_sheet_records_all_five(
+    setup, capsys, tmp_path
+):
+    work = setup.tmp_path / "work"
+    path = config(
+        tmp_path,
+        "shade:\n  ao_distance_m: 1.2\n  ao_samples: 128\n  occlusion_weight: 0.5\n"
+        "  convexity_weight: 0\n  range: [120, 188]\n",
+    )
+    status, _, err = run(
+        capsys, setup.argv("--config", str(path), "--work-dir", str(work))
+    )
+    assert status == 0, err
+    capture = {
+        "ao_distance_m": 1.2,
+        "ao_samples": 128,
+        "occlusion_weight": 0.5,
+        "convexity_weight": 0.0,
+    }
+    for mode in ("measure", "render"):
+        job = json.loads((work / mode / "job.json").read_text())
+        assert job["settings"]["shade"] == capture
+    sheet = json.loads(setup.json.read_text())
+    assert sheet["settings"]["shade"] == capture | {"range": [120, 188]}
+    assert list(sheet["settings"])[-5:] == [
+        "root_motion",
+        "previews",
+        "shade",
+        "style",
+        "clips",
+    ]
+    assert "shade_range" not in sheet["settings"]["style"]
+    assert list(sheet["generator"]["shade"]) == [
+        "technique",
+        "samples_per_pixel",
+        "seed",
+        "pixel_filter",
+        "filter_width_px",
+    ]
+
+
+def test_changing_only_the_range_leaves_the_capture_jobs_unchanged(setup, capsys):
+    jobs = []
+    for shade_range in ("84,191", "120,255"):
+        work = setup.tmp_path / f"work-{shade_range}"
+        argv = setup.argv("--shade-range", shade_range, "--work-dir", str(work))
+        assert run(capsys, argv)[0] == 0
+        jobs.append(
+            {
+                mode: (work / mode / "job.json").read_text().replace(str(work), "W")
+                for mode in ("measure", "render")
+            }
+        )
+    assert jobs[0] == jobs[1]
+
+
 # Isolation from the owner's own user file
 
 
@@ -705,7 +898,7 @@ def test_an_older_sheet_is_exit_2_naming_its_schema_and_the_supported_one(
     forbid_blender(monkeypatch)
     status, _, err = run(capsys, reload(setup, sheet))
     assert status == 2
-    assert "moskophoros.sheet/3" in err and "moskophoros.sheet/4" in err
+    assert "moskophoros.sheet/3" in err and "moskophoros.sheet/5" in err
 
 
 def test_a_reloaded_sheet_without_previews_writes_none(setup, capsys):
