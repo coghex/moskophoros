@@ -9,6 +9,8 @@ writes one."""
 
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -27,6 +29,7 @@ from test_reuse import write_sheet
 from moskophoros import cli
 
 POSITIONALS = ["in.glb", "out.png"]
+ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
@@ -414,6 +417,8 @@ def bad_settings(kind, tmp_path):
         "deep": "[" * 100_000,
         "not-utf8": "fps: \udcff\n",
         "missing-palette": "palette: absent.hex\n",
+        "nul-palette": 'palette: "bad\\0/p.hex"\n',
+        "nul-materials": f'palette: {palette_file(tmp_path)}\nmaterials: "lib\\0/m.yaml"\n',
         "library-without-palette": "materials: lib.yaml\n",
     }
     path = tmp_path / "bad.yaml"
@@ -438,6 +443,8 @@ def bad_settings(kind, tmp_path):
         "deep",
         "not-utf8",
         "missing-palette",
+        "nul-palette",
+        "nul-materials",
         "library-without-palette",
     ],
 )
@@ -452,6 +459,53 @@ def test_every_settings_error_is_exit_2_before_any_blender_invocation(
     assert err.splitlines()[0].startswith("usage:")
     assert setup.calls() == []
     assert not setup.png.exists()
+
+
+def test_a_nul_in_a_settings_path_names_the_file_key_and_line(tmp_path, capsys):
+    path = config(tmp_path, f'palette: {palette_file(tmp_path)}\nmaterials: "a\\0b"\n')
+    assert refused(capsys, "--config", str(path)) == (
+        f"--config {str(path)!r}: materials: expected a file path without a NUL "
+        "character, got 'a\\x00b' at line 2, column 1"
+    )
+
+
+# Isolation from the owner's own user file
+
+
+@pytest.fixture(scope="module")
+def module_options():
+    """Resolved once per module, as shared whole-command fixtures run."""
+    return cli.resolve_settings(cli.parse_args(POSITIONALS))
+
+
+def test_a_module_scoped_fixture_sees_no_user_settings(module_options):
+    assert (module_options.fps, module_options.cell) == (12.0, None)
+    assert module_options.previews is True
+
+
+def test_a_populated_ambient_user_file_never_reaches_the_suite(tmp_path):
+    """The suite isolates the user file before fixtures of any scope run: a
+    run started with a user file in both places it is looked for still sees
+    the shipped defaults in a module-scoped fixture."""
+    for base in (tmp_path / "xdg", tmp_path / "home" / ".config"):
+        (base / "moskophoros").mkdir(parents=True)
+        (base / "moskophoros" / "config.yaml").write_text("fps: 6\ncell: 8x8\n")
+    env = os.environ | {
+        "XDG_CONFIG_HOME": str(tmp_path / "xdg"),
+        "HOME": str(tmp_path / "home"),
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    test = f"{__file__}::test_a_module_scoped_fixture_sees_no_user_settings"
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", test],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
 
 
 # The clip selection over a loaded sheet (D-19, D-27)

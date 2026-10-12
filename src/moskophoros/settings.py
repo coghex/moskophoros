@@ -122,6 +122,9 @@ def _check_path(value):
         return None
     if not isinstance(value, str) or not value:
         raise _Bad(f"expected a file path or null, got {_shown(value)}")
+    if "\0" in value:
+        # No file system accepts it, and Python refuses to open such a path.
+        raise _Bad(f"expected a file path without a NUL character, got {_shown(value)}")
     return value
 
 

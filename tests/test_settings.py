@@ -146,6 +146,14 @@ def test_each_settings_values(text, expected):
         ("fps: null", "fps: expected a number greater than 0, got null"),
         ("palette: ''", "palette: expected a file path or null, got ''"),
         ("palette: 5", "palette: expected a file path or null, got 5"),
+        (
+            'palette: "bad\\0/p.hex"',
+            "palette: expected a file path without a NUL character, got 'bad\\x00/p.hex'",
+        ),
+        (
+            'materials: "lib.yaml\\0"',
+            "materials: expected a file path without a NUL character",
+        ),
         ("materials: [a.yaml]", "materials: expected a file path or null, got a list"),
         ("previews: yes", "previews: expected true or false, got 'yes'"),
         ("previews: 1", "previews: expected true or false, got 1"),
