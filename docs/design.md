@@ -977,7 +977,12 @@ these rules:
   which never merges, and `=`. A quoted value is always a string. So `017` as
   a ramp index is refused as `ramps["metal"][0]: "017" is not an integer`,
   and a material named `on` or `no` keeps its name.
-- Line and column numbers count from 1.
+- Every failure is a `yamlfile.YamlError` naming its line and column, which
+  count from 1, never another exception. That includes input Python itself
+  refuses while PyYAML reads it: an escape beyond U+10FFFF such as
+  `"\U00110000"`, a number longer than Python's integer digit limit, and
+  nesting too deep to read, each placed where reading stopped. Only a UTF-8
+  error gives a byte offset instead.
 
 The result is an immutable `materials.Library`: `ramps` maps each name to a
 tuple of indices, `default` is a ramp name or `None`, and `materials` maps
@@ -991,7 +996,7 @@ caller-supplied source and the problem: a name that does not end in `.yaml`
 or `.yml`, unreadable files, invalid UTF-8, malformed YAML, nesting too deep
 to read, an empty file, more than one document, repeated keys, a tag, a
 recursive alias, a sequence or mapping key, an integer with too many digits
-for Python to convert, a wrong or missing field, an
+for Python to convert, an escape beyond U+10FFFF, a wrong or missing field, an
 unknown field, a key that is not a string, a value of the wrong type, an
 empty or oversized ramp, a non-integer or out-of-palette index, an entry of
 none or several forms, an empty name, or a reference to an undefined ramp.

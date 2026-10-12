@@ -356,8 +356,15 @@ def test_malformed_yaml(tmp_path, text, where):
 
 
 def test_deep_nesting(tmp_path):
-    assert refused(tmp_path, "[" * 100_000) == (
-        "is not valid YAML: it is nested too deeply"
+    problem = refused(tmp_path, "[" * 100_000)
+    assert problem.startswith("is not valid YAML at line 1, column ")
+    assert problem.endswith(": it is nested too deeply")
+
+
+def test_an_escape_past_unicode_is_refused(tmp_path):
+    text = LIBRARY_TEXT.replace("face: ordinary", 'face: "\\U00110000"')
+    assert refused(tmp_path, text).startswith(
+        "is not valid YAML at line 11, column 12: cannot read a token"
     )
 
 

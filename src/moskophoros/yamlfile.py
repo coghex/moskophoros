@@ -55,6 +55,8 @@ def load(data):
                 + _where(second.start_mark)
             )
         return loader.construct_document(node)
+    except YamlError:
+        raise
     except _Refused as error:
         raise YamlError(
             f"{error.problem} at {_where(error.mark)}{error.reason}"
@@ -69,7 +71,16 @@ def load(data):
             f"character #x{error.character:04x}"
         ) from None
     except RecursionError:
-        raise YamlError("is not valid YAML: it is nested too deeply") from None
+        raise YamlError(
+            f"is not valid YAML{_at(loader)}: it is nested too deeply"
+        ) from None
+    except (ValueError, OverflowError) as error:
+        # PyYAML's scanner converts some tokens with Python built-ins that
+        # raise plain errors, such as an escape beyond U+10FFFF (`chr`) or a
+        # `%YAML` version longer than `int`'s digit limit.
+        raise YamlError(
+            f"is not valid YAML{_at(loader)}: cannot read a token ({error})"
+        ) from None
     finally:
         if loader is not None:
             loader.dispose()
@@ -162,6 +173,11 @@ _Loader.add_constructor(_YAML_TAG + "float", lambda _, node: float(node.value))
 def _where(mark):
     # PyYAML's marks count from 0; people count lines and columns from 1.
     return f"line {mark.line + 1}, column {mark.column + 1}"
+
+
+def _at(loader):
+    # Where the reader stopped, for errors PyYAML gives no mark.
+    return "" if loader is None else f" at {_where(loader.get_mark())}"
 
 
 def _invalid(error):

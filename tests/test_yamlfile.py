@@ -2,6 +2,7 @@
 no tags, no recursive aliases, UTF-8 only (settings design D-1, D-7)."""
 
 import math
+import re
 import sys
 
 import pytest
@@ -89,13 +90,6 @@ def test_floats_are_decimal_and_exponent_forms(text, expected):
 )
 def test_other_float_spellings_are_strings(text):
     assert value(text) == text
-
-
-def test_an_integer_too_long_to_convert_is_refused():
-    digits = "9" * (sys.get_int_max_str_digits() + 1)
-    assert refused(f"a: 1\nb: [0, -{digits}]\n") == (
-        f"has an integer of {len(digits)} digits, too long to read at line 2, column 8"
-    )
 
 
 def test_an_overflowing_exponent_is_a_float():
@@ -259,11 +253,59 @@ def test_an_unprintable_character_is_refused_with_line_and_column():
     )
 
 
-def test_deep_nesting_is_refused():
-    assert refused("[" * 100_000) == "is not valid YAML: it is nested too deeply"
-    assert refused("a:\n" + "".join(" " * n + "- \n" for n in range(5000))).startswith(
-        "is not valid YAML"
-    )
+# Where Python itself, not PyYAML, rejects the input: a plain ValueError,
+# OverflowError, UnicodeDecodeError or RecursionError. Each must still be a
+# YamlError with a location, never a leaked exception.
+DIGITS = "9" * (sys.get_int_max_str_digits() + 1)
+
+
+@pytest.mark.parametrize(
+    ("data", "pattern"),
+    [
+        (
+            f"a: 1\nb: [0, -{DIGITS}]\n",
+            rf"has an integer of {len(DIGITS)} digits, too long to read at line 2, "
+            r"column 8\Z",
+        ),
+        (
+            'a: "\\U00110000"\n',
+            r"is not valid YAML at line 1, column 7: cannot read a token \(chr\(\)",
+        ),
+        (
+            'a: 1\nb: ["x", "\\UFFFFFFFF"]\n',
+            r"is not valid YAML at line 2, column 13: cannot read a token",
+        ),
+        (
+            f"%YAML 1.{DIGITS}\n--- a\n",
+            r"is not valid YAML at line 1, column 9: cannot read a token",
+        ),
+        (
+            "[" * 100_000,
+            r"is not valid YAML at line 1, column \d+: it is nested too deeply\Z",
+        ),
+        (
+            "a:\n" + "".join(" " * n + "- \n" for n in range(5000)),
+            r"is not valid YAML at line \d+, column \d+: it is nested too deeply\Z",
+        ),
+        (b"a: \xff\n", r"is not UTF-8: invalid start byte at byte 3\Z"),
+        (
+            b"\xff\xfe" + "a: 1\n".encode("utf-16-le"),
+            r"is not UTF-8: invalid start byte at byte 0\Z",
+        ),
+    ],
+    ids=[
+        "long-integer",
+        "escape-past-unicode",
+        "escape-far-past-unicode",
+        "long-yaml-version",
+        "deep-flow",
+        "deep-block",
+        "invalid-utf8",
+        "utf-16",
+    ],
+)
+def test_python_level_failures_are_located_yaml_errors(data, pattern):
+    assert re.match(pattern, refused(data))
 
 
 @pytest.mark.parametrize(

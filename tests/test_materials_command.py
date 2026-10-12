@@ -182,6 +182,8 @@ def library_with(**changes):
         ("repeated-key", 'repeats the key "schema" at line 2, column 1'),
         ("not-a-string-key", "materials: key 1 is not a string"),
         ("huge-integer", "digits, too long to read at line"),
+        ("escape-past-unicode", "cannot read a token"),
+        ("deep-nesting", "it is nested too deeply"),
         ("bad-default", "default"),
     ],
 )
@@ -209,6 +211,10 @@ def test_every_library_error_is_exit_2_before_blender_and_names_file_and_entry(
         digits = "9" * (sys.get_int_max_str_digits() + 1)
         document["ramps"]["metal"] = [1]
         path.write_text(yaml.safe_dump(document).replace("- 1\n", f"- {digits}\n", 1))
+    elif kind == "escape-past-unicode":
+        path.write_text(yaml.safe_dump(document) + 'extra: "\\U00110000"\n')
+    elif kind == "deep-nesting":
+        path.write_text("[" * 100_000)
     elif kind == "not-a-string-key":
         path.write_text(
             "schema: moskophoros.materials/1\nramps: {}\nmaterials: {1: ordinary}\n"
