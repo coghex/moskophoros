@@ -2,6 +2,7 @@
 no tags, no recursive aliases, UTF-8 only (settings design D-1, D-7)."""
 
 import math
+import sys
 
 import pytest
 
@@ -88,6 +89,13 @@ def test_floats_are_decimal_and_exponent_forms(text, expected):
 )
 def test_other_float_spellings_are_strings(text):
     assert value(text) == text
+
+
+def test_an_integer_too_long_to_convert_is_refused():
+    digits = "9" * (sys.get_int_max_str_digits() + 1)
+    assert refused(f"a: 1\nb: [0, -{digits}]\n") == (
+        f"has an integer of {len(digits)} digits, too long to read at line 2, column 8"
+    )
 
 
 def test_an_overflowing_exponent_is_a_float():

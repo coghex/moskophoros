@@ -142,7 +142,20 @@ _resolve(
     r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+(?:[eE][-+]?[0-9]+)?|[eE][-+]?[0-9]+)\Z",
     _DIGITS,
 )
-_Loader.add_constructor(_YAML_TAG + "int", lambda _, node: int(node.value))
+
+
+def _integer(_, node):
+    try:
+        return int(node.value)
+    except ValueError:
+        # Python refuses to convert very long decimal strings.
+        raise _Refused(
+            f"has an integer of {len(node.value.lstrip('-'))} digits, too long to read",
+            node.start_mark,
+        ) from None
+
+
+_Loader.add_constructor(_YAML_TAG + "int", _integer)
 _Loader.add_constructor(_YAML_TAG + "float", lambda _, node: float(node.value))
 
 

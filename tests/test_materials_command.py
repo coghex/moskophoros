@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -180,6 +181,7 @@ def library_with(**changes):
         ("empty-ramp", 'ramps["metal"]'),
         ("repeated-key", 'repeats the key "schema" at line 2, column 1'),
         ("not-a-string-key", "materials: key 1 is not a string"),
+        ("huge-integer", "digits, too long to read at line"),
         ("bad-default", "default"),
     ],
 )
@@ -203,6 +205,10 @@ def test_every_library_error_is_exit_2_before_blender_and_names_file_and_entry(
         path.write_text("ramps: &r {metal: *r}\n")
     elif kind == "repeated-key":
         path.write_text("schema: x\nschema: x\n")
+    elif kind == "huge-integer":
+        digits = "9" * (sys.get_int_max_str_digits() + 1)
+        document["ramps"]["metal"] = [1]
+        path.write_text(yaml.safe_dump(document).replace("- 1\n", f"- {digits}\n", 1))
     elif kind == "not-a-string-key":
         path.write_text(
             "schema: moskophoros.materials/1\nramps: {}\nmaterials: {1: ordinary}\n"

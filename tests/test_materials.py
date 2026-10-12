@@ -2,6 +2,7 @@
 
 import copy
 import json
+import sys
 
 import pytest
 import yaml
@@ -512,6 +513,14 @@ def test_a_bad_ramp_index(tmp_path, where, index, problem):
 def test_the_float_spelling_of_an_integer_is_refused(tmp_path):
     text = LIBRARY_TEXT.replace("[8, 9, 10]", "[8, 9.0, 10]", 1)
     assert refused(tmp_path, text) == 'ramps["cloth"][1]: 9.0 is not an integer'
+
+
+def test_an_integer_too_long_to_convert_is_refused(tmp_path):
+    digits = "9" * (sys.get_int_max_str_digits() + 1)
+    text = LIBRARY_TEXT.replace("[8, 9, 10]", f"[8, {digits}, 10]", 1)
+    assert refused(tmp_path, text) == (
+        f"has an integer of {len(digits)} digits, too long to read at line 5, column 14"
+    )
 
 
 def test_an_overflowing_number_is_refused(tmp_path):

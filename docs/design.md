@@ -990,7 +990,8 @@ Every failure raises `materials.LibraryError`, naming the file or
 caller-supplied source and the problem: a name that does not end in `.yaml`
 or `.yml`, unreadable files, invalid UTF-8, malformed YAML, nesting too deep
 to read, an empty file, more than one document, repeated keys, a tag, a
-recursive alias, a sequence or mapping key, a wrong or missing field, an
+recursive alias, a sequence or mapping key, an integer with too many digits
+for Python to convert, a wrong or missing field, an
 unknown field, a key that is not a string, a value of the wrong type, an
 empty or oversized ramp, a non-integer or out-of-palette index, an entry of
 none or several forms, an empty name, or a reference to an undefined ramp.
