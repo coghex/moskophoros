@@ -449,7 +449,8 @@ The owner's review asked these to be explicit. The owner signed them off
   - `settings.style` drops `shade_range`, and `generator.shade` keeps only
     the technique fields: `technique`, `samples_per_pixel`, `seed`,
     `pixel_filter` and `filter_width_px`.
-  - SET-3 adds an optional `shade` to entries in the inline library record.
+  - SET-3 adds an optional `shade` to entries in the inline library record,
+    as the library gives it (D-37).
   - SET-5 adds `settings.frames` (`auto` or a count) and a `frames` on each
     `settings.clips` entry (a count, `auto` or `null`; D-31), and a `time_scale` (the retiming factor) on each
     top-level `clips` entry.
@@ -987,6 +988,40 @@ Decided by the owner on 2026-10-11, during issue processing, option (a):
 
 Affects SET-2.
 
+### D-36. The capture job carries each material's capture values
+
+Decided by the owner on 2026-10-11, during issue processing, option (a):
+"i approve your recommendations for both".
+
+- design.md §Capture job and result contract says the job leaves out the
+  sheet's `style`, "so the job is the same whatever the style" (owner
+  decision 2026-10-04). D-9 puts each material's weights and distance in its
+  capture shader, and D-20 puts those overrides in the library, which is part
+  of the style. So the rule is amended.
+- The job carries each material's AO distance, occlusion weight and
+  convexity weight, keyed by glTF material, and nothing else from the style.
+  It stays the same whatever the ramps, the palette, the reduction, the shade
+  range and the default ramp.
+- SET-3 amends that design.md row. The alternative, moving the weights from
+  capture to stylize, is the deferred recolouring (D-18).
+
+Affects SET-3.
+
+### D-37. The inline library record keeps each material's overrides as given
+
+Decided by the owner on 2026-10-11, during issue processing, option (a), with
+D-36.
+
+- A material entry's `shade` follows its `ramp` or `uses` in the sheet's
+  inline library record.
+- It holds only the keys the library gives, in a fixed order whatever the
+  file's key order: `ao_distance_m`, `occlusion_weight`, `convexity_weight`,
+  `range`. An entry without overrides has no `shade`.
+- Reloading restores exactly what the library said, as the record already
+  does for ramps.
+
+Affects SET-3.
+
 ## Open questions
 
 None.
@@ -1216,7 +1251,8 @@ its own pull request, because tests read design.md.
 - **Phase:** 3.
 - **Depends on:** SET-0, SET-2.
 - **Ordering:** critical path for per-material control.
-- **Relevant decisions:** D-4, D-9, D-15, D-16, D-20, D-22, D-23, D-24, D-29.
+- **Relevant decisions:** D-4, D-9, D-15, D-16, D-20, D-22, D-23, D-24, D-29,
+  D-36, D-37.
 - **Acceptance signals:**
   - a Blender test with two materials of different weights and distance in
     one frame;
