@@ -444,6 +444,39 @@ P-4: "yea, that is fine".
 
 Affects SET-1.
 
+### D-9. Global shading values, each overridable per material
+
+Decided by the owner on 2026-10-11, round 4. This resolves Q-12, as
+recommended: "both is fine".
+
+- AO distance, occlusion weight, convexity weight and shade range each have a
+  global value.
+- Any material may override any of them. A material that sets none uses the
+  global values.
+- The AO sample count is a global-only setting.
+- The per-material range amends material styling D-7 ("one global range").
+- Weights and distance act in capture, through each material's replacement
+  shader. The range acts in stylize.
+
+Affects SET-2 and SET-3.
+
+### D-10. The sheet's description stays JSON
+
+Decided by the owner on 2026-10-11, round 4. This resolves part of Q-13: "the
+sheet description can stay json". YAML covers the files the owner writes:
+the library, the user file and `--config` files. The tool's output, and what
+`--settings-from` reads, stays JSON (vision V-2). Affects SET-0 and SET-1.
+
+### D-11. `.json` material libraries are refused
+
+Decided by the owner on 2026-10-11, round 4. This resolves the rest of Q-13:
+"refuse them". A library file must end in `.yaml` or `.yml`. Any other suffix
+is a usage error (exit 2) before Blender starts, saying that libraries are
+YAML. No conversion command is provided. Affects SET-0.
+
+The owner also approved the SET-0 issue draft on 2026-10-11 (round 4). Filing
+it waits for the owner's word on who files it.
+
 ## Open questions
 
 ### Q-1. Which settings exist, and which stay command-line only?
@@ -615,7 +648,7 @@ Reasons:
 - It mirrors the library's existing default ramp.
 
 Weights and AO distance act in capture, per material shader. The range acts in
-stylize. Resolved by the owner.
+stylize. **Resolved by D-9.**
 
 ### Q-13. What else does "everything yaml" cover?
 
@@ -625,7 +658,7 @@ stylize. Resolved by the owner.
 - Are existing `.json` libraries refused with a hint to convert them, or still
   read?
 
-Resolved by the owner.
+**Resolved by D-10 and D-11.**
 
 ### Q-10. What are the "ambient" and "soft" shading dials?
 
@@ -713,7 +746,9 @@ request, because tests read design.md.
   - the settings loader (SET-1);
   - the sheet's format;
   - palette formats.
-- **Open questions:** Q-13.
+- **Relevant decisions (added):** D-10, D-11. The owner approved the issue
+  draft on 2026-10-11.
+- **Open questions:** None.
 
 ### SET-1. Load layered YAML settings for the existing options
 
