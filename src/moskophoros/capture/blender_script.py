@@ -134,6 +134,12 @@ def _is_number(value):
     return isinstance(value, int) or (isinstance(value, float) and math.isfinite(value))
 
 
+def _is_frame_count(value):
+    """A frame count as given: "auto" or a whole number of 1 or more. The
+    job's frames already hold the times it samples; this only checks it."""
+    return value == "auto" or (_is_int(value) and value >= 1)
+
+
 def _require(condition, message):
     if not condition:
         raise ScriptError(f"the job is invalid: {message}")
@@ -181,6 +187,7 @@ def check_job(job):
             "view",
             "model_yaw_deg",
             "fps",
+            "frames",
             "supersample",
             "pixels_per_meter",
             "cell",
@@ -210,6 +217,7 @@ def check_job(job):
     _require(_is_number(view["start_angle_deg"]), "settings.view.start_angle_deg")
     _require(_is_number(settings["model_yaw_deg"]), "settings.model_yaw_deg")
     _require(_is_number(settings["fps"]) and settings["fps"] > 0, "settings.fps")
+    _require(_is_frame_count(settings["frames"]), "settings.frames")
     _require(
         _is_int(settings["supersample"]) and 1 <= settings["supersample"] <= 16,
         "settings.supersample",
@@ -298,8 +306,9 @@ def check_job(job):
         isinstance(listed, list)
         and all(
             isinstance(item, dict)
-            and set(item) == {"name", "loop"}
+            and set(item) == {"name", "loop", "frames"}
             and isinstance(item["loop"], bool)
+            and (item["frames"] is None or _is_frame_count(item["frames"]))
             for item in listed
         )
         and [item["name"] for item in listed]

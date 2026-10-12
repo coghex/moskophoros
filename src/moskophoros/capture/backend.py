@@ -136,6 +136,9 @@ class Settings:
     ground_px: tuple[int, int] | None
     root_motion: str
     shade: Shade
+    # The global frame count as given: "auto" or a count (settings design
+    # D-13, D-31); each selected clip carries its own.
+    frames: int | str = sampling.AUTO
 
 
 @dataclass(frozen=True)
@@ -220,7 +223,9 @@ def build_job(mode, source, subject, settings, selected_clips, frames, output_di
         settings.pitch, settings.directions, settings.start_angle, settings.model_yaw
     )
     try:
-        expected = sampling.frames(subject, selected_clips, view, settings.fps)
+        expected = sampling.frames(
+            subject, selected_clips, view, settings.fps, settings.frames
+        )
     except ValueError as error:
         raise MalformedJob(str(error)) from None
     if frames != expected:
@@ -268,6 +273,7 @@ def settings_document(settings, selected_clips, fitted=True):
         },
         "model_yaw_deg": float(settings.model_yaw),
         "fps": float(settings.fps),
+        "frames": settings.frames,
         "supersample": settings.supersample,
         "pixels_per_meter": None if ppm is None else float(ppm),
         "cell": None if cell is None else {"width": cell[0], "height": cell[1]},
@@ -292,7 +298,11 @@ def settings_document(settings, selected_clips, fitted=True):
             ],
         },
         "clips": [
-            {"name": selected.clip.name, "loop": not selected.one_shot}
+            {
+                "name": selected.clip.name,
+                "loop": not selected.one_shot,
+                "frames": selected.frames,
+            }
             for selected in selected_clips
         ],
     }
@@ -381,6 +391,8 @@ def _check_settings(settings, mode):
     if settings.root_motion not in ROOT_MOTION_MODES:
         problems.append(f"root_motion {settings.root_motion!r}")
     problems += _shade_problems(settings.shade)
+    if not _is_frame_count(settings.frames):
+        problems.append(f"frames {settings.frames!r}")
     fitted = {
         "ppm": settings.ppm is None or (_is_number(settings.ppm) and settings.ppm > 0),
         "cell": settings.cell is None or _is_pair(settings.cell, 1, MAX_CELL),
@@ -438,6 +450,13 @@ def _check_clips(selected_clips):
         for root in clip.roots:
             if root.node_name is not None and not isinstance(root.node_name, str):
                 raise MalformedJob(f"{where} has root name {root.node_name!r}")
+        if selected.frames is not None and not _is_frame_count(selected.frames):
+            raise MalformedJob(f"{where} has frame count {selected.frames!r}")
+
+
+def _is_frame_count(value):
+    """A frame count as given: `"auto"` or a whole number of 1 or more."""
+    return value == sampling.AUTO or (_is_int(value) and value >= 1)
 
 
 # Results

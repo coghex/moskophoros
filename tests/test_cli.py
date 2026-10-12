@@ -150,7 +150,7 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
             *["--root-motion", "keep", "--supersample", "4", "--reduce", "plain"],
             *["--ao-distance", "1.2", "--ao-samples", "128"],
             *["--occlusion-weight", "0.5", "--convexity-weight", "0"],
-            *["--shade-range", "120,188"],
+            *["--shade-range", "120,188", "--frames", "8"],
             *["--settings-from", "old.json", "--no-preview"],
             *["--config", "a.yaml", "--config", "b.yaml", "--no-user-config"],
             *["--work-dir", "work", "--blender", "/opt/blender", "--any-blender"],
@@ -169,6 +169,7 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         "materials",
         "no_materials",
         "origins",
+        "clip_frames",
     }
     assert options == cli.Options(
         infile=Path("in.glb"),
@@ -201,6 +202,7 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         occlusion_weight=0.5,
         convexity_weight=0.0,
         shade_range=(120, 188),
+        frames=8,
     )
 
 
@@ -242,6 +244,10 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         ("--shade-range", "0,1", "shade_range", (0, 1)),
         ("--shade-range", "254,255", "shade_range", (254, 255)),
         ("--shade-range", "120,188", "shade_range", (120, 188)),
+        ("--frames", "1", "frames", 1),
+        ("--frames", "120", "frames", 120),
+        ("--frames", "08", "frames", 8),
+        ("--frames", "auto", "frames", "auto"),
     ],
 )
 def test_range_boundaries_are_accepted(option, value, field, expected):
@@ -290,6 +296,13 @@ def test_range_boundaries_are_accepted(option, value, field, expected):
         ("--shade-range", "84", "expected LO,HI"),
         ("--shade-range", "84,120,191", "expected LO,HI"),
         ("--shade-range", "84.0,191", "expected LO,HI"),
+        ("--frames", "0", "expected a whole number 1 or more, or auto"),
+        ("--frames", "-1", "expected a whole number 1 or more, or auto"),
+        ("--frames", "8.0", "expected a whole number 1 or more, or auto"),
+        ("--frames", "+8", "expected a whole number 1 or more, or auto"),
+        ("--frames", "8_0", "expected a whole number 1 or more, or auto"),
+        ("--frames", "Auto", "expected a whole number 1 or more, or auto"),
+        ("--frames", "", "expected a whole number 1 or more, or auto"),
     ],
 )
 def test_the_nearest_invalid_value_is_rejected(capsys, option, value, message):
@@ -492,9 +505,9 @@ def test_a_repeat_names_the_values_given(capsys, argv, message):
 @pytest.mark.parametrize(
     ("argv", "message"),
     [
-        (["--frames", "8", *POSITIONALS], "unrecognized option: --frames"),
+        (["--frame", "8", *POSITIONALS], "unrecognized option: --frame"),
         (["--dir", "4", *POSITIONALS], "unrecognized option: --dir"),
-        (["--frames=8", *POSITIONALS], "unrecognized option: --frames=8"),
+        (["--frame=8", *POSITIONALS], "unrecognized option: --frame=8"),
         (["-v", *POSITIONALS], "unrecognized option: -v"),
         (["-in.glb", "out.png"], "unrecognized option: -in.glb"),
         ([*POSITIONALS, "--pitch"], "argument --pitch: expected one argument"),
@@ -534,6 +547,7 @@ DESIGN_OPTIONS = {
     "--config FILE": "none",
     "--no-user-config": "off",
     "--preview": "on",
+    "--frames N": "auto",
     "--ground X,Y,Z": "0,0,0",
     "--ground-px X,Y": "auto",
     "--root-motion MODE": "error",

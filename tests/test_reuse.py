@@ -27,6 +27,7 @@ SETTINGS = {
     },
     "model_yaw_deg": -45.0,
     "fps": 24.0,
+    "frames": 6,
     "supersample": 4,
     "pixels_per_meter": 32.0,
     "cell": {"width": 48, "height": 40},
@@ -46,7 +47,10 @@ SETTINGS = {
         "palette": None,
         "materials": None,
     },
-    "clips": [{"name": "walk", "loop": True}, {"name": "attack", "loop": False}],
+    "clips": [
+        {"name": "walk", "loop": True, "frames": 8},
+        {"name": "attack", "loop": False, "frames": None},
+    ],
 }
 REUSED = {
     "view": "side",
@@ -55,6 +59,7 @@ REUSED = {
     "start_angle": 90.0,
     "model_yaw": -45.0,
     "fps": 24.0,
+    "frames": 6,
     "supersample": 4,
     "ppm": 32.0,
     "cell": (48, 40),
@@ -64,6 +69,7 @@ REUSED = {
     "previews": False,
     "clip": ("walk", "attack"),
     "once": ("attack",),
+    "clip_frames": {"walk": 8, "attack": None},
     "reduce": "plain",
     "shade_range": (120, 188),
     "ao_distance": 1.2,
@@ -75,7 +81,7 @@ REUSED = {
 
 def write_sheet(tmp_path, settings=None, name="old.json", **document):
     path = tmp_path / name
-    contents = {"schema": "moskophoros.sheet/6"} | document
+    contents = {"schema": "moskophoros.sheet/7"} | document
     contents["settings"] = copy.deepcopy(SETTINGS if settings is None else settings)
     path.write_text(json.dumps(contents, ensure_ascii=False), encoding="utf-8")
     return path
@@ -320,23 +326,53 @@ def test_once_naming_a_clip_outside_the_loaded_list_is_a_usage_error(tmp_path, c
         ("nonsense", 'expected a nonempty list of clips, got "nonsense"'),
         ({}, "expected a nonempty list of clips, got {}"),
         (
-            [{"name": "walk"}],
-            '[0]: expected exactly {"name": NAME, "loop": BOOLEAN}, got {"name": "walk"}',
+            [{"name": "walk", "loop": True}],
+            '[0]: expected exactly {"name": NAME, "loop": BOOLEAN, "frames": FRAMES}, '
+            'got {"name": "walk", "loop": true}',
         ),
         (
-            [{"name": "walk", "loop": True, "extra": 1}],
-            '[0]: expected exactly {"name": NAME, "loop": BOOLEAN}, got '
-            '{"name": "walk", "loop": true, "extra": 1}',
+            [{"name": "walk", "loop": True, "frames": None, "extra": 1}],
+            '[0]: expected exactly {"name": NAME, "loop": BOOLEAN, "frames": FRAMES}, '
+            'got {"name": "walk", "loop": true, "frames": null, "extra": 1}',
         ),
-        (["walk"], '[0]: expected exactly {"name": NAME, "loop": BOOLEAN}, got "walk"'),
-        ([{"name": 5, "loop": True}], "[0].name: expected a nonempty clip name, got 5"),
         (
-            [{"name": "", "loop": True}],
+            ["walk"],
+            '[0]: expected exactly {"name": NAME, "loop": BOOLEAN, "frames": FRAMES}, '
+            'got "walk"',
+        ),
+        (
+            [{"name": 5, "loop": True, "frames": None}],
+            "[0].name: expected a nonempty clip name, got 5",
+        ),
+        (
+            [{"name": "", "loop": True, "frames": None}],
             '[0].name: expected a nonempty clip name, got ""',
         ),
-        ([{"name": "a", "loop": 1}], "[0].loop: expected true or false, got 1"),
         (
-            [{"name": "a", "loop": True}, {"name": "a", "loop": False}],
+            [{"name": "a", "loop": 1, "frames": None}],
+            "[0].loop: expected true or false, got 1",
+        ),
+        (
+            [{"name": "a", "loop": True, "frames": 0}],
+            "[0].frames: expected a whole number 1 or more, 'auto' or null, got 0",
+        ),
+        (
+            [{"name": "a", "loop": True, "frames": 8.0}],
+            "[0].frames: expected a whole number 1 or more, 'auto' or null, got 8.0",
+        ),
+        (
+            [{"name": "a", "loop": True, "frames": True}],
+            "[0].frames: expected a whole number 1 or more, 'auto' or null, got true",
+        ),
+        (
+            [{"name": "a", "loop": True, "frames": "8"}],
+            "[0].frames: expected a whole number 1 or more, 'auto' or null, got \"8\"",
+        ),
+        (
+            [
+                {"name": "a", "loop": True, "frames": None},
+                {"name": "a", "loop": False, "frames": None},
+            ],
             '[1].name: the clip "a" is recorded twice',
         ),
     ],
@@ -371,7 +407,7 @@ def test_previews_must_be_a_boolean(tmp_path, capsys, value):
 
 def test_a_document_with_only_schema_and_settings_is_enough(tmp_path):
     path = tmp_path / "minimal.json"
-    path.write_text(json.dumps({"schema": "moskophoros.sheet/6", "settings": SETTINGS}))
+    path.write_text(json.dumps({"schema": "moskophoros.sheet/7", "settings": SETTINGS}))
     assert values(reuse(path)) == REUSED
 
 
@@ -439,7 +475,7 @@ def test_a_deeply_nested_file_is_rejected(tmp_path, capsys):
     ("text", "key"),
     [
         (
-            '{"schema": "moskophoros.sheet/6", "schema": "moskophoros.sheet/6"}',
+            '{"schema": "moskophoros.sheet/7", "schema": "moskophoros.sheet/7"}',
             "schema",
         ),
         ('{"settings": {"fps": 12, "fps": 12}}', "fps"),
@@ -454,11 +490,11 @@ def test_a_repeated_key_anywhere_is_rejected(tmp_path, capsys, text, key):
     assert rejected(capsys, path) == f"repeats the key {key!r}"
 
 
-NOT_A_SHEET = "is not a moskophoros.sheet/6 document"
+NOT_A_SHEET = "is not a moskophoros.sheet/7 document"
 
 
 def older(schema):
-    return f"is a {schema} sheet; only moskophoros.sheet/6 sheets load, so generate it again"
+    return f"is a {schema} sheet; only moskophoros.sheet/7 sheets load, so generate it again"
 
 
 @pytest.mark.parametrize(
@@ -469,26 +505,27 @@ def older(schema):
         ({"schema": "moskophoros.sheet/3"}, older("moskophoros.sheet/3")),
         ({"schema": "moskophoros.sheet/2"}, older("moskophoros.sheet/2")),
         ({"schema": "moskophoros.sheet/1"}, older("moskophoros.sheet/1")),
+        ({"schema": "moskophoros.sheet/6"}, older("moskophoros.sheet/6")),
         ({"schema": "moskophoros.sheet/5"}, older("moskophoros.sheet/5")),
         ({"schema": "moskophoros.sheet/4"}, older("moskophoros.sheet/4")),
-        ({"schema": "moskophoros.sheet/7"}, older("moskophoros.sheet/7")),
+        ({"schema": "moskophoros.sheet/8"}, older("moskophoros.sheet/8")),
         (
             {"schema": " moskophoros.sheet/4"},
             f'{NOT_A_SHEET}: schema is " moskophoros.sheet/4"',
         ),
         ({"schema": 1}, f"{NOT_A_SHEET}: schema is 1"),
         (
-            {"schema": ["moskophoros.sheet/6"]},
-            f'{NOT_A_SHEET}: schema is ["moskophoros.sheet/6"]',
+            {"schema": ["moskophoros.sheet/7"]},
+            f'{NOT_A_SHEET}: schema is ["moskophoros.sheet/7"]',
         ),
         ({"schema": None}, f"{NOT_A_SHEET}: schema is null"),
-        ({"schema": "moskophoros.sheet/6"}, "settings: missing"),
+        ({"schema": "moskophoros.sheet/7"}, "settings: missing"),
         (
-            {"schema": "moskophoros.sheet/6", "settings": None},
+            {"schema": "moskophoros.sheet/7", "settings": None},
             "settings: must be set, got null",
         ),
         (
-            {"schema": "moskophoros.sheet/6", "settings": []},
+            {"schema": "moskophoros.sheet/7", "settings": []},
             "settings: expected an object, got []",
         ),
     ],
@@ -751,6 +788,7 @@ def test_an_explicit_reduce_overrides_the_reused_one(tmp_path, sheet, explicit):
 @pytest.mark.parametrize(
     "schema",
     [
+        "moskophoros.sheet/6",
         "moskophoros.sheet/5",
         "moskophoros.sheet/4",
         "moskophoros.sheet/3",

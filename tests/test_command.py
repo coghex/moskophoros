@@ -259,7 +259,7 @@ def test_a_run_writes_the_sheet_its_json_and_a_preview_per_clip(setup, capsys):
         "hero.walk.gif",
     ]
     description = json.loads(setup.json.read_text())
-    assert description["schema"] == "moskophoros.sheet/6"
+    assert description["schema"] == "moskophoros.sheet/7"
     assert description["settings"]["style"] == PLAIN_STYLE
     assert description["image"]["file"] == "hero.png"
     assert [(c["name"], c["loop"]) for c in description["clips"]] == [
@@ -324,6 +324,7 @@ def test_the_fingerprint_reaches_the_frames_before_stylize(setup, capsys, monkey
         },
         "model_yaw_deg": 0.0,
         "fps": 4.0,
+        "frames": "auto",
         "supersample": 1,
         "pixels_per_meter": 10.0,
         "cell": {"width": 16, "height": 16},
@@ -339,7 +340,10 @@ def test_the_fingerprint_reaches_the_frames_before_stylize(setup, capsys, monkey
             "range": [84, 191],
         },
         "style": PLAIN_STYLE,
-        "clips": [{"name": "walk", "loop": True}, {"name": "attack", "loop": False}],
+        "clips": [
+            {"name": "walk", "loop": True, "frames": None},
+            {"name": "attack", "loop": False, "frames": None},
+        ],
     }
     expected = export.fingerprint(
         export.generator(BACKEND),
@@ -405,7 +409,8 @@ def test_the_style_never_reaches_the_capture_jobs(setup, capsys):
 
 # Measure and render jobs as master built them before the style was recorded,
 # for fixed source and output paths: SHA-256 of the job file's text. A job now
-# also carries the shade's capture values, `settings.shade`; without them it
+# also carries the shade's capture values, `settings.shade`, and the frame
+# counts as given, `settings.frames` and each clip's `frames`; without them it
 # is exactly that job.
 JOB_BASELINES = {
     "measure": "ff7fc011058a0270b604a93cb7fcccaa930addf47248857ed31a0d0b88b8348d",
@@ -446,6 +451,9 @@ def test_the_capture_jobs_are_byte_identical_to_the_baseline(options):
             "convexity_weight": 1.0,
             "materials": [],
         }
+        assert job["settings"].pop("frames") == "auto"
+        for clip in job["settings"]["clips"]:
+            assert clip.pop("frames") is None
         text = blender._job_text(job)
         assert hashlib.sha256(text.encode()).hexdigest() == JOB_BASELINES[mode]
 
@@ -987,7 +995,7 @@ def test_a_bad_settings_file_is_a_usage_error(setup, capsys):
     bad.write_text("{}")
     status, _, err = run(capsys, setup.argv("--settings-from", str(bad)))
     assert status == 2
-    assert "is not a moskophoros.sheet/6 document" in err
+    assert "is not a moskophoros.sheet/7 document" in err
     assert setup.listing() == earlier
 
 

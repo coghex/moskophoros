@@ -80,9 +80,10 @@ CANONICAL = (
     '"python":"3.13.15","renderer":"workbench","studio_light":"rim.sl",'
     '"tool":"moskophoros","version":"0.1.0"},'
     '"settings":{"cell":{"height":3,"width":2},'
-    '"clips":[{"loop":true,"name":"läuft"},{"loop":false,"name":"攻撃"},'
-    '{"loop":true,"name":"pose"}],'
-    '"fps":3.0,"ground_m":{"x":0.0,"y":0.0,"z":0.0},"ground_px":{"x":1,"y":2},'
+    '"clips":[{"frames":null,"loop":true,"name":"läuft"},'
+    '{"frames":null,"loop":false,"name":"攻撃"},'
+    '{"frames":null,"loop":true,"name":"pose"}],'
+    '"fps":3.0,"frames":"auto","ground_m":{"x":0.0,"y":0.0,"z":0.0},"ground_px":{"x":1,"y":2},'
     '"model_yaw_deg":0.0,"pixels_per_meter":24.5,"previews":true,'
     '"root_motion":"error",'
     '"shade":{"ao_distance_m":0.3,"ao_samples":64,"convexity_weight":1.0,'
@@ -160,7 +161,7 @@ EXPECTED_FRAMES = ",\n".join(
 
 EXPECTED_JSON = (
     """{
-  "schema": "moskophoros.sheet/6",
+  "schema": "moskophoros.sheet/7",
   "generator": {
     "tool": "moskophoros",
     "version": "0.1.0",
@@ -187,6 +188,7 @@ EXPECTED_JSON = (
     },
     "model_yaw_deg": 0.0,
     "fps": 3.0,
+    "frames": "auto",
     "supersample": 4,
     "pixels_per_meter": 24.5,
     "cell": {
@@ -222,15 +224,18 @@ EXPECTED_JSON = (
     "clips": [
       {
         "name": "läuft",
-        "loop": true
+        "loop": true,
+        "frames": null
       },
       {
         "name": "攻撃",
-        "loop": false
+        "loop": false,
+        "frames": null
       },
       {
         "name": "pose",
-        "loop": true
+        "loop": true,
+        "frames": null
       }
     ]
   },
@@ -258,21 +263,24 @@ EXPECTED_JSON = (
       "loop": true,
       "duration_s": 1.0,
       "frame_count": 3,
-      "frame_duration_s": 0.3333333333333333
+      "frame_duration_s": 0.3333333333333333,
+      "time_scale": 1.0
     },
     {
       "name": "攻撃",
       "loop": false,
       "duration_s": 1.0,
       "frame_count": 4,
-      "frame_duration_s": 0.3333333333333333
+      "frame_duration_s": 0.3333333333333333,
+      "time_scale": 1.0
     },
     {
       "name": "pose",
       "loop": true,
       "duration_s": 0.0,
       "frame_count": 1,
-      "frame_duration_s": 0.3333333333333333
+      "frame_duration_s": 0.3333333333333333,
+      "time_scale": 1.0
     }
   ],
   "frames": [
@@ -301,6 +309,7 @@ def test_the_fingerprint_hashes_the_canonical_mirrored_object():
         },
         "model_yaw_deg": 0.0,
         "fps": 3.0,
+        "frames": "auto",
         "supersample": 4,
         "pixels_per_meter": 24.5,
         "cell": {"width": 2, "height": 3},
@@ -311,9 +320,9 @@ def test_the_fingerprint_hashes_the_canonical_mirrored_object():
         "shade": SHADE_RECORD,
         "style": PLAIN,
         "clips": [
-            {"name": "läuft", "loop": True},
-            {"name": "攻撃", "loop": False},
-            {"name": "pose", "loop": True},
+            {"name": "läuft", "loop": True, "frames": None},
+            {"name": "攻撃", "loop": False, "frames": None},
+            {"name": "pose", "loop": True, "frames": None},
         ],
     }
     assert export.fingerprint(GENERATOR, settings, SHA) == FINGERPRINT
@@ -572,7 +581,8 @@ def test_the_static_clip_is_one_frame_at_zero():
         '      "loop": true,\n'
         '      "duration_s": 0.0,\n'
         '      "frame_count": 1,\n'
-        '      "frame_duration_s": 0.08333333333333333\n'
+        '      "frame_duration_s": 0.08333333333333333,\n'
+        '      "time_scale": 1.0\n'
         "    }\n"
         "  ],\n"
     ) in text

@@ -97,7 +97,7 @@ ROOT_MOTION_MODES = ("error", "keep")
 # The values --reduce accepts; the first is the default.
 REDUCTIONS = ("plain", "mode")
 # The only sheet schema `--settings-from` loads (settings design D-24).
-SHEET_SCHEMA = "moskophoros.sheet/6"
+SHEET_SCHEMA = "moskophoros.sheet/7"
 _MAX_DIGITS = 4300
 _VIEW_FIELDS = ("view", "pitch", "directions", "start_angle")
 _REPEATABLE = frozenset({"--clip", "--once", "--config"})
@@ -193,6 +193,11 @@ class Options:
     configs: tuple[Path, ...] = ()
     no_user_config: bool = False
     origins: MappingProxyType = MappingProxyType({})
+    # The global frame count as given, "auto" or a count, and each clip's own
+    # by name: a count, "auto", or None to take the global (settings design
+    # D-13, D-31).
+    frames: int | str = layered.DEFAULTS["frames"]
+    clip_frames: MappingProxyType = MappingProxyType({})
 
 
 class UsageError(SystemExit):
@@ -274,6 +279,7 @@ def parse_args(argv: Sequence[str]) -> Options:
         shade_range=args.shade_range,
         configs=tuple(args.configs or ()),
         no_user_config=args.no_user_config,
+        frames=args.frames,
     )
 
 
@@ -302,6 +308,8 @@ class ReusedSettings:
     previews: bool
     clip: tuple[str, ...]
     once: tuple[str, ...]
+    frames: int | str
+    clip_frames: MappingProxyType
     reduce: str
     shade_range: tuple[int, int]
     ao_distance: float
@@ -332,13 +340,23 @@ def resolve_settings(options: Options, environ=None) -> Options:
         options, layered.merge(*(values for _, values in configs)), configs
     )
     reused_colors = None
+    clip_layers = [] if user is None else [user[1].get("clips", {})]
     if options.settings_from is not None:
         reused = read_settings(options.settings_from)
         options = apply_settings(options, reused)
         if reused.palette is not None:
             reused_colors = reused.palette.colors
+        clip_layers.append(reused.clip_frames)
     else:
         options = _apply_defaults(options, defaults, user)
+    # Each clip's own frame count merges by clip name, the loaded sheet's
+    # included, a higher layer's null clearing a lower one's count; per-clip
+    # values come from files and the sheet only (settings design D-17, D-39).
+    clip_layers += [values.get("clips", {}) for _, values in configs]
+    merged = {}
+    for layer in clip_layers:
+        merged.update(layer)
+    options = replace(options, clip_frames=MappingProxyType(merged))
     options = _resolve_palette(options)
     return _resolve_materials(options, reused_colors)
 
@@ -376,6 +394,8 @@ def _apply_layer(options, values, sources, mark=True):
     changes = {}
     origins = dict(options.origins)
     for name, value in values.items():
+        if name == "clips":
+            continue
         if name not in _PATH_FIELDS:
             field = _SETTING_FIELDS.get(name, name)
             if field not in explicit:
@@ -594,6 +614,10 @@ def read_settings(path) -> ReusedSettings:
         ground_px=(ground_px["x"], ground_px["y"]),
         root_motion=checked["root_motion"],
         previews=checked["previews"],
+        frames=checked["frames"],
+        clip_frames=MappingProxyType(
+            {entry["name"]: entry["frames"] for entry in checked["clips"]}
+        ),
         clip=tuple(entry["name"] for entry in checked["clips"]),
         once=tuple(entry["name"] for entry in checked["clips"] if not entry["loop"]),
         reduce=style["reduce"],
@@ -624,7 +648,7 @@ def apply_settings(options: Options, reused: ReusedSettings) -> Options:
     names = [
         field.name
         for field in fields(ReusedSettings)
-        if field.name not in ("clip", "once")
+        if field.name not in ("clip", "once", "clip_frames")
     ]
     if "view" in explicit:
         names = [name for name in names if name not in _VIEW_FIELDS]
@@ -663,6 +687,7 @@ def capture_settings(options: Options) -> backend.Settings:
         ground=options.ground,
         ground_px=options.ground_px,
         root_motion=options.root_motion,
+        frames=options.frames,
         shade=backend.Shade(
             ao_distance_m=options.ao_distance,
             ao_samples=options.ao_samples,
@@ -793,13 +818,20 @@ def _command(options):
             f"has {subject.material_count} materials; the material-ID buffer "
             f"holds at most {backend.MAX_MATERIALS}",
         )
-    selected = gltf.select_clips(subject, options.clip or (), options.once)
+    selected = tuple(
+        replace(selected, frames=options.clip_frames.get(selected.clip.name))
+        for selected in gltf.select_clips(subject, options.clip or (), options.once)
+    )
+    for warning in _frame_warnings(options, selected):
+        _report("warning", warning)
     preview_paths = export.preview_paths(outfile, selected) if options.previews else ()
     _check_targets([outfile, json_path, *preview_paths])
     view = views.View(
         options.pitch, options.directions, options.start_angle, options.model_yaw
     )
-    requested = sampling.frames(subject.name, selected, view, options.fps)
+    requested = sampling.frames(
+        subject.name, selected, view, options.fps, options.frames
+    )
     settings = capture_settings(options)
     sheet_style = style_record(options)
     if options.materials is not None:
@@ -932,6 +964,42 @@ def _command(options):
             preview_paths, (preview.gif for preview in previews), strict=True
         )
     publish(outputs)
+
+
+def _frame_warnings(options, selected):
+    """The frame-count warnings for the selected clips (settings design D-25,
+    D-26, D-41), neither an error nor a change to the output.
+
+    When `--frames` or a `--config` file set the global count, one warning
+    names every selected clip whose own value, a count or `auto`, beats it,
+    even an equal one; a clip of zero duration and `static` are left out.
+    Each of those whose own count is above 1 is named as keeping one frame.
+    """
+    messages = []
+    still = [
+        item
+        for item in selected
+        if item.clip.animation_index is None or item.clip.t1 == item.clip.t0
+    ]
+    if "frames" in options.explicit:
+        own = [
+            f"{json.dumps(item.clip.name, ensure_ascii=False)} ({item.frames})"
+            for item in selected
+            if item.frames is not None and item not in still
+        ]
+        if own:
+            messages.append(
+                f"the global frame count {options.frames} does not reach the clips "
+                f"with their own: {', '.join(own)}"
+            )
+    for item in still:
+        if isinstance(item.frames, int) and item.frames > 1:
+            messages.append(
+                f"clip {json.dumps(item.clip.name, ensure_ascii=False)} has no "
+                f"duration and keeps one frame; its own frame count {item.frames} "
+                "does not apply"
+            )
+    return messages
 
 
 # Each shading value a material may override, by the `Options` field that
@@ -1471,6 +1539,15 @@ def _build_parser():
         "target sampling rate, greater than 0 (default: 12)",
     )
     single(
+        "--frames",
+        "N",
+        _frames_option,
+        layered.DEFAULTS["frames"],
+        "how many frames each clip is sampled to, retimed so each lasts 1/fps, "
+        "1 or more, or auto: sampled by duration; a settings file's clips "
+        "mapping may give a clip its own (default: auto)",
+    )
+    single(
         "--ppm",
         "N",
         _positive,
@@ -1872,19 +1949,41 @@ def _previews(value):
     return value
 
 
+def _frame_count(value):
+    """A recorded frame count: `"auto"` or a whole number of 1 or more, never a
+    boolean or a float (settings design D-34)."""
+    if value == layered.AUTO or (type(value) is int and value >= 1):
+        return value
+    raise argparse.ArgumentTypeError(
+        f"expected a whole number 1 or more, or {layered.AUTO!r}, got {_shown(value)}"
+    )
+
+
+def _frames_option(text):
+    """`--frames`: a decimal integer of 1 or more, or `auto`."""
+    if text == layered.AUTO:
+        return text
+    if not re.fullmatch("[0-9]+", text) or int(text) < 1:
+        raise argparse.ArgumentTypeError(
+            f"expected a whole number 1 or more, or auto, got {text!r}"
+        )
+    return int(text)
+
+
 def _clips(value):
     """The recorded clip selection: a nonempty list of distinct clips, each
-    exactly `{"name": NAME, "loop": BOOLEAN}`, in sheet order."""
+    exactly `{"name": NAME, "loop": BOOLEAN, "frames": FRAMES}`, in sheet
+    order, `FRAMES` its own count as given: a count, `"auto"` or null."""
     if not isinstance(value, list) or not value:
         raise argparse.ArgumentTypeError(
             f"expected a nonempty list of clips, got {_shown(value)}"
         )
     names = set()
     for index, entry in enumerate(value):
-        if not isinstance(entry, dict) or set(entry) != {"name", "loop"}:
+        if not isinstance(entry, dict) or set(entry) != {"name", "loop", "frames"}:
             raise argparse.ArgumentTypeError(
-                f'[{index}]: expected exactly {{"name": NAME, "loop": BOOLEAN}}, '
-                f"got {_shown(entry)}"
+                f'[{index}]: expected exactly {{"name": NAME, "loop": BOOLEAN, '
+                f'"frames": FRAMES}}, got {_shown(entry)}'
             )
         name, loop = entry["name"], entry["loop"]
         if not isinstance(name, str) or not name:
@@ -1894,6 +1993,14 @@ def _clips(value):
         if not isinstance(loop, bool):
             raise argparse.ArgumentTypeError(
                 f"[{index}].loop: expected true or false, got {_shown(loop)}"
+            )
+        frames = entry["frames"]
+        if frames is not None and not (
+            frames == layered.AUTO or (type(frames) is int and frames >= 1)
+        ):
+            raise argparse.ArgumentTypeError(
+                f"[{index}].frames: expected a whole number 1 or more, "
+                f"{layered.AUTO!r} or null, got {_shown(frames)}"
             )
         if name in names:
             raise argparse.ArgumentTypeError(
@@ -1922,6 +2029,7 @@ _SETTINGS = {
     },
     "model_yaw_deg": _reused(_number),
     "fps": _reused(_positive),
+    "frames": _frame_count,
     "supersample": _reused(_supersample),
     "pixels_per_meter": _reused(_positive),
     "cell": {"width": _reused(_cell_side), "height": _reused(_cell_side)},

@@ -37,6 +37,7 @@ def test_the_schema_holds_this_slices_settings():
     assert list(settings.SCHEMA) == [
         "cell",
         "fps",
+        "frames",
         "palette",
         "materials",
         "previews",
@@ -59,6 +60,7 @@ def test_the_defaults_file_and_the_schema_table_agree():
     assert shipped == {
         "cell": None,
         "fps": 12.0,
+        "frames": "auto",
         "palette": None,
         "materials": None,
         "previews": True,
@@ -196,15 +198,15 @@ def test_an_overlong_integer_fps_is_refused_with_its_line():
     )
 
 
-@pytest.mark.parametrize("key", ["frames", "clips", "view", "Cell", "fps ", "Shade"])
+@pytest.mark.parametrize("key", ["view", "pitch", "Frames", "Cell", "fps ", "Shade"])
 def test_an_unknown_key_is_refused_naming_it_and_its_line(key):
     text = f"version: 1\nfps: 12\n'{key}': {{a: 1}}\n"
     assert refused(text) == f"{key}: unknown key at line 3, column 1"
 
 
-def test_a_key_from_a_later_slice_is_an_unknown_key():
-    text = "fps: 12\nframes: 8\n"
-    assert refused(text) == "frames: unknown key at line 2, column 1"
+def test_an_option_that_is_not_a_setting_is_an_unknown_key():
+    text = "fps: 12\nsupersample: 8\n"
+    assert refused(text) == "supersample: unknown key at line 2, column 1"
 
 
 # The shade group (settings design D-3, D-9, D-12, D-22, D-30, D-42)
@@ -519,3 +521,73 @@ def test_merging_nothing_gives_nothing_and_changes_no_layer():
     assert merge() == {}
     assert merge(first, {"fps": 7.0}) == {"fps": 7.0}
     assert first == {"fps": 6.0}
+
+
+# Frame counts (settings design D-13, D-17, D-22, D-31, D-34)
+
+
+def test_a_global_count_and_each_clips_own_value():
+    assert layer(
+        "frames: 8\nclips:\n  Jump: {frames: 6}\n  Idle: {frames: auto}\n"
+        "  Walk: {frames: null}\n  Pose: {}\n"
+    ) == {
+        "frames": 8,
+        "clips": {"Jump": 6, "Idle": "auto", "Walk": None},
+    }
+    assert layer("frames: auto\n") == {"frames": "auto"}
+    assert layer("frames: 100000\n") == {"frames": 100000}
+
+
+@pytest.mark.parametrize(
+    ("value", "shown"),
+    [("0", "0"), ("-1", "-1"), ("8.0", "8.0"), ("'8'", "'8'"), ("true", "true")]
+    + [("null", "null"), ("Auto", "'Auto'"), ("[8]", "a list")],
+)
+def test_a_bad_global_count_names_its_key_and_line(value, shown):
+    assert refused(f"fps: 12\nframes: {value}\n") == (
+        f"frames: expected a whole number 1 or more, or auto, got {shown} "
+        "at line 2, column 1"
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "shown"),
+    [("0", "0"), ("-3", "-3"), ("6.0", "6.0"), ("'6'", "'6'"), ("false", "false")],
+)
+def test_a_bad_clip_count_names_its_key_path_and_line(value, shown):
+    assert refused(
+        f"clips:\n  Walk: {{frames: 2}}\n  Jump:\n    frames: {value}\n"
+    ) == (
+        f"clips.Jump.frames: expected a whole number 1 or more, auto or null, got "
+        f"{shown} at line 4, column 5"
+    )
+
+
+def test_an_unknown_clip_key_names_its_key_path_and_line():
+    assert refused("clips:\n  Jump:\n    frames: 6\n    fps: 24\n") == (
+        "clips.Jump.fps: unknown key at line 4, column 5"
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "problem"),
+    [
+        ("clips: [Jump]\n", "clips: expected a mapping of clips by name, got a list"),
+        (
+            "clips:\n  Jump: 6\n",
+            "clips.Jump: expected a mapping of the clip's settings, got 6 at line 2, "
+            "column 3",
+        ),
+        ("clips:\n  1: {frames: 6}\n", "clips: the key 1 is not a clip name"),
+        ("clips:\n  '': {frames: 6}\n", "clips: the key '' is not a clip name"),
+    ],
+)
+def test_a_malformed_clips_mapping_is_refused(text, problem):
+    assert refused(text).startswith(problem)
+
+
+def test_per_clip_values_merge_by_name_and_null_clears_a_lower_count():
+    user = layer("clips:\n  Jump: {frames: 6}\n  Walk: {frames: 4}\n")
+    config = layer("clips:\n  Jump: {frames: null}\n  Idle: {frames: auto}\n")
+    assert merge(user, config)["clips"] == {"Jump": None, "Walk": 4, "Idle": "auto"}
+    assert merge(user, layer("fps: 6\n"))["clips"] == {"Jump": 6, "Walk": 4}

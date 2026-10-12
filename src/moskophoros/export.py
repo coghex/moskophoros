@@ -1,4 +1,4 @@
-"""The sheet PNG, its `moskophoros.sheet/6` JSON and the animated previews,
+"""The sheet PNG, its `moskophoros.sheet/7` JSON and the animated previews,
 following design §Export.
 
 `encode` lays the plain frames out on the sheet, describes them and returns
@@ -27,7 +27,7 @@ import moskophoros
 from moskophoros import sampling, views
 from moskophoros.capture.backend import settings_document
 
-SCHEMA = "moskophoros.sheet/6"
+SCHEMA = "moskophoros.sheet/7"
 USAGE_ERROR = 2
 PREVIEW_SCALE = 4
 PREVIEW_BACKGROUND = (128, 128, 128)
@@ -179,12 +179,17 @@ def encode(
         settings.pitch, settings.directions, settings.start_angle, settings.model_yaw
     )
     directions = views.directions(view)
-    requested = sampling.frames(subject, selected_clips, view, settings.fps)
+    requested = sampling.frames(
+        subject, selected_clips, view, settings.fps, settings.frames
+    )
     width, height = settings.cell
     pixels = _pixels_by_address(frames, requested, (height, width, 4))
 
     row_of_clip = {selected.clip.name: c for c, selected in enumerate(selected_clips)}
-    samplings = [sampling.sample(selected, settings.fps) for selected in selected_clips]
+    samplings = [
+        sampling.sample(selected, settings.fps, settings.frames)
+        for selected in selected_clips
+    ]
     columns = max(s.frame_count for s in samplings)
     rows = len(selected_clips) * len(directions)
     image = np.zeros((rows * height, columns * width, 4), dtype=np.uint8)
@@ -234,6 +239,7 @@ def encode(
                 "duration_s": float(selected.clip.t1 - selected.clip.t0),
                 "frame_count": s.frame_count,
                 "frame_duration_s": float(s.frame_duration),
+                "time_scale": float(s.time_scale),
             }
             for selected, s in zip(selected_clips, samplings, strict=True)
         ],
@@ -326,7 +332,7 @@ def previews(frames, *, subject, settings, selected_clips):
                 f"the preview of clip {name!r} would be {preview_width} pixels "
                 f"wide, over GIF's limit of {MAX_PREVIEW_WIDTH} pixels"
             )
-        timing = sampling.sample(selected, settings.fps)
+        timing = sampling.sample(selected, settings.fps, settings.frames)
         delays = preview_delays_ms(
             timing.frame_duration, timing.frame_count, selected.one_shot
         )
@@ -338,7 +344,9 @@ def previews(frames, *, subject, settings, selected_clips):
             )
         plans.append((name, timing.times, delays))
 
-    requested = sampling.frames(subject, selected_clips, view, settings.fps)
+    requested = sampling.frames(
+        subject, selected_clips, view, settings.fps, settings.frames
+    )
     pixels = _pixels_by_address(frames, requested, (height, width, 4))
     for address, array in pixels.items():
         if not np.isin(array[..., 3], (0, 255)).all():
