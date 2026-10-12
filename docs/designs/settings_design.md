@@ -17,26 +17,33 @@ concrete precondition
 
 ## Processing status
 
-The slices below are a **proposal** awaiting the owner's signoff (Q-9).
+The owner has not yet signed off this slice list (Q-9).
 
 - [ ] EPIC. Configure moskophoros from layered YAML settings and command-line overrides
 - [#82] SET-0. Read material libraries from YAML instead of JSON
 - [ ] SET-1. Load layered YAML settings for the existing options
-- [ ] SET-2. Make the shading constants settings and command-line options
-- [ ] SET-3. Add per-material settings
-- [ ] SET-4. Recolour shading without a re-render
+- [ ] SET-2. Make the global shading values settings and command-line options
+- [ ] SET-3. Let each material override the shading values
+- [ ] SET-5. Set a clip's frame count, retiming it to the fps
+- [deferred] SET-4. Recolour shading without a re-render. Waits until iteration speed becomes a problem and the owner asks for it (D-18).
 
 ## Epic contract
 
 - **Goal:** every setting the owner tunes per generation has one name, one
   shipped default and one validation rule. It can be set in the user file, in
-  a `--config` file or on the command line, in that order of precedence. Every
-  sheet records the values it was made with.
-- **Done when:** (proposal) the shading knobs and the settings the owner lists
-  under Q-1 can each be set at every layer. The R1 and R2 looks can be
-  reproduced from a `--config` file alone, with no code edit. Per-material
-  settings work. A sheet reused with `--settings-from` reproduces itself
-  whatever the user file says. The owner accepts it (V-12).
+  `--config` files and, for global values, on the command line, in the order
+  D-8 fixes. Every sheet records every setting that affects its output, and
+  loading the sheet regenerates that output exactly.
+- **Done when:**
+  - every D-14 setting works at every layer;
+  - the R1 and R2 looks can be reproduced from a `--config` file alone, with
+    no code edit;
+  - per-material shading overrides and clip frame counts work;
+  - reusing a sheet with the same model gives byte-identical output, checked
+    by a test (D-16);
+  - with no settings files and no new options, sheet PNGs and previews are
+    byte-identical to today's (D-12);
+  - the owner accepts the result (V-12).
 - **Users and operators:** the owner, generating sprites from the command line.
   Later, a UI that edits the same settings model (D-5).
 - **Arc label:** `None proposed`.
@@ -181,184 +188,221 @@ From the owner's words (2026-10-11):
 
 - **Quick to change.** Try a look by editing a small YAML file, or a single
   option, and rerunning. For example:
-  `moskophoros --config flat.yaml hero.glb hero.png`, then
+  `moskophoros --config grey-soft.yaml hero.glb hero.png`, then
   `--convexity-weight 0.3` on top to try a variation.
 - **Personal defaults.** `~/.config/moskophoros/config.yaml` holds the owner's
-  usual choices, so everyday commands stay short.
+  usual cell, fps, palette, library and shading, so everyday commands shrink
+  to the model and the output.
 - **Shipped defaults are visible.** One defaults file inside the package holds
   every setting's default. It doubles as the reference for what can be set.
-- **Per-material control.** Per-material settings live in the same settings
-  model (D-4).
-- **Reproducible.** A sheet says exactly what made it, and
-  `--settings-from` makes it again.
+- **Per-material control.** Any material can override the shading values (D-9).
+- **Arbitrary size, rate and length.** Any cell size, any fps, and a frame
+  count per clip (D-13, D-14).
+- **Reproducible.** A sheet records everything that affects its output.
+  Loading it, from `--settings-from` now or a UI later, regenerates that output
+  exactly, without touching the owner's YAML files (D-15, D-16).
 - **A UI later** edits the same settings (D-5).
 
 ## Scope
 
 ### In scope
 
-- A settings model: names, types, units, defaults and validation.
-- The four layers (D-2), their precedence, and how `--settings-from` fits in.
+- The settings model: names, types, units, defaults and validation (P-1, P-7).
+- The layers and their precedence, including a loaded sheet (D-2, D-8, D-17).
 - Shipped defaults as a YAML file in the package.
-- Shading knobs as settings and options (D-3).
-- Per-material settings (D-4).
-- Recording the resolved settings in the sheet.
-- The design.md amendments these require, delivered with the implementation
-  pull requests.
-- Optionally, recolouring shade without a re-render (SET-4, by the owner's
-  choice).
+- The D-14 settings: cell, fps, frames, the shading values with per-material
+  overrides, AO samples, and the palette and library paths.
+- The library moving to YAML (SET-0, #82).
+- Recording every output-affecting setting in the sheet, and loading it back
+  (D-15, D-16).
+- The design.md amendments each slice requires, in that slice's pull request.
 
 ### Out of scope
 
 - The UI itself (D-5). Only "do not rule it out" applies.
-- Choosing new default values for the look. Today's values stay the defaults
-  unless the owner decides otherwise (Q-7).
+- Named shading presets such as "ambient" and "soft" (D-6, deferred).
+- Recolouring without a re-render (D-18, deferred).
+- New default values for the look (D-12).
+- The inventory's other settings, which follow later, each when it is simple
+  and gives value (D-14).
+- A generic `--set key=value` option (D-17).
+- The sheet's own format: it stays JSON (D-10).
 - Directional light. D-22 and D-25 stand: the knobs tune occlusion and
   curvature only.
-- Resolving #78 or #79.
-- Free chains of style passes. Saved settings files are requested; a pass
-  chain is still deferred (style pass 1 D-7).
+- Resolving #78 or #79, though the knobs let the owner try their options.
+- Free chains of style passes. Settings files are requested; a pass chain is
+  still deferred (style pass 1 D-7).
 
 ## Design
 
-Everything in this section is a **Proposal** unless it cites a `D-N`.
+Each statement cites the `D-N` that decides it. A `P-N` marks a proposal that
+the owner has not signed off.
 
-### Settings model (P-1)
+### Settings model (P-1; D-5)
 
 - One plain, nested data structure of named values: mappings, lists, strings,
-  numbers and booleans, which YAML and JSON can both represent. Each leaf has
-  a declared type, unit, default and validation rule, kept in one schema
-  table in the code. That table is what a UI would read to build its controls
-  (D-5).
+  numbers and booleans. Each leaf has a declared type, unit, default and
+  validation rule, kept in one schema table in the code. That table is what a
+  UI would read to build its controls (D-5).
 - Names are `snake_case`, with the unit in the name where there is one,
-  matching the sheet JSON (`ao_distance_m`, `pitch_deg`).
-- Sections follow the pipeline stages, for example `view`, `sampling`,
-  `scale`, `capture.shade`, `style` and `materials`. The final layout comes
-  from Q-1 and the inventory.
-- Every command-line option that is a setting maps to exactly one key. Options
-  that act on one run only, such as `--work-dir`, `--no-preview` and the input
-  and output paths, are proposed to stay command-line only. That is part of
-  Q-1.
+  matching the sheet JSON (`ao_distance_m`).
+- Every global setting in the first scope has its own command-line option.
+  Per-clip and per-material values are set in files only (D-17).
+- Settings that do not affect the output stay out of the sheet, and loading a
+  sheet never changes them (D-16). Examples are local and UI preferences,
+  `--work-dir` and the Blender path.
 
-### Layers and precedence (D-2)
+### Proposed file shape (P-7)
+
+This sketch is part of Q-9's signoff. It shows a user or `--config` file. Any
+key may be left out, and an omitted key falls through to the layer below:
+
+```yaml
+version: 1
+cell: 48x48            # width x height in pixels; unset: fit the model to 64x64
+fps: 12
+frames: 8              # optional; unset: each clip's frames follow fps and its length
+clips:                 # per-clip overrides, by clip name
+  Jump:
+    frames: 6
+shade:
+  ao_distance_m: 0.3
+  ao_samples: 64
+  occlusion_weight: 0.25
+  convexity_weight: 1.0
+  range: [84, 191]
+palette: ~/palettes/vince-128.gpl
+materials: robot-library.yaml   # relative to this file
+```
+
+New options: `--config FILE` (repeatable), `--no-user-config`,
+`--frames N`, `--ao-distance M`, `--ao-samples N`, `--occlusion-weight W`,
+`--convexity-weight W` and `--shade-range LO,HI`. `--cell`, `--fps`,
+`--palette` and `--materials` already exist and keep their syntax.
+
+A `clips` entry naming a clip the model does not have is silently unused.
+That follows the precedent of unused library entries (material styling D-15),
+so one user file can serve many models. Where per-material overrides live is
+Q-16.
+
+### Layers and precedence (D-2, D-8, D-17)
 
 Lowest to highest:
 
-1. **Shipped defaults:** `src/moskophoros/defaults.yaml` (proposed name), read
-   as package data. It holds every setting.
-2. **The user file:** `~/.config/moskophoros/config.yaml`, optional.
-3. **`--config FILE`:** optional and single (Q-6 asks whether it may be
-   repeated).
-4. **Command-line options.**
+1. **Shipped defaults:** a YAML file inside the package (for example
+   `src/moskophoros/defaults.yaml`), holding every setting.
+2. **The user file:** `$XDG_CONFIG_HOME/moskophoros/config.yaml`, else
+   `~/.config/moskophoros/config.yaml`. It is optional, and is skipped under
+   `--no-user-config`.
+3. **A loaded sheet:** `--settings-from FILE`, or a sheet loaded in a future
+   UI. Every recorded setting that affects the output (D-16).
+4. **`--config FILE`**, repeatable, later files winning.
+5. **Command-line options.**
 
-Each layer is a partial tree: a key a layer does not mention falls through to
-the layer below. Lists replace rather than merge. Proposal for per-material
-mappings: merge by material name (Q-3).
+- Each layer is a partial tree: a key that a layer leaves out falls through
+  to the layer below.
+- Lists replace rather than merge. Per-clip entries merge by clip name.
+- Loading is in memory, for that generation only. The tool never writes the
+  user file or any `--config` file (D-15).
+- Today's reuse rules carry over unchanged inside the sheet layer. An explicit
+  `--view` still replaces the whole reused view, and a reused library still
+  stays with its palette (design §Scale and ground point, *Reuse*).
 
-Where `--settings-from` sits is open (Q-4). The proposal is shipped defaults
-< user file < `--config` < reused sheet < command line. A reused sheet then
-reproduces itself whatever the user file says, and explicit options still
-override it, as they do today.
+### Files and errors (D-17, P-2)
 
-### Files and errors (P-2)
-
-- **Safe loading only:** `yaml.safe_load` through a loader that rejects
-  duplicate keys, which PyYAML otherwise silently accepts.
-- **Strict types**, to blunt YAML 1.1 surprises: a boolean key accepts only
-  `true` and `false`, a number key accepts no quoted strings, and `nan` and
-  `inf` are refused, as on the command line.
-- **Unknown keys are errors**, naming the file, the key path and, where PyYAML
-  gives one, the line. This matches the strict `--settings-from` check.
+- Settings files are read through SET-0's strict YAML reader. It allows only
+  one document and no repeated keys, and its implicit typing is restricted.
+- **Unknown keys are errors**, naming the file, the key path and the line.
+- `version: 1` is optional at the top of a user or `--config` file. An unknown
+  version is an error.
 - **Exit codes:** every settings error is a usage error (exit 2) before any
-  Blender invocation, including its version probe, as palette and library
-  errors already are. A missing user file is not an error; a missing
-  `--config` file is.
-- **Paths inside a file** (for example a palette or library) resolve relative
-  to that file's directory.
-- **Schema version:** a top-level `version: 1` key, optional in user and
-  `--config` files and present in the shipped defaults. An unknown version is
-  a usage error.
-- **Tests stay hermetic:** an environment variable or option
-  (`--no-user-config`, proposed) keeps tests and scripted runs from reading
-  the owner's user file. AGENTS.md already bars tests from reading the owner's
-  Blender setup, and this keeps the same rule.
+  Blender invocation, including its version probe. A missing user file is not
+  an error; a missing `--config` file is.
+- Paths inside a file resolve relative to that file's directory, with a
+  leading `~` expanded (P-2).
+- Tests and scripts use `--no-user-config`, so they never read the owner's
+  file.
 
-### Recording and reproducibility (P-3; V-2, V-9)
+### Shading values (D-3, D-6, D-9, D-12)
 
-- The sheet records the fully resolved values, never the layers. A sheet made
-  with a user file reproduces on a machine without it.
-- The shading values already have homes. Capture constants are in
-  `generator.shade`, and the range is in `settings.style.shade_range`. Q-5
-  asks whether capture knobs move from `generator` to `settings`, since they
-  become choices rather than properties of the technique.
-- Where each value came from (default, user, `--config`, sheet or command line)
-  is not part of the result. It is proposed to go to stderr, or into a separate
-  record outside the fingerprint (Q-5), so the same resolved settings still
-  give the same bytes.
-
-### Shading knobs (D-3)
-
-| Setting (proposed key) | Option (proposed) | Default (today) | R1 | R2 | Stage |
-|---|---|---|---|---|---|
-| `capture.shade.ao_distance_m` | `--ao-distance M` | 0.3 | 1.2 | 1.2 | capture |
-| `capture.shade.ao_samples` | `--ao-samples N` | 64 | 64 | 64 | capture |
-| `capture.shade.occlusion_weight` | `--occlusion-weight W` | 0.25 | 0.5 | 0.5 | capture (stylize with SET-4) |
-| `capture.shade.convexity_weight` | `--convexity-weight W` | 1.0 | 0.0 | 0.5 | capture (stylize with SET-4) |
-| `style.shade_range` | `--shade-range LO,HI` | [84, 191] | [120, 188] | [120, 255] | stylize |
+| Setting | Option | Default | R1 | R2 | Acts in | Per material |
+|---|---|---|---|---|---|---|
+| `shade.ao_distance_m` | `--ao-distance M` | 0.3 | 1.2 | 1.2 | capture | yes |
+| `shade.ao_samples` | `--ao-samples N` | 64 | 64 | 64 | capture | no |
+| `shade.occlusion_weight` | `--occlusion-weight W` | 0.25 | 0.5 | 0.5 | capture | yes |
+| `shade.convexity_weight` | `--convexity-weight W` | 1.0 | 0.0 | 0.5 | capture | yes |
+| `shade.range` | `--shade-range LO,HI` | [84, 191] | [120, 188] | [120, 255] | stylize | yes |
 
 - The shade formula keeps its meaning: linear
   `clamp(occlusion_weight · AO_out + convexity_weight · (1 − AO_in), 0, 1)`.
   It covers occlusion and curvature only, with no light, direction or material
   property (D-25).
-- **AO samples** is proposed as a knob. It trades render time for noise, and
-  the sheet already records it.
-- **Proposed validation:** distance > 0; samples a whole number from 1 to
-  1024; weights finite and ≥ 0; range integers with `0 ≤ lo < hi ≤ 255`, as
+- Weights and distance reach Blender through the capture job, so
+  `blender_script.py` no longer holds them as constants. Per-material values
+  go into each material's replacement shader, which capture already builds.
+  The range is a stylize parameter, as now.
+- **Validation (P-2):** distance > 0; samples a whole number from 1 to 1024;
+  weights finite and ≥ 0; the range two integers with `0 ≤ lo < hi ≤ 255`, as
   reuse already checks.
-- R1 and R2 become two example `--config` files. Whether they ship with the
-  package is part of Q-7.
-- D-10's range rationale and the fixture's distinct-band guarantee are
-  proposed to stay bound to the shipped defaults only. A user who changes the
-  knobs owns the resulting bands. Q-7 asks the owner to confirm.
+- Material styling D-10's range rationale and the fixture's distinct-band
+  guarantee stay bound to the defaults only (D-12).
 
-### Per-material settings (D-4)
+### Frames (D-13)
 
-Open (Q-2, Q-3). Candidate per-material settings, from the evidence:
+- Without `frames`, sampling is exactly today's.
+- With `frames` = `N`:
+  - a loop samples `t0 + k·d/N`, for k = 0 … N − 1;
+  - a one-shot samples `t0 + k·d/(N − 1)`, for k = 0 … N − 1;
+  - `N` = 1 samples `t0`.
+- Each frame lasts exactly `1/fps`, and the sheet records the clip's retiming
+  factor `d·fps/N`.
+- Previews follow the recorded frame durations, as now.
 
-- the **shade range**, which #79 needs for Grey and Black. This would amend
-  material styling D-7, "one global range".
-- the **weights**: possible in capture, which already replaces each material's
-  shader, or in stylize with SET-4.
-- the **ramp**, which today lives in the JSON library.
+### Recording and loading (D-15, D-16, P-6)
 
-### Recolouring without a re-render (SET-4, optional)
+- The sheet's `settings` records every resolved setting that affects the
+  output. The capture knobs move there from `generator.shade`, and per-material
+  overrides and frame counts are recorded too.
+- Where each value came from is never stored.
+- **P-6:** each slice that adds recorded settings bumps the sheet schema, as
+  `/2` and `/3` did. Older sheets still load, taking the defaults for what they
+  lack.
+- **The reproduction test (D-16):** generate a sheet, then rerun with
+  `--settings-from` that sheet, the same model and no other options. The PNG,
+  JSON and previews must be byte-identical. Each slice extends the test to its
+  own settings.
+
+### Deferred: recolouring without a re-render (D-18)
+
+The record is kept for when the trigger arrives:
 
 - Capture would keep occlusion (`AO_out`) and convexity (`1 − AO_in`) as
-  separate values per pixel instead of one combined shade. The weights would
-  then move from capture to stylize.
-- A weight or range change recolours retained buffers without Blender. That
-  fits V-4: capture decides nothing about the look.
+  separate values per pixel, so the weights would move from capture to
+  stylize. A weight or range change would then recolour retained buffers
+  without Blender, which fits V-4.
 - The R1/R2 decomposition shows the arithmetic works (feedback-1 §7.1;
   manifest, *Validity*).
 - **Costs:**
-  - The render's channels are already full (ID in red and blue, shade in
-    green), so this needs another output or channel.
-  - Combining 8-bit O and C in stylize rounds differently from today's
-    single shade, so default output bytes would change.
-  - "Recolour a retained capture" is a new kind of run. Today's design gives
-    `--work-dir` no replay interface.
-- Whether, and when, is the owner's call (Q-8).
+  - The render's channels are already full, so this needs another output.
+  - 8-bit O and C combined in stylize round differently from today's single
+    shade.
+  - "Recolour a retained capture" is a new kind of run.
+- At the owner's sizes a re-render is cheap: R1 and R2 at 48×48 took 22.6 s and
+  19.9 s (manifest).
 
 ## Decisions
 
-All five were made by the owner on 2026-10-11, in the moskophoros manager's
-terminal, and relayed in request moskophoros-20261011-1.
+D-1 to D-5 were made by the owner on 2026-10-11, in the moskophoros manager's
+terminal, and relayed in request moskophoros-20261011-1. D-6 onward were made
+by the owner in this design conversation on the same day, round by round
+(*Source notes*).
 
 ### D-1. Settings files are YAML, read with PyYAML
 
 "im just used to yaml, and pyyaml is a pretty good library, so use yaml". The
 project pin goes into `pyproject.toml` and `requirements.lock` with the first
-implementation pull request (AGENTS.md, Architecture rules). Affects SET-1.
+implementation pull request, SET-0 (#82) (AGENTS.md, Architecture rules).
+Affects SET-0 and SET-1.
 
 ### D-2. Four layers, each overriding the one below
 
@@ -373,7 +417,7 @@ Affects SET-1.
 
 AO distance, occlusion weight, convexity weight and shade range become
 settings and options. The AO sample count is included if the design judges it
-a knob (proposed: yes). R1 and R2 are the reference presets:
+a knob. D-9 makes it a global-only setting. R1 and R2 are the reference presets:
 
 - R1: AO 1.2 m, occlusion 0.5, convexity 0.0, range 120..188, "more internal
   shading from ambient light";
@@ -384,8 +428,8 @@ light or direction. Affects SET-2.
 
 ### D-4. Per-material settings belong in the settings
 
-"per material will definitely be in the settings". What they are and how they
-relate to the JSON library is Q-2 and Q-3. Affects SET-3.
+"per material will definitely be in the settings". What they are is D-9. Where
+they live is Q-16. Affects SET-3.
 
 ### D-5. A UI comes later and must not be ruled out
 
@@ -405,7 +449,7 @@ that, but for now i want to control raw values."
   and shade range.
 - Named shading presets, and the names "ambient" and "soft", are deferred.
 - R1 and R2 stay reference values for verification only.
-- Whether each value is global, per material or both is Q-12.
+- Whether each value is global, per material or both: D-9.
 
 Affects SET-2 and SET-3.
 
@@ -421,15 +465,14 @@ Decided by the owner on 2026-10-11, round 3. This partly resolves Q-3.
   strict YAML reader that the settings loader reuses.
 - This supersedes the format part of material styling D-8 ("The library is a
   JSON file"). The tool still only reads the library.
-- Still open (Q-13): whether the sheet's own description becomes YAML too,
-  and how existing `.json` libraries are treated.
+- The sheet stays JSON (D-10), and `.json` libraries are refused (D-11).
 
 Affects SET-0 and SET-3.
 
 ### D-8. Precedence: defaults < user file < loaded sheet < `--config` < options
 
 Decided by the owner on 2026-10-11, round 3. This resolves Q-4 and adopts
-P-4: "yea, that is fine".
+the agent's proposal: "yea, that is fine".
 
 - The order, lowest to highest: shipped defaults, the user file, a loaded
   sheet (`--settings-from`, or loading a sheet in a future UI), `--config`
@@ -496,7 +539,7 @@ Affects SET-2.
 ### D-13. Frame count is a setting that retimes the clip
 
 Decided by the owner on 2026-10-11, round 6. This resolves Q-11 and adopts
-P-5: "yes, it should act as any other setting, following the override path
+the agent's proposal: "yes, it should act as any other setting, following the override path
 we laid out earlier".
 
 - `fps` is a setting.
@@ -513,8 +556,7 @@ we laid out earlier".
   samples fall at `t0 + k·d/(N − 1)`, for k = 0 … N − 1. An `N` of 1 shows
   `t0`.
 
-This amends design §Clips and sampling. Affects SET-1, or the slice that
-carries frames (Q-9).
+This amends design §Clips and sampling. Affects SET-5.
 
 ### D-14. The first settings scope
 
@@ -549,402 +591,338 @@ extends D-8.
   user's yaml settings, just the values for the generation." Loading a sheet
   supplies one layer, in memory, for that generation only. The tool never
   writes the user file or any `--config` file.
-- Which recorded settings a loaded sheet applies is still open: everything,
-  or only those that "effect more than just the sprite in question" (Q-14).
+- Which recorded settings a loaded sheet applies is D-16.
 
 Affects SET-1 and SET-2.
 
+### D-16. Loading a sheet applies everything that affects the output
+
+Decided by the owner on 2026-10-11, round 7. This resolves Q-14 with reading
+(a), widened: "everything that effects the output, reusing a sprite's settings
+with the same model should generate identical output, we should have a test
+for that. if there are client settings that done effect output, we dont change
+those, these might be related to the ui for instance, local settings for
+users, but the generation needs to be identical. so (a)".
+
+- Every recorded setting that affects the sheet PNG, its JSON or the previews
+  loads, model yaw and the ground point included.
+- Settings that do not affect the output are not recorded, and loading a
+  sheet never changes them. Examples are local and UI preferences.
+- A test regenerates a sheet from itself with the same model and no other
+  options, and requires byte-identical output. Each slice extends it.
+- Clip selection and one-shot marks also affect the output, but today's design
+  always takes them from the command line. Loading them is confirmed
+  separately (Q-15).
+
+Affects SET-1, SET-2, SET-3 and SET-5.
+
+### D-17. Settings file and option details
+
+Decided by the owner on 2026-10-11, round 7. This resolves Q-6 and the
+remaining P-2 proposals, as recommended: "that's all fine".
+
+- `--config FILE` may be repeated, and later files win.
+- The user file is `$XDG_CONFIG_HOME/moskophoros/config.yaml` when that
+  variable is set, else `~/.config/moskophoros/config.yaml`.
+- `--no-user-config` skips the user file, for tests and scripts.
+- Every global setting in the first scope has its own option. Per-clip and
+  per-material values are set in files only.
+- There is no generic `--set key=value` option for now.
+- A settings file may carry `version: 1`. Unknown keys and unknown versions
+  are usage errors (exit 2) before any Blender invocation.
+
+Affects SET-1, SET-2 and SET-5.
+
+### D-18. Recolouring without a re-render is deferred
+
+Decided by the owner on 2026-10-11, round 7. This resolves Q-8, as
+recommended: "defer".
+
+- SET-4 leaves this arc's active plan. Its trigger is iteration speed
+  becoming a problem, and the owner asking for it.
+- The analysis stays under Design, *Deferred*, and goes into design §Deferred
+  when this arc amends design.md.
+
 ## Open questions
 
-### Q-14. Which recorded settings does a loaded sheet apply?
-
-The owner (round 6): "the sheet should store a settings block with the
-settings that effect more than just the sprite in question, as well as per
-material settings."
-
-Two readings:
-
-- **(a)** The sheet stores and loads every setting except clip selection,
-  which comes from the command, as today. Model yaw and the ground point load
-  too. That suits reloading the same sprite in a UI. Regenerating a different
-  model from it needs explicit overrides.
-- **(b)** The sheet stores every setting, for the record, but loading
-  applies only the shared ones: cell, scale, fps and frames, shading,
-  palette, library and per-material settings. Model-specific values (model
-  yaw, the ground point) come from the current command.
-
-Resolved by the owner.
-
-### Q-1. Which settings exist, and which stay command-line only?
-
-The owner has "many settings i can think of". The inventory above lists
-today's options and tunable constants. Which become settings, which stay
-command-line only, and what else does the owner want? This decides the schema
-and the slice boundaries. Resolved by the owner's list.
-
-**Owner input, 2026-10-11 (round 2), not yet signed off:**
-
-- The inventory's labels "look good": a setting that is simple to include and
-  gives value should be included.
-- The first slice is limited to scale, fps, frame count, and "most
-  importantly … the two shading dials that i want to control shading, ambient
-  (known in my work currently as R1) and soft (R2)".
-- "I would allow more if you think it wise."
-
-**Agent view:**
-
-- Keep the first slice small. The loader and the layers are the real work.
-  Each extra key costs little code, but it is a schema commitment.
-- Worth adding: the cell size, if "scale" means only pixels per meter, and the
-  palette and library paths, which every acceptance command so far repeats.
-- Still open:
-  - what the dials are (Q-10);
-  - what frame count means (Q-11);
-  - whether scale covers the cell.
-
-**Owner clarification, 2026-10-11 (round 3):**
-
-- "Scale" meant **image size**, the cell (`--cell WxH`). The owner generates
-  48×48 today but needs arbitrary sizes.
-- The dials are the raw values (D-6).
-- The first-slice candidates are now:
-  - the cell;
-  - fps;
-  - frame count (Q-11);
-  - the raw shading values.
-- The agent's suggestion to add the palette and library paths is unanswered.
-
-### Q-2. What are the per-material settings?
-
-Candidates are the shade range (#79; this would amend material styling D-7),
-the occlusion and convexity weights, and the ramp. Anything else? Resolved by
-the owner.
-
-**Owner input, 2026-10-11 (round 2), not yet signed off:**
-
-- "All of the shading stuff needs per material values as well, im not sure
-  what all i want."
-- For a first slice: a per-material shade range (min and max), with the
-  materials defined in YAML.
-
-A per-material range amends material styling D-7 ("one global range"), so it
-needs its own explicit signoff. Per-material weights and AO distance come
-later, and stay deliberately open until the owner decides what they want.
-Weights and distance act in capture, where each material's shader is already
-replaced, or in stylize with SET-4.
-
-### Q-3. How do per-material settings relate to the JSON material library?
-
-- **(a) Merge:** YAML settings gain a `materials:` section keyed by material
-  name, and the library keeps the ramps. Two files speak about one material.
-- **(b) Replace:** the library moves into the YAML settings. A
-  `moskophoros.materials/1` JSON file stays readable or gets converted.
-- **(c) Reference:** the settings name a library file, and per-material
-  settings go into the library, under a new library schema version.
-
-Each affects reuse, the sheet record (D-19) and validation against the
-palette. Resolved by the owner.
-
-**Owner input, 2026-10-11 (round 2), not yet signed off:**
-
-- "I didnt realize i was already using json, ideally i would want everything
-  in yaml if possible."
-- The YAML library may be gated on an earlier issue that moves the library to
-  YAML first.
-- Still open:
-  - whether the library becomes part of the settings model, or a separate
-    YAML file;
-  - whether existing JSON libraries stay readable.
-- The sheet's description stays JSON: vision V-2 fixes "a JSON description
-  beside it". The agent's reading, to confirm, is that "everything" means the
-  files the owner writes.
-
-### Q-4. Where does `--settings-from` sit among the layers?
-
-**Resolved by D-8.**
-
-The proposal is above `--config`, below the command line, so a reused sheet
-ignores the user file and `--config`. Alternatives: below the user file, or
-not combinable with `--config` at all. Resolved by the owner.
-
-**Owner input, 2026-10-11 (round 2), not yet signed off.** A later UI will
-"load up a sprite, see its current sheet and all of the settings used in its
-generation get loaded in to the parameters automatically". Loading a sheet
-takes preference over all settings. From the command line, "even without
-explicit options", the config file settings should still override the sheet,
-"i suppose, but you tell me".
-
-**Agent view.** The sheet's JSON `settings` is already that metadata. It must
-grow to hold every setting, including the shading knobs (Q-5). Letting the
-implicit user file override a reused sheet has two costs:
-
-- A reused sheet would silently take today's preferences, so it would no
-  longer reproduce itself (V-2).
-- A user file that sets the scale would refit sprites that were meant to keep
-  their size across exports (V-7, stable scale).
-
-**Proposal P-4.** The same order applies in the UI and on the command line:
-shipped defaults < user file < loaded sheet < `--config` files < command-line
-options. Under P-4:
-
-- Your everyday user file never changes a reused sheet.
-- A `--config` file you name on that command line counts as explicit, so it
-  does.
-
-### Q-5. What does the sheet record?
-
-- Do the capture knobs move from `generator.shade` into `settings`, since
-  they become choices?
-- Is provenance (which layer set each value) recorded, and if so, outside the
-  fingerprint? Recording it inside would make identical settings from
-  different files give different bytes (V-2).
-
-This affects the sheet schema version (`/4`) and reuse of `/3` sheets.
-**Resolved by D-15**, apart from Q-14.
-
-The owner's round-2 answer to Q-4 bears on this question: loading a sheet must
-restore every setting. Reuse today reads only `settings`, never `generator`
-(`cli.py:356–432`), so the shading knobs would not be restored from
-`generator.shade`. Moving them into `settings` follows from that need. That
-move is part of Q-5's signoff.
-
-### Q-6. Schema details
-
-May `--config` be repeated, with later files winning? Should a generic
-`--set key.path=value` option reach settings without a dedicated flag? Should
-the user file's location follow `$XDG_CONFIG_HOME`, or be fixed? And confirm
-the error, unknown-key and versioning proposals in P-2. Resolved by the owner.
-
-### Q-7. Defaults, presets and the bound guarantees
-
-- Do today's values stay the shipped defaults, or does R1 or R2 become the
-  default?
-- Do R1 and R2 ship as example files?
-- Do D-10's range rationale and the fixture's distinct-band guarantee stay
-  bound to the defaults only?
-
-Resolved by the owner.
-
-### Q-12. Global, per material, or both?
-
-The owner: "i guess these would be per material, maybe we dont need a global,
-you tell me."
-
-**Agent recommendation:**
-
-- Each of the four values has a global default, and any material may override
-  any of them.
-- AO samples is global only, if it is a setting at all.
-
-Reasons:
-
-- Without a global value, every material entry repeats all four values, and
-  a model with an unlisted material has none.
-- A global value is what the defaults file and `--config` naturally hold.
-- It mirrors the library's existing default ramp.
-
-Weights and AO distance act in capture, per material shader. The range acts in
-stylize. **Resolved by D-9.**
-
-### Q-13. What else does "everything yaml" cover?
-
-- Does the sheet's description (`hero.json`) become YAML? Vision V-2 fixes a
-  JSON description, the sheet is read by programs, and `--settings-from`
-  reads it. The agent recommends it stays JSON.
-- Are existing `.json` libraries refused with a hint to convert them, or still
-  read?
-
-**Resolved by D-10 and D-11.**
-
-### Q-10. What are the "ambient" and "soft" shading dials?
-
-**Resolved by D-6:** raw values now, named presets later.
-
-The owner calls them "the two shading dials … ambient (known in my work
-currently as R1) and soft (R2)". R1 and R2 are each a full set of four values,
-and they differ in convexity weight (0 against 0.5) and in the top of the range
-(188 against 255). Three readings:
-
-- **(a) Two named presets:** for example `--shading ambient` or
-  `--shading soft`, carrying the R1 and R2 values. The raw knobs (D-3) are
-  still settable underneath, as `--pitch` is under `--view`.
-- **(b) Two continuous dials:** `ambient` and `soft`, each a number. A formula,
-  still to be designed, turns them into the raw knobs.
-- **(c) Raw knobs only:** shipped example files `ambient.yaml` and `soft.yaml`.
-
-Resolved by the owner.
-
-### Q-11. What is "frame count"?
-
-No frame-count option exists today: a clip gets
-`max(1, floor(duration · fps + 0.5))` samples, plus one for a one-shot
-(design §Clips and sampling). Readings:
-
-- a fixed number of frames per clip, used instead of fps;
-- a cap on frames per clip, on top of fps;
-- either of those set per clip.
-
-Resolved by the owner.
-
-**Owner input, 2026-10-11 (round 5):** "when i think about an animation, its
-frame count, and fps, with the total duration being determined by those two
-characteristics, but this doesnt really work with blender does it? if it does
-then thats what i want, if not, then just fps is fine, the important thing is
-that we can generate animations of arbitrary fps and length."
-
-**Verified facts** (design §Clips and sampling):
-
-- A clip's authored length `d` comes from the model: its glTF keyframe
-  range, `t1 − t0`.
-- The tool chooses its own sample times, and Blender evaluates each at its
-  exact time, not on a timeline frame. So the tool is not bound to the
-  timeline grid or the authored frame rate.
-- Today the output always plays at the authored speed. `n` frames are spaced
-  `d/n` apart, and each lasts `d/n`, so `fps` only picks `n`.
-
-**Agent analysis.** The owner's model works. With a frame count `N` and an
-fps `F`:
-
-- sample `N` poses evenly over the authored motion, at `t0 + k·d/N`;
-- give each frame `1/F`.
-
-The clip then plays for `N/F` seconds. When that differs from `d`, the motion
-is retimed: played faster or slower than authored, by the factor `d·F/N`. A
-loop still closes seamlessly, because the samples cover the whole cycle.
-Nothing in Blender has to change, and the model need not be re-exported to
-change the length.
-
-**Proposal P-5:**
-
-- `fps` stays a global setting.
-- A per-clip `frames` setting is optional.
-- Without `frames`, today's behaviour holds exactly, so existing sheets
-  reproduce.
-- With `frames`, the clip is sampled as above, and the sheet records its
-  frame duration (`1/F`) and its retiming factor.
-
-Still open:
-
-- whether `frames` is per clip, global, or both;
-- whether a one-shot's `N` includes its final pose (today it adds one).
-
-Amends design §Clips and sampling. **Resolved by D-13.**
-
-### Q-8. Recolouring without a re-render: a slice, a deferral, or dropped?
-
-See SET-4 above. Resolved by the owner.
-
-### Q-9. Delivery order and slice boundaries
-
-Is the proposed SET-1 to SET-4 order right? In particular, may SET-2 land
-before SET-3, and is SET-4 in this arc? Resolved by the owner, after Q-1 to
-Q-8.
+### Q-15. Does a loaded sheet supply the clip selection?
+
+D-16 loads everything that affects the output. The clip list and the one-shot
+marks do (`settings.clips` already records each clip's name and loop flag).
+Today's design says "Clip selection and `--once` always come from the current
+command line" (design §Scale and ground point, *Reuse*).
+
+**Proposal:**
+
+- A loaded sheet supplies the clip list and one-shot marks.
+- An explicit `--clip` replaces the whole list, and `--once` then comes from
+  the command line, as now.
+- A recorded clip the model no longer has is an input error (exit 3), as an
+  unknown `--once` is today.
+
+Affects SET-1. Resolved by the owner.
+
+### Q-16. Where do per-material shading overrides live?
+
+D-9 lets any material override any shading value except AO samples.
+
+- **(a) In the library file**, as an optional `shade` mapping on a material
+  entry, under a new library schema (`moskophoros.materials/2`). The library
+  stays the one place that defines a material's look, shared across subjects
+  (material styling D-3). The sheet already records the library inline, so
+  overrides reload with it. To vary one material for one generation, you edit
+  or copy the library.
+- **(b) In settings files**, as `materials: {Grey: {shade: …}}`, merged by name
+  across the layers. A `--config` can then override one material, but a
+  material's look is split between two files.
+
+The agent recommends (a). Affects SET-3. Resolved by the owner.
+
+### Q-9. Is the slice plan right?
+
+Does the owner sign off the delivery plan below, its order and boundaries, and
+the file shape in P-7? Resolved by the owner.
+
+## Resolved questions
+
+Each kept with its identifier. The owner's words are under *Source notes*.
+
+- **Q-1.** Which settings exist? The inventory's labels were accepted.
+  **Resolved by D-14**, the first scope. "Scale" meant image size, the cell.
+- **Q-2.** What are the per-material settings? The four shading values except
+  AO samples. **Resolved by D-9.** Ramps stay in the library.
+- **Q-3.** How do per-material settings relate to the library? The library
+  becomes YAML (**D-7**), JSON libraries are refused (**D-11**), and the sheet
+  stays JSON (**D-10**). Where the overrides live is **Q-16**.
+- **Q-4.** Where does a loaded sheet sit among the layers? **Resolved by D-8.**
+- **Q-5.** What does the sheet record? **Resolved by D-15**; what loading
+  applies is **D-16**.
+- **Q-6.** Schema details. **Resolved by D-17.**
+- **Q-7.** Defaults, presets and the bound guarantees. **Resolved by D-12**
+  (today's values stay the defaults, and the guarantees stay bound to them)
+  and **D-6** (no presets or example files; R1 and R2 are references).
+- **Q-8.** Recolouring without a re-render. **Resolved by D-18:** deferred.
+- **Q-10.** The "ambient" and "soft" dials. **Resolved by D-6:** raw values.
+- **Q-11.** What "frame count" means. **Resolved by D-13:** retiming.
+- **Q-12.** Global or per material. **Resolved by D-9:** both.
+- **Q-13.** What "everything YAML" covers. **Resolved by D-10 and D-11.**
+- **Q-14.** What a loaded sheet applies. **Resolved by D-16.**
 
 ## Verification strategy
 
-Proposal:
-
-- **Pure tests**, needing no Blender or filesystem, for layer merging,
-  precedence, validation, unknown keys, duplicate keys, YAML type traps and
-  error messages.
-- **Command tests** with temporary user and `--config` files: precedence,
-  exit 2 before any Blender invocation, and hermetic runs that never read the
-  owner's real user file.
-- **Byte identity:** with no user file, no `--config` and no new options,
-  every sheet, JSON and preview is byte-identical to today's, apart from
-  whatever Q-5 changes in the JSON.
-- **Blender tests** for the shading knobs: non-default weights and distance
-  reach the shade buffer and the sheet record. The fixture's distinct-band
-  check stays bound to the defaults (Q-7).
-- **Owner acceptance:** reproduce R1 and R2 from `--config` files and compare
-  them byte for byte with the manifest's recorded sheets
-  (`R1/RobotExpressive.png` d69bf461…, `R2/RobotExpressive.png` 59d0a37c…).
-  The owner then judges a fresh variation by eye (V-12).
+- **Pure tests**, needing no Blender or filesystem, for:
+  - layer merging and precedence, each pair of layers;
+  - validation, unknown keys and versions;
+  - YAML traps and duplicate keys (SET-0's reader);
+  - path resolution;
+  - retimed sample times;
+  - per-material banding.
+- **Command tests** with temporary user and `--config` files:
+  - precedence end to end;
+  - exit 2 before any Blender invocation;
+  - `--no-user-config`;
+  - no test ever reads the owner's real user file.
+- **Byte identity with no settings:** with no user file, no `--config` and no
+  new options, every sheet PNG and preview is byte-identical to today's. The
+  JSON changes only by the slice's schema bump.
+- **The reproduction test (D-16):** a sheet regenerated from itself with the
+  same model is byte-identical, PNG, JSON and previews. It runs in the
+  whole-command Blender tests and grows with each slice.
+- **Blender tests** for the shading values: non-default global and
+  per-material weights and distance reach the shade buffer and the record.
+  The fixture's distinct-band check stays at the defaults (D-12).
+- **Owner acceptance (V-12):** reproduce R1 and R2 from `--config` files with
+  the YAML conversion of `library-draft.json`. Their sheet PNGs and previews
+  should match the 2026-10-09 manifest hashes (`R1/RobotExpressive.png`
+  d69bf461…, `R2/RobotExpressive.png` 59d0a37c…). If a merged change since has
+  altered rendering, the pull request names it. The owner then judges new
+  variations by eye.
 
 ## Delivery plan
 
-**Proposal**, pending Q-1 to Q-9. Every slice amends design.md in its own pull
-request, because tests read design.md.
+The owner has not yet signed off this plan (Q-9). Every slice amends design.md
+in its own pull request, because tests read design.md.
 
 ### SET-0. Read material libraries from YAML instead of JSON
 
-- **Outcome:** `--materials FILE` reads a YAML library with the same fields
-  and validation as today, through a strict YAML reader the settings loader
-  will reuse. The owner asked for its issue to be drafted first (D-7).
-- **Scope:** the strict reader; the PyYAML pin; the library reader; tests;
-  the design §CLI and §Material libraries amendments; the README.
+- **Outcome:** `--materials FILE` reads a YAML library with the same fields and
+  validation as today, through a strict YAML reader that the settings loader
+  reuses.
+- **Scope:**
+  - the strict reader;
+  - the PyYAML pin;
+  - the library reader;
+  - tests;
+  - the design §CLI and §Material libraries amendments;
+  - the README.
 - **Phase:** 0.
 - **Depends on:** none.
 - **Ordering:** can land first.
-- **Relevant decisions:** D-1, D-7.
-- **Acceptance signals:** the same library content in YAML gives the same
-  `Library`, and byte-identical sheet PNGs and previews. YAML 1.1 traps,
-  duplicate keys and multiple documents are refused with named errors before
-  Blender starts.
+- **Relevant decisions:** D-1, D-7, D-10, D-11.
+- **Acceptance signals:**
+  - the same library content in YAML gives the same `Library`, with
+    byte-identical sheet PNGs and previews;
+  - YAML 1.1 traps, repeated keys and multiple documents are refused with
+    named errors before Blender starts.
 - **Out of scope:**
   - per-material shading fields (SET-3);
   - the settings loader (SET-1);
   - the sheet's format;
   - palette formats.
-- **Relevant decisions (added):** D-10, D-11. The owner approved the issue
-  draft on 2026-10-11.
-- **Open questions:** None.
+- **Open questions:** None. The owner approved the issue draft on 2026-10-11,
+  and it is filed as #82.
 
 ### SET-1. Load layered YAML settings for the existing options
 
-- **Outcome:** shipped defaults, the user file and `--config` are loaded,
-  validated and merged under the command line. Every existing option chosen
-  under Q-1 is a setting, and the sheet records the resolved values.
-- **Scope:** the settings schema and loader; the PyYAML pin; hermetic test
-  support; design §CLI, §Option validation and §Reproducibility amendments.
+- **Outcome:** the shipped defaults file, the user file, repeatable `--config`
+  files and a loaded sheet merge under the command line in D-8's order. Cell,
+  fps, palette and library work at every layer. A loaded sheet applies every
+  setting that affects the output, and the reproduction test is in place.
+- **Scope:**
+  - the settings schema table and the pure merge and validation functions;
+  - the packaged defaults file;
+  - user-file discovery and `--no-user-config`;
+  - path resolution;
+  - errors (D-17);
+  - the clip selection from a loaded sheet, if Q-15 confirms it;
+  - design §CLI, §Option validation, §Scale and ground point (*Reuse*),
+    §Reproducibility and §Project layout;
+  - the README.
 - **Phase:** 1.
-- **Depends on:** none.
+- **Depends on:** SET-0.
 - **Ordering:** critical path.
-- **Relevant decisions:** D-1, D-2, D-5.
-- **Acceptance signals:** precedence and error tests; byte identity with no
-  settings files.
-- **Out of scope:** new knobs; per-material settings.
-- **Open questions:** Q-1, Q-4, Q-5, Q-6.
+- **Relevant decisions:** D-2, D-5, D-8, D-14, D-15, D-16, D-17.
+- **Acceptance signals:**
+  - precedence and error tests;
+  - byte identity with no settings files;
+  - the reproduction test;
+  - tests never read the real user file.
+- **Out of scope:** shading values, frames, per-material overrides, and
+  schema changes to the sheet.
+- **Open questions:** Q-15.
 
-### SET-2. Make the shading constants settings and command-line options
+### SET-2. Make the global shading values settings and command-line options
 
-- **Outcome:** AO distance, AO samples, occlusion and convexity weights and
-  the shade range are settings and options. R1 and R2 can be reproduced from
+- **Outcome:** AO distance, AO samples, the occlusion and convexity weights
+  and the shade range are settings and options. They reach Blender through
+  the capture job and are recorded in `settings`, under the next sheet
+  schema. A loaded sheet restores them, and R1 and R2 can be reproduced from
   `--config` files.
-- **Scope:** the capture job carries the knobs; `blender_script.py` reads them
-  instead of `SHADE`; the range default comes from the settings; design
-  §Capture and §Export amendments; the overridden "no command option sets the
-  shade range" rule.
+- **Scope:**
+  - the capture job and `blender_script.py` read the values instead of
+    `SHADE`;
+  - `backend.DEFAULT_SHADE_RANGE` gives way to the setting;
+  - design §Capture (*Shade* and *Default shade range*), §Export (the
+    overridden "No command option sets the shade range") and §CLI;
+  - reuse of older sheets.
 - **Phase:** 2.
 - **Depends on:** SET-1.
 - **Ordering:** critical path.
-- **Relevant decisions:** D-3, D-5.
-- **Acceptance signals:** Blender tests for non-default knobs; R1/R2
-  reproduction.
+- **Relevant decisions:** D-3, D-6, D-9 (global values), D-12, D-15, D-16.
+- **Acceptance signals:**
+  - a Blender test that non-default values reach the shade buffer and the
+    record;
+  - default output byte-identical;
+  - the fixture's distinct-band test unchanged;
+  - the reproduction test extended;
+  - R1 and R2 reproduction for the owner.
 - **Out of scope:** per-material values; recolouring without a re-render.
-- **Open questions:** Q-5, Q-7.
+- **Open questions:** None.
 
-### SET-3. Add per-material settings
+### SET-3. Let each material override the shading values
 
-- **Outcome:** per-material settings as decided under Q-2 and Q-3.
-- **Scope:** to be settled.
+- **Outcome:** any material may override AO distance, the weights and the
+  range. Capture applies the material's weights and distance in its
+  replacement shader, and stylize bands each material over its own range.
+  The overrides are recorded and reloaded.
+- **Scope:**
+  - where the overrides live, per Q-16;
+  - capture and stylize changes;
+  - design §Material libraries, §Material ramps and §Capture;
+  - the amendment to material styling D-7 ("one global range").
 - **Phase:** 3.
-- **Depends on:** SET-1; SET-2 if per-material shading values are chosen.
-- **Ordering:** not on the critical path for the shading knobs.
-- **Relevant decisions:** D-4.
-- **Acceptance signals:** to be settled.
-- **Out of scope:** generated ramps (MAT-8).
-- **Open questions:** Q-2, Q-3.
+- **Depends on:** SET-0, SET-2.
+- **Ordering:** critical path for per-material control.
+- **Relevant decisions:** D-4, D-9, D-15, D-16.
+- **Acceptance signals:**
+  - a Blender test with two materials of different weights and distance in
+    one frame;
+  - pure tests of per-material banding;
+  - the reproduction test extended;
+  - output without overrides byte-identical.
+- **Out of scope:** generated ramps (MAT-8); AO samples per material.
+- **Open questions:** Q-16.
+
+### SET-5. Set a clip's frame count, retiming it to the fps
+
+- **Outcome:** `frames`, global and per clip, samples each clip as D-13
+  defines, records each clip's frame duration and retiming factor, and
+  reloads them. Without `frames`, sampling is unchanged.
+- **Scope:**
+  - `sampling.py`;
+  - the `--frames N` option and the per-clip file entries;
+  - the sheet's clip records, under the next sheet schema;
+  - design §Clips and sampling, §Export and §CLI.
+- **Phase:** 3.
+- **Depends on:** SET-1.
+- **Ordering:** independent of SET-2 and SET-3. Each sheet-schema bump takes
+  the next version, whichever slice lands first.
+- **Relevant decisions:** D-13, D-14, D-15, D-16, D-17.
+- **Acceptance signals:**
+  - pure sampling tests for loop, one-shot and `N` = 1;
+  - frame duration exactly `1/fps`;
+  - the retiming factor recorded;
+  - output without `frames` byte-identical;
+  - the reproduction test extended.
+- **Out of scope:** root-motion extraction; per-clip fps.
+- **Open questions:** None.
 
 ### SET-4. Recolour shading without a re-render
 
-- **Outcome:** capture keeps occlusion and convexity separately, so weight and
-  range changes need no Blender run.
-- **Scope:** to be settled; possibly a spike first.
-- **Phase:** 4.
+- **Status:** deferred (D-18), not part of this arc's active plan.
+- **Precondition:** iteration speed becomes a problem, and the owner asks for
+  it.
 - **Depends on:** SET-2.
-- **Ordering:** not on the critical path.
-- **Relevant decisions:** D-3.
-- **Acceptance signals:** to be settled.
-- **Out of scope:** to be settled.
-- **Open questions:** Q-8, deliberately open.
+- **Relevant decisions:** D-18.
+
+## Source notes
+
+The owner's words, 2026-10-11, in this design conversation:
+
+- **Round 2:** "your settings look good, if its simple to include and
+  provides value, we should include it, but for the first design slice we can
+  limit it to the scale, fps, frame count, and i think most importantly are
+  the two shading dials that i want to control shading, ambient (known in my
+  work currently as R1) and soft (R2). … i would allow more if you think it
+  wise. 2) yes, all of the shading stuff needs per material values as well,
+  im not sure what all i want, but for a first slice, the shade range, min and
+  max, with materials defined in yaml, i didnt realize i was already using
+  json, ideally i would want everything in yaml if possible, we can gate this
+  work on an issue to address that first if you think that's ok. 3) … when i
+  implement a ui, i want to load up a sprite, see its current sheet and all
+  of the settings used in its generation get loaded in to the parameters
+  automatically …"
+- **Round 3:** "i generate 48x48 each time now, but i need to support
+  arbitrary sizes, so yes, scale is incorrect terminology, i meant image
+  size. … i want those 4 values as settings, forget ambient and soft … i guess
+  these would be per material, maybe we dont need a global, you tell me. 2)
+  yea a new library file, everything yaml … i will do that first, you can
+  draft the issue for me now. 3) yea, that is fine"
+- **Round 4:** "1) both is fine, 2) ok, the sheet description can stay json.
+  3) refuse them. i approve your draft issue as well"
+- **Round 5:** "1) yea, file it now, i am the authority, i will manage getting
+  it approved … 2) when i think about an animation, its frame count, and fps,
+  with the total duration being determined by those two characteristics …
+  the important thing is that we can generate animations of arbitrary fps and
+  length … 3) yes, that is fine"
+- **Round 6:** "1) yes, it should act as any other setting, following the
+  override path we laid out earlier. 2) yes, 3) yes, i think that the sheet
+  should store a settings block with the settings that effect more than just
+  the sprite in question, as well as per material settings, then all these
+  would override the client settings at once. … this is not saved to disk,
+  just loaded into the program, we dont overwrite the user's yaml settings,
+  just the values for the generation."
+- **Round 7:** "1) everything that effects the output, reusing a sprite's
+  settings with the same model should generate identical output, we should
+  have a test for that. if there are client settings that done effect output,
+  we dont change those … so (a) 2) that's all fine, 3) defer"
