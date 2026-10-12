@@ -208,7 +208,7 @@ From the owner's words (2026-10-11):
 
 ### In scope
 
-- The settings model: names, types, units, defaults and validation (P-1, D-21).
+- The settings model: names, types, units, defaults and validation (D-21, D-30).
 - The layers and their precedence, including a loaded sheet (D-2, D-8, D-17).
 - Shipped defaults as a YAML file in the package.
 - The D-14 settings: cell, fps, frames, the shading values with per-material
@@ -236,10 +236,9 @@ From the owner's words (2026-10-11):
 
 ## Design
 
-Each statement cites the `D-N` that decides it. A `P-N` marks a proposal that
-the owner has not signed off.
+Each statement cites the `D-N` that decides it.
 
-### Settings model (P-1; D-5)
+### Settings model (D-5, D-30)
 
 - One plain, nested data structure of named values: mappings, lists, strings,
   numbers and booleans. Each leaf has a declared type, unit, default and
@@ -274,12 +273,14 @@ shade:
   range: [84, 191]
 palette: ~/palettes/vince-128.gpl
 materials: robot-library.yaml   # relative to this file
+previews: true         # false: write no animated previews
 ```
 
-New options: `--config FILE` (repeatable), `--no-user-config`,
-`--frames N`, `--ao-distance M`, `--ao-samples N`, `--occlusion-weight W`,
+New options: `--config FILE` (repeatable), `--no-user-config`, `--preview`
+(D-28), `--frames N`, `--ao-distance M`, `--ao-samples N`, `--occlusion-weight W`,
 `--convexity-weight W` and `--shade-range LO,HI`. `--cell`, `--fps`,
-`--palette` and `--materials` already exist and keep their syntax.
+`--palette`, `--materials` and `--no-preview` already exist and keep their
+syntax.
 
 A `clips` entry naming a clip the model does not have is silently unused.
 That follows the precedent of unused library entries (material styling D-15),
@@ -353,13 +354,15 @@ The owner's review asked these to be explicit. The owner signed them off
    user file.
 7. **A library is validated against the palette in force,** wherever each
    came from, before any Blender invocation.
-8. **Compound settings.** The view is not in the first scope. It comes only
+8. **One-shot marks over a loaded sheet (D-27).** An explicit `--once`
+   replaces the loaded marks; each name must be in the loaded clip list.
+9. **Compound settings.** The view is not in the first scope. It comes only
    from a loaded sheet or the command line, with today's rules: `--view`
    replaces the whole reused view. When the view becomes a setting later, a
    layer's preset will replace the pitch, directions and start angle below
    it, as `--view` does. That is designed then.
 
-### Files and errors (D-17, P-2)
+### Files and errors (D-17, D-30)
 
 - Settings files are read through SET-0's strict YAML reader. It allows only
   one document and no repeated keys, and its implicit typing is restricted.
@@ -370,7 +373,7 @@ The owner's review asked these to be explicit. The owner signed them off
   Blender invocation, including its version probe. A missing user file is not
   an error; a missing `--config` file is.
 - Paths inside a file resolve relative to that file's directory, with a
-  leading `~` expanded (P-2).
+  leading `~` expanded (D-30).
 - Tests and scripts use `--no-user-config`, so they never read the owner's
   file.
 
@@ -392,7 +395,7 @@ The owner's review asked these to be explicit. The owner signed them off
   `blender_script.py` no longer holds them as constants. Per-material values
   go into each material's replacement shader, which capture already builds.
   The range is a stylize parameter, as now.
-- **Validation (P-2):** distance > 0; samples a whole number from 1 to 1024;
+- **Validation (D-30):** distance > 0; samples a whole number from 1 to 1024;
   weights finite and ≥ 0; the range two integers with `0 ≤ lo < hi ≤ 255`, as
   reuse already checks.
 - Material styling D-10's range rationale and the fixture's distinct-band
@@ -407,17 +410,26 @@ The owner's review asked these to be explicit. The owner signed them off
   - `N` = 1 samples `t0`.
 - Each frame lasts exactly `1/fps`, and the sheet records the clip's retiming
   factor `d·fps/N`.
+- **Zero-duration clips (D-25).** A clip with `d = 0`, or the synthetic
+  `static` clip, always has one frame at `t0`, lasting `1/fps`. A global count
+  does not apply to it. A per-clip count above 1 naming it gives a warning.
+- **Precedence (D-26).** A clip's own count beats the global count from any
+  layer. An explicit global gives a warning naming the clips that kept their
+  own count. The sheet records counts as given (`auto` or a number), never the
+  resolved totals.
 - Previews follow the recorded frame durations, as now.
 
-### Recording and loading (D-15, D-16, P-6)
+### Recording and loading (D-15, D-16, D-28, D-30)
 
 - The sheet's `settings` records every resolved setting that affects the
   output. The capture knobs move there from `generator.shade`, and per-material
   overrides and frame counts are recorded too.
 - Where each value came from is never stored.
-- **P-6:** each slice that adds recorded settings bumps the sheet schema, as
+- **Schema bumps (D-30):** each slice that adds recorded settings bumps the sheet schema, as
   `/2` and `/3` did. Under D-24, the previous schema then stops loading.
 - **The recorded schema (D-24):**
+  - SET-1's sheet schema adds `settings.previews` (a boolean) after
+    `root_motion` (D-28).
   - SET-2's sheet schema adds `settings.shade`: `ao_distance_m`,
     `ao_samples`, `occlusion_weight`, `convexity_weight` and `range`, after
     `root_motion`.
@@ -632,7 +644,8 @@ Decided by the owner on 2026-10-11, round 6. This resolves Q-1's scope: "yes".
   - the four shading values, global with per-material overrides (D-9), plus
     the global AO sample count;
   - the palette path;
-  - the material library path.
+  - the material library path;
+  - whether previews are written (added by D-28).
 - The inventory's other settings follow later, each when it is simple and
   gives value (owner, round 2).
 - How this scope splits into pull requests is D-21.
@@ -806,101 +819,94 @@ matter, just dont support old formats."
 
 Affects SET-1, SET-2, SET-3 and SET-5.
 
-## Open questions
+### D-25. A zero-duration clip keeps one frame
 
-### Q-19. Does a `moskophoros.materials/1` library still load after SET-3?
-
-SET-3 introduces `moskophoros.materials/2`, a superset that adds the optional
-`shade` mapping. D-24 drops old sheet formats, but says nothing about the
-library.
-
-The agent proposes the same rule: after SET-3, only `/2` loads, and a `/1`
-library is a usage error saying to change its `schema` line. That is the only
-edit a `/1` library needs.
-
-Affects SET-3. Resolved by the owner.
-
-### Q-20. What does a frame count do to a zero-duration or `static` clip?
-
-Raised by the owner's second review. With `frames: 8` and `d = 0`, all eight
-samples share one time, so they share one frame address (V-9), which the
-pipeline rejects.
-
-**Proposal:**
+Decided by the owner on 2026-10-11, round 12. This resolves Q-20 as proposed:
+"all recommended".
 
 - A clip with `d = 0`, or the synthetic `static` clip, always has exactly one
-  frame, at `t0`, lasting `1/fps`, as today.
-- A global count does not apply to it, silently. A per-clip count of more
-  than 1 naming such a clip gives a warning naming the clip.
-- Acceptance cases cover a global count over a `static` model, a per-clip
+  frame, at `t0`, lasting `1/fps`, so no two frames share an address (V-9).
+- A global count does not apply to such a clip. A per-clip count above 1
+  naming it gives a warning naming the clip.
+- SET-5's acceptance covers a global count over a `static` model, a per-clip
   count on a zero-duration clip, and a count of 1.
 
-Affects SET-5. Resolved by the owner.
+Affects SET-5.
 
-### Q-21. Does a clip's own count beat a global count from a higher layer?
+### D-26. A clip's own count beats the global count
 
-Raised by the owner's second review. For example, the user file sets
-`clips.Jump.frames: 6`, and the command says `--frames 12`.
+Decided by the owner on 2026-10-11, round 12. This resolves Q-21 as proposed,
+mirroring D-23.
 
-**Proposal**, mirroring D-23: a clip's own count wins, whatever layer the
-global came from.
+- A clip's own `frames` wins over the global count from any layer.
+- When the global is set explicitly, by a `--config` file or `--frames`, a
+  warning names each clip that kept its own count.
+- `frames: auto` on a clip's entry clears its count.
+- The sheet records counts as given: the global count or `auto`, and each
+  clip's own count or `auto`.
 
-- `--frames 12` changes only clips without their own count. When the global
-  is set explicitly, a warning names each clip that kept its own count.
-- A layer clears a clip's count with `frames: auto` on that clip's entry
-  (D-22).
-- The sheet records the counts as given: `settings.frames` is the global
-  count or `auto`, and each `settings.clips` entry carries the clip's own
-  count or `auto`. Resolved per-clip totals are never stored as overrides, so
-  an option over a loaded sheet still reaches every clip without its own
-  count.
+Affects SET-5.
 
-Affects SET-5. Resolved by the owner.
+### D-27. An explicit `--once` replaces a loaded sheet's one-shot marks
 
-### Q-22. What does `--once` do over a loaded sheet without `--clip`?
+Decided by the owner on 2026-10-11, round 12. This resolves Q-22 as proposed.
 
-Raised by the owner's second review. D-19 covers an explicit `--clip`, but not
-`--settings-from sheet.json --once Jump`.
-
-**Proposal:** an explicit `--once` replaces the loaded one-shot marks, so
-exactly the named clips are one-shots.
-
+- Over a loaded sheet without `--clip`, the clips named by `--once` are
+  exactly the one-shots.
 - Each name must be in the loaded clip list. A name that is not there is a
   usage error.
-- Without `--once`, the loaded marks stay.
-- To make every clip loop again, give the clip list with `--clip`.
+- Without `--once`, the loaded marks stay. `--clip` resets the selection as
+  in D-19.
 - SET-1 tests each case.
 
-Affects SET-1. Resolved by the owner.
+Affects SET-1.
 
-### Q-23. Are previews part of the reproduction promise?
+### D-28. Previews on or off is a recorded setting
 
-Raised by the owner's second review. D-16 promises identical previews, but
-`--no-preview` is not recorded. Reusing a sheet made with it writes previews
-the original omitted, and can fail on the GIF size and delay limits.
+Decided by the owner on 2026-10-11, round 12. This resolves Q-23 with option
+(a).
 
-- **(a) Record it (recommended):** `previews: true | false` joins the first
-  scope as a setting, recorded in `settings`, with `--no-preview` and a new
-  `--preview` to override a loaded value. It then enters the fingerprint like
-  any setting.
-- **(b) Narrow the promise:** the reproduction test covers the sheet PNG and
-  JSON, plus the previews only when that run writes them. Previews stay
-  outside the sheet contract, as design §Export says today.
+- `previews: true | false` joins the first scope (amending D-14). It is
+  recorded in `settings` and enters the fingerprint like any setting.
+- `--no-preview` sets it false, and a new `--preview` sets it true over a
+  loaded sheet (amending D-21's options).
+- A reused sheet made without previews therefore writes none, and the
+  reproduction test covers the sheet PNG, its JSON and the previews.
+- SET-1 records it, so SET-1 takes a sheet-schema bump (D-30). This amends
+  SET-1's "no schema changes".
 
-Affects SET-1. Resolved by the owner.
+Affects SET-1.
 
-### Q-24. Do the remaining proposals stand?
+### D-29. A `moskophoros.materials/1` library stops loading in SET-3
 
-These are unsigned and implementation-shaping:
+Decided by the owner on 2026-10-11, round 12. This resolves Q-19 as proposed.
 
-- **P-1:** one plain settings structure with one schema table in the code.
-- **P-2:**
-  - the validation limits: AO distance > 0, AO samples 1 to 1024, weights
-    finite and ≥ 0, `0 ≤ lo < hi ≤ 255`;
-  - paths resolve relative to their file, with `~` expanded.
-- **P-6:** each slice that adds recorded settings bumps the sheet schema.
+After SET-3 only `moskophoros.materials/2` loads. A `/1` library is a usage
+error saying to change its `schema` line, which is the only edit it needs.
 
-Resolved by the owner.
+Affects SET-3.
+
+### D-30. The settings structure, validation limits, paths and schema bumps
+
+Decided by the owner on 2026-10-11, round 12. This resolves Q-24 and adopts
+the remaining proposals:
+
+- **One structure (P-1):** one plain settings structure, with one schema table
+  in the code that a UI can read.
+- **Limits and paths (P-2):**
+  - AO distance > 0;
+  - AO samples a whole number from 1 to 1024;
+  - weights finite and ≥ 0;
+  - the range two integers with `0 ≤ lo < hi ≤ 255`;
+  - paths resolve relative to their file, with a leading `~` expanded.
+- **Schema bumps (P-6):** each slice that adds recorded settings bumps the
+  sheet schema, and under D-24 the previous schema stops loading.
+
+Affects every slice.
+
+## Open questions
+
+None.
 
 ## Resolved questions
 
@@ -936,6 +942,12 @@ Each kept with its identifier. The owner's words are under *Source notes*.
   D-23:** the material wins.
 - **Q-18.** The merge rules and the recorded schema. **Resolved by D-22 and
   D-24.**
+- **Q-19.** The `/1` library after SET-3. **Resolved by D-29.**
+- **Q-20.** Frame counts on zero-duration clips. **Resolved by D-25.**
+- **Q-21.** A clip's count against the global count. **Resolved by D-26.**
+- **Q-22.** `--once` over a loaded sheet. **Resolved by D-27.**
+- **Q-23.** Previews and the reproduction promise. **Resolved by D-28.**
+- **Q-24.** The remaining proposals. **Resolved by D-30.**
 
 ### The owner's second review, 2026-10-11
 
@@ -946,7 +958,9 @@ schema retirement and the delivery plan sound, with targeted gaps:
 2. **A per-clip count against a global count:** Q-21.
 3. **`--once` without `--clip` over a loaded sheet:** Q-22.
 4. **`--no-preview` and the reproduction promise:** Q-23.
-5. **Q-19** is still open. SET-3 is gated on it.
+5. **Q-19** was still open.
+
+All five were resolved by the owner in round 12 (D-25 to D-29).
 
 ### The owner's review, 2026-10-11
 
@@ -1043,7 +1057,10 @@ its own pull request, because tests read design.md.
   - user-file discovery and `--no-user-config`;
   - path resolution;
   - errors (D-17);
-  - the clip selection from a loaded sheet (D-19);
+  - the clip selection from a loaded sheet (D-19), and `--once` over it
+    (D-27);
+  - `previews` as a recorded setting, with `--preview`, under the next sheet
+    schema (D-28);
   - design §CLI, §Option validation, §Scale and ground point (*Reuse*),
     §Reproducibility and §Project layout;
   - the README.
@@ -1051,15 +1068,15 @@ its own pull request, because tests read design.md.
 - **Depends on:** SET-0.
 - **Ordering:** critical path.
 - **Relevant decisions:** D-2, D-5, D-8, D-14, D-15, D-16, D-17, D-19, D-21.
-  Also D-22 and D-24 (removing `/1` and `/2` reuse).
+  Also D-22, D-24 (only the current schema loads), D-27, D-28 and D-30.
 - **Acceptance signals:**
   - precedence and error tests;
   - byte identity with no settings files;
-  - the reproduction test;
+  - the reproduction test, including a sheet made with `--no-preview`;
+  - the `--once` cases over a loaded sheet;
   - tests never read the real user file.
-- **Out of scope:** shading values, frames, per-material overrides, and
-  schema changes to the sheet.
-- **Open questions:** Q-22, Q-23, Q-24.
+- **Out of scope:** shading values, frames and per-material overrides.
+- **Open questions:** None.
 
 ### SET-2. Make the global shading values settings and command-line options
 
@@ -1098,14 +1115,14 @@ its own pull request, because tests read design.md.
   The overrides are recorded and reloaded.
 - **Scope:**
   - the `shade` mapping on library entries, under `moskophoros.materials/2`
-    (D-20);
-  - capture and stylize changes;
+    (D-20), with `/1` no longer loading (D-29);
+  - capture and stylize changes, and the D-23 warning;
   - design §Material libraries, §Material ramps and §Capture;
   - the amendment to material styling D-7 ("one global range").
 - **Phase:** 3.
 - **Depends on:** SET-0, SET-2.
 - **Ordering:** critical path for per-material control.
-- **Relevant decisions:** D-4, D-9, D-15, D-16, D-20, D-22, D-23, D-24.
+- **Relevant decisions:** D-4, D-9, D-15, D-16, D-20, D-22, D-23, D-24, D-29.
 - **Acceptance signals:**
   - a Blender test with two materials of different weights and distance in
     one frame;
@@ -1113,7 +1130,7 @@ its own pull request, because tests read design.md.
   - the reproduction test extended;
   - output without overrides byte-identical.
 - **Out of scope:** generated ramps (MAT-8); AO samples per material.
-- **Open questions:** Q-19.
+- **Open questions:** None.
 
 ### SET-5. Set a clip's frame count, retiming it to the fps
 
@@ -1129,15 +1146,19 @@ its own pull request, because tests read design.md.
 - **Depends on:** SET-1.
 - **Ordering:** independent of SET-2 and SET-3. Each sheet-schema bump takes
   the next version, whichever slice lands first.
-- **Relevant decisions:** D-13, D-14, D-15, D-16, D-17, D-22, D-24.
+- **Relevant decisions:** D-13, D-14, D-15, D-16, D-17, D-22, D-24, D-25,
+  D-26.
 - **Acceptance signals:**
   - pure sampling tests for loop, one-shot and `N` = 1;
+  - zero-duration and `static` clips keep one frame, with the warning for a
+    per-clip count (D-25);
+  - a clip's own count beats `--frames`, with the warning (D-26);
   - frame duration exactly `1/fps`;
   - the retiming factor recorded;
   - output without `frames` byte-identical;
   - the reproduction test extended.
 - **Out of scope:** root-motion extraction; per-clip fps.
-- **Open questions:** Q-20, Q-21.
+- **Open questions:** None.
 
 ### SET-4. Recolour shading without a re-render
 
@@ -1198,3 +1219,6 @@ The owner's words, 2026-10-11, in this design conversation:
 - **Round 10:** "1) that is fine, 2) (a) 3) it doesnt matter, we are
   developing still though, none of my current sheets matter, just dont
   support old formats."
+- **Round 11, the owner's second review:** four targeted gaps and Q-19,
+  dispositioned under *Resolved questions*.
+- **Round 12:** "all recommended"
