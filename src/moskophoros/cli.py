@@ -390,10 +390,14 @@ def _apply_defaults(options, defaults, user):
     return _apply_layer(options, merged, sources, mark=False)
 
 
+_UNREADABLE = (OSError, ValueError, RuntimeError)
+
+
 def _unreadable(error):
     """Why a palette or library file cannot be read: any `OSError`, such as
     a missing file, a directory, no permission, a name too long or a loop of
-    links, or a path the file system cannot name."""
+    links, or a path the file system cannot name (`ValueError`, including
+    `UnicodeError`, or `RuntimeError`)."""
     return f"cannot be read: {getattr(error, 'strerror', None) or error}"
 
 
@@ -413,7 +417,7 @@ def _resolve_palette(options: Options) -> Options:
             _build_parser()[0].error(f"{name} {str(path)!r}: {error}")
         try:
             data = path.read_bytes()
-        except (OSError, ValueError) as error:
+        except _UNREADABLE as error:
             _build_parser()[0].error(f"{name} {str(path)!r}: {_unreadable(error)}")
         try:
             colors = palette.read_palette_bytes(data, source=path)
@@ -458,7 +462,7 @@ def _resolve_materials(options: Options, reused_colors) -> Options:
             parser.error(f"{name} {str(path)!r}: {error}")
         try:
             data = path.read_bytes()
-        except (OSError, ValueError) as error:
+        except _UNREADABLE as error:
             parser.error(f"{name} {str(path)!r}: {_unreadable(error)}")
         try:
             library = materials.read_library_bytes(data, colors, source=path)

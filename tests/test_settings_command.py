@@ -7,6 +7,7 @@ The suite's `no_owner_settings` fixture points `$XDG_CONFIG_HOME` and `$HOME`
 at empty temporary directories, so a user file exists only where a test
 writes one."""
 
+import errno
 import json
 import os
 import subprocess
@@ -485,8 +486,9 @@ def unusable(kind, directory, suffix):
         (directory / name).mkdir()
         return name, "cannot be read: Is a directory"
     if kind == "no-permission":
+        # The test makes reading this file fail with EACCES: file modes
+        # cannot, for a user such as root that they do not bind.
         (directory / name).write_text("000000\n")
-        (directory / name).chmod(0)
         return name, "cannot be read: Permission denied"
     if kind == "name-too-long":
         return "x" * 300 + suffix, "cannot be read: File name too long"
@@ -502,6 +504,19 @@ def unusable(kind, directory, suffix):
             f"expected a file path the file system can name, got 'bad\\ud800/{name}': "
             "surrogates not allowed",
         )
+    # A `~` prefix: the raw string is checked before it is expanded.
+    if kind == "tilde-nul":
+        return f'"~bad\\0/{name}"', "expected a file path without a NUL character"
+    if kind == "tilde-surrogate":
+        return (
+            f'"~bad\\uD800/{name}"',
+            f"expected a file path the file system can name, got '~bad\\ud800/{name}': "
+            "surrogates not allowed",
+        )
+    if kind == "tilde-no-such-user":
+        # Left unexpanded, so it names a file under the settings file's
+        # directory, which does not exist.
+        return f"~no-such-user-84/{name}", "cannot be read: No such file or directory"
     raise AssertionError(kind)
 
 
@@ -517,13 +532,14 @@ def unusable(kind, directory, suffix):
         "link-loop",
         "nul",
         "surrogate",
+        "tilde-nul",
+        "tilde-surrogate",
+        "tilde-no-such-user",
     ],
 )
 def test_every_unusable_settings_path_is_exit_2_naming_file_key_and_line(
     setup, capsys, monkeypatch, kind, key, where
 ):
-    if kind == "no-permission" and os.geteuid() == 0:
-        pytest.fail("this case needs a user that file permissions apply to")
     if where == "config":
         directory = setup.tmp_path / "conf"
         directory.mkdir()
@@ -542,6 +558,18 @@ def test_every_unusable_settings_path_is_exit_2_naming_file_key_and_line(
     else:
         path = user_file(text)
         label, args = f"the user settings {str(path)!r}", []
+    if kind == "no-permission":
+        locked = directory / written
+        real = Path.read_bytes
+
+        def read_bytes(self):
+            if self == locked:
+                raise PermissionError(
+                    errno.EACCES, os.strerror(errno.EACCES), str(self)
+                )
+            return real(self)
+
+        monkeypatch.setattr(Path, "read_bytes", read_bytes)
     forbid_blender(monkeypatch)
     status, out, err = run(capsys, setup.argv(*args))
     assert (status, out) == (2, "")

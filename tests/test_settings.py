@@ -273,6 +273,25 @@ def test_an_absolute_path_is_kept():
     assert layer("palette: /x/p.gpl\n", directory="/a")["palette"] == Path("/x/p.gpl")
 
 
+@pytest.mark.parametrize(
+    ("given", "problem"),
+    [
+        ('"~bad\\0/p.hex"', "expected a file path without a NUL character"),
+        ('"~bad\\uD800/p.hex"', "expected a file path the file system can name"),
+    ],
+)
+def test_a_path_is_checked_before_and_after_it_is_expanded(given, problem):
+    message = refused(f"version: 1\npalette: {given}\n")
+    assert message.startswith(f"palette: {problem}")
+    assert message.endswith(" at line 2, column 1")
+
+
+def test_an_unknown_user_is_left_unexpanded():
+    assert layer("palette: ~no-such-user-84/p.hex\n", directory="/a")["palette"] == (
+        Path("/a/~no-such-user-84/p.hex")
+    )
+
+
 def test_a_leading_tilde_is_expanded(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     assert layer("palette: ~/p.gpl\n", directory="/a")["palette"] == tmp_path / "p.gpl"

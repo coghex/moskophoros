@@ -168,7 +168,9 @@ resolves relative to that file's directory, with a leading `~` expanded;
 paths on the command line resolve as before. Every path a settings file
 supplies must be one the file system can name: one holding a NUL character
 or a lone surrogate (from a `\uD800` escape) is refused while the file is
-read. Every participating file is read and checked first, but only the
+read. The raw value is checked before `~` is expanded and again after it is
+resolved, and anything the expansion or resolution raises is the same
+error; a `~user` prefix naming no user is left as written. Every participating file is read and checked first, but only the
 palette and library that survive the merge are read, so an overridden path
 need not exist. Any failure to read a palette or library a settings file
 names, whether missing, a directory, without permission, a name too long or

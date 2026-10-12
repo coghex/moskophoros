@@ -134,24 +134,36 @@ def _check_path(value):
     return value
 
 
-def usable_path(path, given):
-    """`path`, resolved from the settings value `given`, if the file system
-    can name it; else `_Bad` naming `given`. Every path a settings file
-    supplies passes here, so no path can fail on being opened for what it
-    is rather than for what is at it."""
-    text = os.fspath(path)
-    if "\0" in text:
-        # No file system accepts it, and Python refuses to open such a path.
-        raise _Bad(f"expected a file path without a NUL character, got {_shown(given)}")
+def resolve_path(given, directory):
+    """The path the settings value `given` names, resolved against
+    `directory` with a leading `~` expanded, or `_Bad` naming `given`.
+
+    The whole pipeline runs inside one boundary: the raw string is checked
+    first, then expanded, joined and checked again, so whatever any step
+    raises, `ValueError`, `UnicodeError`, `OSError` or `RuntimeError` (such
+    as an unnamable `~user`), is a settings error and never escapes. Every
+    path a settings file supplies passes here.
+    """
     try:
-        os.fsencode(text)
-    except (ValueError, UnicodeError) as error:
+        _nameable(given)
+        path = Path(directory, os.path.expanduser(given))
+        _nameable(os.fspath(path))
+        return path
+    except (ValueError, UnicodeError, OSError, RuntimeError) as error:
         reason = getattr(error, "reason", None) or str(error)
         raise _Bad(
             f"expected a file path the file system can name, got {_shown(given)}: "
             f"{reason}"
         ) from None
-    return path
+
+
+def _nameable(text):
+    """Refuse a path no file system can name: one holding a NUL character,
+    or one `os.fsencode` refuses, such as one holding a lone surrogate."""
+    if "\0" in text:
+        # Python refuses to open such a path.
+        raise _Bad(f"expected a file path without a NUL character, got {_shown(text)}")
+    os.fsencode(text)
 
 
 def _check_previews(value):
@@ -246,9 +258,7 @@ def read_bytes(data, *, source, directory):
             refuse((key,), error.problem)
         if setting.path and checked is not None:
             try:
-                checked = usable_path(
-                    Path(directory, os.path.expanduser(checked)), value
-                )
+                checked = resolve_path(checked, directory)
             except _Bad as error:
                 refuse((key,), error.problem)
         layer[key] = checked
