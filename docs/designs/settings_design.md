@@ -26,9 +26,9 @@ probably ready, go ahead and mark it so if you agree". The agent agreed:
 - no tracker epic duplicates this one (the open epics are #3, #24 and #63);
 - SET-0 is already filed as #82.
 
-- [ ] EPIC. Configure moskophoros from layered YAML settings and command-line overrides
+- [x] EPIC. Configure moskophoros from layered YAML settings and command-line overrides — [#83]
 - [#82] SET-0. Read material libraries from YAML instead of JSON
-- [ ] SET-1. Load layered YAML settings for the existing options
+- [x] SET-1. Load layered YAML settings for the existing options — [#84]
 - [ ] SET-2. Make the global shading values settings and command-line options
 - [ ] SET-3. Let each material override the shading values
 - [ ] SET-5. Set a clip's frame count, retiming it to the fps
@@ -444,7 +444,8 @@ The owner's review asked these to be explicit. The owner signed them off
     `root_motion` (D-28).
   - SET-2's sheet schema adds `settings.shade`: `ao_distance_m`,
     `ao_samples`, `occlusion_weight`, `convexity_weight` and `range`, after
-    `root_motion`.
+    `previews` (D-35). With both, `settings` runs `root_motion`, `previews`,
+    `shade`, `style`, `clips`.
   - `settings.style` drops `shade_range`, and `generator.shade` keeps only
     the technique fields: `technique`, `samples_per_pixel`, `seed`,
     `pixel_filter` and `filter_width_px`.
@@ -974,6 +975,18 @@ Decided by the owner on 2026-10-11, round 14. This resolves Q-28 as proposed.
 
 Affects SET-5.
 
+### D-35. `settings.shade` follows `settings.previews`
+
+Decided by the owner on 2026-10-11, during issue processing, option (a):
+"a". Both D-24's `shade` and D-28's `previews` were placed "after
+`root_motion`".
+
+- `settings` runs `root_motion`, `previews`, `shade`, `style`, `clips`.
+- SET-1 (#84) adds `previews` directly after `root_motion`, unchanged. SET-2
+  adds `shade` directly after `previews`.
+
+Affects SET-2.
+
 ## Open questions
 
 None.
@@ -1177,7 +1190,7 @@ its own pull request, because tests read design.md.
 - **Depends on:** SET-1.
 - **Ordering:** critical path.
 - **Relevant decisions:** D-3, D-6, D-9 (global values), D-12, D-15, D-16,
-  D-22, D-24.
+  D-22, D-24, D-35.
 - **Acceptance signals:**
   - a Blender test that non-default values reach the shade buffer and the
     record;
