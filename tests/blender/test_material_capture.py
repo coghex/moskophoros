@@ -20,7 +20,7 @@ from test_render import render
 
 from moskophoros import gltf
 from moskophoros.capture import backend, blender
-from moskophoros.capture.backend import Shade
+from moskophoros.capture.backend import MaterialShade, Shade
 from moskophoros.sampling import BACKGROUND
 
 pytestmark = pytest.mark.blender
@@ -134,6 +134,29 @@ def test_an_importer_copy_of_a_material_keeps_its_glTF_material(found, tmp_path)
     assert image[at(-0.5, 0.5, 1)] == 1
     assert image[at(0.5, 0.5, 1)] == 1
     assert set(np.unique(image).tolist()) == {0, 1}
+
+
+def test_an_importer_copy_takes_its_glTF_materials_own_values(found, tmp_path):
+    """Settings design D-36: material 0's own occlusion weight reaches the
+    importer's copy of it too, so both quads shade alike."""
+    path = vertex_colours(tmp_path)
+    own = Shade(0.3, 64, 0.25, 1.0, (MaterialShade(0, 0.3, 0.5, 1.0),))
+    for shade, expected in ((DEFAULT_SHADE, 0.25), (own, 0.5)):
+        result, _ = render(
+            found,
+            path,
+            tmp_path,
+            ppm=PPM,
+            cell=CELL,
+            ground_px=GROUND_PX,
+            supersample=1,
+            workspace=f"work-{expected}",
+            shade=shade,
+        )
+        values = pixels(list(result.buffers.values())[0]["shade"])[..., 0]
+        left, right = values[at(-0.5, 0.5, 1)], values[at(0.5, 0.5, 1)]
+        assert left == right
+        assert abs(int(left) - srgb_byte(expected)) <= 0.5, (expected, left)
 
 
 def test_identities_decode_duplicate_unnamed_missing_and_blend_materials(
@@ -303,17 +326,17 @@ PROBE = """
 import importlib.util, json, sys
 import bpy
 
-path, shade = sys.argv[sys.argv.index("--") + 1 :]
+path, shade, code = sys.argv[sys.argv.index("--") + 1 :]
 spec = importlib.util.spec_from_file_location("probe_script", path)
 script = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(script)
 material = bpy.data.materials.new("probe")
 auxiliary = script.Auxiliary(bpy.context.scene, [], {}, json.loads(shade))
-auxiliary._inject(material, 1)
+auxiliary._inject(material, int(code))
 nodes = material.node_tree.nodes
 print("PROBE " + json.dumps({
     "ao": sorted(
-        (node.inside, node.samples, node.inputs["Distance"].default_value)
+        (node.inside, node.samples, round(node.inputs["Distance"].default_value, 6))
         for node in nodes
         if node.bl_idname == "ShaderNodeAmbientOcclusion"
     ),
@@ -343,6 +366,7 @@ def test_the_job_s_samples_distance_and_weights_reach_both_ao_nodes(
         "ao_samples": samples,
         "occlusion_weight": 0.4,
         "convexity_weight": 0.6,
+        "materials": [],
     }
     completed = subprocess.run(
         [
@@ -355,6 +379,7 @@ def test_the_job_s_samples_distance_and_weights_reach_both_ao_nodes(
             "--",
             str(Path(blender.__file__).with_name("blender_script.py")),
             json.dumps(shade),
+            "1",
         ],
         capture_output=True,
         text=True,
@@ -371,6 +396,95 @@ def test_the_job_s_samples_distance_and_weights_reach_both_ao_nodes(
         ["MULTIPLY_ADD", 0.6],
         ["SUBTRACT", 1.0],
     ]
+
+
+def probe(found, tmp_path, shade, code):
+    path = tmp_path / f"probe-{code}.py"
+    path.write_text(PROBE)
+    completed = subprocess.run(
+        [
+            str(found.path),
+            "-b",
+            "--factory-startup",
+            "-noaudio",
+            "--python",
+            str(path),
+            "--",
+            str(Path(blender.__file__).with_name("blender_script.py")),
+            json.dumps(shade),
+            str(code),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    lines = [
+        line for line in completed.stdout.splitlines() if line.startswith("PROBE ")
+    ]
+    assert completed.returncode == 0 and lines, completed.stdout + completed.stderr
+    return json.loads(lines[0].removeprefix("PROBE "))
+
+
+def test_a_materials_own_values_reach_its_shader_and_only_its(found, tmp_path):
+    """Settings design D-9 and D-36: glTF material 1 (code 2) overrides the
+    distance and weights; samples stay global, and other materials and the
+    no-material stand-in take the global values."""
+    shade = {
+        "ao_distance_m": 0.3,
+        "ao_samples": 128,
+        "occlusion_weight": 0.25,
+        "convexity_weight": 1.0,
+        "materials": [
+            {
+                "material": 1,
+                "ao_distance_m": 1.25,
+                "occlusion_weight": 0.5,
+                "convexity_weight": 0.0,
+            }
+        ],
+    }
+    own = probe(found, tmp_path, shade, 2)
+    assert own["ao"] == [[False, 128, 1.25], [True, 128, 1.25]]
+    assert own["math"] == [["MULTIPLY", 0.5], ["MULTIPLY_ADD", 0.0], ["SUBTRACT", 1.0]]
+    for code in (1, backend.NO_MATERIAL_ID):
+        other = probe(found, tmp_path, shade, code)
+        assert other["ao"] == [[False, 128, 0.3], [True, 128, 0.3]]
+        assert other["math"] == [
+            ["MULTIPLY", 0.25],
+            ["MULTIPLY_ADD", 1.0],
+            ["SUBTRACT", 1.0],
+        ]
+
+
+def test_two_materials_in_one_frame_each_take_their_own_values(found, tmp_path):
+    """The floor (glTF material 0) overrides its occlusion weight; the wall
+    keeps the global one. Both flat open surfaces have AO_out 1 and no
+    convexity, so each shade is its own occlusion weight."""
+    path = form(tmp_path)
+    result, _ = render(
+        found,
+        path,
+        tmp_path,
+        pitch=30.0,
+        ppm=40.0,
+        cell=(128, 112),
+        ground_px=(64, 80),
+        supersample=1,
+        shade=Shade(0.3, 64, 0.25, 1.0, (MaterialShade(0, 0.3, 0.5, 1.0),)),
+    )
+    image = codes(result)
+    shade = pixels(list(result.buffers.values())[0]["shade"])[..., 0]
+    floor, wall, ball = image == 1, image == 2, image == 3
+    meeting = (floor & (_distance_to(wall, 2) <= 1)) | (
+        wall & (_distance_to(floor, 2) <= 1)
+    )
+    to_crease = _distance_to(meeting, 40)
+    clear = (_distance_to(ball, 40) >= 8) & (_distance_to(image == 0, 40) >= 3)
+    open_floor = floor & (to_crease >= 12) & clear
+    open_wall = wall & (to_crease >= 12) & clear
+    assert open_floor.any() and open_wall.any()
+    assert abs(float(shade[open_floor].mean()) - srgb_byte(0.5)) <= 0.5
+    assert float(shade[open_wall].mean()) == 137.0
 
 
 # Colour: unchanged by the auxiliary render before it.

@@ -1,4 +1,4 @@
-"""The sheet PNG, its `moskophoros.sheet/5` JSON and the animated previews,
+"""The sheet PNG, its `moskophoros.sheet/6` JSON and the animated previews,
 following design §Export.
 
 `encode` lays the plain frames out on the sheet, describes them and returns
@@ -27,7 +27,7 @@ import moskophoros
 from moskophoros import sampling, views
 from moskophoros.capture.backend import settings_document
 
-SCHEMA = "moskophoros.sheet/5"
+SCHEMA = "moskophoros.sheet/6"
 USAGE_ERROR = 2
 PREVIEW_SCALE = 4
 PREVIEW_BACKGROUND = (128, 128, 128)
@@ -124,7 +124,18 @@ def sheet_settings(settings, selected_clips, style, *, shade_range, previews=Tru
     """
     document = settings_document(settings, selected_clips)
     clips = document.pop("clips")
-    shade = document.pop("shade") | {"range": [int(bound) for bound in shade_range]}
+    # The sheet records the global values; each material's own values are
+    # in its library entry, recorded inline in the style.
+    capture = document.pop("shade")
+    shade = {
+        key: capture[key]
+        for key in (
+            "ao_distance_m",
+            "ao_samples",
+            "occlusion_weight",
+            "convexity_weight",
+        )
+    } | {"range": [int(bound) for bound in shade_range]}
     return document | {
         "previews": previews,
         "shade": shade,

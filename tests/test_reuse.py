@@ -75,7 +75,7 @@ REUSED = {
 
 def write_sheet(tmp_path, settings=None, name="old.json", **document):
     path = tmp_path / name
-    contents = {"schema": "moskophoros.sheet/5"} | document
+    contents = {"schema": "moskophoros.sheet/6"} | document
     contents["settings"] = copy.deepcopy(SETTINGS if settings is None else settings)
     path.write_text(json.dumps(contents, ensure_ascii=False), encoding="utf-8")
     return path
@@ -371,7 +371,7 @@ def test_previews_must_be_a_boolean(tmp_path, capsys, value):
 
 def test_a_document_with_only_schema_and_settings_is_enough(tmp_path):
     path = tmp_path / "minimal.json"
-    path.write_text(json.dumps({"schema": "moskophoros.sheet/5", "settings": SETTINGS}))
+    path.write_text(json.dumps({"schema": "moskophoros.sheet/6", "settings": SETTINGS}))
     assert values(reuse(path)) == REUSED
 
 
@@ -439,7 +439,7 @@ def test_a_deeply_nested_file_is_rejected(tmp_path, capsys):
     ("text", "key"),
     [
         (
-            '{"schema": "moskophoros.sheet/5", "schema": "moskophoros.sheet/5"}',
+            '{"schema": "moskophoros.sheet/6", "schema": "moskophoros.sheet/6"}',
             "schema",
         ),
         ('{"settings": {"fps": 12, "fps": 12}}', "fps"),
@@ -454,11 +454,11 @@ def test_a_repeated_key_anywhere_is_rejected(tmp_path, capsys, text, key):
     assert rejected(capsys, path) == f"repeats the key {key!r}"
 
 
-NOT_A_SHEET = "is not a moskophoros.sheet/5 document"
+NOT_A_SHEET = "is not a moskophoros.sheet/6 document"
 
 
 def older(schema):
-    return f"is a {schema} sheet; only moskophoros.sheet/5 sheets load, so generate it again"
+    return f"is a {schema} sheet; only moskophoros.sheet/6 sheets load, so generate it again"
 
 
 @pytest.mark.parametrize(
@@ -469,25 +469,26 @@ def older(schema):
         ({"schema": "moskophoros.sheet/3"}, older("moskophoros.sheet/3")),
         ({"schema": "moskophoros.sheet/2"}, older("moskophoros.sheet/2")),
         ({"schema": "moskophoros.sheet/1"}, older("moskophoros.sheet/1")),
+        ({"schema": "moskophoros.sheet/5"}, older("moskophoros.sheet/5")),
         ({"schema": "moskophoros.sheet/4"}, older("moskophoros.sheet/4")),
-        ({"schema": "moskophoros.sheet/6"}, older("moskophoros.sheet/6")),
+        ({"schema": "moskophoros.sheet/7"}, older("moskophoros.sheet/7")),
         (
             {"schema": " moskophoros.sheet/4"},
             f'{NOT_A_SHEET}: schema is " moskophoros.sheet/4"',
         ),
         ({"schema": 1}, f"{NOT_A_SHEET}: schema is 1"),
         (
-            {"schema": ["moskophoros.sheet/5"]},
-            f'{NOT_A_SHEET}: schema is ["moskophoros.sheet/5"]',
+            {"schema": ["moskophoros.sheet/6"]},
+            f'{NOT_A_SHEET}: schema is ["moskophoros.sheet/6"]',
         ),
         ({"schema": None}, f"{NOT_A_SHEET}: schema is null"),
-        ({"schema": "moskophoros.sheet/5"}, "settings: missing"),
+        ({"schema": "moskophoros.sheet/6"}, "settings: missing"),
         (
-            {"schema": "moskophoros.sheet/5", "settings": None},
+            {"schema": "moskophoros.sheet/6", "settings": None},
             "settings: must be set, got null",
         ),
         (
-            {"schema": "moskophoros.sheet/5", "settings": []},
+            {"schema": "moskophoros.sheet/6", "settings": []},
             "settings: expected an object, got []",
         ),
     ],
@@ -750,6 +751,7 @@ def test_an_explicit_reduce_overrides_the_reused_one(tmp_path, sheet, explicit):
 @pytest.mark.parametrize(
     "schema",
     [
+        "moskophoros.sheet/5",
         "moskophoros.sheet/4",
         "moskophoros.sheet/3",
         "moskophoros.sheet/2",

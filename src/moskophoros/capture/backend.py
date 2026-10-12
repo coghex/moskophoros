@@ -87,16 +87,31 @@ class Source:
 
 
 @dataclass(frozen=True)
+class MaterialShade:
+    """One glTF material's own capture values (settings design D-9, D-36):
+    its AO distance and weights, each its library override or the global
+    value. AO samples is global only."""
+
+    material: int
+    ao_distance_m: float
+    occlusion_weight: float
+    convexity_weight: float
+
+
+@dataclass(frozen=True)
 class Shade:
     """The capture values of the shade (design §Capture, Shade): the ambient
     occlusion distance and samples, and the weights of occlusion by other
-    surfaces and of a surface's own convexity. The shade range acts after
+    surfaces and of a surface's own convexity. `materials` holds the values
+    of each glTF material that overrides any of them, in material order; every
+    other surface takes the global values. The shade range acts after
     capture, so it is not here."""
 
     ao_distance_m: float
     ao_samples: int
     occlusion_weight: float
     convexity_weight: float
+    materials: tuple[MaterialShade, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -266,6 +281,15 @@ def settings_document(settings, selected_clips, fitted=True):
             "ao_samples": settings.shade.ao_samples,
             "occlusion_weight": float(settings.shade.occlusion_weight),
             "convexity_weight": float(settings.shade.convexity_weight),
+            "materials": [
+                {
+                    "material": own.material,
+                    "ao_distance_m": float(own.ao_distance_m),
+                    "occlusion_weight": float(own.occlusion_weight),
+                    "convexity_weight": float(own.convexity_weight),
+                }
+                for own in settings.shade.materials
+            ],
         },
         "clips": [
             {"name": selected.clip.name, "loop": not selected.one_shot}
@@ -739,6 +763,26 @@ def _shade_problems(shade):
         value = getattr(shade, name)
         if not (_is_number(value) and value >= 0):
             problems.append(f"shade.{name} {value!r}")
+    if not isinstance(shade.materials, tuple) or not all(
+        isinstance(own, MaterialShade) for own in shade.materials
+    ):
+        return [*problems, f"shade.materials {shade.materials!r}"]
+    indices = [own.material for own in shade.materials]
+    if not all(_is_int(index) and 0 <= index < MAX_MATERIALS for index in indices) or (
+        indices != sorted(set(indices))
+    ):
+        problems.append(
+            f"shade.materials indices {indices!r} are not distinct, ascending "
+            "glTF material indices"
+        )
+    for own in shade.materials:
+        where = f"shade.materials[{own.material!r}]"
+        if not (_is_number(own.ao_distance_m) and own.ao_distance_m > 0):
+            problems.append(f"{where}.ao_distance_m {own.ao_distance_m!r}")
+        for name in ("occlusion_weight", "convexity_weight"):
+            value = getattr(own, name)
+            if not (_is_number(value) and value >= 0):
+                problems.append(f"{where}.{name} {value!r}")
     return problems
 
 

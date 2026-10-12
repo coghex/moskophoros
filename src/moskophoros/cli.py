@@ -97,7 +97,7 @@ ROOT_MOTION_MODES = ("error", "keep")
 # The values --reduce accepts; the first is the default.
 REDUCTIONS = ("plain", "mode")
 # The only sheet schema `--settings-from` loads (settings design D-24).
-SHEET_SCHEMA = "moskophoros.sheet/5"
+SHEET_SCHEMA = "moskophoros.sheet/6"
 _MAX_DIGITS = 4300
 _VIEW_FIELDS = ("view", "pitch", "directions", "start_angle")
 _REPEATABLE = frozenset({"--clip", "--once", "--config"})
@@ -694,7 +694,10 @@ def style_record(options: Options) -> dict:
 
 def _materials_document(record: MaterialsRecord) -> dict:
     """The library snapshot as the sheet records it: its source base name and
-    digest, then its ramps, default and entries in name order."""
+    digest, then its ramps, default and entries in name order. An entry with
+    its own shading values has a `shade` after its `ramp` or `uses`, holding
+    only the values the library gives, in a fixed order (settings design
+    D-37)."""
     library = record.library
     entries = {}
     for name, entry in library.materials.items():
@@ -704,6 +707,12 @@ def _materials_document(record: MaterialsRecord) -> dict:
             entries[name] = {"uses": entry.uses}
         else:
             entries[name] = materials.ORDINARY
+            continue
+        if entry.shade is not None:
+            entries[name]["shade"] = {
+                key: list(value) if key == "range" else value
+                for key, value in entry.shade.given()
+            }
     return {
         "source": record.source,
         "sha256": record.sha256,
@@ -794,10 +803,31 @@ def _command(options):
     settings = capture_settings(options)
     sheet_style = style_record(options)
     if options.materials is not None:
-        for warning in materials.warnings(
-            subject.primitive_materials, options.materials.library
+        library = options.materials.library
+        for warning in materials.warnings(subject.primitive_materials, library):
+            _report("warning", warning)
+        for warning in materials.override_warnings(
+            subject.primitive_materials, library, _explicit_shading(options)
         ):
             _report("warning", warning)
+        settings = replace(
+            settings,
+            shade=replace(
+                settings.shade,
+                materials=tuple(
+                    backend.MaterialShade(*values)
+                    for values in materials.capture_overrides(
+                        subject.primitive_materials,
+                        library,
+                        {
+                            "ao_distance_m": options.ao_distance,
+                            "occlusion_weight": options.occlusion_weight,
+                            "convexity_weight": options.convexity_weight,
+                        },
+                    )
+                ),
+            ),
+        )
     found = blender.locate(options.blender, options.any_blender)
 
     with _workspace(options.work_dir) as workspace:
@@ -902,6 +932,29 @@ def _command(options):
             preview_paths, (preview.gif for preview in previews), strict=True
         )
     publish(outputs)
+
+
+# Each shading value a material may override, by the `Options` field that
+# holds its global value.
+_OVERRIDABLE = MappingProxyType(
+    {
+        "ao_distance_m": "ao_distance",
+        "occlusion_weight": "occlusion_weight",
+        "convexity_weight": "convexity_weight",
+        "range": "shade_range",
+    }
+)
+
+
+def _explicit_shading(options):
+    """The global shading values an option or a `--config` file set, by
+    name: the ones a material's own value warns about (settings design
+    D-23). The shipped defaults, the user file and a loaded sheet set none."""
+    return {
+        name: getattr(options, field)
+        for name, field in _OVERRIDABLE.items()
+        if field in options.explicit
+    }
 
 
 def _load_frame(address, paths, metadata, lookup):
@@ -1530,7 +1583,8 @@ def _build_parser():
         "FILE",
         _path,
         None,
-        "draw materials from the ramps of a YAML material library; needs a "
+        "draw materials from the ramps of a YAML moskophoros.materials/2 "
+        "library, whose entries may give their own shading values; needs a "
         "palette (default: none)",
     )
     parser.add_argument(

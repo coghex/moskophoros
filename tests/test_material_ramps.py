@@ -567,9 +567,11 @@ def nearest(mean, ramp, entry_index, lo, span):
     )
 
 
-def reference(pixels, identity, shade, factor, names, lib, lo, hi, by_mode):
-    """Block by block with `Fraction`s: the design's rules, read directly."""
-    span = hi - lo + 1
+def reference(
+    pixels, identity, shade, factor, names, lib, global_lo, global_hi, by_mode
+):
+    """Block by block with `Fraction`s: the design's rules, read directly.
+    Each material is banded over its own range where its entry gives one."""
     first = {}
     for index, name in enumerate(names):
         first.setdefault(name, index)
@@ -613,6 +615,12 @@ def reference(pixels, identity, shade, factor, names, lib, lo, hi, by_mode):
             ramp = ramp_of(winner)
             if ramp is None:
                 continue
+            value = lib.materials.get(names[winner])
+            own_range = (
+                None if value is None or value.shade is None else value.shade.range
+            )
+            lo, hi = own_range or (global_lo, global_hi)
+            span = hi - lo + 1
             own = [
                 (a, v) for a, i, v in cells if a > 0 and i >= 0 and pooled(i) == winner
             ]
@@ -659,6 +667,11 @@ def test_random_blocks_match_an_independent_reference(look, by_mode):
                 entries[name] = {"ramp": ramps["r0"][::-1]}
             elif kind == 3:
                 entries[name] = "ordinary"
+            if kind in (1, 2) and rng.integers(0, 2):
+                # Its own range (settings design D-9).
+                own_lo = int(rng.integers(0, 250))
+                own_hi = min(255, own_lo + 1 + int(rng.choice([0, 1, 3, 20, 255])))
+                entries[name]["shade"] = {"range": [own_lo, own_hi]}
         default = f"r{int(rng.integers(0, 3))}" if rng.integers(0, 2) else None
         lib = library(ramps=ramps, default=default, entries=entries)
         lo = int(rng.integers(0, 250))
@@ -725,6 +738,125 @@ def test_random_ties_match_the_reference_under_mode():
         votes = np.bincount([ramp[b] for b in bands.ravel()], minlength=4)
         tied += (votes == votes.max()).sum() > 1
     assert tied > 60
+
+
+def test_random_ties_over_a_materials_own_range_match_the_reference():
+    """`mode`'s band centres are the material's own range's, not the
+    global range's."""
+    rng = np.random.default_rng(86)
+    tied = 0
+    for trial in range(400):
+        size = int(rng.integers(2, 4))
+        ramp = rng.integers(1, 4, int(rng.integers(2, 7))).tolist()
+        lo = int(rng.integers(0, 100))
+        hi = lo + 1 + int(rng.integers(0, 150))
+        lib = library(
+            ramps={"r": ramp},
+            entries={"steel": {"uses": "r", "shade": {"range": [lo, hi]}}},
+        )
+        pixels = np.zeros((size, size, 4), dtype=np.uint8)
+        pixels[..., 3] = 255
+        identity = np.zeros((size, size), dtype=np.int32)
+        shade = rng.integers(lo, hi + 1, (size, size), dtype=np.uint8)
+        one = ImageFrame(address(), pixels, {}, {IDENTITY: identity, SHADE: shade})
+        got = stylize.mode(
+            [one],
+            size,
+            palette=COLORS,
+            identities=IDENTITIES,
+            library=lib,
+            shade_range=(0, 255),
+        )[0].pixels
+        want = reference(pixels, identity, shade, size, NAMES, lib, 0, 255, True)
+        assert got[0, 0, :3].tolist() == list(COLORS[want[0, 0]]), trial
+        bands = (shade.astype(int) - lo) * len(ramp) // (hi - lo + 1)
+        votes = np.bincount([ramp[b] for b in bands.ravel()], minlength=4)
+        tied += (votes == votes.max()).sum() > 1
+    assert tied > 40
+
+
+# Each material's own range (settings design D-9)
+
+
+@pytest.mark.parametrize(("look", "by_mode"), BOTH)
+def test_two_materials_in_one_frame_are_each_banded_over_their_own_range(look, by_mode):
+    lib = library(
+        ramps={"r": [1, 2, 3, 4]},
+        entries={
+            "steel": {"uses": "r", "shade": {"range": [0, 99]}},
+            "cloth": {"uses": "r", "shade": {"range": [100, 199]}},
+        },
+        default="r",
+    )
+    # Shade 60 is band 2 of [0, 99] and below [100, 199], so band 0; shade 160
+    # is above [0, 99], so band 3, and band 2 of [100, 199]. Skin takes the
+    # default ramp over the global range [0, 255]: 160 is band 2.
+    blocks = [(0, 60), (0, 160), (1, 60), (1, 160), (2, 160)]
+    pixels = np.full((2, 2 * len(blocks), 4), 255, dtype=np.uint8)
+    identity = np.zeros((2, 2 * len(blocks)), dtype=np.int32)
+    shade = np.zeros((2, 2 * len(blocks)), dtype=np.uint8)
+    for column, (index, value) in enumerate(blocks):
+        identity[:, 2 * column : 2 * column + 2] = index
+        shade[:, 2 * column : 2 * column + 2] = value
+    one = ImageFrame(address(), pixels, {}, {IDENTITY: identity, SHADE: shade})
+    result = look(
+        [one],
+        2,
+        palette=COLORS,
+        identities=IDENTITIES,
+        library=lib,
+        shade_range=(0, 255),
+    )[0].pixels
+    got = [COLORS.index(tuple(int(c) for c in result[0, k, :3])) for k in range(5)]
+    assert got == [3, 4, 1, 3, 3]
+
+
+@pytest.mark.parametrize(("look", "by_mode"), BOTH)
+def test_materials_sharing_a_name_share_its_range(look, by_mode):
+    names = Identities(("steel", "cloth", "steel"))
+    lib = library(
+        ramps={"r": [1, 2]},
+        entries={"steel": {"uses": "r", "shade": {"range": [0, 99]}}},
+    )
+    for index in (0, 2):
+        # 60 is the upper band of [0, 99]; over [0, 255] it would be the lower.
+        one = frame([255] * 4, [index] * 4, [60] * 4)
+        assert entry(run(look, one, library=lib, identities=names)) == 2
+
+
+@pytest.mark.parametrize(("look", "by_mode"), BOTH)
+def test_without_its_own_range_a_material_takes_the_global(look, by_mode):
+    lib = library(
+        ramps={"r": [1, 2]},
+        entries={"steel": {"uses": "r", "shade": {"convexity_weight": 0.5}}},
+    )
+    assert mapped(look, 60, lib, shade_range=(0, 99)) == 2
+    assert mapped(look, 60, lib, shade_range=(0, 255)) == 1
+
+
+def test_map_ramps_checks_each_range():
+    pixels = np.full((1, 1, 4), 255, dtype=np.uint8)
+    identity = np.zeros((1, 1), dtype=np.int32)
+    shade = np.zeros((1, 1), dtype=np.uint8)
+    for ranges, error in (
+        ([(5, 5)], ValueError),
+        ([(0, 256)], ValueError),
+        ([(0.0, 9)], TypeError),
+        ([None, None], ValueError),
+    ):
+        with pytest.raises(error):
+            imageops.map_ramps(
+                pixels,
+                identity,
+                shade,
+                1,
+                [(1,)],
+                COLORS,
+                0,
+                255,
+                by_mode=False,
+                ranges=ranges,
+            )
 
 
 def test_map_ramps_marks_exactly_the_mapped_blocks():

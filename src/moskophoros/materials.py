@@ -3,20 +3,25 @@
 A library is a YAML file the tool only reads (material design D-8, settings
 design D-7), parsed by the strict reader in `yamlfile`. Its ramps
 index the shared palette (D-6, D-7); it holds named generic ramps, an optional
-default naming one of them, and material entries (D-15, D-17). `warnings`
-names what a library leaves to its fallbacks for a given model (D-3, D-9,
-D-17, D-18).
+default naming one of them, and material entries (D-15, D-17). An entry with
+a ramp may override the global shading values for its material (settings
+design D-9, D-20). `warnings` names what a library leaves to its fallbacks
+for a given model (D-3, D-9, D-17, D-18).
 """
 
 import json
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, fields
 from numbers import Integral
 from pathlib import Path
 from types import MappingProxyType
 
 from moskophoros import yamlfile
 
-SCHEMA = "moskophoros.materials/1"
+SCHEMA = "moskophoros.materials/2"
+# The schema before per-material shading, which no longer loads (settings
+# design D-29): the only edit it needs is its schema line.
+PREVIOUS_SCHEMA = "moskophoros.materials/1"
 ORDINARY = "ordinary"
 MAX_RAMP = 256
 # A library file's name ends in one of these, in any case (settings D-11).
@@ -38,12 +43,41 @@ class LibraryError(Exception):
 
 
 @dataclass(frozen=True)
+class Shade:
+    """A material's own shading values, each None where the global value in
+    force applies (settings design D-9, D-20, D-23). AO samples is global
+    only."""
+
+    ao_distance_m: float | None = None
+    occlusion_weight: float | None = None
+    convexity_weight: float | None = None
+    range: tuple[int, int] | None = None
+
+    def given(self):
+        """The values the library gives, as `(name, value)` pairs in the fixed
+        order `ao_distance_m`, `occlusion_weight`, `convexity_weight`,
+        `range`."""
+        return tuple(
+            (field.name, getattr(self, field.name))
+            for field in fields(self)
+            if getattr(self, field.name) is not None
+        )
+
+
+# The capture values among a material's shading values; `range` acts in
+# stylize.
+CAPTURE_VALUES = ("ao_distance_m", "occlusion_weight", "convexity_weight")
+
+
+@dataclass(frozen=True)
 class Entry:
     """One material entry: its own `ramp`, the named ramp it `uses`, or
-    neither, which is the `"ordinary"` look."""
+    neither, which is the `"ordinary"` look. `shade` holds its own shading
+    values, or is None when it gives none; the ordinary look takes none."""
 
     ramp: tuple[int, ...] | None = None
     uses: str | None = None
+    shade: Shade | None = None
 
 
 @dataclass(frozen=True)
@@ -108,6 +142,12 @@ def validate_library(document, colors, *, source):
     for field in _REQUIRED:
         if field not in document:
             raise LibraryError(source, f"{field}: missing")
+    if document["schema"] == PREVIOUS_SCHEMA:
+        raise LibraryError(
+            source,
+            f"schema: {_name(PREVIOUS_SCHEMA)} libraries no longer load; change "
+            f"the schema line to {_name(SCHEMA)}, the only edit the library needs",
+        )
     if not isinstance(document["schema"], str) or document["schema"] != SCHEMA:
         raise LibraryError(
             source,
@@ -190,6 +230,85 @@ def warnings(records, library):
     return messages
 
 
+def _ramped(records, library):
+    """Each glTF material of the model that takes its library entry's ramp,
+    with its entry, in material order: a named, non-translucent material
+    whose entry gives a ramp or uses one."""
+    taken = {}
+    for record in records:
+        if record.material_index is None or record.name is None:
+            continue
+        if record.alpha_mode not in RAMP_ALPHA_MODES:
+            continue
+        entry = library.materials.get(record.name)
+        if entry is None or (entry.ramp is None and entry.uses is None):
+            continue
+        taken.setdefault(record.material_index, (record.name, entry))
+    return [(index, *taken[index]) for index in sorted(taken)]
+
+
+def capture_overrides(records, library, globals_):
+    """The capture values of each glTF material that overrides any of them,
+    as `(material index, ao_distance_m, occlusion_weight, convexity_weight)`
+    in material order (settings design D-9, D-23, D-36).
+
+    `records` are the model's `gltf.PrimitiveMaterial`s, and `globals_` maps
+    each capture value's name to the global value in force. A material's own
+    value wins; one it does not give is the global. Materials sharing a name
+    share their entry; a translucent material, one taking the default ramp or
+    the ordinary look, and one with no entry take the global values.
+    """
+    overrides = []
+    for index, _, entry in _ramped(records, library):
+        shade = entry.shade
+        if shade is None or all(
+            getattr(shade, name) is None for name in CAPTURE_VALUES
+        ):
+            continue
+        overrides.append(
+            (
+                index,
+                *(
+                    globals_[name]
+                    if getattr(shade, name) is None
+                    else getattr(shade, name)
+                    for name in CAPTURE_VALUES
+                ),
+            )
+        )
+    return overrides
+
+
+def override_warnings(records, library, explicit):
+    """The warnings for globals given explicitly that a material keeps its own
+    value over (settings design D-23), in a fixed order: by material, then
+    in the order `ao_distance_m`, `occlusion_weight`, `convexity_weight`,
+    `range`.
+
+    `explicit` maps the name of each shading value a `--config` file or an
+    option set to that global value. Each material of the model taking its
+    entry's ramp is named once per value it overrides; a value the shipped
+    defaults, the user file or a loaded sheet gave warns nothing.
+    """
+    messages = []
+    named = set()
+    for _, name, entry in _ramped(records, library):
+        if name in named or entry.shade is None:
+            continue
+        named.add(name)
+        for setting, value in entry.shade.given():
+            if setting not in explicit:
+                continue
+            shown = list(value) if setting == "range" else value
+            messages.append(
+                f"material {_name(name)} keeps its own shade.{setting}, "
+                f"{_shown(shown)}, from the material library; the global "
+                f"{_shown(list(explicit[setting]) if setting == 'range' else explicit[setting])} "
+                "applies to materials without their own"
+            )
+    return messages
+
+
 def _named(mapping, location, source):
     """Yield a name-keyed mapping's items in name order, checking each name."""
     if not isinstance(mapping, dict):
@@ -253,16 +372,88 @@ def _entry(value, location, ramps, size, source):
             f'"{ORDINARY}", got {_shown(value)}',
         )
     _check_keys(value, source, location)
-    unknown = sorted(key for key in value if key not in ("ramp", "uses"))
+    unknown = sorted(key for key in value if key not in ("ramp", "uses", "shade"))
     if unknown:
         raise LibraryError(source, f"{location}: unknown field {_name(unknown[0])}")
-    if len(value) != 1:
+    if ("ramp" in value) == ("uses" in value):
         raise LibraryError(
             source, f'{location}: expected exactly one of "ramp" and "uses"'
         )
+    shade = (
+        _shade(value["shade"], f"{location}.shade", source)
+        if "shade" in value
+        else None
+    )
     if "ramp" in value:
-        return Entry(ramp=_ramp(value["ramp"], f"{location}.ramp", size, source))
-    return Entry(uses=_reference(value["uses"], f"{location}.uses", ramps, source))
+        ramp = _ramp(value["ramp"], f"{location}.ramp", size, source)
+        return Entry(ramp=ramp, shade=shade)
+    uses = _reference(value["uses"], f"{location}.uses", ramps, source)
+    return Entry(uses=uses, shade=shade)
+
+
+def _shade(value, location, source):
+    """A material's own shading values, checked with the global values'
+    limits (settings design D-30), or None when it gives none."""
+    if not isinstance(value, dict):
+        raise LibraryError(
+            source,
+            f"{location}: expected a mapping of shading values, got {_shown(value)}",
+        )
+    _check_keys(value, source, location)
+    if "ao_samples" in value:
+        raise LibraryError(
+            source,
+            f"{location}.ao_samples: AO samples is a global setting only; set it "
+            "with --ao-samples or shade.ao_samples in a settings file",
+        )
+    known = [field.name for field in fields(Shade)]
+    unknown = sorted(key for key in value if key not in known)
+    if unknown:
+        raise LibraryError(source, f"{location}: unknown field {_name(unknown[0])}")
+    given = {}
+    for name in known:
+        if name not in value:
+            continue
+        here = f"{location}.{name}"
+        item = value[name]
+        if name == "range":
+            given[name] = _shade_range(item, here, source)
+            continue
+        number = _finite(item)
+        if number is None or (number <= 0 if name == "ao_distance_m" else number < 0):
+            wanted = "greater than 0" if name == "ao_distance_m" else "0 or greater"
+            raise LibraryError(
+                source, f"{here}: expected a finite number {wanted}, got {_shown(item)}"
+            )
+        given[name] = number
+    return Shade(**given) if given else None
+
+
+def _finite(value):
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _shade_range(value, location, source):
+    if (
+        isinstance(value, list | tuple)
+        and len(value) == 2
+        and all(
+            isinstance(bound, int) and not isinstance(bound, bool) for bound in value
+        )
+        and 0 <= value[0] < value[1] <= 255
+    ):
+        return int(value[0]), int(value[1])
+    raise LibraryError(
+        source,
+        f"{location}: expected [lo, hi], two integers with 0 <= lo < hi <= 255, "
+        f"got {_shown(value)}",
+    )
 
 
 def _name(name):

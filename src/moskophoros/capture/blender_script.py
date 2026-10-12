@@ -219,7 +219,13 @@ def check_job(job):
     _require(all(map(_is_number, ground.values())), "settings.ground_m")
     shade = _fields(
         settings["shade"],
-        ["ao_distance_m", "ao_samples", "occlusion_weight", "convexity_weight"],
+        [
+            "ao_distance_m",
+            "ao_samples",
+            "occlusion_weight",
+            "convexity_weight",
+            "materials",
+        ],
         "settings.shade",
     )
     _require(
@@ -233,6 +239,32 @@ def check_job(job):
     )
     for key in ("occlusion_weight", "convexity_weight"):
         _require(_is_number(shade[key]) and shade[key] >= 0, f"settings.shade.{key}")
+    _require(isinstance(shade["materials"], list), "settings.shade.materials")
+    indices = []
+    for own in shade["materials"]:
+        _fields(
+            own,
+            ["material", "ao_distance_m", "occlusion_weight", "convexity_weight"],
+            "settings.shade.materials entry",
+        )
+        _require(
+            _is_int(own["material"]) and 0 <= own["material"] < MAX_MATERIALS,
+            f"settings.shade.materials material {own['material']!r}",
+        )
+        indices.append(own["material"])
+        _require(
+            _is_number(own["ao_distance_m"]) and own["ao_distance_m"] > 0,
+            f"settings.shade.materials[{own['material']}].ao_distance_m",
+        )
+        for key in ("occlusion_weight", "convexity_weight"):
+            _require(
+                _is_number(own[key]) and own[key] >= 0,
+                f"settings.shade.materials[{own['material']}].{key}",
+            )
+    _require(
+        indices == sorted(set(indices)),
+        "settings.shade.materials is not in ascending, distinct material order",
+    )
     if job["mode"] == "measure":
         for key in ("pixels_per_meter", "cell", "ground_px"):
             _require(settings[key] is None, f"settings.{key} is set in a measure job")
@@ -1047,8 +1079,10 @@ class Auxiliary:
         self.scene = scene
         self.objects = objects
         self.codes = codes
-        # The job's capture values: settings.shade.
+        # The job's capture values: settings.shade, and each glTF material's
+        # own distance and weights by material index.
         self.shade = shade
+        self.own = {own["material"]: own for own in shade["materials"]}
         self.saved = []
         self.trees = []
         self.slots = []
@@ -1126,16 +1160,19 @@ class Auxiliary:
         ]
         for link in [link for link in tree.links if link.to_node == output]:
             tree.links.remove(link)
+        # A glTF material's code is its index plus 1; the stand-in for
+        # surfaces without a material takes the global values.
+        values = self.own.get(code - 1, self.shade)
         outside = node("ShaderNodeAmbientOcclusion")
         inside = node("ShaderNodeAmbientOcclusion")
         for ao, is_inside in ((outside, False), (inside, True)):
             ao.samples = self.shade["ao_samples"]
             ao.inside = is_inside
             ao.only_local = False
-            ao.inputs["Distance"].default_value = self.shade["ao_distance_m"]
+            ao.inputs["Distance"].default_value = values["ao_distance_m"]
         occlusion = node("ShaderNodeMath")
         occlusion.operation = "MULTIPLY"
-        occlusion.inputs[1].default_value = self.shade["occlusion_weight"]
+        occlusion.inputs[1].default_value = values["occlusion_weight"]
         tree.links.new(outside.outputs["AO"], occlusion.inputs[0])
         convexity = node("ShaderNodeMath")
         convexity.operation = "SUBTRACT"
@@ -1144,7 +1181,7 @@ class Auxiliary:
         shade = node("ShaderNodeMath")
         shade.operation = "MULTIPLY_ADD"
         shade.use_clamp = True
-        shade.inputs[1].default_value = self.shade["convexity_weight"]
+        shade.inputs[1].default_value = values["convexity_weight"]
         tree.links.new(convexity.outputs[0], shade.inputs[0])
         tree.links.new(occlusion.outputs[0], shade.inputs[2])
         color = node("ShaderNodeCombineColor")

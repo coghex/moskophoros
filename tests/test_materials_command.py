@@ -217,7 +217,7 @@ def test_every_library_error_is_exit_2_before_blender_and_names_file_and_entry(
         path.write_text("[" * 100_000)
     elif kind == "not-a-string-key":
         path.write_text(
-            "schema: moskophoros.materials/1\nramps: {}\nmaterials: {1: ordinary}\n"
+            "schema: moskophoros.materials/2\nramps: {}\nmaterials: {1: ordinary}\n"
         )
     else:
         if kind == "bad-schema":
@@ -310,7 +310,7 @@ def test_a_run_records_the_library_inline_and_the_shade_range(setup, capsys):
     named_hero(setup, HERO_MATERIALS)
     run_with_library(setup, capsys, "--no-preview")
     description = json.loads(setup.json.read_text())
-    assert description["schema"] == "moskophoros.sheet/5"
+    assert description["schema"] == "moskophoros.sheet/6"
     style = description["settings"]["style"]
     assert list(style) == ["reduce", "palette", "materials"]
     assert description["settings"]["shade"]["range"] == DEFAULT_RANGE
@@ -641,7 +641,8 @@ def test_a_reused_shade_range_is_kept_when_an_explicit_library_replaces_the_libr
 
 
 @pytest.mark.parametrize(
-    "schema", ["moskophoros.sheet/4", "moskophoros.sheet/3", "moskophoros.sheet/2"]
+    "schema",
+    ["moskophoros.sheet/5", "moskophoros.sheet/4", "moskophoros.sheet/3"],
 )
 def test_a_sheet_from_before_the_shade_was_recorded_no_longer_loads(
     tmp_path, capsys, schema
@@ -650,7 +651,7 @@ def test_a_sheet_from_before_the_shade_was_recorded_no_longer_loads(
     with pytest.raises(cli.UsageError):
         cli.read_settings(path)
     assert (
-        f"is a {schema} sheet; only moskophoros.sheet/5 sheets load"
+        f"is a {schema} sheet; only moskophoros.sheet/6 sheets load"
         in capsys.readouterr().err
     )
 

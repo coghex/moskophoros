@@ -160,7 +160,7 @@ EXPECTED_FRAMES = ",\n".join(
 
 EXPECTED_JSON = (
     """{
-  "schema": "moskophoros.sheet/5",
+  "schema": "moskophoros.sheet/6",
   "generator": {
     "tool": "moskophoros",
     "version": "0.1.0",
@@ -387,7 +387,8 @@ def test_previews_shade_and_the_style_record_sit_just_before_clips(previews):
     ]
     rest = {k: v for k, v in settings.items() if k not in ("style", "previews")}
     job = settings_document(SIDE, (RUN,))
-    assert rest == job | {"shade": job["shade"] | {"range": [84, 191]}}
+    capture = {key: value for key, value in job["shade"].items() if key != "materials"}
+    assert rest == job | {"shade": capture | {"range": [84, 191]}}
 
 
 def test_the_sheet_records_the_shade_values_used_and_fingerprints_them():
