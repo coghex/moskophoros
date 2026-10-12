@@ -55,7 +55,12 @@ moskophoros [options] <infile.glb> <outfile.png>
 | `--no-palette` | off | Use no palette, dropping a reused or configured one; cannot accompany `--palette`. |
 | `--materials FILE` | none | Draw each named material from the ramps of a YAML material library, a `.yaml` or `.yml` file, on the palette in force. Needs a palette. See [Material libraries](#material-libraries). A [settings file](#settings-files) may set it. |
 | `--no-materials` | off | Use no material library, dropping a reused or configured one; cannot accompany `--materials`. |
-| `--settings-from FILE` | none | Load every recorded setting of an earlier `moskophoros.sheet/4` sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
+| `--ao-distance M` | `0.3` | How far the shade's ambient occlusion looks for other surfaces, in meters, greater than 0. See [Capture](#capture), *Shade*. A [settings file](#settings-files) may set it. |
+| `--ao-samples N` | `64` | Ambient occlusion samples per pixel, a whole number from 1 to 128, the most Blender's Ambient Occlusion node takes (settings design D-42). A [settings file](#settings-files) may set it. |
+| `--occlusion-weight W` | `0.25` | How much occlusion by other surfaces lightens the shade, finite and 0 or greater. A [settings file](#settings-files) may set it. |
+| `--convexity-weight W` | `1.0` | How much a surface's own convexity lightens the shade, finite and 0 or greater. A [settings file](#settings-files) may set it. |
+| `--shade-range LO,HI` | `84,191` | The 8-bit shade values a material's ramp spans, two integers with `0 ≤ LO < HI ≤ 255`. See [Material ramps](#material-ramps). A [settings file](#settings-files) may set it. |
+| `--settings-from FILE` | none | Load every recorded setting of an earlier `moskophoros.sheet/5` sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
 | `--config FILE` | none | Repeatable. Read settings from a YAML file; later files win, and its values act as the options would. See [Settings files](#settings-files). |
 | `--no-user-config` | off | Skip the user settings file. |
 | `--preview` | on | Write the animated previews, also over a sheet or settings file without them; cannot accompany `--no-preview`. |
@@ -120,6 +125,17 @@ default; a test keeps the two in agreement.
 | `palette` | `--palette FILE`, `--no-palette` | `null` | a palette file path, or `null` for none |
 | `materials` | `--materials FILE`, `--no-materials` | `null` | a material library path, or `null` for none |
 | `previews` | `--preview`, `--no-preview` | `true` | `true` or `false` |
+| `shade.ao_distance_m` | `--ao-distance M` | `0.3` | a finite number greater than 0, meters |
+| `shade.ao_samples` | `--ao-samples N` | `64` | a whole number from 1 to 128 |
+| `shade.occlusion_weight` | `--occlusion-weight W` | `0.25` | a finite number 0 or greater |
+| `shade.convexity_weight` | `--convexity-weight W` | `1.0` | a finite number 0 or greater |
+| `shade.range` | `--shade-range LO,HI` | `[84, 191]` | `[lo, hi]`, two integers with `0 ≤ lo < hi ≤ 255` |
+
+The `shade` settings are a nested mapping in a file, and each is a setting of
+its own: they merge key by key across the layers, so a file may set one and
+inherit the rest, while `shade.range`, a list, replaces whole (owner
+decisions 2026-10-11 and 2026-10-12, settings design D-3, D-9, D-12, D-22,
+D-30 and D-42). They are global values; per-material values come later.
 
 **Layers.** Lowest first, each a partial set of settings; a setting a layer
 leaves out falls through to the layer below:
@@ -185,6 +201,11 @@ fps: 12
 palette: ~/palettes/vince-128.gpl
 materials: robot-library.yaml   # relative to this file
 previews: true          # false: write no animated previews
+shade:                  # set any of them; the rest fall through
+  ao_distance_m: 1.2
+  occlusion_weight: 0.5
+  convexity_weight: 0.0
+  range: [120, 188]
 ```
 
 ### Option validation
@@ -205,6 +226,11 @@ decision 2026-10-01):
 - `--palette` together with `--no-palette`, or either option repeated.
 - `--materials` together with `--no-materials`, or either option repeated.
 - `--preview` together with `--no-preview`, or either option repeated.
+- `--ao-distance` not finite and greater than 0; `--ao-samples` not a whole
+  number from 1 to 128, the limit stated (settings design D-42); a
+  `--occlusion-weight` or `--convexity-weight` not finite and 0 or greater; a
+  `--shade-range` not two integers with `0 ≤ LO < HI ≤ 255`. The same limits
+  apply to the `shade` settings in a [settings file](#settings-files).
 - A bad [settings file](#settings-files), or a missing or unreadable
   `--config` file. These errors name the file, the key and the line.
 - Over a loaded sheet without `--clip`, a `--once` naming a clip outside the
@@ -488,9 +514,11 @@ settings design D-15, D-16, D-19 and D-28):
 - ppm, cell, ground point and ground pixel
 - root-motion mode
 - whether previews are written, `settings.previews`
+- the shading values, `settings.shade`: the ambient occlusion distance and
+  samples, the occlusion and convexity weights, and the shade range
 - the style: its reduction and inline palette, `settings.style.reduce` and
-  `settings.style.palette`, its inline material library, `settings.style.materials`,
-  and the fixed shade range, `settings.style.shade_range`
+  `settings.style.palette`, and its inline material library,
+  `settings.style.materials`
 - the clip selection and its one-shot marks, `settings.clips`
 
 This makes scale, cell and ground pixel fixed. Options given explicitly, and
@@ -517,8 +545,8 @@ D-27):
   the model no longer has is an input error (exit 3) naming the clip. A clip
   that `--clip` replaced need not exist.
 
-Only the current sheet schema, `moskophoros.sheet/4`, loads (owner decision
-2026-10-11, settings design D-24). A sheet of any other schema, `/1` to `/3`
+Only the current sheet schema, `moskophoros.sheet/5`, loads (owner decision
+2026-10-11, settings design D-24). A sheet of any other schema, `/1` to `/4`
 included, is a usage error naming its schema and the supported one. A file
 that is unreadable, or not a sheet document, is a usage error.
 
@@ -557,24 +585,27 @@ present with a value its option would accept, `projection` must be
 `cell` is the fitted `{width, height}` record, never `auto`. `previews` must
 be `true` or `false`. `clips` must be a nonempty list of distinct clips, each
 an object with exactly `name`, a nonempty string, and `loop`, `true` or
-`false`; it is checked even when `--clip` replaces it.
+`false`; it is checked even when `--clip` replaces it. `shade` must be an
+object with exactly `ao_distance_m`, `ao_samples`, `occlusion_weight`,
+`convexity_weight` and `range`, each a value its option would accept:
+numbers, never booleans, and `ao_samples` an integer from 1 to 128.
 `style` must be an object with exactly `reduce`, a value
 `--reduce` accepts, `palette`, either `null` or an object with exactly
 `source`, `sha256` and `colors`, `materials`, either `null` or an object with
-exactly `source`, `sha256`, `ramps`, `default` and `materials`, and
-`shade_range`. The source is a nonempty base filename, never a path; the
+exactly `source`, `sha256`, `ramps`, `default` and `materials`. The source is a nonempty base filename, never a path; the
 digest is exactly 64 lowercase hexadecimal digits; colours are 1 to 255 unique
 canonical lowercase `#rrggbb` strings in their recorded order. The palette
 module applies its shared count, RGB and uniqueness checks. A library record's
 `ramps`, `default` (a ramp name, or `null` for none) and `materials` are
 validated by the library module exactly as a library file is, against the
 recorded palette, and a record beside a `null` palette is an error.
-`shade_range` is an array of exactly two JSON integers, never booleans or
+`shade.range` is an array of exactly two JSON integers, never booleans or
 floating-point numbers, with `0 ≤ lo < hi ≤ 255`; it is validated even when
 `materials` is `null`. All reused fields are validated before any
 override, including `--reduce`, `--palette`, `--no-palette`, `--materials`,
-`--no-materials`, `--clip`, `--once`, `--preview` and `--no-preview`, and
-`--config` values (owner decisions 2026-10-04, 2026-10-07, 2026-10-11).
+`--no-materials`, `--clip`, `--once`, `--preview`, `--no-preview` and the
+shading options, and `--config` values (owner decisions 2026-10-04,
+2026-10-07, 2026-10-11, 2026-10-12).
 A missing or invalid field, or an unknown field inside `settings`, is a usage
 error naming it. The rest of the sheet is not checked beyond its `schema`
 (owner decisions 2026-10-01).
@@ -700,11 +731,20 @@ renders ran before it. The colour itself is unchanged.
   materials have no cutouts (D-26): the colour shows them opaque over their
   whole surface, and so do the ID and shade.
 - *Shade* (D-22, D-25), occlusion and curvature only: linear
-  `clamp(0.25 · AO_out + 1.0 · (1 − AO_in), 0, 1)`, where `AO_out` and
-  `AO_in` are Cycles ambient occlusion looking outside and inside the
-  surface, distance 0.3 m, 64 samples. Creases and nooks are darker, convex
-  curves lighter; a flat open surface is 0.25, encoded 137. No light,
-  direction or material property enters it. The buffer has `R = G = B` =
+  `clamp(occlusion_weight · AO_out + convexity_weight · (1 − AO_in), 0, 1)`,
+  where `AO_out` and `AO_in` are Cycles ambient occlusion looking outside and
+  inside the surface, out to `ao_distance_m` with `ao_samples` samples. The
+  four values are [settings](#settings-files) and options, `--ao-distance`,
+  `--ao-samples`, `--occlusion-weight` and `--convexity-weight`, that reach
+  Blender in the capture job's `settings.shade` and every material's
+  replacement shader (owner decisions 2026-10-11 and 2026-10-12, settings
+  design D-3, D-9, D-12 and D-42). Their shipped defaults are today's values:
+  distance 0.3 m, 64 samples, occlusion weight 0.25 and convexity weight 1.0.
+  At the defaults, creases and nooks are darker and convex curves lighter; a
+  flat open surface is 0.25, encoded 137. A convexity weight of 0 removes the
+  curvature term. AO samples stop at 128, the most Blender 5.2's Ambient
+  Occlusion node takes: it silently clamps more, so the command refuses it
+  first. No light, direction or material property enters the shade. The buffer has `R = G = B` =
   the sRGB-encoded shade (`Standard`, as the colour), alpha 255 where a
   surface was sampled and `(0, 0, 0, 0)` elsewhere.
 - *Material-ID codes:* a glTF material of index `i` has code `i + 1`; a
@@ -713,10 +753,12 @@ renders ran before it. The colour itself is unchanged.
   blue 0 and alpha 255, and background as `(0, 0, 0, 0)`. A model with more
   than 65534 materials cannot be encoded: an input error (exit 3) before any
   Blender invocation, including the version probe.
-- *Default shade range:* `[84, 191]` (`backend.DEFAULT_SHADE_RANGE`): new
-  renders take bands over it (material styling design, Mapping a block),
-  chosen from the spike's measurements so that a flat open surface, a crease
-  and an isolated convex curve take different bands.
+- *Default shade range:* `[84, 191]`, the shipped default of the
+  `shade.range` setting and `--shade-range` (settings design D-12): ramps take
+  bands over the range in force (material styling design, Mapping a block).
+  It was chosen from the spike's measurements so that a flat open surface, a
+  crease and an isolated convex curve take different bands; that rationale
+  and the distinct-band guarantee hold at the default shading values only.
 
 Blender writes the material-ID and shade PNGs itself from the render's
 pixels, with nothing but those pixels in them, since Cycles adds render-time
@@ -752,7 +794,7 @@ keys, missing required fields and invalid numeric values are rejected.
 | `mode` | `measure` or `render`. |
 | `source` | Absolute `path` to the original GLB, its `sha256` and the selected original glTF `scene` index. |
 | `subject`, `variant` | Input stem and `default`, matching every requested frame address. |
-| `settings` | The accepted sheet settings, using resolved option values. In measure mode, `pixels_per_meter`, `cell` and `ground_px` are null: fitting belongs to the caller. In render mode all three are resolved, fixed values. The sheet's `style` is left out: style is applied after capture, so the job is the same whatever the style (owner decision 2026-10-04). |
+| `settings` | The accepted sheet settings, using resolved option values. In measure mode, `pixels_per_meter`, `cell` and `ground_px` are null: fitting belongs to the caller. In render mode all three are resolved, fixed values. `shade` carries the shade's capture values, exactly `ao_distance_m` (finite, greater than 0), `ao_samples` (an integer, 1 to 128), `occlusion_weight` and `convexity_weight` (finite, 0 or greater), which both the launcher and the script check. The sheet's `style`, `previews` and shade range are left out: they act after capture, so the job, and its `job_sha256`, are the same whatever they are (owner decisions 2026-10-04, 2026-10-12). |
 | `clips` | Selected clips in sheet order. Each carries its original `animation_index`, `name`, `t0_s`, `t1_s` and candidate `roots`. The synthetic `static` clip has a null animation index, zero endpoints and no animated roots. |
 | `clips[].roots` | Each candidate root's original `node_index` and optional original `node_name`, determined using the accepted ancestry rule. Indices identify nodes; names are diagnostics, never assumed unique. |
 | `frames` | The exact requested samples in sheet order: clip, direction, then sample. Each carries an `address`, sample `index` and direction `angle_deg`. The address has `subject`, `variant`, `clip`, `direction` and `time_s`. |
@@ -783,7 +825,7 @@ never interprets human-readable stdout as a manifest.
 | `mode` | Must match the submitted job. |
 | `job_sha256` | Hash of the submitted job encoded as canonical JSON with sorted keys, compact separators, ASCII escapes and non-finite numbers forbidden. This binds a result to its complete request, not just its source. |
 | `source_sha256` | Must match the job's source digest. |
-| `backend` | Actual Blender version; render results also record the actual renderer and studio light of the colour, and `shade`: the shade technique and its fixed parameters (`technique`, `samples_per_pixel`, `seed`, `pixel_filter`, `filter_width_px`, `ao_distance_m`, `ao_samples`, `occlusion_weight`, `convexity_weight`). The version is parsed according to the owning supported-version contract. |
+| `backend` | Actual Blender version; render results also record the actual renderer and studio light of the colour, and `shade`: exactly the shade technique and its fixed parameters (`technique`, `samples_per_pixel`, `seed`, `pixel_filter`, `filter_width_px`); the capture values are the job's. The version is parsed according to the owning supported-version contract. |
 | `frames` | Exactly one record per requested address, in request order. No missing, duplicate or unexpected address is accepted. |
 | `frames[].bounds_m` | Measure only: finite, nonnegative `L`, `R`, `U`, `D` as defined by the product design. |
 | `frames[].height_m` | Measure only: evaluated subject height along the glTF vertical axis, for the accepted unit warning. |
@@ -1203,9 +1245,10 @@ validated against the palette in force, whether it came from `--palette`, a
 settings file or reused settings. `--no-materials` drops a reused library. The library is
 used with the reduction, the palette and the shade range in force: each frame
 is mapped as under [Material ramps](#material-ramps), from the decoded
-material-ID and shade buffers. No command option sets the shade range; a new
-run uses `capture.backend.DEFAULT_SHADE_RANGE`, and a reused sheet keeps its
-recorded range, even when an explicit library replaces the reused one.
+material-ID and shade buffers. The shade range in force is the `shade.range`
+setting: `--shade-range`, a settings file, a reused sheet's recorded range
+(kept even when an explicit library replaces the reused one), or the shipped
+default `[84, 191]`.
 
 Each of these is a usage error (exit 2) before any Blender invocation,
 including its version probe, naming the file and, where there is one, the
@@ -1252,19 +1295,17 @@ through unchanged.
 - Cells are packed with no gaps; unused cells are fully transparent.
 - Output is an 8-bit RGBA PNG written by Pillow with no text or time chunks.
 
-**JSON (`moskophoros.sheet/4`).**
+**JSON (`moskophoros.sheet/5`).**
 
 ```json
 {
-  "schema": "moskophoros.sheet/4",
+  "schema": "moskophoros.sheet/5",
   "generator": {
     "tool": "moskophoros", "version": "0.1.0",
     "python": "3.x.y", "numpy": "x.y.z", "pillow": "x.y.z",
     "blender": "x.y.z", "renderer": "workbench", "studio_light": "...",
     "shade": { "technique": "cycles-ambient-occlusion", "samples_per_pixel": 1,
-               "seed": 0, "pixel_filter": "BOX", "filter_width_px": 0.01,
-               "ao_distance_m": 0.3, "ao_samples": 64,
-               "occlusion_weight": 0.25, "convexity_weight": 1.0 }
+               "seed": 0, "pixel_filter": "BOX", "filter_width_px": 0.01 }
   },
   "source": { "file": "hero.glb", "sha256": "..." },
   "subject": "hero",
@@ -1281,8 +1322,10 @@ through unchanged.
     "ground_px": { "x": 24, "y": 46 },
     "root_motion": "error",
     "previews": true,
-    "style": { "reduce": "plain", "palette": null, "materials": null,
-               "shade_range": [84, 191] },
+    "shade": { "ao_distance_m": 0.3, "ao_samples": 64,
+               "occlusion_weight": 0.25, "convexity_weight": 1.0,
+               "range": [84, 191] },
+    "style": { "reduce": "plain", "palette": null, "materials": null },
     "clips": [ { "name": "walk", "loop": true },
                { "name": "attack", "loop": false } ]
   },
@@ -1309,17 +1352,23 @@ through unchanged.
   or an object with `source` (the library file's base filename), `sha256`
   (SHA-256 of its bytes), `ramps` (each named ramp, a list of palette indices,
   in name order), `default` (a ramp name, or `null`) and `materials` (each
-  entry in name order: `{"ramp": [...]}`, `{"uses": NAME}` or `"ordinary"`);
-  and `shade_range`, the fixed shade range `[lo, hi]` as two integers, recorded
-  whether or not a library is used and outside the library. It sits between
-  `previews` and `clips`. Export writes and fingerprints the record the
+  entry in name order: `{"ramp": [...]}`, `{"uses": NAME}` or `"ordinary"`).
+  It sits between `shade` and `clips`. Export writes and fingerprints the record the
   command resolved without interpreting it, so a new look changes neither
   export nor capture (owner decisions 2026-10-04, 2026-10-07).
 - `settings.previews` records whether the run wrote the animated previews, a
-  boolean between `root_motion` and `style`, inside the fingerprint (owner
-  decision 2026-10-11, settings design D-28). `moskophoros.sheet/3` is the
-  same document without it; [reuse](#scale-and-ground-point) loads only `/4`
-  (settings design D-24).
+  boolean between `root_motion` and `shade`, inside the fingerprint (owner
+  decision 2026-10-11, settings design D-28).
+- `settings.shade` records the shading values used, in this order:
+  `ao_distance_m`, `ao_samples`, `occlusion_weight`, `convexity_weight` and
+  `range` (`[lo, hi]`), recorded whether or not a library is used, between
+  `previews` and `style`, inside the fingerprint (owner decisions 2026-10-11
+  and 2026-10-12, settings design D-24 and D-35). `generator.shade` keeps only
+  the fixed technique: `technique`, `samples_per_pixel`, `seed`,
+  `pixel_filter` and `filter_width_px`. `moskophoros.sheet/4` recorded the
+  capture values in `generator.shade` and the range as
+  `settings.style.shade_range`; [reuse](#scale-and-ground-point) loads only
+  `/5` (settings design D-24).
 - `fingerprint` is the SHA-256 of the canonical JSON (sorted keys, no
   whitespace, UTF-8) of `generator`, `source.sha256` and `settings`. The
   hashed object mirrors the sheet's own structure:

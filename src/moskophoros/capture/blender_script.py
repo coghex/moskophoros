@@ -187,6 +187,7 @@ def check_job(job):
             "ground_m",
             "ground_px",
             "root_motion",
+            "shade",
             "clips",
         ],
         "settings",
@@ -216,6 +217,22 @@ def check_job(job):
     _require(settings["root_motion"] in ("error", "keep"), "settings.root_motion")
     ground = _fields(settings["ground_m"], ["x", "y", "z"], "settings.ground_m")
     _require(all(map(_is_number, ground.values())), "settings.ground_m")
+    shade = _fields(
+        settings["shade"],
+        ["ao_distance_m", "ao_samples", "occlusion_weight", "convexity_weight"],
+        "settings.shade",
+    )
+    _require(
+        _is_number(shade["ao_distance_m"]) and shade["ao_distance_m"] > 0,
+        "settings.shade.ao_distance_m",
+    )
+    _require(
+        _is_int(shade["ao_samples"]) and 1 <= shade["ao_samples"] <= MAX_AO_SAMPLES,
+        f"settings.shade.ao_samples {shade['ao_samples']!r} is not 1 to "
+        f"{MAX_AO_SAMPLES}",
+    )
+    for key in ("occlusion_weight", "convexity_weight"):
+        _require(_is_number(shade[key]) and shade[key] >= 0, f"settings.shade.{key}")
     if job["mode"] == "measure":
         for key in ("pixels_per_meter", "cell", "ground_px"):
             _require(settings[key] is None, f"settings.{key} is set in a measure job")
@@ -967,17 +984,18 @@ def frame_size(settings):
 ID_BACKGROUND = 0
 NO_MATERIAL_ID = 0xFFFF
 MAX_MATERIALS = NO_MATERIAL_ID - 1
+# The fixed shade technique, reported in the result. The capture values,
+# the ambient occlusion distance and samples and the two weights, are the
+# job's `settings.shade`.
 SHADE = {
     "technique": "cycles-ambient-occlusion",
     "samples_per_pixel": 1,
     "seed": 0,
     "pixel_filter": "BOX",
     "filter_width_px": 0.01,
-    "ao_distance_m": 0.3,
-    "ao_samples": 64,
-    "occlusion_weight": 0.25,
-    "convexity_weight": 1.0,
 }
+# The most samples the Ambient Occlusion node takes; it silently clamps more.
+MAX_AO_SAMPLES = 128
 _AUXILIARY_SETTINGS = (
     ("render", "engine", "CYCLES"),
     ("render", "dither_intensity", 0.0),
@@ -1025,10 +1043,12 @@ class Auxiliary:
     """Applies the auxiliary render's settings and shaders, and restores every
     one of them exactly, so the next colour render is as if it never ran."""
 
-    def __init__(self, scene, objects, codes):
+    def __init__(self, scene, objects, codes, shade):
         self.scene = scene
         self.objects = objects
         self.codes = codes
+        # The job's capture values: settings.shade.
+        self.shade = shade
         self.saved = []
         self.trees = []
         self.slots = []
@@ -1109,13 +1129,13 @@ class Auxiliary:
         outside = node("ShaderNodeAmbientOcclusion")
         inside = node("ShaderNodeAmbientOcclusion")
         for ao, is_inside in ((outside, False), (inside, True)):
-            ao.samples = SHADE["ao_samples"]
+            ao.samples = self.shade["ao_samples"]
             ao.inside = is_inside
             ao.only_local = False
-            ao.inputs["Distance"].default_value = SHADE["ao_distance_m"]
+            ao.inputs["Distance"].default_value = self.shade["ao_distance_m"]
         occlusion = node("ShaderNodeMath")
         occlusion.operation = "MULTIPLY"
-        occlusion.inputs[1].default_value = SHADE["occlusion_weight"]
+        occlusion.inputs[1].default_value = self.shade["occlusion_weight"]
         tree.links.new(outside.outputs["AO"], occlusion.inputs[0])
         convexity = node("ShaderNodeMath")
         convexity.operation = "SUBTRACT"
@@ -1124,7 +1144,7 @@ class Auxiliary:
         shade = node("ShaderNodeMath")
         shade.operation = "MULTIPLY_ADD"
         shade.use_clamp = True
-        shade.inputs[1].default_value = SHADE["convexity_weight"]
+        shade.inputs[1].default_value = self.shade["convexity_weight"]
         tree.links.new(convexity.outputs[0], shade.inputs[0])
         tree.links.new(occlusion.outputs[0], shade.inputs[2])
         color = node("ShaderNodeCombineColor")
@@ -1327,7 +1347,7 @@ def render_frames(job, document, statics):
     scene.camera = camera
     configure_render(scene, settings)
     codes, table = material_codes(document)
-    auxiliary = Auxiliary(scene, objects, codes)
+    auxiliary = Auxiliary(scene, objects, codes, settings["shade"])
     width, height, _, _ = frame_size(settings)
     for name in ("color", "matid", "shade"):
         os.makedirs(os.path.join(job["output_dir"], name), exist_ok=False)

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import shading
 import yaml
 from glb_writer import GlbWriter
 from PIL import Image
@@ -18,7 +19,6 @@ from test_command import PLAIN_STYLE, Setup, run
 from test_reuse import edited, write_sheet
 
 from moskophoros import cli, materials, stylize
-from moskophoros.capture import backend
 from moskophoros.gltf import PrimitiveMaterial
 
 # Eight colours, so every ramp index below is valid.
@@ -33,7 +33,7 @@ LIBRARY = {
         "ghost": {"ramp": [7, 0]},
     },
 }
-DEFAULT_RANGE = list(backend.DEFAULT_SHADE_RANGE)
+DEFAULT_RANGE = list(shading.DEFAULT_RANGE)
 
 
 @pytest.fixture
@@ -149,7 +149,7 @@ def test_materials_parsing_reads_no_files(tmp_path):
     assert options.materials is None
     dropped = cli.parse_args(["--no-materials", "model.glb", "out.png"])
     assert dropped.no_materials and dropped.explicit == {"no_materials"}
-    assert dropped.shade_range == backend.DEFAULT_SHADE_RANGE
+    assert dropped.shade_range == shading.DEFAULT_RANGE
 
 
 def test_help_lists_the_options(capsys):
@@ -310,10 +310,10 @@ def test_a_run_records_the_library_inline_and_the_shade_range(setup, capsys):
     named_hero(setup, HERO_MATERIALS)
     run_with_library(setup, capsys, "--no-preview")
     description = json.loads(setup.json.read_text())
-    assert description["schema"] == "moskophoros.sheet/4"
+    assert description["schema"] == "moskophoros.sheet/5"
     style = description["settings"]["style"]
-    assert list(style) == ["reduce", "palette", "materials", "shade_range"]
-    assert style["shade_range"] == DEFAULT_RANGE
+    assert list(style) == ["reduce", "palette", "materials"]
+    assert description["settings"]["shade"]["range"] == DEFAULT_RANGE
     record = style["materials"]
     assert list(record) == ["source", "sha256", "ramps", "default", "materials"]
     assert record["source"] == "materials.yaml"
@@ -546,7 +546,7 @@ def test_the_fingerprint_changes_with_the_library_and_the_shade_range(
     document = json.loads(setup.json.read_text())
     run_with_library(setup, capsys)
     document = json.loads(setup.json.read_text())
-    document["settings"]["style"]["shade_range"] = [90, 180]
+    document["settings"]["shade"]["range"] = [90, 180]
     sheet.write_text(json.dumps(document))
     assert run(capsys, setup.argv("--settings-from", str(sheet)))[0] == 0
     assert fingerprint(setup) not in {without, with_library, changed}
@@ -603,7 +603,7 @@ def test_a_reused_shade_range_decides_the_bands(setup, capsys, tmp_path):
     named_hero(setup, HERO_MATERIALS)
     sheet = recorded(setup, capsys)
     document = json.loads(sheet.read_text())
-    document["settings"]["style"]["shade_range"] = [140, 200]
+    document["settings"]["shade"]["range"] = [140, 200]
     sheet.write_text(json.dumps(document))
     assert (
         run(capsys, setup.argv("--settings-from", str(sheet), "--no-preview"))[0] == 0
@@ -618,7 +618,7 @@ def test_a_reused_shade_range_is_kept_when_an_explicit_library_replaces_the_libr
     named_hero(setup, HERO_MATERIALS)
     sheet = recorded(setup, capsys)
     document = json.loads(sheet.read_text())
-    document["settings"]["style"]["shade_range"] = [140, 200]
+    document["settings"]["shade"]["range"] = [140, 200]
     sheet.write_text(json.dumps(document))
     replacement = library_file(setup.tmp_path, library_with(), name="other.yaml")
     assert (
@@ -634,21 +634,23 @@ def test_a_reused_shade_range_is_kept_when_an_explicit_library_replaces_the_libr
         )[0]
         == 0
     )
-    style = json.loads(setup.json.read_text())["settings"]["style"]
-    assert style["shade_range"] == [140, 200]
-    assert style["materials"]["source"] == "other.yaml"
+    recorded_settings = json.loads(setup.json.read_text())["settings"]
+    assert recorded_settings["shade"]["range"] == [140, 200]
+    assert recorded_settings["style"]["materials"]["source"] == "other.yaml"
     assert sheet_colours(setup.png) == {CLEAR, opaque(1)}
 
 
-@pytest.mark.parametrize("schema", ["moskophoros.sheet/3", "moskophoros.sheet/2"])
-def test_a_sheet_from_before_previews_were_recorded_no_longer_loads(
+@pytest.mark.parametrize(
+    "schema", ["moskophoros.sheet/4", "moskophoros.sheet/3", "moskophoros.sheet/2"]
+)
+def test_a_sheet_from_before_the_shade_was_recorded_no_longer_loads(
     tmp_path, capsys, schema
 ):
     path = write_sheet(tmp_path, schema=schema)
     with pytest.raises(cli.UsageError):
         cli.read_settings(path)
     assert (
-        f"is a {schema} sheet; only moskophoros.sheet/4 sheets load"
+        f"is a {schema} sheet; only moskophoros.sheet/5 sheets load"
         in capsys.readouterr().err
     )
 
@@ -677,7 +679,6 @@ def style_sheet(tmp_path, **changes):
         "reduce": "plain",
         "palette": PALETTE_RECORD,
         "materials": GOOD_RECORD,
-        "shade_range": [84, 191],
     } | changes
     return write_sheet(tmp_path, edited({"style": style}))
 
@@ -686,7 +687,7 @@ def test_a_well_formed_library_record_reads(tmp_path):
     reused = cli.read_settings(style_sheet(tmp_path))
     assert reused.materials.source == "materials.json"
     assert reused.materials.library.ramps["metal"] == (1, 2, 3)
-    assert reused.shade_range == (84, 191)
+    assert reused.shade_range == (120, 188)
 
 
 @pytest.mark.parametrize(
@@ -759,24 +760,6 @@ def test_a_well_formed_library_record_reads(tmp_path):
             "settings.style.materials.materials: must be set, got null",
         ),
         ({"palette": None}, "settings.style.materials: a library needs a palette"),
-        ({"shade_range": None}, "settings.style.shade_range: must be set"),
-        (
-            {"shade_range": "84,191"},
-            "settings.style.shade_range: expected two integers",
-        ),
-        ({"shade_range": [84]}, "settings.style.shade_range: expected two integers"),
-        (
-            {"shade_range": [84, 191, 200]},
-            "settings.style.shade_range: expected two integers",
-        ),
-        ({"shade_range": [84.0, 191]}, "settings.style.shade_range: expected two"),
-        ({"shade_range": [84, 191.5]}, "settings.style.shade_range: expected two"),
-        ({"shade_range": [True, 191]}, "settings.style.shade_range: expected two"),
-        ({"shade_range": ["84", "191"]}, "settings.style.shade_range: expected two"),
-        ({"shade_range": [191, 84]}, "settings.style.shade_range: expected 0 <= lo"),
-        ({"shade_range": [100, 100]}, "settings.style.shade_range: expected 0 <= lo"),
-        ({"shade_range": [-1, 5]}, "settings.style.shade_range: expected 0 <= lo"),
-        ({"shade_range": [0, 256]}, "settings.style.shade_range: expected 0 <= lo"),
     ],
 )
 def test_each_malformed_style_field_is_a_usage_error_naming_it(
@@ -790,20 +773,26 @@ def test_each_malformed_style_field_is_a_usage_error_naming_it(
     assert problem in err
 
 
-def test_a_bad_shade_range_is_an_error_even_when_the_library_is_null(tmp_path, capsys):
-    path = style_sheet(tmp_path, materials=None, shade_range=[200, 100])
+def test_a_bad_shade_range_is_an_error_even_without_a_library(tmp_path, capsys):
+    path = write_sheet(tmp_path, edited({"shade.range": [200, 100]}))
     with pytest.raises(cli.UsageError):
         cli.read_settings(path)
-    assert "settings.style.shade_range: expected 0 <= lo" in capsys.readouterr().err
+    assert "settings.shade.range: expected 0 <= lo" in capsys.readouterr().err
+
+
+def test_a_shade_range_in_the_style_is_an_unknown_field(tmp_path, capsys):
+    path = style_sheet(tmp_path, shade_range=[84, 191])
+    with pytest.raises(cli.UsageError):
+        cli.read_settings(path)
+    assert "settings.style.shade_range: unknown field" in capsys.readouterr().err
 
 
 def test_a_style_member_missing_from_a_sheet_is_an_error(tmp_path, capsys):
-    for member in ("materials", "shade_range"):
+    for member in ("reduce", "palette", "materials"):
         style = {
             "reduce": "plain",
             "palette": None,
             "materials": None,
-            "shade_range": [84, 191],
         }
         del style[member]
         path = write_sheet(tmp_path, edited({"style": style}))
@@ -888,7 +877,7 @@ def test_no_materials_drops_the_reused_library(tmp_path):
     assert options.materials is None
     assert options.palette.source == "palette.hex"
     assert cli.style_record(options)["materials"] is None
-    assert cli.style_record(options)["shade_range"] == [84, 191]
+    assert options.shade_range == (120, 188)
 
 
 def test_a_valid_library_may_be_dropped_with_the_palette_or_beside_a_new_one(

@@ -143,10 +143,6 @@ SHADE = {
     "seed": 0,
     "pixel_filter": "BOX",
     "filter_width_px": 0.01,
-    "ao_distance_m": 0.3,
-    "ao_samples": 64,
-    "occlusion_weight": 0.25,
-    "convexity_weight": 1.0,
 }
 DEFAULT_CONFIG = {
     "shade": SHADE,
@@ -159,7 +155,6 @@ PLAIN_STYLE = {
     "reduce": "plain",
     "palette": None,
     "materials": None,
-    "shade_range": list(backend.DEFAULT_SHADE_RANGE),
 }
 OPTIONS = ["--once", "attack", "--supersample", "1", "--cell", "16x16", "--fps", "4"]
 BACKEND = {
@@ -264,7 +259,7 @@ def test_a_run_writes_the_sheet_its_json_and_a_preview_per_clip(setup, capsys):
         "hero.walk.gif",
     ]
     description = json.loads(setup.json.read_text())
-    assert description["schema"] == "moskophoros.sheet/4"
+    assert description["schema"] == "moskophoros.sheet/5"
     assert description["settings"]["style"] == PLAIN_STYLE
     assert description["image"]["file"] == "hero.png"
     assert [(c["name"], c["loop"]) for c in description["clips"]] == [
@@ -336,6 +331,13 @@ def test_the_fingerprint_reaches_the_frames_before_stylize(setup, capsys, monkey
         "ground_px": {"x": 8, "y": 15},
         "root_motion": "error",
         "previews": True,
+        "shade": {
+            "ao_distance_m": 0.3,
+            "ao_samples": 64,
+            "occlusion_weight": 0.25,
+            "convexity_weight": 1.0,
+            "range": [84, 191],
+        },
         "style": PLAIN_STYLE,
         "clips": [{"name": "walk", "loop": True}, {"name": "attack", "loop": False}],
     }
@@ -402,7 +404,9 @@ def test_the_style_never_reaches_the_capture_jobs(setup, capsys):
 
 
 # Measure and render jobs as master built them before the style was recorded,
-# for fixed source and output paths: SHA-256 of the job file's text.
+# for fixed source and output paths: SHA-256 of the job file's text. A job now
+# also carries the shade's capture values, `settings.shade`; without them it
+# is exactly that job.
 JOB_BASELINES = {
     "measure": "ff7fc011058a0270b604a93cb7fcccaa930addf47248857ed31a0d0b88b8348d",
     "render": "445b27ea3c882aabdb2bf0a1fe366462a0029a6ab3ae7ac99ba37436b0ce7017",
@@ -435,6 +439,12 @@ def test_the_capture_jobs_are_byte_identical_to_the_baseline(options):
         job = backend.build_job(
             mode, source, "hero", resolved, selected, requested, f"/work/{mode}"
         )
+        assert job["settings"].pop("shade") == {
+            "ao_distance_m": 0.3,
+            "ao_samples": 64,
+            "occlusion_weight": 0.25,
+            "convexity_weight": 1.0,
+        }
         text = blender._job_text(job)
         assert hashlib.sha256(text.encode()).hexdigest() == JOB_BASELINES[mode]
 
@@ -976,7 +986,7 @@ def test_a_bad_settings_file_is_a_usage_error(setup, capsys):
     bad.write_text("{}")
     status, _, err = run(capsys, setup.argv("--settings-from", str(bad)))
     assert status == 2
-    assert "is not a moskophoros.sheet/4 document" in err
+    assert "is not a moskophoros.sheet/5 document" in err
     assert setup.listing() == earlier
 
 

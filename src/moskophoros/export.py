@@ -1,4 +1,4 @@
-"""The sheet PNG, its `moskophoros.sheet/4` JSON and the animated previews,
+"""The sheet PNG, its `moskophoros.sheet/5` JSON and the animated previews,
 following design §Export.
 
 `encode` lays the plain frames out on the sheet, describes them and returns
@@ -27,7 +27,7 @@ import moskophoros
 from moskophoros import sampling, views
 from moskophoros.capture.backend import settings_document
 
-SCHEMA = "moskophoros.sheet/4"
+SCHEMA = "moskophoros.sheet/5"
 USAGE_ERROR = 2
 PREVIEW_SCALE = 4
 PREVIEW_BACKGROUND = (128, 128, 128)
@@ -66,7 +66,8 @@ class Preview:
 def generator(backend):
     """The sheet's `generator`: this tool and its libraries, and the Blender
     version, renderer and studio light of the colour, and the shade technique
-    and its fixed parameters, that a render result's `backend` reports."""
+    and its fixed parameters, that a render result's `backend` reports. The
+    shade's capture values are settings, recorded in `settings.shade`."""
     missing = [
         key
         for key in ("blender", "renderer", "studio_light", "shade")
@@ -112,17 +113,24 @@ def fingerprint(generator, settings, source_sha256):
     return "sha256:" + hashlib.sha256(canonical).hexdigest()
 
 
-def sheet_settings(settings, selected_clips, style, *, previews=True):
+def sheet_settings(settings, selected_clips, style, *, shade_range, previews=True):
     """The sheet's `settings` object: the capture job's settings, fitted, then
-    `previews`, whether the animated previews are written, and `style`
-    recorded as given, just before `clips`.
+    `previews`, whether the animated previews are written, `shade`, the
+    capture's shade values with the shade range `[lo, hi]` stylize used, and
+    `style` recorded as given, just before `clips`.
 
     `style` is the record the command resolved, written and fingerprinted as
     it is: export does not know which reductions or palettes exist.
     """
     document = settings_document(settings, selected_clips)
     clips = document.pop("clips")
-    return document | {"previews": previews, "style": style, "clips": clips}
+    shade = document.pop("shade") | {"range": [int(bound) for bound in shade_range]}
+    return document | {
+        "previews": previews,
+        "shade": shade,
+        "style": style,
+        "clips": clips,
+    }
 
 
 def encode(
@@ -135,6 +143,7 @@ def encode(
     style,
     selected_clips,
     image_path,
+    shade_range,
     previews=True,
 ):
     """Lay out and describe the sheet, returning its PNG and JSON bytes.
@@ -145,7 +154,8 @@ def encode(
     capture `Source`, `style` is the style record `sheet_settings` takes,
     `selected_clips` are `gltf.SelectedClip`s in selection order,
     `image_path` is where the PNG will be written; only its base name is
-    recorded, as is the source's; and `previews` records whether the
+    recorded, as is the source's; `shade_range` is the shade range stylize
+    used, recorded in `settings.shade`; and `previews` records whether the
     animated previews are written.
 
     Raises `ValueError` for frames that are missing, extra, duplicated or
@@ -186,7 +196,9 @@ def encode(
             }
         )
 
-    settings_doc = sheet_settings(settings, selected_clips, style, previews=previews)
+    settings_doc = sheet_settings(
+        settings, selected_clips, style, shade_range=shade_range, previews=previews
+    )
     description = {
         "schema": SCHEMA,
         "generator": generator,

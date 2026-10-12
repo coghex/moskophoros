@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 from PIL import Image
+from shading import DEFAULT_SHADE
 
 from moskophoros import sampling, views
 from moskophoros.capture import blender
@@ -243,6 +244,7 @@ def make_job(tmp_path, mode="measure"):
         (0.0, 0.0, 0.0),
         (2, 2),
         "error",
+        DEFAULT_SHADE,
     )
     frames = sampling.frames("hero", clips, views.View(90.0, 1, 0.0), 12.0)
     workspace = tmp_path / "work"
@@ -324,10 +326,6 @@ SHADE = {
     "seed": 0,
     "pixel_filter": "BOX",
     "filter_width_px": 0.01,
-    "ao_distance_m": 0.3,
-    "ao_samples": 64,
-    "occlusion_weight": 0.25,
-    "convexity_weight": 1.0,
 }
 RENDER_BUFFERS = {name: f"{name}/000000.png" for name in ("color", "matid", "shade")}
 

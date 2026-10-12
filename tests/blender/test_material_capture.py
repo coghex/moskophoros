@@ -6,15 +6,21 @@ Positions are worked out from the fixtures' known geometry: in front view
 a point (x, y) lands at pixel (gx + x·ppm, gy − y·ppm), times the supersample.
 """
 
+import json
+import subprocess
+from pathlib import Path
+
 import numpy as np
 import pytest
 from glb_writer import GlbWriter
 from material_models import EDGES, appearance, edges, form, quad_xy, vertex_colours
 from PIL import Image
+from shading import DEFAULT_RANGE, DEFAULT_SHADE
 from test_render import render
 
 from moskophoros import gltf
 from moskophoros.capture import backend, blender
+from moskophoros.capture.backend import Shade
 from moskophoros.sampling import BACKGROUND
 
 pytestmark = pytest.mark.blender
@@ -199,11 +205,8 @@ def band(value, lo, hi, n):
     return (value - lo) * n // (hi - lo + 1)
 
 
-@pytest.mark.parametrize("supersample", [1, 4])
-def test_flat_crease_and_convex_take_different_bands(found, tmp_path, supersample):
-    # The spike's recorded settings and regions (material styling design
-    # §Spike record (D-10)): floor 1, wall 2 and sphere 3 are material codes.
-    path = form(tmp_path)
+def form_shades(found, path, tmp_path, supersample, shade=DEFAULT_SHADE, name="work"):
+    """The mean shade byte of `form`'s crease, flat and convex regions."""
     result, _ = render(
         found,
         path,
@@ -213,7 +216,15 @@ def test_flat_crease_and_convex_take_different_bands(found, tmp_path, supersampl
         cell=(128, 112),
         ground_px=(64, 80),
         supersample=supersample,
+        workspace=name,
+        shade=shade,
     )
+    return region_means(result, supersample)
+
+
+def region_means(result, supersample):
+    # The spike's recorded settings and regions (material styling design
+    # §Spike record (D-10)): floor 1, wall 2 and sphere 3 are material codes.
     image = codes(result)
     shade = pixels(list(result.buffers.values())[0]["shade"])[..., 0]
     s = supersample
@@ -230,16 +241,136 @@ def test_flat_crease_and_convex_take_different_bands(found, tmp_path, supersampl
         "flat": (floor | wall) & (to_crease >= 12 * s) & clear,
         "convex": ball,
     }
-    means = {name: float(shade[mask].mean()) for name, mask in regions.items()}
+    return {name: float(shade[mask].mean()) for name, mask in regions.items()}
+
+
+@pytest.mark.parametrize("supersample", [1, 4])
+def test_flat_crease_and_convex_take_different_bands(found, tmp_path, supersample):
+    # At the defaults only (settings design D-12).
+    means = form_shades(found, form(tmp_path), tmp_path, supersample)
     assert means["flat"] == 137.0
     assert means["crease"] < means["flat"] < means["convex"]
-    lo, hi = backend.DEFAULT_SHADE_RANGE
+    lo, hi = DEFAULT_RANGE
     assert (lo, hi) == (84, 191)
     for n in (3, 4, 5):
         bands = [
             band(round(means[name]), lo, hi, n) for name in ("crease", "flat", "convex")
         ]
         assert bands[0] < bands[1] < bands[2], (n, means, bands)
+
+
+# The capture values (settings design D-3, D-9, D-42): the shade is
+# clamp(occlusion_weight · AO_out + convexity_weight · (1 − AO_in), 0, 1),
+# written as the sRGB byte of that linear value.
+
+
+def srgb_byte(linear):
+    encoded = (
+        12.92 * linear if linear <= 0.0031308 else 1.055 * linear ** (1 / 2.4) - 0.055
+    )
+    return 255 * encoded
+
+
+def test_the_weights_change_the_shade_as_the_formula_says(found, tmp_path):
+    path = form(tmp_path)
+    default = form_shades(found, path, tmp_path, 1, name="default")
+    # The flat surface is open (AO_out 1) and not convex (AO_in 1): its shade
+    # is the occlusion weight. Without the convexity term, the isolated
+    # convex sphere is no brighter than the flat surface.
+    weighted = form_shades(
+        found, path, tmp_path, 1, Shade(0.3, 64, 0.5, 0.0), name="weighted"
+    )
+    assert default["flat"] == 137.0 == round(srgb_byte(0.25))
+    assert abs(weighted["flat"] - srgb_byte(0.5)) <= 0.5
+    assert default["convex"] > default["flat"] + 5
+    assert abs(weighted["convex"] - weighted["flat"]) <= 0.5
+    # Occlusion still darkens the crease.
+    assert weighted["crease"] < weighted["flat"]
+
+
+def test_a_longer_ao_distance_reaches_farther_geometry(found, tmp_path):
+    # The "flat" region lies 0.3 m or more from the crease: open at the
+    # default 0.3 m, occluded by the wall within 1.2 m.
+    path = form(tmp_path)
+    near = form_shades(found, path, tmp_path, 1, name="near")
+    far = form_shades(found, path, tmp_path, 1, Shade(1.2, 64, 0.25, 1.0), name="far")
+    assert near["flat"] == 137.0
+    assert far["flat"] < near["flat"] - 2
+    assert far["crease"] <= near["crease"]
+
+
+PROBE = """
+import importlib.util, json, sys
+import bpy
+
+path, shade = sys.argv[sys.argv.index("--") + 1 :]
+spec = importlib.util.spec_from_file_location("probe_script", path)
+script = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(script)
+material = bpy.data.materials.new("probe")
+auxiliary = script.Auxiliary(bpy.context.scene, [], {}, json.loads(shade))
+auxiliary._inject(material, 1)
+nodes = material.node_tree.nodes
+print("PROBE " + json.dumps({
+    "ao": sorted(
+        (node.inside, node.samples, node.inputs["Distance"].default_value)
+        for node in nodes
+        if node.bl_idname == "ShaderNodeAmbientOcclusion"
+    ),
+    # Each math node's constant input: the weight, or the 1 in 1 - AO_in.
+    "math": sorted(
+        (
+            node.operation,
+            round(node.inputs[0 if node.operation == "SUBTRACT" else 1].default_value, 6),
+        )
+        for node in nodes
+        if node.bl_idname == "ShaderNodeMath"
+    ),
+}))
+"""
+
+
+@pytest.mark.parametrize("samples", [1, 64, 128])
+def test_the_job_s_samples_distance_and_weights_reach_both_ao_nodes(
+    found, tmp_path, samples
+):
+    """Settings design D-42: up to 128 samples reach both AO nodes as given;
+    Blender would silently clamp more, which the command refuses first."""
+    probe = tmp_path / "probe.py"
+    probe.write_text(PROBE)
+    shade = {
+        "ao_distance_m": 0.75,
+        "ao_samples": samples,
+        "occlusion_weight": 0.4,
+        "convexity_weight": 0.6,
+    }
+    completed = subprocess.run(
+        [
+            str(found.path),
+            "-b",
+            "--factory-startup",
+            "-noaudio",
+            "--python",
+            str(probe),
+            "--",
+            str(Path(blender.__file__).with_name("blender_script.py")),
+            json.dumps(shade),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    lines = [
+        line for line in completed.stdout.splitlines() if line.startswith("PROBE ")
+    ]
+    assert completed.returncode == 0 and lines, completed.stdout + completed.stderr
+    probed = json.loads(lines[0].removeprefix("PROBE "))
+    assert probed["ao"] == [[False, samples, 0.75], [True, samples, 0.75]]
+    assert probed["math"] == [
+        ["MULTIPLY", 0.4],
+        ["MULTIPLY_ADD", 0.6],
+        ["SUBTRACT", 1.0],
+    ]
 
 
 # Colour: unchanged by the auxiliary render before it.

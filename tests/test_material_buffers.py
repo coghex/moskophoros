@@ -180,9 +180,9 @@ def test_render_results_need_the_buffers_table_and_shade_provenance(
         ("seed", -1),
         ("seed", 1.5),
         ("filter_width_px", 0),
-        ("ao_distance_m", float("inf")),
-        ("ao_samples", True),
-        ("occlusion_weight", "0.25"),
+        ("filter_width_px", float("inf")),
+        ("samples_per_pixel", True),
+        ("pixel_filter", ""),
     ],
 )
 def test_malformed_shade_provenance_is_a_backend_error(tmp_path, key, value):

@@ -11,10 +11,11 @@ import numpy as np
 import PIL
 import pytest
 from PIL import Image
+from shading import DEFAULT_SHADE
 
 import moskophoros
 from moskophoros import export, stylize
-from moskophoros.capture.backend import Settings, Source, settings_document
+from moskophoros.capture.backend import Settings, Shade, Source, settings_document
 from moskophoros.gltf import Clip, SelectedClip
 from moskophoros.sampling import FrameAddress, ImageFrame
 
@@ -44,6 +45,7 @@ SIDE = Settings(
     ground=(0.0, 0.0, 0.0),
     ground_px=(1, 2),
     root_motion="error",
+    shade=DEFAULT_SHADE,
 )
 RUN = SelectedClip(Clip(0, "läuft", 0.0, 1.0, ()), one_shot=False)
 STRIKE = SelectedClip(Clip(1, "攻撃", 0.5, 1.5, ()), one_shot=True)
@@ -53,7 +55,14 @@ PLAIN = {
     "reduce": "plain",
     "palette": None,
     "materials": None,
-    "shade_range": [84, 191],
+}
+RANGE = (84, 191)
+SHADE_RECORD = {
+    "ao_distance_m": 0.3,
+    "ao_samples": 64,
+    "occlusion_weight": 0.25,
+    "convexity_weight": 1.0,
+    "range": [84, 191],
 }
 
 # Sample times worked out by hand from design §Clips and sampling:
@@ -76,8 +85,9 @@ CANONICAL = (
     '"fps":3.0,"ground_m":{"x":0.0,"y":0.0,"z":0.0},"ground_px":{"x":1,"y":2},'
     '"model_yaw_deg":0.0,"pixels_per_meter":24.5,"previews":true,'
     '"root_motion":"error",'
-    '"style":{"materials":null,"palette":null,"reduce":"plain",'
-    '"shade_range":[84,191]},"supersample":4,"view":{"directions":2,"pitch_deg":0.0,"preset":"side",'
+    '"shade":{"ao_distance_m":0.3,"ao_samples":64,"convexity_weight":1.0,'
+    '"occlusion_weight":0.25,"range":[84,191]},'
+    '"style":{"materials":null,"palette":null,"reduce":"plain"},"supersample":4,"view":{"directions":2,"pitch_deg":0.0,"preset":"side",'
     '"projection":"orthographic","start_angle_deg":90.0}},'
     '"source":{"sha256":"' + SHA + '"}}'
 )
@@ -105,6 +115,7 @@ def _encode_side(frames=None, **changes):
         "subject": "héros",
         "settings": SIDE,
         "style": PLAIN,
+        "shade_range": RANGE,
         "selected_clips": (RUN, STRIKE, POSE),
         "image_path": Path("/tmp/out/héros.png"),
     } | changes
@@ -149,7 +160,7 @@ EXPECTED_FRAMES = ",\n".join(
 
 EXPECTED_JSON = (
     """{
-  "schema": "moskophoros.sheet/4",
+  "schema": "moskophoros.sheet/5",
   "generator": {
     "tool": "moskophoros",
     "version": "0.1.0",
@@ -193,14 +204,20 @@ EXPECTED_JSON = (
     },
     "root_motion": "error",
     "previews": true,
-    "style": {
-      "reduce": "plain",
-      "palette": null,
-      "materials": null,
-      "shade_range": [
+    "shade": {
+      "ao_distance_m": 0.3,
+      "ao_samples": 64,
+      "occlusion_weight": 0.25,
+      "convexity_weight": 1.0,
+      "range": [
         84,
         191
       ]
+    },
+    "style": {
+      "reduce": "plain",
+      "palette": null,
+      "materials": null
     },
     "clips": [
       {
@@ -291,6 +308,7 @@ def test_the_fingerprint_hashes_the_canonical_mirrored_object():
         "ground_px": {"x": 1, "y": 2},
         "root_motion": "error",
         "previews": True,
+        "shade": SHADE_RECORD,
         "style": PLAIN,
         "clips": [
             {"name": "läuft", "loop": True},
@@ -339,9 +357,11 @@ def test_the_fingerprint_changes_with_any_hashed_input(changes):
 
 
 def test_the_fingerprint_covers_the_style_record():
-    settings = export.sheet_settings(SIDE, (RUN, STRIKE, POSE), PLAIN)
+    settings = export.sheet_settings(
+        SIDE, (RUN, STRIKE, POSE), PLAIN, shade_range=RANGE
+    )
     restyled = export.sheet_settings(
-        SIDE, (RUN, STRIKE, POSE), {"reduce": "plain", "palette": []}
+        SIDE, (RUN, STRIKE, POSE), {"reduce": "plain", "palette": []}, shade_range=RANGE
     )
     assert export.fingerprint(GENERATOR, settings, SHA) == FINGERPRINT
     assert export.fingerprint(GENERATOR, restyled, SHA) != FINGERPRINT
@@ -350,13 +370,42 @@ def test_the_fingerprint_covers_the_style_record():
 
 
 @pytest.mark.parametrize("previews", [True, False])
-def test_previews_then_the_style_record_sit_just_before_clips(previews):
-    settings = export.sheet_settings(SIDE, (RUN,), PLAIN, previews=previews)
-    assert list(settings)[-4:] == ["root_motion", "previews", "style", "clips"]
+def test_previews_shade_and_the_style_record_sit_just_before_clips(previews):
+    settings = export.sheet_settings(
+        SIDE, (RUN,), PLAIN, shade_range=RANGE, previews=previews
+    )
+    assert list(settings)[-5:] == ["root_motion", "previews", "shade", "style", "clips"]
     assert settings["style"] == PLAIN
     assert settings["previews"] is previews
+    assert settings["shade"] == SHADE_RECORD
+    assert list(settings["shade"]) == [
+        "ao_distance_m",
+        "ao_samples",
+        "occlusion_weight",
+        "convexity_weight",
+        "range",
+    ]
     rest = {k: v for k, v in settings.items() if k not in ("style", "previews")}
-    assert rest == settings_document(SIDE, (RUN,))
+    job = settings_document(SIDE, (RUN,))
+    assert rest == job | {"shade": job["shade"] | {"range": [84, 191]}}
+
+
+def test_the_sheet_records_the_shade_values_used_and_fingerprints_them():
+    shade = Shade(1.2, 128, 0.5, 0.0)
+    sheet = json.loads(
+        _encode_side(settings=replace(SIDE, shade=shade), shade_range=(120, 255)).json
+    )
+    assert sheet["settings"]["shade"] == {
+        "ao_distance_m": 1.2,
+        "ao_samples": 128,
+        "occlusion_weight": 0.5,
+        "convexity_weight": 0.0,
+        "range": [120, 255],
+    }
+    assert "shade_range" not in sheet["settings"]["style"]
+    assert sheet["fingerprint"] != json.loads(_encode_side().json)["fingerprint"]
+    ranged = json.loads(_encode_side(shade_range=(84, 190)).json)
+    assert ranged["fingerprint"] != json.loads(_encode_side().json)["fingerprint"]
 
 
 def test_the_previews_flag_is_recorded_and_fingerprinted():
@@ -380,7 +429,9 @@ def test_export_records_any_style_record_as_given():
     description = json.loads(sheet.json)
     assert description["settings"]["style"] == style
     assert description["fingerprint"] == export.fingerprint(
-        GENERATOR, export.sheet_settings(SIDE, (RUN, STRIKE, POSE), style), SHA
+        GENERATOR,
+        export.sheet_settings(SIDE, (RUN, STRIKE, POSE), style, shade_range=RANGE),
+        SHA,
     )
     assert description["fingerprint"] != FINGERPRINT
     assert sheet.png == _encode_side().png
@@ -418,6 +469,7 @@ GRID = Settings(
     ground=(0.0, 0.0, 0.0),
     ground_px=(1, 1),
     root_motion="keep",
+    shade=DEFAULT_SHADE,
 )
 # At 2 fps, a one-second loop has 2 frames (at 0 and 0.5) and a one-second
 # one-shot 3 (at 0, 0.5 and 1).
@@ -446,6 +498,7 @@ def _encode_grid(frames):
         subject="grid",
         settings=GRID,
         style=PLAIN,
+        shade_range=RANGE,
         selected_clips=(SHORT, LONG),
         image_path="grid.png",
     )
@@ -506,6 +559,7 @@ def test_the_static_clip_is_one_frame_at_zero():
         subject="box",
         settings=settings,
         style=PLAIN,
+        shade_range=RANGE,
         selected_clips=(static,),
         image_path="box.png",
     )
@@ -595,7 +649,7 @@ def test_unfitted_settings_are_rejected():
 # Generator and writing
 
 
-SHADE = {"technique": "cycles-ambient-occlusion", "ao_distance_m": 0.3}
+SHADE = {"technique": "cycles-ambient-occlusion", "seed": 0}
 
 
 def test_the_generator_records_this_tool_and_the_render_provenance():
@@ -628,11 +682,10 @@ def test_the_generator_needs_render_provenance():
     "change",
     [
         {"technique": "another"},
-        {"ao_distance_m": 0.25},
-        {"ao_samples": 128},
+        {"samples_per_pixel": 2},
         {"seed": 1},
-        {"occlusion_weight": 0.3},
-        {"convexity_weight": 0.5},
+        {"pixel_filter": "GAUSSIAN"},
+        {"filter_width_px": 1.5},
     ],
 )
 def test_a_different_shade_technique_or_parameter_changes_the_fingerprint(change):
@@ -642,10 +695,6 @@ def test_a_different_shade_technique_or_parameter_changes_the_fingerprint(change
         "seed": 0,
         "pixel_filter": "BOX",
         "filter_width_px": 0.01,
-        "ao_distance_m": 0.3,
-        "ao_samples": 64,
-        "occlusion_weight": 0.25,
-        "convexity_weight": 1.0,
     }
     backend = {"blender": "5.2.2", "renderer": "workbench", "studio_light": "Default"}
     settings = {"supersample": 2}
