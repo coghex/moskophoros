@@ -6,10 +6,13 @@ design §CLI, §Option validation and §Presets. On success it has no effects:
 it reads no files, starts no process and prints nothing. Checks that need the
 input file, the filesystem or Blender belong to the stages that use them.
 
-`resolve_settings` applies `--settings-from`, following design §Scale and
-ground point, Reuse: `read_settings` reads and checks the earlier sheet's
-`settings`, and `apply_settings` merges them with the parsed options. It also
-reads a selected palette snapshot; these reads precede any Blender invocation.
+`resolve_settings` lays the settings layers under the parsed options,
+following design §CLI, Settings files, and §Scale and ground point, Reuse:
+the shipped defaults, the user file, a loaded sheet (`--settings-from`) and
+`--config` files. `read_settings` reads and checks the loaded sheet's
+`settings`, and `apply_settings` merges them with the options. It also reads
+the selected palette and material library snapshots; these reads precede any
+Blender invocation.
 
 `capture_settings` gives the settings capture and export share, and
 `style_record` the style the sheet records beside them, following design
@@ -54,6 +57,7 @@ from moskophoros import (
     stylize,
     views,
 )
+from moskophoros import settings as layered
 from moskophoros.capture import backend, blender
 
 PROG = "moskophoros"
@@ -91,15 +95,20 @@ CUSTOM_VIEW = "custom"
 ROOT_MOTION_MODES = ("error", "keep")
 # The values --reduce accepts; the first is the default.
 REDUCTIONS = ("plain", "mode")
-SHEET_SCHEMA = "moskophoros.sheet/3"
-# Older sheets, still reused. A `/2` sheet reads as having no material library
-# and the current default shade range; a `/1` sheet also as the plain
-# reduction with no palette.
-PREVIOUS_SHEET_SCHEMA = "moskophoros.sheet/2"
-LEGACY_SHEET_SCHEMA = "moskophoros.sheet/1"
+# The only sheet schema `--settings-from` loads (settings design D-24).
+SHEET_SCHEMA = "moskophoros.sheet/4"
 _MAX_DIGITS = 4300
 _VIEW_FIELDS = ("view", "pitch", "directions", "start_angle")
-_REPEATABLE = frozenset({"--clip", "--once"})
+_REPEATABLE = frozenset({"--clip", "--once", "--config"})
+# The file settings that are paths, with the `Options` fields a path and a
+# null set; the others set the field of their own name. Each one's names in
+# `explicit` are its own and, for a path, the null's flag.
+_PATH_FIELDS = MappingProxyType(
+    {
+        "palette": ("palette_file", "no_palette"),
+        "materials": ("materials_file", "no_materials"),
+    }
+)
 _HELP = frozenset({"-h", "--help"})
 
 
@@ -126,10 +135,13 @@ class Options:
     """Validated options.
 
     `explicit` holds the field names of the options given on the command
-    line, as distinct from defaults and preset-derived values. `view` is the
-    resolved preset name, or `custom` when an explicit pitch, direction count
-    or start angle overrides the preset. `clip` is None when every clip is
-    selected; `ppm`, `cell` and `ground_px` are None when automatic.
+    line, as distinct from defaults and preset-derived values; once
+    `resolve_settings` has run, it also holds the fields a `--config` file
+    set, which act as explicit options. `view` is the resolved preset name,
+    or `custom` when an explicit pitch, direction count or start angle
+    overrides the preset. `clip` is None when every clip is selected; `ppm`,
+    `cell` and `ground_px` are None when automatic. `origins` names the
+    settings file that set a palette or library, for its errors.
     """
 
     infile: Path
@@ -150,7 +162,7 @@ class Options:
     supersample: int
     reduce: str
     settings_from: Path | None
-    no_preview: bool
+    previews: bool
     work_dir: Path | None
     blender: Path | None
     any_blender: bool
@@ -162,6 +174,9 @@ class Options:
     no_materials: bool = False
     materials: MaterialsRecord | None = None
     shade_range: tuple[int, int] = backend.DEFAULT_SHADE_RANGE
+    configs: tuple[Path, ...] = ()
+    no_user_config: bool = False
+    origins: MappingProxyType = MappingProxyType({})
 
 
 class UsageError(SystemExit):
@@ -186,6 +201,8 @@ def parse_args(argv: Sequence[str]) -> Options:
         parser.error("--palette and --no-palette cannot be given together")
     if args.materials is not None and args.no_materials:
         parser.error("--materials and --no-materials cannot be given together")
+    if args.preview and args.no_preview:
+        parser.error("--preview and --no-preview cannot be given together")
 
     once = tuple(args.once or ())
     clip = None if args.clip is None else tuple(args.clip)
@@ -194,7 +211,10 @@ def parse_args(argv: Sequence[str]) -> Options:
             if name not in clip:
                 parser.error(f"argument --once: {name!r} is not among the --clip names")
 
-    explicit = frozenset(args.explicit_)
+    explicit = set(args.explicit_)
+    if explicit & {"preview", "no_preview"}:
+        explicit = (explicit - {"preview", "no_preview"}) | {"previews"}
+    explicit = frozenset(explicit)
     preset = PRESETS[args.view]
     overrides = {"pitch", "directions", "start_angle"} & explicit
     return Options(
@@ -218,7 +238,11 @@ def parse_args(argv: Sequence[str]) -> Options:
         supersample=args.supersample,
         reduce=args.reduce,
         settings_from=args.settings_from,
-        no_preview=args.no_preview,
+        previews=(
+            not args.no_preview
+            if "previews" in explicit
+            else layered.DEFAULTS["previews"]
+        ),
         work_dir=args.work_dir,
         blender=args.blender,
         any_blender=args.any_blender,
@@ -227,6 +251,8 @@ def parse_args(argv: Sequence[str]) -> Options:
         no_palette=args.no_palette,
         materials_file=args.materials,
         no_materials=args.no_materials,
+        configs=tuple(args.configs or ()),
+        no_user_config=args.no_user_config,
     )
 
 
@@ -236,7 +262,8 @@ class ReusedSettings:
 
     `view` is a preset name or `custom`, with the view's recorded pitch,
     direction count and start angle. Scale, cell and ground pixel are always
-    set: reuse makes them fixed.
+    set: reuse makes them fixed. `clip` is the recorded clip selection, in
+    sheet order, and `once` the one-shot clips among it.
     """
 
     view: str
@@ -251,42 +278,143 @@ class ReusedSettings:
     ground: tuple[float, float, float]
     ground_px: tuple[int, int]
     root_motion: str
+    previews: bool
+    clip: tuple[str, ...]
+    once: tuple[str, ...]
     reduce: str
     palette: PaletteRecord | None = None
     materials: MaterialsRecord | None = None
     shade_range: tuple[int, int] = backend.DEFAULT_SHADE_RANGE
 
 
-def resolve_settings(options: Options) -> Options:
-    """Validate reuse before overrides, then resolve the palette and material
-    library bytes, and check the combination, before Blender."""
+def resolve_settings(options: Options, environ=None) -> Options:
+    """Lay the settings layers under `options`, then resolve the palette and
+    material library bytes and check the combination, all before Blender.
+
+    The layers, lowest first, are the shipped defaults, the user file (unless
+    `--no-user-config`), a loaded sheet (`--settings-from`), the `--config`
+    files in order, then the command line (design §CLI, Settings files).
+    Every file is read and checked before any value is used. A `--config`
+    value acts as its explicit option would, including against a loaded
+    sheet. The user file and the defaults are only defaults: a loaded sheet
+    records every setting they hold, so they apply only without one.
+    `environ` locates the user file; it is `os.environ` by default. Only the
+    palette and library that survive the merge are read.
+    """
+    environ = os.environ if environ is None else environ
+    defaults, user, configs = _read_layers(options, environ)
+    options = _apply_layer(
+        options, layered.merge(*(values for _, values in configs)), configs
+    )
     reused_colors = None
     if options.settings_from is not None:
         reused = read_settings(options.settings_from)
         options = apply_settings(options, reused)
         if reused.palette is not None:
             reused_colors = reused.palette.colors
+    else:
+        options = _apply_defaults(options, defaults, user)
     options = _resolve_palette(options)
     return _resolve_materials(options, reused_colors)
+
+
+def _read_layers(options, environ):
+    """The shipped defaults, the user file's layer and its label (or None),
+    and each `--config` file's label and layer, in command-line order."""
+    parser = _build_parser()[0]
+    try:
+        defaults = layered.read_defaults()
+        user = None
+        if not options.no_user_config:
+            path = layered.user_file(environ)
+            label = f"the user settings {str(path)!r}"
+            values = layered.read_file(path, source=label, required=False)
+            user = None if values is None else (label, values)
+        configs = []
+        for path in options.configs:
+            label = f"--config {str(path)!r}"
+            configs.append(
+                (label, layered.read_file(path, source=label, required=True))
+            )
+    except layered.SettingsError as error:
+        parser.error(str(error))
+    return defaults, user, configs
+
+
+def _apply_layer(options, values, sources, mark=True):
+    """Set the `Options` fields of each setting in `values` that the command
+    line did not, as its option would. With `mark`, the settings join
+    `explicit`; a null palette or library then drops a reused one, as
+    `--no-palette` and `--no-materials` do. `sources` are the layers'
+    `(label, values)`, lowest first, to name the file that set a path."""
+    explicit = set(options.explicit)
+    changes = {}
+    origins = dict(options.origins)
+    for name, value in values.items():
+        if name not in _PATH_FIELDS:
+            if name not in explicit:
+                changes[name] = value
+                if mark:
+                    explicit.add(name)
+            continue
+        path_field, none_field = _PATH_FIELDS[name]
+        if explicit & {name, none_field}:
+            continue
+        if value is not None or mark:
+            origins[name] = next(
+                label for label, layer in reversed(sources) if name in layer
+            )
+        changes[path_field] = value
+        changes[none_field] = mark and value is None
+        if mark:
+            explicit.add(name if value is not None else none_field)
+    if not changes:
+        return options
+    return replace(
+        options,
+        explicit=frozenset(explicit),
+        origins=MappingProxyType(origins),
+        **changes,
+    )
+
+
+def _apply_defaults(options, defaults, user):
+    """Without a loaded sheet, the user file's settings, then the shipped
+    defaults, for what neither the command line nor a `--config` file set."""
+    sources = [("the shipped defaults", defaults)]
+    if user is not None:
+        sources.append(user)
+    merged = layered.merge(*(values for _, values in sources))
+    return _apply_layer(options, merged, sources, mark=False)
+
+
+def _origin(options, name, option):
+    """How errors name the source of a palette or library setting: `option`
+    when the command line gave it, else the settings file and key."""
+    origin = options.origins.get(name)
+    if origin is None:
+        return option
+    return f"{origin}: {name}"
 
 
 def _resolve_palette(options: Options) -> Options:
     if options.palette_file is not None:
         path = options.palette_file
+        name = _origin(options, "palette", "--palette")
         try:
             source = _palette_source(path.name)
         except argparse.ArgumentTypeError as error:
-            _build_parser()[0].error(f"--palette {str(path)!r}: {error}")
+            _build_parser()[0].error(f"{name} {str(path)!r}: {error}")
         try:
             data = path.read_bytes()
         except OSError as error:
             _build_parser()[0].error(
-                f"--palette {str(path)!r}: cannot be read: {error.strerror or error}"
+                f"{name} {str(path)!r}: cannot be read: {error.strerror or error}"
             )
         try:
             colors = palette.read_palette_bytes(data, source=path)
         except palette.PaletteError as error:
-            _build_parser()[0].error(f"--palette {error}")
+            _build_parser()[0].error(f"{name} {error}")
         options = replace(
             options,
             palette=PaletteRecord(source, hashlib.sha256(data).hexdigest(), colors),
@@ -310,29 +438,30 @@ def _resolve_materials(options: Options, reused_colors) -> Options:
     colors = None if options.palette is None else options.palette.colors
     if options.materials_file is not None:
         path = options.materials_file
+        name = _origin(options, "materials", "--materials")
         try:
             materials.check_path(path)
         except materials.LibraryError as error:
-            parser.error(f"--materials {error}")
+            parser.error(f"{name} {error}")
         if colors is None:
             parser.error(
-                f"--materials {str(path)!r}: a library needs a palette; give "
+                f"{name} {str(path)!r}: a library needs a palette; give "
                 "--palette FILE or reuse a sheet with one"
             )
         try:
             source = _palette_source(path.name)
         except argparse.ArgumentTypeError as error:
-            parser.error(f"--materials {str(path)!r}: {error}")
+            parser.error(f"{name} {str(path)!r}: {error}")
         try:
             data = path.read_bytes()
         except OSError as error:
             parser.error(
-                f"--materials {str(path)!r}: cannot be read: {error.strerror or error}"
+                f"{name} {str(path)!r}: cannot be read: {error.strerror or error}"
             )
         try:
             library = materials.read_library_bytes(data, colors, source=path)
         except materials.LibraryError as error:
-            parser.error(f"--materials {error}")
+            parser.error(f"{name} {error}")
         return replace(
             options,
             materials=MaterialsRecord(
@@ -345,12 +474,13 @@ def _resolve_materials(options: Options, reused_colors) -> Options:
         return options
     if colors is None:
         parser.error(
-            "--no-palette: the reused material library needs a palette; also "
-            "give --no-materials to drop it"
+            f"{_origin(options, 'palette', '--no-palette')}: the reused material "
+            "library needs a palette; also give --no-materials to drop it"
         )
     if colors != reused_colors:
         parser.error(
-            f"--palette {str(options.palette_file)!r}: its colours differ from "
+            f"{_origin(options, 'palette', '--palette')} "
+            f"{str(options.palette_file)!r}: its colours differ from "
             "the reused palette the reused material library was written for; "
             "also give --materials FILE, or --no-materials to drop the library"
         )
@@ -363,15 +493,14 @@ def read_settings(path) -> ReusedSettings:
 
     Raises `UsageError`, reported as `parse_args` reports one, naming the
     file and the problem: the file cannot be read, is not UTF-8 JSON, repeats
-    a key, is not a `moskophoros.sheet/3`, `/2` or `/1` document with a
-    `settings` object, or its `settings` has a missing, unknown or
-    unacceptable field. Every field is checked as its option checks it,
-    including fields an explicit option will replace. A `/3` or `/2` sheet's
-    `settings.style` is checked the same way, and a recorded material library
-    against the recorded palette; a `/2` sheet reads as having no library and
-    the default shade range, and a `/1` sheet has no style and also reads as
-    the plain reduction. Nothing beyond `schema` and `settings` is read, and
-    `settings.clips` is ignored.
+    a key, is not a `moskophoros.sheet/4` document with a `settings` object
+    (another sheet schema is named), or its `settings` has a missing, unknown
+    or unacceptable field. Every field is checked as its option checks it,
+    including fields an explicit option will replace: the style, with a
+    recorded material library checked against the recorded palette, the
+    previews flag, and the clip selection, a nonempty list of distinct clips
+    each with exactly a name and a loop flag. Nothing beyond `schema` and
+    `settings` is read.
     """
     path = Path(path)
     try:
@@ -392,25 +521,31 @@ def read_settings(path) -> ReusedSettings:
         _settings_error(path, f"is not valid JSON: {error}")
     except RecursionError:
         _settings_error(path, "is not valid JSON: it is nested too deeply")
-    not_a_sheet = f"is not a {' or '.join(_SHAPES)} document"
+    not_a_sheet = f"is not a {SHEET_SCHEMA} document"
     if not isinstance(document, dict):
         _settings_error(path, f"{not_a_sheet}: not a JSON object")
     if "schema" not in document:
         _settings_error(path, f"{not_a_sheet}: schema is missing")
     schema = document["schema"]
-    if not isinstance(schema, str) or schema not in _SHAPES:
+    if isinstance(schema, str) and schema.startswith(_SHEET_PREFIX):
+        if schema != SHEET_SCHEMA:
+            _settings_error(
+                path,
+                f"is a {schema} sheet; only {SHEET_SCHEMA} sheets load, so "
+                "generate it again",
+            )
+    else:
         _settings_error(path, f"{not_a_sheet}: schema is {_shown(schema)}")
     if "settings" not in document:
         _settings_error(path, "settings: missing")
     problems = []
-    shape = _SHAPES[schema]
-    checked = _check_shape(shape, document["settings"], "settings", problems)
-    if not problems and "style" in shape:
+    checked = _check_shape(_SETTINGS, document["settings"], "settings", problems)
+    if not problems:
         checked["style"] = _style(checked["style"], problems)
     if problems:
         _settings_error(path, "; ".join(problems))
-    view, cell, ground, ground_px = (
-        checked[name] for name in ("view", "cell", "ground_m", "ground_px")
+    view, cell, ground, ground_px, style = (
+        checked[name] for name in ("view", "cell", "ground_m", "ground_px", "style")
     )
     return ReusedSettings(
         view=view["preset"],
@@ -425,14 +560,13 @@ def read_settings(path) -> ReusedSettings:
         ground=(ground["x"], ground["y"], ground["z"]),
         ground_px=(ground_px["x"], ground_px["y"]),
         root_motion=checked["root_motion"],
-        reduce=checked["style"]["reduce"] if "style" in shape else REDUCTIONS[0],
-        palette=checked["style"]["palette"] if "style" in shape else None,
-        materials=checked["style"].get("materials") if "style" in shape else None,
-        shade_range=(
-            checked["style"].get("shade_range", backend.DEFAULT_SHADE_RANGE)
-            if "style" in shape
-            else backend.DEFAULT_SHADE_RANGE
-        ),
+        previews=checked["previews"],
+        clip=tuple(entry["name"] for entry in checked["clips"]),
+        once=tuple(entry["name"] for entry in checked["clips"] if not entry["loop"]),
+        reduce=style["reduce"],
+        palette=style["palette"],
+        materials=style["materials"],
+        shade_range=style["shade_range"],
     )
 
 
@@ -443,15 +577,33 @@ def apply_settings(options: Options, reused: ReusedSettings) -> Options:
     An explicit `--view` resolves the view exactly as without reuse.
     Otherwise the reused view stays, and an explicit `--pitch`,
     `--directions` or `--start-angle` replaces its value and makes the preset
-    `custom`. Clip selection, `--once` and `explicit` stay as parsed.
+    `custom`. An explicit `--clip` replaces the reused clip selection and its
+    one-shot marks, and `--once` then comes from the command line. Without
+    `--clip`, the reused clips stay, and an explicit `--once` replaces their
+    marks: it must name only reused clips, else this is a usage error.
+    `explicit` stays as given.
     """
     explicit = options.explicit
-    names = [field.name for field in fields(ReusedSettings)]
+    names = [
+        field.name
+        for field in fields(ReusedSettings)
+        if field.name not in ("clip", "once")
+    ]
     if "view" in explicit:
         names = [name for name in names if name not in _VIEW_FIELDS]
     values = {name: getattr(reused, name) for name in names if name not in explicit}
     if "view" not in explicit and explicit & set(_VIEW_FIELDS):
         values["view"] = CUSTOM_VIEW
+    if "clip" not in explicit:
+        values["clip"] = reused.clip
+        if "once" not in explicit:
+            values["once"] = reused.once
+        for name in options.once:
+            if name not in reused.clip:
+                _build_parser()[0].error(
+                    f"argument --once: {name!r} is not among the loaded sheet's "
+                    f"clips: {', '.join(map(repr, reused.clip))}"
+                )
     return replace(options, **values)
 
 
@@ -591,9 +743,7 @@ def _command(options):
             f"holds at most {backend.MAX_MATERIALS}",
         )
     selected = gltf.select_clips(subject, options.clip or (), options.once)
-    preview_paths = (
-        () if options.no_preview else export.preview_paths(outfile, selected)
-    )
+    preview_paths = export.preview_paths(outfile, selected) if options.previews else ()
     _check_targets([outfile, json_path, *preview_paths])
     view = views.View(
         options.pitch, options.directions, options.start_angle, options.model_yaw
@@ -650,7 +800,9 @@ def _command(options):
         metadata = {
             "fingerprint": export.fingerprint(
                 generator,
-                export.sheet_settings(settings, selected, sheet_style),
+                export.sheet_settings(
+                    settings, selected, sheet_style, previews=options.previews
+                ),
                 source.sha256,
             )
         }
@@ -687,11 +839,12 @@ def _command(options):
         subject=subject.name,
         settings=settings,
         style=sheet_style,
+        previews=options.previews,
         selected_clips=selected,
         image_path=outfile,
     )
     outputs = [(outfile, sheet.png), (json_path, sheet.json)]
-    if not options.no_preview:
+    if options.previews:
         previews = export.previews(
             frames, subject=subject.name, settings=settings, selected_clips=selected
         )
@@ -979,6 +1132,14 @@ class _Flag(argparse.Action):
         setattr(namespace, self.dest, True)
 
 
+class _Files(argparse.Action):
+    """A repeatable option collecting paths in the order given."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        namespace.explicit_.add(self.dest)
+        setattr(namespace, self.dest, [*(getattr(namespace, self.dest) or []), values])
+
+
 class _Names(argparse.Action):
     """A repeatable option collecting distinct names in the order given."""
 
@@ -1035,16 +1196,15 @@ _cell_side = _from_to(_integer, 1, 4096)
 
 
 def _cell(text):
-    parts = text.split("x")
-    try:
-        if len(parts) != 2:
-            raise argparse.ArgumentTypeError(text)
-        width, height = (_cell_side(part) for part in parts)
-    except argparse.ArgumentTypeError:
+    """`WxH` as `(W, H)`, or `auto` as None, the automatic cell."""
+    if text == layered.AUTO:
+        return None
+    cell = layered.parse_cell(text)
+    if cell is None:
         raise argparse.ArgumentTypeError(
-            f"expected WxH, two integers each from 1 to 4096, got {text!r}"
-        ) from None
-    return width, height
+            f"expected WxH, two integers each from 1 to 4096, or auto, got {text!r}"
+        )
+    return cell
 
 
 def _ground(text):
@@ -1176,7 +1336,7 @@ def _build_parser():
         "--fps",
         "N",
         _positive,
-        12.0,
+        layered.DEFAULTS["fps"],
         "target sampling rate, greater than 0 (default: 12)",
     )
     single(
@@ -1190,11 +1350,12 @@ def _build_parser():
         "--cell",
         "WxH",
         _cell,
-        None,
-        "cell size in pixels, each 1 to 4096; unless --ppm is given or reused, "
-        "the model is scaled to fit the cell, so a smaller cell gives smaller, "
-        "chunkier sprites; --cell with --ppm fixes both (default: reused by "
-        "--settings-from, else fitted to the model with --ppm, else 64x64)",
+        layered.DEFAULTS["cell"],
+        "cell size in pixels, each 1 to 4096, or auto; unless --ppm is given or "
+        "reused, the model is scaled to fit the cell, so a smaller cell gives "
+        "smaller, chunkier sprites; --cell with --ppm fixes both; auto drops a "
+        "reused or configured cell (default: reused by --settings-from, else "
+        "fitted to the model with --ppm, else 64x64)",
     )
     single(
         "--ground",
@@ -1233,28 +1394,63 @@ def _build_parser():
         f"pixel reduction: {', '.join(REDUCTIONS)} (default: {REDUCTIONS[0]})",
         choices=REDUCTIONS,
     )
-    single("--palette", "FILE", _path, None, "map colours to a HEX, GPL or PNG palette")
+    single(
+        "--palette",
+        "FILE",
+        _path,
+        None,
+        "map colours to a HEX, GPL or PNG palette (default: none)",
+    )
     parser.add_argument(
-        "--no-palette", action=_Flag, help="drop a reused palette (default: off)"
+        "--no-palette",
+        action=_Flag,
+        help="use no palette, dropping a reused or configured one (default: off)",
     )
     single(
         "--materials",
         "FILE",
         _path,
         None,
-        "draw materials from the ramps of a YAML material library; needs a palette",
+        "draw materials from the ramps of a YAML material library; needs a "
+        "palette (default: none)",
     )
     parser.add_argument(
         "--no-materials",
         action=_Flag,
-        help="drop a reused material library (default: off)",
+        help="use no material library, dropping a reused or configured one "
+        "(default: off)",
     )
     single(
         "--settings-from",
         "FILE",
         _path,
         None,
-        "reuse settings from an earlier sheet's JSON (default: none)",
+        "load every setting of an earlier sheet's JSON, a "
+        f"{SHEET_SCHEMA} sheet (default: none)",
+    )
+    value_options.add("--config")
+    parser.add_argument(
+        "--config",
+        dest="configs",
+        metavar="FILE",
+        type=_path,
+        action=_Files,
+        help="read settings from a YAML file; repeatable, later files winning. "
+        "A settings file may set cell, fps, palette, materials and previews; "
+        "its values act as the options would. The user file and the shipped "
+        "defaults give the defaults below any loaded sheet (default: none)",
+    )
+    parser.add_argument(
+        "--no-user-config",
+        action=_Flag,
+        help="skip the user settings file, $XDG_CONFIG_HOME/moskophoros/"
+        "config.yaml, else ~/.config/moskophoros/config.yaml (default: off)",
+    )
+    parser.add_argument(
+        "--preview",
+        action=_Flag,
+        help="write the animated previews, also over a sheet or settings file "
+        "without them (default: on)",
     )
     parser.add_argument(
         "--no-preview",
@@ -1281,7 +1477,15 @@ def _build_parser():
         action=_Flag,
         help="allow a Blender version other than the supported one (default: off)",
     )
-    flags = {*_HELP, "--no-preview", "--any-blender", "--no-palette", "--no-materials"}
+    flags = {
+        *_HELP,
+        "--preview",
+        "--no-preview",
+        "--no-user-config",
+        "--any-blender",
+        "--no-palette",
+        "--no-materials",
+    }
     return parser, frozenset(value_options), frozenset(flags)
 
 
@@ -1403,13 +1607,12 @@ def _one_of(*choices):
     return check
 
 
-# The sheet's `settings` object, member by member. `clips` is recognized but
-# never read: clip selection comes from the current command line. A member
-# that may be null or a palette record is `_PALETTE`, and one that may be null
-# or a material library record `_MATERIALS`.
-_IGNORED = None
+# The sheet's `settings` object, member by member. A member that may be null
+# or a palette record is `_PALETTE`, and one that may be null or a material
+# library record `_MATERIALS`.
 _PALETTE = object()
 _MATERIALS = object()
+_SHEET_PREFIX = "moskophoros.sheet/"
 
 
 class _Nullable:
@@ -1490,6 +1693,43 @@ def _shade_range(value):
     return lo, hi
 
 
+def _previews(value):
+    if not isinstance(value, bool):
+        raise argparse.ArgumentTypeError(f"expected true or false, got {_shown(value)}")
+    return value
+
+
+def _clips(value):
+    """The recorded clip selection: a nonempty list of distinct clips, each
+    exactly `{"name": NAME, "loop": BOOLEAN}`, in sheet order."""
+    if not isinstance(value, list) or not value:
+        raise argparse.ArgumentTypeError(
+            f"expected a nonempty list of clips, got {_shown(value)}"
+        )
+    names = set()
+    for index, entry in enumerate(value):
+        if not isinstance(entry, dict) or set(entry) != {"name", "loop"}:
+            raise argparse.ArgumentTypeError(
+                f'[{index}]: expected exactly {{"name": NAME, "loop": BOOLEAN}}, '
+                f"got {_shown(entry)}"
+            )
+        name, loop = entry["name"], entry["loop"]
+        if not isinstance(name, str) or not name:
+            raise argparse.ArgumentTypeError(
+                f"[{index}].name: expected a nonempty clip name, got {_shown(name)}"
+            )
+        if not isinstance(loop, bool):
+            raise argparse.ArgumentTypeError(
+                f"[{index}].loop: expected true or false, got {_shown(loop)}"
+            )
+        if name in names:
+            raise argparse.ArgumentTypeError(
+                f"[{index}].name: the clip {_shown(name)} is recorded twice"
+            )
+        names.add(name)
+    return value
+
+
 # A material library record, whose ramps, default and entries the library
 # module checks once the palette is known (`_style`).
 _MATERIALS_FIELDS = {
@@ -1499,7 +1739,7 @@ _MATERIALS_FIELDS = {
     "default": _Nullable(_ramp_name),
     "materials": _anything,
 }
-_LEGACY_SETTINGS = {
+_SETTINGS = {
     "view": {
         "preset": _one_of(*PRESETS, CUSTOM_VIEW),
         "projection": _one_of("orthographic"),
@@ -1515,27 +1755,14 @@ _LEGACY_SETTINGS = {
     "ground_m": {axis: _reused(_number) for axis in "xyz"},
     "ground_px": {axis: _reused(_whole_number) for axis in "xy"},
     "root_motion": _one_of(*ROOT_MOTION_MODES),
-    "clips": _IGNORED,
-}
-_PREVIOUS_SETTINGS = {
-    name: _LEGACY_SETTINGS[name] for name in _LEGACY_SETTINGS if name != "clips"
-}
-_PREVIOUS_SETTINGS |= {
-    "style": {"reduce": _one_of(*REDUCTIONS), "palette": _PALETTE},
-    "clips": _IGNORED,
-}
-_SETTINGS = {name: _PREVIOUS_SETTINGS[name] for name in _PREVIOUS_SETTINGS}
-_SETTINGS["style"] = {
-    "reduce": _one_of(*REDUCTIONS),
-    "palette": _PALETTE,
-    "materials": _MATERIALS,
-    "shade_range": _shade_range,
-}
-# Each reusable schema's `settings`, newest first.
-_SHAPES = {
-    SHEET_SCHEMA: _SETTINGS,
-    PREVIOUS_SHEET_SCHEMA: _PREVIOUS_SETTINGS,
-    LEGACY_SHEET_SCHEMA: _LEGACY_SETTINGS,
+    "previews": _previews,
+    "style": {
+        "reduce": _one_of(*REDUCTIONS),
+        "palette": _PALETTE,
+        "materials": _MATERIALS,
+        "shade_range": _shade_range,
+    },
+    "clips": _clips,
 }
 
 
@@ -1570,8 +1797,6 @@ def _check_shape(shape, value, name, problems):
         return None
     checked = {}
     for member, member_shape in shape.items():
-        if member_shape is _IGNORED:
-            continue
         if member not in value:
             problems.append(f"{name}.{member}: missing")
             continue

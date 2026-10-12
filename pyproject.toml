@@ -26,6 +26,10 @@ dev = [
     "uv>=0.12",
 ]
 
+[tool.setuptools.package-data]
+# The shipped settings defaults, read at run time.
+moskophoros = ["defaults.yaml"]
+
 [tool.pytest.ini_options]
 minversion = "9.1"
 testpaths = ["tests", "tools"]

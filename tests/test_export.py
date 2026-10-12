@@ -74,7 +74,8 @@ CANONICAL = (
     '"clips":[{"loop":true,"name":"läuft"},{"loop":false,"name":"攻撃"},'
     '{"loop":true,"name":"pose"}],'
     '"fps":3.0,"ground_m":{"x":0.0,"y":0.0,"z":0.0},"ground_px":{"x":1,"y":2},'
-    '"model_yaw_deg":0.0,"pixels_per_meter":24.5,"root_motion":"error",'
+    '"model_yaw_deg":0.0,"pixels_per_meter":24.5,"previews":true,'
+    '"root_motion":"error",'
     '"style":{"materials":null,"palette":null,"reduce":"plain",'
     '"shade_range":[84,191]},"supersample":4,"view":{"directions":2,"pitch_deg":0.0,"preset":"side",'
     '"projection":"orthographic","start_angle_deg":90.0}},'
@@ -148,7 +149,7 @@ EXPECTED_FRAMES = ",\n".join(
 
 EXPECTED_JSON = (
     """{
-  "schema": "moskophoros.sheet/3",
+  "schema": "moskophoros.sheet/4",
   "generator": {
     "tool": "moskophoros",
     "version": "0.1.0",
@@ -191,6 +192,7 @@ EXPECTED_JSON = (
       "y": 2
     },
     "root_motion": "error",
+    "previews": true,
     "style": {
       "reduce": "plain",
       "palette": null,
@@ -288,6 +290,7 @@ def test_the_fingerprint_hashes_the_canonical_mirrored_object():
         "ground_m": {"x": 0.0, "y": 0.0, "z": 0.0},
         "ground_px": {"x": 1, "y": 2},
         "root_motion": "error",
+        "previews": True,
         "style": PLAIN,
         "clips": [
             {"name": "läuft", "loop": True},
@@ -346,12 +349,24 @@ def test_the_fingerprint_covers_the_style_record():
     assert export.fingerprint(GENERATOR, unstyled, SHA) != FINGERPRINT
 
 
-def test_the_style_record_sits_just_before_clips():
-    settings = export.sheet_settings(SIDE, (RUN,), PLAIN)
-    assert list(settings)[-2:] == ["style", "clips"]
+@pytest.mark.parametrize("previews", [True, False])
+def test_previews_then_the_style_record_sit_just_before_clips(previews):
+    settings = export.sheet_settings(SIDE, (RUN,), PLAIN, previews=previews)
+    assert list(settings)[-4:] == ["root_motion", "previews", "style", "clips"]
     assert settings["style"] == PLAIN
-    unstyled = {key: value for key, value in settings.items() if key != "style"}
-    assert unstyled == settings_document(SIDE, (RUN,))
+    assert settings["previews"] is previews
+    rest = {k: v for k, v in settings.items() if k not in ("style", "previews")}
+    assert rest == settings_document(SIDE, (RUN,))
+
+
+def test_the_previews_flag_is_recorded_and_fingerprinted():
+    on = json.loads(_encode_side(previews=True).json)
+    off = json.loads(_encode_side(previews=False).json)
+    assert (on["settings"]["previews"], off["settings"]["previews"]) == (True, False)
+    assert on["fingerprint"] != off["fingerprint"]
+    assert {k: v for k, v in on["settings"].items() if k != "previews"} == {
+        k: v for k, v in off["settings"].items() if k != "previews"
+    }
 
 
 def test_export_records_any_style_record_as_given():

@@ -43,20 +43,23 @@ moskophoros [options] <infile.glb> <outfile.png>
 | `--model-yaw DEG` | `0` | Corrects a model that does not face +Z (see [Input contract](#input-contract)). |
 | `--clip NAME` | every clip | Repeatable. Selects clips and their order in the sheet. |
 | `--once NAME` | none | Repeatable. Marks a selected clip as one-shot; all others loop. |
-| `--fps N` | `12` | Target sampling rate, greater than 0. |
+| `--fps N` | `12` | Target sampling rate, greater than 0. A [settings file](#settings-files) may set it. |
 | `--ppm N` | auto | Pixels per meter, greater than 0. |
-| `--cell WxH` | reused by `--settings-from`, else fitted to the model with `--ppm`, else 64×64 | Cell size in pixels, each 1 to 4096. Without a given or reused `--ppm`, the model is scaled to fit the cell. See [Scale and ground point](#scale-and-ground-point). |
+| `--cell WxH` | reused by `--settings-from`, else fitted to the model with `--ppm`, else 64×64 | Cell size in pixels, each 1 to 4096, or `auto`, the automatic cell: fitted with the pixels per meter in force, given or reused, else 64×64. `auto` drops a reused or configured cell (owner decision 2026-10-11, settings design D-32). Without a given or reused `--ppm`, the model is scaled to fit the cell. See [Scale and ground point](#scale-and-ground-point). A [settings file](#settings-files) may set it. |
 | `--ground X,Y,Z` | `0,0,0` | Ground point in subject coordinates, meters. |
 | `--ground-px X,Y` | auto | Cell pixel corner the ground point lands on. |
 | `--root-motion MODE` | `error` | `error` or `keep`. See [Root motion](#root-motion). |
 | `--supersample N` | `8` | Capture resolution multiplier, 1 to 16. |
 | `--reduce NAME` | `plain` | How each supersampled block becomes one pixel: `plain`, the alpha-weighted mean, or `mode`, the most common colour. See [Stylize](#stylize). |
-| `--palette FILE` | none | Map colours to an ordered `.hex`, `.gpl` or `.png` palette. See [Stylize](#stylize). |
-| `--no-palette` | off | Drop a reused palette; cannot accompany `--palette`. |
-| `--materials FILE` | none | Draw each named material from the ramps of a YAML material library, a `.yaml` or `.yml` file, on the palette in force. Needs a palette. See [Material libraries](#material-libraries). |
-| `--no-materials` | off | Drop a reused material library; cannot accompany `--materials`. |
-| `--settings-from FILE` | none | Reuse settings from an earlier sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
-| `--no-preview` | off | Skip the animated previews. |
+| `--palette FILE` | none | Map colours to an ordered `.hex`, `.gpl` or `.png` palette. See [Stylize](#stylize). A [settings file](#settings-files) may set it. |
+| `--no-palette` | off | Use no palette, dropping a reused or configured one; cannot accompany `--palette`. |
+| `--materials FILE` | none | Draw each named material from the ramps of a YAML material library, a `.yaml` or `.yml` file, on the palette in force. Needs a palette. See [Material libraries](#material-libraries). A [settings file](#settings-files) may set it. |
+| `--no-materials` | off | Use no material library, dropping a reused or configured one; cannot accompany `--materials`. |
+| `--settings-from FILE` | none | Load every recorded setting of an earlier `moskophoros.sheet/4` sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
+| `--config FILE` | none | Repeatable. Read settings from a YAML file; later files win, and its values act as the options would. See [Settings files](#settings-files). |
+| `--no-user-config` | off | Skip the user settings file. |
+| `--preview` | on | Write the animated previews, also over a sheet or settings file without them; cannot accompany `--no-preview`. |
+| `--no-preview` | off | Skip the animated previews. A [settings file](#settings-files) may set `previews: false` instead. |
 | `--work-dir DIR` | temporary | Keep capture output in `DIR` instead of a deleted temporary directory. |
 | `--blender PATH` | discovered | Blender executable. See [Capture](#capture). |
 | `--any-blender` | off | Allow a Blender version other than the supported one. |
@@ -100,6 +103,83 @@ workspaces are deleted in either case. Retention does not make an incomplete
 phase a valid result or supply a replay interface. Reusing a retained location
 requires choosing a new or empty directory (owner decision 2026-09-30).
 
+### Settings files
+
+The cell, `fps`, the palette, the material library and whether previews are
+written are also settings, which YAML settings files may set (owner
+decisions 2026-10-11, settings design D-2, D-5, D-8, D-14, D-17, D-22, D-28,
+D-30 and D-32). Each is validated exactly as its option is. One schema table
+in `settings.py` gives each setting's type, unit, default and validation
+rule, and the packaged `defaults.yaml` gives every setting its shipped
+default; a test keeps the two in agreement.
+
+| Setting | Option | Shipped default | Value |
+|---|---|---|---|
+| `cell` | `--cell WxH` | `auto` | `WxH`, each side 1 to 4096, or `auto` |
+| `fps` | `--fps N` | `12` | a finite number greater than 0 |
+| `palette` | `--palette FILE`, `--no-palette` | `null` | a palette file path, or `null` for none |
+| `materials` | `--materials FILE`, `--no-materials` | `null` | a material library path, or `null` for none |
+| `previews` | `--preview`, `--no-preview` | `true` | `true` or `false` |
+
+**Layers.** Lowest first, each a partial set of settings; a setting a layer
+leaves out falls through to the layer below:
+
+1. the shipped defaults, `defaults.yaml` inside the package;
+2. the user file, `$XDG_CONFIG_HOME/moskophoros/config.yaml` when that
+   variable is set and not empty, else `~/.config/moskophoros/config.yaml`.
+   It is optional: a missing user file is not an error. `--no-user-config`
+   skips it, as tests and scripts do;
+3. a loaded sheet, `--settings-from FILE` (see
+   [Scale and ground point](#scale-and-ground-point), *Reuse*);
+4. `--config FILE` files, in command-line order, later files winning;
+5. the command-line options.
+
+Loading is in memory, for that generation only. The tool never writes the
+user file or any `--config` file. Where each value came from is never
+recorded, so identical resolved settings give identical bytes.
+
+**Merge rules.**
+
+- `auto` is a value. `cell: auto` is the automatic cell: fitted with the
+  pixels per meter in force, from `--ppm` or a loaded sheet, else 64×64 with
+  auto-fit. So the shipped defaults never turn `--ppm`-only sizing into a
+  fixed cell. Any layer may set `auto`, and `--cell` accepts it.
+- `null` means none for `palette` and `materials`, as `--no-palette` and
+  `--no-materials` do.
+- A `--config` value acts exactly as its explicit option would, including
+  against a loaded sheet: `cell` behaves like `--cell` after
+  `--settings-from`, and a palette or library follows the reuse table under
+  *Reuse*. A command-line option still beats it.
+- A value from the user file or the shipped defaults is only a default. A
+  loaded sheet records every one of these settings and sits above both, so
+  they apply only without one.
+- The library is one setting, a path, and replaces whole. It is validated
+  against the palette in force, wherever each came from.
+- Every other option, such as the view, `--ppm` or `--supersample`, stays a
+  command-line option and a reused value exactly as before.
+
+**Files.** A user or `--config` file is read through the strict YAML reader
+(see [Material libraries](#material-libraries)) and is a mapping of
+settings. `version: 1` is optional at its top. An unknown key, including a
+later slice's such as `frames`, `clips` or `shade`, an unknown version, a
+value of the wrong type or out of range, or any YAML error is a usage error
+(exit 2) naming the file, the key and the line. A path inside a settings file
+resolves relative to that file's directory, with a leading `~` expanded;
+paths on the command line resolve as before. Every participating file is
+read and checked first, but only the palette and library that survive the
+merge are read, so an overridden path need not exist. Errors about a palette
+or library from a settings file name that file and key, such as
+`--config 'look.yaml': palette '/art/p.gpl': cannot be read: …`.
+
+```yaml
+version: 1
+cell: 48x48             # or auto
+fps: 12
+palette: ~/palettes/vince-128.gpl
+materials: robot-library.yaml   # relative to this file
+previews: true          # false: write no animated previews
+```
+
 ### Option validation
 
 Each of these is a usage error (exit 2) unless stated otherwise (owner
@@ -117,6 +197,11 @@ decision 2026-10-01):
 - A `--reduce` value other than `plain` or `mode` (owner decision 2026-10-04).
 - `--palette` together with `--no-palette`, or either option repeated.
 - `--materials` together with `--no-materials`, or either option repeated.
+- `--preview` together with `--no-preview`, or either option repeated.
+- A bad [settings file](#settings-files), or a missing or unreadable
+  `--config` file. These errors name the file, the key and the line.
+- Over a loaded sheet without `--clip`, a `--once` naming a clip outside the
+  loaded clip list (owner decision 2026-10-11, settings design D-27).
 - A `--materials` file whose name does not end in `.yaml` or `.yml`, in any
   case, `.json` included. The error says libraries are YAML, and comes before
   the file is read (owner decision 2026-10-11, settings design D-11).
@@ -128,6 +213,12 @@ decision 2026-10-01):
   [Material libraries](#material-libraries). These errors name the file and the
   material or entry, and precede every Blender invocation, including its
   version probe (owner decisions 2026-10-07, D-8 and D-24).
+
+Every settings error, including a bad palette or library a settings file
+names, comes before any Blender invocation, including its version probe
+(owner decision 2026-10-11, settings design D-17). Errors that depend on the
+model's measurements, such as fitting and overflow, keep their own place and
+exit codes.
 
 `--start-angle` and `--model-yaw` accept any finite number of degrees; the
 direction formula's `mod 360` handles wrapping. `<infile.glb>` has no suffix
@@ -380,25 +471,49 @@ sample time, with the overshoot on each side in whole pixels, rounded up
 (owner decision 2026-10-01). The margin is not
 required when checking.
 
-**Reuse.** `--settings-from FILE` reads the `settings` object of an earlier
-sheet's JSON and reuses these values:
+**Reuse.** `--settings-from FILE` loads the `settings` object of an earlier
+sheet's JSON as one in-memory layer of [settings](#settings-files), applying
+every recorded setting that affects the output (owner decisions 2026-10-11,
+settings design D-15, D-16, D-19 and D-28):
 
 - view and model yaw
 - fps and supersample
 - ppm, cell, ground point and ground pixel
 - root-motion mode
+- whether previews are written, `settings.previews`
 - the style: its reduction and inline palette, `settings.style.reduce` and
   `settings.style.palette`, its inline material library, `settings.style.materials`,
   and the fixed shade range, `settings.style.shade_range`
+- the clip selection and its one-shot marks, `settings.clips`
 
-This makes scale, cell and ground pixel fixed. Options given explicitly
-override the reused values; an explicit `--reduce` replaces the reused
-reduction, retaining the palette. `--palette FILE` replaces the reused palette;
+This makes scale, cell and ground pixel fixed. Options given explicitly, and
+`--config` values, override the reused values; the user file and the shipped
+defaults never do. An explicit `--reduce` replaces the reused reduction,
+retaining the palette. `--palette FILE` replaces the reused palette;
 `--no-palette` drops it. Reuse applies the recorded ordered colours without
-opening the original palette file and keeps its record unchanged. Clip
-selection and `--once` always come from the current command line. A file that
-is unreadable, or not a `moskophoros.sheet/3`, `moskophoros.sheet/2` or
-`moskophoros.sheet/1` document, is a usage error.
+opening the original palette file and keeps its record unchanged. `--preview`
+writes previews over a sheet made without them, and `--no-preview` skips them
+over one made with them.
+
+The clip selection (owner decisions 2026-10-11, settings design D-19 and
+D-27):
+
+- The loaded sheet supplies the clip list, in sheet order, and its one-shot
+  marks.
+- An explicit `--clip` replaces the whole list, and `--once` then comes from
+  the command line, as without a loaded sheet.
+- Without `--clip`, an explicit `--once` replaces the loaded marks: the clips
+  it names are exactly the one-shots. Each name must be in the loaded clip
+  list; a name that is not is a usage error.
+- Without `--clip` or `--once`, the loaded list and marks stay.
+- The final selection is checked against the model: a retained loaded clip
+  the model no longer has is an input error (exit 3) naming the clip. A clip
+  that `--clip` replaced need not exist.
+
+Only the current sheet schema, `moskophoros.sheet/4`, loads (owner decision
+2026-10-11, settings design D-24). A sheet of any other schema, `/1` to `/3`
+included, is a usage error naming its schema and the supported one. A file
+that is unreadable, or not a sheet document, is a usage error.
 
 The reused library follows the palette's pattern (owner decisions 2026-10-07,
 D-19 and D-24). It is applied without opening the original library file and
@@ -423,14 +538,6 @@ error even when an override drops or replaces it; a library that is dropped or
 replaced is never checked against another palette. The final library and
 palette are validated before any Blender invocation.
 
-A `moskophoros.sheet/2` sheet, written before the library was recorded, has a
-`settings.style` of exactly `reduce` and `palette`, and reuses as having no
-library and with the current default shade range (`capture.backend.DEFAULT_SHADE_RANGE`).
-A `moskophoros.sheet/1` sheet, written before the style was recorded, has no
-`settings.style` and also reads as `{"reduce": "plain", "palette": null}`; its
-other fields are checked as below, and a `style` field in it is an unknown
-field (owner decision 2026-10-04).
-
 An explicit `--view` replaces the whole reused view: that preset's values
 apply, then any explicit `--pitch`, `--directions` or `--start-angle` on top,
 exactly as without reuse. Without `--view`, the reused view stays, and an
@@ -440,7 +547,11 @@ makes the preset `custom`.
 The reused `settings` are checked strictly. Every reused field must be
 present with a value its option would accept, `projection` must be
 `orthographic`, and `pixels_per_meter`, `cell` and `ground_px` must be set.
-In a `/3` sheet, `style` must be an object with exactly `reduce`, a value
+`cell` is the fitted `{width, height}` record, never `auto`. `previews` must
+be `true` or `false`. `clips` must be a nonempty list of distinct clips, each
+an object with exactly `name`, a nonempty string, and `loop`, `true` or
+`false`; it is checked even when `--clip` replaces it.
+`style` must be an object with exactly `reduce`, a value
 `--reduce` accepts, `palette`, either `null` or an object with exactly
 `source`, `sha256` and `colors`, `materials`, either `null` or an object with
 exactly `source`, `sha256`, `ramps`, `default` and `materials`, and
@@ -453,10 +564,10 @@ validated by the library module exactly as a library file is, against the
 recorded palette, and a record beside a `null` palette is an error.
 `shade_range` is an array of exactly two JSON integers, never booleans or
 floating-point numbers, with `0 ≤ lo < hi ≤ 255`; it is validated even when
-`materials` is `null`. A `/2` sheet's `style` is exactly `reduce` and
-`palette`, checked the same way. All reused fields are validated before any
-override, including `--reduce`, `--palette`, `--no-palette`, `--materials` and
-`--no-materials` (owner decisions 2026-10-04, 2026-10-07).
+`materials` is `null`. All reused fields are validated before any
+override, including `--reduce`, `--palette`, `--no-palette`, `--materials`,
+`--no-materials`, `--clip`, `--once`, `--preview` and `--no-preview`, and
+`--config` values (owner decisions 2026-10-04, 2026-10-07, 2026-10-11).
 A missing or invalid field, or an unknown field inside `settings`, is a usage
 error naming it. The rest of the sheet is not checked beyond its `schema`
 (owner decisions 2026-10-01).
@@ -1078,10 +1189,11 @@ bands are out of scope (D-7).
 
 #### Using a library from the command
 
-`--materials FILE` reads the library file once; the same bytes are parsed
+`--materials FILE`, or a [settings file](#settings-files)'s `materials`,
+reads the library file once; the same bytes are parsed
 (`materials.read_library_bytes`) and hashed (SHA-256), and the library is
-validated against the palette in force, whether it came from `--palette` or
-from reused settings. `--no-materials` drops a reused library. The library is
+validated against the palette in force, whether it came from `--palette`, a
+settings file or reused settings. `--no-materials` drops a reused library. The library is
 used with the reduction, the palette and the shade range in force: each frame
 is mapped as under [Material ramps](#material-ramps), from the decoded
 material-ID and shade buffers. No command option sets the shade range; a new
@@ -1133,11 +1245,11 @@ through unchanged.
 - Cells are packed with no gaps; unused cells are fully transparent.
 - Output is an 8-bit RGBA PNG written by Pillow with no text or time chunks.
 
-**JSON (`moskophoros.sheet/3`).**
+**JSON (`moskophoros.sheet/4`).**
 
 ```json
 {
-  "schema": "moskophoros.sheet/3",
+  "schema": "moskophoros.sheet/4",
   "generator": {
     "tool": "moskophoros", "version": "0.1.0",
     "python": "3.x.y", "numpy": "x.y.z", "pillow": "x.y.z",
@@ -1161,6 +1273,7 @@ through unchanged.
     "ground_m": { "x": 0.0, "y": 0.0, "z": 0.0 },
     "ground_px": { "x": 24, "y": 46 },
     "root_motion": "error",
+    "previews": true,
     "style": { "reduce": "plain", "palette": null, "materials": null,
                "shade_range": [84, 191] },
     "clips": [ { "name": "walk", "loop": true },
@@ -1192,12 +1305,14 @@ through unchanged.
   entry in name order: `{"ramp": [...]}`, `{"uses": NAME}` or `"ordinary"`);
   and `shade_range`, the fixed shade range `[lo, hi]` as two integers, recorded
   whether or not a library is used and outside the library. It sits between
-  `root_motion` and `clips`. Export writes and fingerprints the record the
+  `previews` and `clips`. Export writes and fingerprints the record the
   command resolved without interpreting it, so a new look changes neither
-  export nor capture. `moskophoros.sheet/2` is the same document with a
-  `style` of only `reduce` and `palette`, and `moskophoros.sheet/1` without
-  `settings.style`; [reuse](#scale-and-ground-point) still reads both (owner
-  decisions 2026-10-04, 2026-10-07).
+  export nor capture (owner decisions 2026-10-04, 2026-10-07).
+- `settings.previews` records whether the run wrote the animated previews, a
+  boolean between `root_motion` and `style`, inside the fingerprint (owner
+  decision 2026-10-11, settings design D-28). `moskophoros.sheet/3` is the
+  same document without it; [reuse](#scale-and-ground-point) loads only `/4`
+  (settings design D-24).
 - `fingerprint` is the SHA-256 of the canonical JSON (sorted keys, no
   whitespace, UTF-8) of `generator`, `source.sha256` and `settings`. The
   hashed object mirrors the sheet's own structure:
@@ -1275,6 +1390,12 @@ JSON are byte-identical. To make that true:
 Output from a different Blender version or GPU may differ; the recorded
 generator and fingerprint make such a difference visible.
 
+A sheet reproduces itself (owner decision 2026-10-11, settings design D-16):
+rerunning with `--settings-from` that sheet, the same model, the same output
+file name and no other options gives a byte-identical PNG, JSON and
+previews, with the same generator. A sheet made with `--no-preview` reloads
+writing no previews. The whole-command Blender tests check this.
+
 ## Project layout
 
 (V-10, V-12)
@@ -1284,6 +1405,8 @@ pyproject.toml            console script: moskophoros = moskophoros.cli:main
 requirements.lock         exact tested versions
 src/moskophoros/
   cli.py                  options, presets, settings resolution, exit codes
+  settings.py             the settings schema table, settings files, layers
+  defaults.yaml           the shipped settings defaults, installed with the package
   gltf.py                 .glb reading: scenes, clips, time ranges, validation
   views.py                camera and direction math
   sampling.py             sample times
@@ -1320,6 +1443,8 @@ Automated tests (pytest), none needing Blender:
 - plain and most-common-colour reductions on constructed arrays
 - sheet layout, JSON content and the fingerprint's stability
 - settings reuse and its overrides
+- settings files: the schema table and `defaults.yaml` agreeing, each layer's
+  precedence, `auto` and `null`, paths and every refused file
 
 Integration tests run Blender and fail with a clear diagnostic when Blender is
 unavailable. Use `pytest -m "not blender"` to run only tests that do not require
@@ -1346,7 +1471,7 @@ Decided later, each when its trigger arrives:
 |---|---|
 | Auxiliary capture buffers (depth, normal, base color, material ID) | The first style pass that needs them: per-material colour ramps, which need material IDs (owner decision 2026-10-04). |
 | Per-material colour ramps | The owner starts a later style arc. |
-| Saved style files, and a free chain of passes beyond the four looks | The owner requests them. |
+| A free chain of passes beyond the four looks | The owner requests it. Settings files are delivered (owner decision 2026-10-11, settings design D-2). |
 | Quantized palette extraction from many-colour art, as a standalone command | The owner requests it. |
 | Per-stage caching | Iteration speed becomes a problem. |
 | Root-motion extraction (keeping travel as data rather than rendering it) | A consumer needs it. |
