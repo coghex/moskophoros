@@ -402,11 +402,44 @@ today's options and tunable constants. Which become settings, which stay
 command-line only, and what else does the owner want? This decides the schema
 and the slice boundaries. Resolved by the owner's list.
 
+**Owner input, 2026-10-11 (round 2), not yet signed off:**
+
+- The inventory's labels "look good": a setting that is simple to include and
+  gives value should be included.
+- The first slice is limited to scale, fps, frame count, and "most
+  importantly … the two shading dials that i want to control shading, ambient
+  (known in my work currently as R1) and soft (R2)".
+- "I would allow more if you think it wise."
+
+**Agent view:**
+
+- Keep the first slice small. The loader and the layers are the real work.
+  Each extra key costs little code, but it is a schema commitment.
+- Worth adding: the cell size, if "scale" means only pixels per meter, and the
+  palette and library paths, which every acceptance command so far repeats.
+- Still open:
+  - what the dials are (Q-10);
+  - what frame count means (Q-11);
+  - whether scale covers the cell.
+
 ### Q-2. What are the per-material settings?
 
 Candidates are the shade range (#79; this would amend material styling D-7),
 the occlusion and convexity weights, and the ramp. Anything else? Resolved by
 the owner.
+
+**Owner input, 2026-10-11 (round 2), not yet signed off:**
+
+- "All of the shading stuff needs per material values as well, im not sure
+  what all i want."
+- For a first slice: a per-material shade range (min and max), with the
+  materials defined in YAML.
+
+A per-material range amends material styling D-7 ("one global range"), so it
+needs its own explicit signoff. Per-material weights and AO distance come
+later, and stay deliberately open until the owner decides what they want.
+Weights and distance act in capture, where each material's shader is already
+replaced, or in stylize with SET-4.
 
 ### Q-3. How do per-material settings relate to the JSON material library?
 
@@ -420,11 +453,49 @@ the owner.
 Each affects reuse, the sheet record (D-19) and validation against the
 palette. Resolved by the owner.
 
+**Owner input, 2026-10-11 (round 2), not yet signed off:**
+
+- "I didnt realize i was already using json, ideally i would want everything
+  in yaml if possible."
+- The YAML library may be gated on an earlier issue that moves the library to
+  YAML first.
+- Still open:
+  - whether the library becomes part of the settings model, or a separate
+    YAML file;
+  - whether existing JSON libraries stay readable.
+- The sheet's description stays JSON: vision V-2 fixes "a JSON description
+  beside it". The agent's reading, to confirm, is that "everything" means the
+  files the owner writes.
+
 ### Q-4. Where does `--settings-from` sit among the layers?
 
 The proposal is above `--config`, below the command line, so a reused sheet
 ignores the user file and `--config`. Alternatives: below the user file, or
 not combinable with `--config` at all. Resolved by the owner.
+
+**Owner input, 2026-10-11 (round 2), not yet signed off.** A later UI will
+"load up a sprite, see its current sheet and all of the settings used in its
+generation get loaded in to the parameters automatically". Loading a sheet
+takes preference over all settings. From the command line, "even without
+explicit options", the config file settings should still override the sheet,
+"i suppose, but you tell me".
+
+**Agent view.** The sheet's JSON `settings` is already that metadata. It must
+grow to hold every setting, including the shading knobs (Q-5). Letting the
+implicit user file override a reused sheet has two costs:
+
+- A reused sheet would silently take today's preferences, so it would no
+  longer reproduce itself (V-2).
+- A user file that sets the scale would refit sprites that were meant to keep
+  their size across exports (V-7, stable scale).
+
+**Proposal P-4.** The same order applies in the UI and on the command line:
+shipped defaults < user file < loaded sheet < `--config` files < command-line
+options. Under P-4:
+
+- Your everyday user file never changes a reused sheet.
+- A `--config` file you name on that command line counts as explicit, so it
+  does.
 
 ### Q-5. What does the sheet record?
 
@@ -436,6 +507,12 @@ not combinable with `--config` at all. Resolved by the owner.
 
 This affects the sheet schema version (`/4`) and reuse of `/3` sheets.
 Resolved by the owner.
+
+The owner's round-2 answer to Q-4 bears on this question: loading a sheet must
+restore every setting. Reuse today reads only `settings`, never `generator`
+(`cli.py:356–432`), so the shading knobs would not be restored from
+`generator.shade`. Moving them into `settings` follows from that need. That
+move is part of Q-5's signoff.
 
 ### Q-6. Schema details
 
@@ -451,6 +528,34 @@ the error, unknown-key and versioning proposals in P-2. Resolved by the owner.
 - Do R1 and R2 ship as example files?
 - Do D-10's range rationale and the fixture's distinct-band guarantee stay
   bound to the defaults only?
+
+Resolved by the owner.
+
+### Q-10. What are the "ambient" and "soft" shading dials?
+
+The owner calls them "the two shading dials … ambient (known in my work
+currently as R1) and soft (R2)". R1 and R2 are each a full set of four values,
+and they differ in convexity weight (0 against 0.5) and in the top of the range
+(188 against 255). Three readings:
+
+- **(a) Two named presets:** for example `--shading ambient` or
+  `--shading soft`, carrying the R1 and R2 values. The raw knobs (D-3) are
+  still settable underneath, as `--pitch` is under `--view`.
+- **(b) Two continuous dials:** `ambient` and `soft`, each a number. A formula,
+  still to be designed, turns them into the raw knobs.
+- **(c) Raw knobs only:** shipped example files `ambient.yaml` and `soft.yaml`.
+
+Resolved by the owner.
+
+### Q-11. What is "frame count"?
+
+No frame-count option exists today: a clip gets
+`max(1, floor(duration · fps + 0.5))` samples, plus one for a one-shot
+(design §Clips and sampling). Readings:
+
+- a fixed number of frames per clip, used instead of fps;
+- a cap on frames per clip, on top of fps;
+- either of those set per clip.
 
 Resolved by the owner.
 
