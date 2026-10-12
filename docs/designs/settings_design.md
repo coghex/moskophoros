@@ -264,7 +264,7 @@ fps: 12
 frames: 8              # auto: each clip's frames follow fps and its length
 clips:                 # per-clip overrides, by clip name
   Jump:
-    frames: 6
+    frames: 6          # a count; auto: duration-based; null: take the global
 shade:
   ao_distance_m: 0.3
   ao_samples: 64
@@ -277,10 +277,10 @@ previews: true         # false: write no animated previews
 ```
 
 New options: `--config FILE` (repeatable), `--no-user-config`, `--preview`
-(D-28), `--frames N`, `--ao-distance M`, `--ao-samples N`, `--occlusion-weight W`,
+(D-28), `--frames N|auto`, `--ao-distance M`, `--ao-samples N`, `--occlusion-weight W`,
 `--convexity-weight W` and `--shade-range LO,HI`. `--cell`, `--fps`,
 `--palette`, `--materials` and `--no-preview` already exist and keep their
-syntax.
+syntax, and `--cell` also accepts `auto` (D-32).
 
 A `clips` entry naming a clip the model does not have is silently unused.
 That follows the precedent of unused library entries (material styling D-15),
@@ -344,8 +344,8 @@ The owner's review asked these to be explicit. The owner signed them off
    - A value from the user file or the shipped defaults is only a default. The
      sheet sits above both, so they never change a loaded sheet's values.
 4. **Mappings merge key by key.** Each `shade` value is separate, and `clips`
-   entries merge by clip name. A clip entry's `frames: auto` clears an
-   inherited count.
+   entries merge by clip name. A clip entry's `frames: null` clears an
+   inherited override (D-31).
 5. **Lists replace whole,** such as `range: [lo, hi]`.
 6. **Files replace whole.** The library is one setting, a path. Per-material
    overrides live inside it (D-20), so they never merge across layers.
@@ -408,15 +408,21 @@ The owner's review asked these to be explicit. The owner signed them off
   - a loop samples `t0 + k·d/N`, for k = 0 … N − 1;
   - a one-shot samples `t0 + k·d/(N − 1)`, for k = 0 … N − 1;
   - `N` = 1 samples `t0`.
-- Each frame lasts exactly `1/fps`, and the sheet records the clip's retiming
-  factor `d·fps/N`.
+- Each frame lasts exactly `1/fps`, and the sheet records the clip's
+  `time_scale` (D-33): `d·fps/N` for a loop, `d·fps/(N − 1)` for a one-shot,
+  and `1` for automatic sampling and for one-frame clips.
+- **A clip's value (D-31):** a count, `auto` (duration-based) or `null`
+  (take the global value). `--frames auto` and `--cell auto` reset from the
+  command line (D-32).
+- **Validation (D-34):** a whole number of 1 or more, or `auto`, with no
+  upper bound.
 - **Zero-duration clips (D-25).** A clip with `d = 0`, or the synthetic
   `static` clip, always has one frame at `t0`, lasting `1/fps`. A global count
   does not apply to it. A per-clip count above 1 naming it gives a warning.
 - **Precedence (D-26).** A clip's own count beats the global count from any
   layer. An explicit global gives a warning naming the clips that kept their
-  own count. The sheet records counts as given (`auto` or a number), never the
-  resolved totals.
+  own count. The sheet records counts as given (a number, `auto` or `null`),
+  never the resolved totals.
 - Previews follow the recorded frame durations, as now.
 
 ### Recording and loading (D-15, D-16, D-28, D-30)
@@ -438,7 +444,7 @@ The owner's review asked these to be explicit. The owner signed them off
     `pixel_filter` and `filter_width_px`.
   - SET-3 adds an optional `shade` to entries in the inline library record.
   - SET-5 adds `settings.frames` (`auto` or a count) and a `frames` on each
-    `settings.clips` entry, and a `time_scale` (the retiming factor) on each
+    `settings.clips` entry (a count, `auto` or `null`; D-31), and a `time_scale` (the retiming factor) on each
     top-level `clips` entry.
 - **Only the current sheet schema loads (D-24).** A sheet of any other schema
   is a usage error (exit 2) naming its schema and the one supported.
@@ -626,7 +632,8 @@ we laid out earlier".
 - With `frames` = `N` and `fps` = `F`, the tool samples `N` poses evenly over
   the authored motion. Each frame lasts `1/F`, so the clip plays for `N/F`
   seconds, retimed by the factor `d·F/N`. The sheet records each clip's frame
-  duration and retiming factor.
+  duration and retiming factor. *Corrected by D-33:* a one-shot's factor is
+  `d·F/(N − 1)`.
 - For a one-shot, `N` counts every cell, the final pose included, so the
   samples fall at `t0 + k·d/(N − 1)`, for k = 0 … N − 1. An `N` of 1 shows
   `t0`.
@@ -841,7 +848,8 @@ mirroring D-23.
 - A clip's own `frames` wins over the global count from any layer.
 - When the global is set explicitly, by a `--config` file or `--frames`, a
   warning names each clip that kept its own count.
-- `frames: auto` on a clip's entry clears its count.
+- `frames: auto` on a clip's entry clears its count. *Amended by D-31:* a
+  clip's `auto` means duration-based sampling, and `null` clears an override.
 - The sheet records counts as given: the global count or `auto`, and each
   clip's own count or `auto`.
 
@@ -904,66 +912,65 @@ the remaining proposals:
 
 Affects every slice.
 
-## Open questions
+### D-31. A clip's frame count is a number, `auto` or `null`
 
-Raised by the owner's third review (of 81a6083), 2026-10-11.
+Decided by the owner on 2026-10-11, round 14. This resolves Q-25 as proposed
+("all four approved") and amends D-26's "`frames: auto` clears its count".
 
-### Q-25. What does a clip's `frames: auto` mean, and how is "no override" written?
+- **A number** is the clip's own count, and it beats the global count.
+- **`auto`** is duration-based sampling for that clip, and it also beats the
+  global count.
+- **`null`, or leaving the key out,** is no override: the clip takes the
+  global value. In a higher layer, `null` clears a lower layer's override.
+- **The record:** the sheet records the global value as a count or `auto`,
+  and each clip's own value as a count, `auto` or `null`. A reload reproduces
+  exactly, and `--frames` over a loaded sheet reaches every clip whose value
+  is `null`.
 
-With a global `frames: 8` and `Jump: {frames: auto}`, does Jump take 8 frames
-or today's duration-based sampling? D-26 is ambiguous.
+Affects SET-5.
 
-**Proposal:** a clip's `frames` takes one of three values.
+### D-32. `--cell auto` and `--frames auto`
 
-- **A count** is the clip's own count. It beats the global count (D-26).
-- **`auto`** is duration-based sampling for that clip, today's behaviour. It
-  also beats the global count.
-- **`null`**, or leaving the key out, is no override: the clip takes the
-  global value. In a higher layer, `null` clears a lower layer's override,
-  matching D-22's "`null` means none".
+Decided by the owner on 2026-10-11, round 14. This resolves Q-26 as proposed.
 
-The sheet records the global value as a count or `auto`, and each clip's own
-value as a count, `auto` or `null`. So a reload reproduces exactly, and a
-`--frames` given over a loaded sheet reaches every clip whose value is `null`.
-This amends D-26's "`frames: auto` clears its count".
+- Both options accept `auto`, so the command line can clear an inherited
+  fixed value.
+- `--no-palette` and `--no-materials` reset those two, as now.
+- Per-clip and per-material values have no options (D-17).
 
-### Q-26. How does the command line reset an automatic value?
+Affects SET-1 (`--cell auto`) and SET-5 (`--frames auto`).
 
-D-22 lets any layer set `auto`, but `--cell WxH` rejects `auto` today
-(`cli.py:1033–1043`), and `--frames N` takes only a number.
+### D-33. `time_scale` is the sample spacing over the frame duration
 
-**Proposal:** `--cell auto` and `--frames auto` are accepted, so the command
-line can clear an inherited fixed value. `--no-palette` and `--no-materials`
-already reset those two. Per-clip and per-material values have no options
-(D-17).
+Decided by the owner on 2026-10-11, round 14. This resolves Q-27 as proposed
+and corrects D-13's factor for one-shots.
 
-### Q-27. What is `time_scale` when nothing is retimed?
+| Clip | `time_scale` |
+|---|---|
+| explicit count `N`, loop | `d·fps/N` |
+| explicit count `N ≥ 2`, one-shot | `d·fps/(N − 1)` |
+| automatic sampling | exactly `1` |
+| one frame (zero duration, `static`, or a one-shot with `N` = 1) | `1` |
 
-D-13's factor `d·fps/N` is defined only for explicit counts, and is wrong for
-one-shots, whose `N` samples span `N − 1` intervals.
+Tests cover each case. Affects SET-5.
 
-**Proposal:** `time_scale` is the sample spacing divided by the frame
-duration: how fast the motion plays relative to its authored speed.
+### D-34. Frame-count validation
 
-- An explicit count on a loop: `d·fps/N`.
-- An explicit count on a one-shot with `N ≥ 2`: `d·fps/(N − 1)`.
-- Automatic sampling: exactly `1`, since the spacing and the frame duration
-  are both `d/n`.
-- A clip with one frame (zero duration, `static`, or a one-shot with
-  `N` = 1): `1`.
+Decided by the owner on 2026-10-11, round 14. This resolves Q-28 as proposed.
 
-Tests cover each case. This corrects D-13's one-shot factor.
-
-### Q-28. How are frame counts validated?
-
-**Proposal:**
-
-- A frame count is a whole number from 1 upward, or `auto`.
+- A frame count is a whole number of 1 or more, or `auto`, and a clip's
+  count may also be `null` (D-31).
 - In YAML it must be an integer: never `8.0`, `"8"` or a boolean. On the
   command line it must be a decimal integer or `auto`.
 - There is no separate upper bound, as `--fps` has none. The existing sheet
   and GIF limits still apply and fail loudly.
 - An invalid count is a usage error (exit 2) before any Blender invocation.
+
+Affects SET-5.
+
+## Open questions
+
+None.
 
 ## Resolved questions
 
@@ -1005,6 +1012,16 @@ Each kept with its identifier. The owner's words are under *Source notes*.
 - **Q-22.** `--once` over a loaded sheet. **Resolved by D-27.**
 - **Q-23.** Previews and the reproduction promise. **Resolved by D-28.**
 - **Q-24.** The remaining proposals. **Resolved by D-30.**
+- **Q-25.** A clip's `auto` against `null`. **Resolved by D-31.**
+- **Q-26.** Resetting from the command line. **Resolved by D-32.**
+- **Q-27.** `time_scale` when nothing is retimed. **Resolved by D-33.**
+- **Q-28.** Frame-count validation. **Resolved by D-34.**
+
+### The owner's third review, 2026-10-11
+
+The review read 81a6083 and found it nearly ready. It raised three contract
+gaps (Q-25 to Q-27) and a validation rule (Q-28), all resolved in round 14
+by D-31 to D-34.
 
 ### The owner's second review, 2026-10-11
 
@@ -1112,6 +1129,7 @@ its own pull request, because tests read design.md.
   - the settings schema table and the pure merge and validation functions;
   - the packaged defaults file;
   - user-file discovery and `--no-user-config`;
+  - `--cell auto` (D-32);
   - path resolution;
   - errors (D-17);
   - the clip selection from a loaded sheet (D-19), and `--once` over it
@@ -1125,7 +1143,7 @@ its own pull request, because tests read design.md.
 - **Depends on:** SET-0.
 - **Ordering:** critical path.
 - **Relevant decisions:** D-2, D-5, D-8, D-14, D-15, D-16, D-17, D-19, D-21.
-  Also D-22, D-24 (only the current schema loads), D-27, D-28 and D-30.
+  Also D-22, D-24 (only the current schema loads), D-27, D-28, D-30 and D-32.
 - **Acceptance signals:**
   - precedence and error tests;
   - byte identity with no settings files;
@@ -1133,7 +1151,7 @@ its own pull request, because tests read design.md.
   - the `--once` cases over a loaded sheet;
   - tests never read the real user file.
 - **Out of scope:** shading values, frames and per-material overrides.
-- **Open questions:** Q-26 (`--cell auto`).
+- **Open questions:** None.
 
 ### SET-2. Make the global shading values settings and command-line options
 
@@ -1204,18 +1222,21 @@ its own pull request, because tests read design.md.
 - **Ordering:** independent of SET-2 and SET-3. Each sheet-schema bump takes
   the next version, whichever slice lands first.
 - **Relevant decisions:** D-13, D-14, D-15, D-16, D-17, D-22, D-24, D-25,
-  D-26.
+  D-26, D-31, D-32, D-33, D-34.
 - **Acceptance signals:**
   - pure sampling tests for loop, one-shot and `N` = 1;
   - zero-duration and `static` clips keep one frame, with the warning for a
     per-clip count (D-25);
   - a clip's own count beats `--frames`, with the warning (D-26);
   - frame duration exactly `1/fps`;
-  - the retiming factor recorded;
+  - `time_scale` for each D-33 case;
+  - a clip's count, `auto` and `null`, each reloaded exactly (D-31);
+  - `--frames auto`;
+  - the D-34 validation errors;
   - output without `frames` byte-identical;
   - the reproduction test extended.
 - **Out of scope:** root-motion extraction; per-clip fps.
-- **Open questions:** Q-25, Q-26, Q-27, Q-28.
+- **Open questions:** None.
 
 ### SET-4. Recolour shading without a re-render
 
@@ -1279,3 +1300,6 @@ The owner's words, 2026-10-11, in this design conversation:
 - **Round 11, the owner's second review:** four targeted gaps and Q-19,
   dispositioned under *Resolved questions*.
 - **Round 12:** "all recommended"
+- **Round 13, the owner's third review:** three contract gaps and a
+  validation rule.
+- **Round 14:** "all four approved"
