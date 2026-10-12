@@ -2,8 +2,10 @@
 
 import copy
 import json
+import sys
 
 import pytest
+import yaml
 
 from moskophoros.materials import (
     Entry,
@@ -35,8 +37,28 @@ def library(**changes):
     return document
 
 
-def write(tmp_path, text):
-    path = tmp_path / "materials.json"
+# The same library as `library()`, as the owner might write it.
+LIBRARY_TEXT = """\
+# Ramps run dark to light, as indices into the palette.
+schema: moskophoros.materials/1
+ramps:
+  metal: [12, 13, 14, 15, 7]
+  cloth: [8, 9, 10]
+default: cloth  # parts with no entry take this ramp
+materials:
+  steel: {uses: metal}
+  cloth.red:
+    ramp: [8, 9, 10]
+  face: ordinary
+"""
+
+
+def dump(document):
+    return yaml.safe_dump(document, sort_keys=False, allow_unicode=True)
+
+
+def write(tmp_path, text, name="materials.yaml"):
+    path = tmp_path / name
     path.write_bytes(text if isinstance(text, bytes) else text.encode("utf-8"))
     return path
 
@@ -51,14 +73,14 @@ def refused(tmp_path, text, colors=COLORS):
 
 
 def refused_document(tmp_path, document, colors=COLORS):
-    return refused(tmp_path, json.dumps(document), colors)
+    return refused(tmp_path, dump(document), colors)
 
 
 # Valid libraries
 
 
 def test_a_library_with_every_kind_of_entry(tmp_path):
-    parsed = read_library(write(tmp_path, json.dumps(library())), COLORS)
+    parsed = read_library(write(tmp_path, dump(library())), COLORS)
     assert parsed.ramps == {"cloth": (8, 9, 10), "metal": (12, 13, 14, 15, 7)}
     assert parsed.default == "cloth"
     assert parsed.materials == {
@@ -71,7 +93,7 @@ def test_a_library_with_every_kind_of_entry(tmp_path):
 
 
 def test_the_result_is_read_only(tmp_path):
-    parsed = read_library(write(tmp_path, json.dumps(library())), COLORS)
+    parsed = read_library(write(tmp_path, dump(library())), COLORS)
     with pytest.raises(TypeError):
         parsed.ramps["new"] = (1,)
     with pytest.raises(TypeError):
@@ -79,14 +101,14 @@ def test_the_result_is_read_only(tmp_path):
 
 
 def test_a_library_without_a_default(tmp_path):
-    parsed = read_library(write(tmp_path, json.dumps(library(default=None))), COLORS)
+    parsed = read_library(write(tmp_path, dump(library(default=None))), COLORS)
     assert parsed.default is None
     assert len(parsed.materials) == 3
 
 
 def test_empty_ramps_and_materials(tmp_path):
     document = library(ramps={}, default=None, materials={})
-    parsed = read_library(write(tmp_path, json.dumps(document)), COLORS)
+    parsed = read_library(write(tmp_path, dump(document)), COLORS)
     assert parsed.ramps == {} and parsed.materials == {} and parsed.default is None
 
 
@@ -96,7 +118,7 @@ def test_flat_repeated_and_unordered_ramps(tmp_path):
         default=None,
         materials={"lamp": {"ramp": [15, 1, 15]}},
     )
-    parsed = read_library(write(tmp_path, json.dumps(document)), COLORS)
+    parsed = read_library(write(tmp_path, dump(document)), COLORS)
     assert parsed.ramps == {
         "bright first": (15, 0),
         "flat": (3,),
@@ -109,14 +131,14 @@ def test_the_largest_ramp_with_repeated_indices(tmp_path):
     ramp = [i % 16 for i in range(256)]
     document = library(materials={"long": {"ramp": ramp}}, ramps={"long": ramp})
     document["default"] = "long"
-    parsed = read_library(write(tmp_path, json.dumps(document)), COLORS)
+    parsed = read_library(write(tmp_path, dump(document)), COLORS)
     assert parsed.ramps["long"] == tuple(ramp)
     assert parsed.materials["long"] == Entry(ramp=tuple(ramp))
 
 
 def test_the_last_palette_index_is_valid(tmp_path):
     document = library(ramps={"edge": [0, 15]}, default=None, materials={})
-    assert read_library(write(tmp_path, json.dumps(document)), COLORS).ramps == {
+    assert read_library(write(tmp_path, dump(document)), COLORS).ramps == {
         "edge": (0, 15)
     }
 
@@ -127,7 +149,7 @@ def test_unused_entries_and_ramps_are_valid(tmp_path):
         materials={"never": {"uses": "unused"}, "nor": "ordinary"},
         default=None,
     )
-    assert len(read_library(write(tmp_path, json.dumps(document)), COLORS).ramps) == 2
+    assert len(read_library(write(tmp_path, dump(document)), COLORS).ramps) == 2
 
 
 def test_names_are_kept_exactly(tmp_path):
@@ -140,7 +162,7 @@ def test_names_are_kept_exactly(tmp_path):
             "steel ": {"uses": " metal "},
         },
     )
-    parsed = read_library(write(tmp_path, json.dumps(document)), COLORS)
+    parsed = read_library(write(tmp_path, dump(document)), COLORS)
     assert parsed.ramps == {" metal ": (3,), "Metal": (1,), "metal": (2,)}
     assert parsed.default == "metal"
     assert parsed.materials == {
@@ -166,17 +188,71 @@ def test_key_order_does_not_matter(tmp_path):
         key: (dict(reversed(value.items())) if isinstance(value, dict) else value)
         for key, value in reversed(forward.items())
     }
-    first = read_library(write(tmp_path, json.dumps(forward)), COLORS)
-    second = read_library(write(tmp_path, json.dumps(backward)), COLORS)
+    first = read_library(write(tmp_path, dump(forward)), COLORS)
+    second = read_library(write(tmp_path, dump(backward)), COLORS)
     assert first == second
     assert list(first.ramps) == list(second.ramps)
     assert list(first.materials) == list(second.materials)
 
 
+def test_comments_are_allowed(tmp_path):
+    assert read_library(write(tmp_path, LIBRARY_TEXT), COLORS) == validate_library(
+        library(), COLORS, source="s"
+    )
+
+
+def test_a_json_library_and_its_yaml_conversion_give_an_equal_library(tmp_path):
+    text = json.dumps(library(), indent=2)
+    from_json = validate_library(json.loads(text), COLORS, source="materials.json")
+    from_yaml = read_library(write(tmp_path, LIBRARY_TEXT), COLORS)
+    assert from_json == from_yaml
+    assert list(from_json.ramps) == list(from_yaml.ramps)
+    assert list(from_json.materials) == list(from_yaml.materials)
+
+
+def test_aliases_reuse_a_ramp(tmp_path):
+    text = (
+        "schema: moskophoros.materials/1\n"
+        "ramps:\n  metal: &metal [1, 2, 3]\n"
+        "materials:\n  steel: {ramp: *metal}\n  iron: {ramp: *metal}\n"
+    )
+    parsed = read_library(write(tmp_path, text), COLORS)
+    assert parsed.materials == {
+        "iron": Entry(ramp=(1, 2, 3)),
+        "steel": Entry(ramp=(1, 2, 3)),
+    }
+
+
+@pytest.mark.parametrize("name", ["on", "no", "yes", "off", "true1", "1.5.2"])
+def test_yaml_words_are_kept_as_names(tmp_path, name):
+    text = (
+        "schema: moskophoros.materials/1\n"
+        f"ramps: {{{name}: [1]}}\n"
+        f"default: {name}\n"
+        f"materials: {{{name}: {{uses: {name}}}}}\n"
+    )
+    parsed = read_library(write(tmp_path, text), COLORS)
+    assert parsed.ramps == {name: (1,)}
+    assert parsed.default == name
+    assert parsed.materials == {name: Entry(uses=name)}
+
+
+@pytest.mark.parametrize(
+    ("name", "shown"), [("1", "1"), ("true", "true"), ("null", "null"), ("~", "null")]
+)
+def test_an_unquoted_name_that_is_not_a_string_is_refused(tmp_path, name, shown):
+    base = "schema: moskophoros.materials/1\nramps: {}\n"
+    problem = refused(tmp_path, base + f"materials:\n  {name}: ordinary\n")
+    assert problem == f"materials: key {shown} is not a string"
+    quoted = read_library(
+        write(tmp_path, base + f"materials:\n  '{name}': ordinary\n"), COLORS
+    )
+    assert quoted.materials == {name: Entry()}
+
+
 def test_file_bytes_and_parsed_give_the_same_library(tmp_path):
-    text = json.dumps(library())
-    path = write(tmp_path, text)
-    document = json.loads(text)
+    path = write(tmp_path, LIBRARY_TEXT)
+    document = library()
     before = copy.deepcopy(document)
     from_file = read_library(path, COLORS)
     from_bytes = read_library_bytes(path.read_bytes(), COLORS, source=path)
@@ -202,8 +278,29 @@ def test_parsed_libraries_may_use_tuples():
 # Reading and parsing failures
 
 
+@pytest.mark.parametrize(
+    "name", ["materials.json", "materials.JSON", "materials", "lib.yaml.txt", "yaml"]
+)
+def test_a_name_without_a_yaml_suffix_is_refused_before_reading(tmp_path, name):
+    path = write(tmp_path, LIBRARY_TEXT, name=name)
+    for target in (path, tmp_path / f"absent-{name}"):
+        with pytest.raises(LibraryError) as raised:
+            read_library(target, COLORS)
+        assert raised.value.source == target
+        assert raised.value.problem == (
+            "material libraries are YAML; the file name must end in .yaml or .yml"
+        )
+
+
+@pytest.mark.parametrize("name", ["a.yaml", "a.yml", "a.YAML", "a.Yml", "a.b.yaml"])
+def test_yaml_suffixes_in_any_case(tmp_path, name):
+    assert read_library(write(tmp_path, LIBRARY_TEXT, name=name), COLORS).default == (
+        "cloth"
+    )
+
+
 def test_an_unreadable_file(tmp_path):
-    path = tmp_path / "absent.json"
+    path = tmp_path / "absent.yaml"
     with pytest.raises(LibraryError) as raised:
         read_library(path, COLORS)
     assert raised.value.source == path
@@ -211,54 +308,108 @@ def test_an_unreadable_file(tmp_path):
 
 
 def test_a_directory_is_unreadable(tmp_path):
+    directory = tmp_path / "library.yaml"
+    directory.mkdir()
     with pytest.raises(LibraryError, match="cannot be read"):
-        read_library(tmp_path, COLORS)
-
-
-def test_invalid_utf8(tmp_path):
-    problem = refused(tmp_path, b'{"schema": "\xff"}')
-    assert problem.startswith("is not UTF-8: ")
-    assert "at byte 12" in problem
+        read_library(directory, COLORS)
 
 
 @pytest.mark.parametrize(
-    "text", ["", "{", '{"schema": }', "[1, 2,]", "{'schema': 1}", "﻿{}"]
+    ("data", "problem"),
+    [
+        (b'{"schema": "\xff"}', "is not UTF-8: invalid start byte at byte 12"),
+        (
+            b"\xff\xfe" + LIBRARY_TEXT.encode("utf-16-le"),
+            "is not UTF-8: invalid start byte at byte 0",
+        ),
+    ],
+    ids=["invalid-byte", "utf-16le-bom"],
 )
-def test_malformed_json(tmp_path, text):
-    assert refused(tmp_path, text).startswith("is not valid JSON: ")
+def test_only_utf8_is_read(tmp_path, data, problem):
+    assert refused(tmp_path, data) == problem
 
 
-@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
-def test_non_json_constants(tmp_path, constant):
-    text = json.dumps(library(ramps={"metal": [1]})).replace("[1]", f"[{constant}]")
-    problem = refused(tmp_path, text)
-    assert problem == f"is not valid JSON: {constant} is not a JSON value"
+@pytest.mark.parametrize("text", ["", "\n", "# nothing yet\n"])
+def test_an_empty_file(tmp_path, text):
+    assert refused(tmp_path, text) == "is empty: it holds no YAML document"
+
+
+def test_two_documents(tmp_path):
+    problem = refused(tmp_path, LIBRARY_TEXT + "---\n" + LIBRARY_TEXT)
+    assert problem == (
+        "holds more than one YAML document; the second starts at line 12, column 1"
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "where"),
+    [
+        ("{", "line 1, column 2"),
+        ("schema: moskophoros.materials/1\nramps: {metal: [1, 2}\n", "line 2"),
+        ("schema: moskophoros.materials/1\nramps:\n\tmetal: [1]\n", "line 3"),
+        ("schema: x\n ramps: {}\n", "line 2"),
+    ],
+    ids=["unclosed", "mismatched", "tab", "indentation"],
+)
+def test_malformed_yaml(tmp_path, text, where):
+    assert refused(tmp_path, text).startswith(f"is not valid YAML at {where}")
 
 
 def test_deep_nesting(tmp_path):
-    assert refused(tmp_path, "[" * 100_000).startswith("is not valid JSON")
+    problem = refused(tmp_path, "[" * 100_000)
+    assert problem.startswith("is not valid YAML at line 1, column ")
+    assert problem.endswith(": it is nested too deeply")
+
+
+def test_an_escape_past_unicode_is_refused(tmp_path):
+    text = LIBRARY_TEXT.replace("face: ordinary", 'face: "\\U00110000"')
+    assert refused(tmp_path, text).startswith(
+        "is not valid YAML at line 11, column 12: cannot read a token"
+    )
 
 
 @pytest.mark.parametrize(
-    ("text", "key"),
+    ("text", "key", "line", "column"),
     [
-        ('{"schema": 1, "schema": 2}', "schema"),
-        ('{"ramps": {"metal": [1], "metal": [2]}}', "metal"),
-        ('{"materials": {"steel": "ordinary", "steel": "ordinary"}}', "steel"),
-        ('{"materials": {"steel": {"uses": "a", "uses": "b"}}}', "uses"),
+        ("schema: x\nramps: {}\nschema: y\n", "schema", 3, 1),
+        ("ramps:\n  metal: [1]\n  metal: [2]\n", "metal", 3, 3),
+        ("materials:\n  steel: ordinary\n  steel: ordinary\n", "steel", 3, 3),
+        ("materials:\n  steel:\n    uses: a\n    uses: b\n", "uses", 4, 5),
     ],
     ids=["root", "ramps", "materials", "entry"],
 )
-def test_repeated_keys(tmp_path, text, key):
-    assert refused(tmp_path, text) == f'repeats the key "{key}"'
+def test_repeated_keys(tmp_path, text, key, line, column):
+    assert refused(tmp_path, text) == (
+        f'repeats the key "{key}" at line {line}, column {column}'
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "tag"), [("!!int 0x0F", "!!int"), ("!!float .nan", "!!float")]
+)
+def test_tags_are_refused(tmp_path, text, tag):
+    problem = refused(tmp_path, f"ramps:\n  metal: [1, {text}]\n")
+    assert problem == f"uses the tag {tag} at line 2, column 14; tags are not allowed"
+
+
+def test_a_recursive_alias_is_refused(tmp_path):
+    problem = refused(tmp_path, "ramps:\n  metal: &m [1, *m]\n")
+    assert problem == "the alias *m is inside its own anchor at line 2, column 17"
+
+
+@pytest.mark.parametrize("index", ["017", "0x0F", "1:20", ".nan", ".inf", "+1", "1_0"])
+def test_yaml_number_spellings_are_not_integers(tmp_path, index):
+    text = LIBRARY_TEXT.replace("[12, 13", f"[{index}, 13")
+    problem = refused(tmp_path, text)
+    assert problem == f'ramps["metal"][0]: "{index}" is not an integer'
 
 
 # The outer shape
 
 
 @pytest.mark.parametrize("document", [[], "library", 1, None])
-def test_not_an_object(tmp_path, document):
-    assert refused_document(tmp_path, document) == "expected a JSON object"
+def test_not_a_mapping(tmp_path, document):
+    assert refused_document(tmp_path, document) == "expected a mapping"
 
 
 @pytest.mark.parametrize("field", ["schema", "ramps", "materials"])
@@ -309,10 +460,10 @@ def test_unknown_fields(tmp_path, change, problem):
 
 @pytest.mark.parametrize("field", ["ramps", "materials"])
 @pytest.mark.parametrize("value", [[], "x", 1, None])
-def test_maps_must_be_objects(tmp_path, field, value):
+def test_maps_must_be_mappings(tmp_path, field, value):
     document = library(default=None)
     document[field] = value
-    assert refused_document(tmp_path, document) == f"{field}: expected an object"
+    assert refused_document(tmp_path, document) == f"{field}: expected a mapping"
 
 
 # Ramps
@@ -367,12 +518,20 @@ def test_a_bad_ramp_index(tmp_path, where, index, problem):
 
 
 def test_the_float_spelling_of_an_integer_is_refused(tmp_path):
-    text = json.dumps(library()).replace("[8, 9, 10]", "[8, 9.0, 10]", 1)
+    text = LIBRARY_TEXT.replace("[8, 9, 10]", "[8, 9.0, 10]", 1)
     assert refused(tmp_path, text) == 'ramps["cloth"][1]: 9.0 is not an integer'
 
 
+def test_an_integer_too_long_to_convert_is_refused(tmp_path):
+    digits = "9" * (sys.get_int_max_str_digits() + 1)
+    text = LIBRARY_TEXT.replace("[8, 9, 10]", f"[8, {digits}, 10]", 1)
+    assert refused(tmp_path, text) == (
+        f"has an integer of {len(digits)} digits, too long to read at line 5, column 14"
+    )
+
+
 def test_an_overflowing_number_is_refused(tmp_path):
-    text = json.dumps(library()).replace("[8, 9, 10]", "[8, 1e400, 10]", 1)
+    text = LIBRARY_TEXT.replace("[8, 9, 10]", "[8, 1e400, 10]", 1)
     assert refused(tmp_path, text) == 'ramps["cloth"][1]: inf is not an integer'
 
 

@@ -53,7 +53,7 @@ moskophoros [options] <infile.glb> <outfile.png>
 | `--reduce NAME` | `plain` | How each supersampled block becomes one pixel: `plain`, the alpha-weighted mean, or `mode`, the most common colour. See [Stylize](#stylize). |
 | `--palette FILE` | none | Map colours to an ordered `.hex`, `.gpl` or `.png` palette. See [Stylize](#stylize). |
 | `--no-palette` | off | Drop a reused palette; cannot accompany `--palette`. |
-| `--materials FILE` | none | Draw each named material from the ramps of a JSON material library, on the palette in force. Needs a palette. See [Material libraries](#material-libraries). |
+| `--materials FILE` | none | Draw each named material from the ramps of a YAML material library, a `.yaml` or `.yml` file, on the palette in force. Needs a palette. See [Material libraries](#material-libraries). |
 | `--no-materials` | off | Drop a reused material library; cannot accompany `--materials`. |
 | `--settings-from FILE` | none | Reuse settings from an earlier sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
 | `--no-preview` | off | Skip the animated previews. |
@@ -117,6 +117,9 @@ decision 2026-10-01):
 - A `--reduce` value other than `plain` or `mode` (owner decision 2026-10-04).
 - `--palette` together with `--no-palette`, or either option repeated.
 - `--materials` together with `--no-materials`, or either option repeated.
+- A `--materials` file whose name does not end in `.yaml` or `.yml`, in any
+  case, `.json` included. The error says libraries are YAML, and comes before
+  the file is read (owner decision 2026-10-11, settings design D-11).
 - A bad palette file: see [Palette inputs](#palette-inputs). These errors name
   the file and, for text errors, the line, and precede every Blender invocation,
   including its version probe (owner decisions 2026-10-04).
@@ -907,29 +910,33 @@ three return the same result for the same library. `--materials FILE` gives the
 command a library, and `stylize` maps frames onto its ramps
 ([Material ramps](#material-ramps)).
 
-A library is a UTF-8 JSON object:
+A library is a UTF-8 YAML file whose name ends in `.yaml` or `.yml`, in any
+case (owner decisions 2026-10-11, settings design D-7 and D-11; this replaces
+the JSON format of material design D-8). `read_library` and the command refuse
+any other name, `.json` included, before reading the file, saying that
+libraries are YAML. `read_library_bytes` and `validate_library` never inspect
+`source`, which only labels diagnostics, so a sheet whose recorded library
+`source` ends in `.json` still reuses. Comments are allowed:
 
-```json
-{
-  "schema": "moskophoros.materials/1",
-  "ramps": {
-    "metal": [12, 13, 14, 15, 47],
-    "cloth": [80, 81, 82]
-  },
-  "default": "cloth",
-  "materials": {
-    "steel":     {"uses": "metal"},
-    "cloth.red": {"ramp": [80, 81, 82]},
-    "face":      "ordinary"
-  }
-}
+```yaml
+# Ramps run darkest first, as indices into the palette.
+schema: moskophoros.materials/1
+ramps:
+  metal: [12, 13, 14, 15, 47]
+  cloth: [80, 81, 82]
+default: cloth          # a named material with no entry takes this ramp
+materials:
+  steel: {uses: metal}
+  cloth.red:
+    ramp: [80, 81, 82]
+  face: ordinary
 ```
 
 - `schema` is exactly `moskophoros.materials/1`. `schema`, `ramps` and
-  `materials` are required; `ramps` and `materials` are objects and may be
+  `materials` are required; `ramps` and `materials` are mappings and may be
   empty. No other field is allowed at any level.
 - `ramps` holds named generic ramps. A ramp is a non-empty list of at most
-  256 JSON integers, never booleans or numbers such as `3.0`, each an index
+  256 integers, never booleans or numbers such as `3.0`, each an index
   from `0` to one less than the palette's length. A one-entry ramp is a flat
   material; indices may repeat. "Darkest first", band 0 being the least
   light, is the authoring convention and is not checked.
@@ -938,7 +945,44 @@ A library is a UTF-8 JSON object:
   `{"uses": NAME}`, a ramp in `ramps`; or the string `"ordinary"`.
 - Names are non-empty strings, kept and compared exactly, case and
   whitespace included. A reference to an undefined ramp is an error. Entries
-  and ramps no model uses are valid and not reported.
+  and ramps no model uses are valid and not reported. An unquoted name the
+  typing below reads as something else, such as `1`, `true` or `null`, is
+  refused as a key that is not a string; quoted, it is a name.
+
+The file is read by the strict YAML reader `yamlfile.load(data)`, which the
+settings loader reuses (settings design D-1). It is PyYAML's safe loader with
+these rules:
+
+- The bytes are decoded strictly as UTF-8 first, so a UTF-16 file is refused
+  even with a byte order mark. A UTF-8 byte order mark is allowed.
+- A file holds exactly one document. An empty file, or one holding only
+  comments, is refused, and so is a second document.
+- A key repeated at any level is refused, naming the key and its line.
+- Every explicit tag is refused, such as `!!int`, `!!float`, `!!str`,
+  `!!binary`, `!!set`, `!!pairs`, a local `!name` or the bare `!`.
+- Anchors and aliases are allowed and resolve to ordinary values. An alias
+  inside its own anchored node, such as `&a [*a]`, is refused.
+- A sequence or mapping used as a key is refused.
+- Implicit typing is restricted, so a plain value means only what it looks
+  like:
+
+  | Plain value | Means | Stays a string |
+  |---|---|---|
+  | `true`, `false` | a boolean | `True`, `TRUE`, `yes`, `no`, `on`, `off` |
+  | `null`, `~` | null | `Null`, `NULL`, and an empty value, which is `""` |
+  | `-?(0\|[1-9][0-9]*)` | an integer | `+1`, `1_000`, `0o17`, `017`, `0x0F`, `1:20` |
+  | JSON's numbers with a fraction, an exponent or both: `1.5`, `-2.5E-3`, `1e3` | a float | `.5`, `5.`, `+1.5`, `.inf`, `-.inf`, `.nan`, `.NaN` |
+
+  Every other plain value is a string: timestamps such as `2026-10-11`, `<<`,
+  which never merges, and `=`. A quoted value is always a string. So `017` as
+  a ramp index is refused as `ramps["metal"][0]: "017" is not an integer`,
+  and a material named `on` or `no` keeps its name.
+- Every failure is a `yamlfile.YamlError` naming its line and column, which
+  count from 1, never another exception. That includes input Python itself
+  refuses while PyYAML reads it: an escape beyond U+10FFFF such as
+  `"\U00110000"`, a number longer than Python's integer digit limit, and
+  nesting too deep to read, each placed where reading stopped. Only a UTF-8
+  error gives a byte offset instead.
 
 The result is an immutable `materials.Library`: `ramps` maps each name to a
 tuple of indices, `default` is a ramp name or `None`, and `materials` maps
@@ -948,13 +992,20 @@ and ordered by name, so the result does not depend on the file's key order,
 and checks run in name order, so neither does the first error reported.
 
 Every failure raises `materials.LibraryError`, naming the file or
-caller-supplied source and the problem: unreadable files, invalid UTF-8,
-malformed JSON, non-JSON constants such as `NaN`, repeated keys, a wrong or
-missing field, an unknown field, a value of the wrong type, an empty or
-oversized ramp, a non-integer or out-of-palette index, an entry of none or
-several forms, an empty name, or a reference to an undefined ramp. Errors
-after parsing name the field, ramp or material and the position in a ramp,
-such as `materials["steel"].ramp[2]`. The module neither prints nor exits.
+caller-supplied source and the problem: a name that does not end in `.yaml`
+or `.yml`, unreadable files, invalid UTF-8, malformed YAML, nesting too deep
+to read, an empty file, more than one document, repeated keys, a tag, a
+recursive alias, a sequence or mapping key, an integer with too many digits
+for Python to convert, an escape beyond U+10FFFF, a wrong or missing field, an
+unknown field, a key that is not a string, a value of the wrong type, an
+empty or oversized ramp, a non-integer or out-of-palette index, an entry of
+none or several forms, an empty name, or a reference to an undefined ramp.
+YAML errors give the line and column, such as `is not valid YAML at line 3,
+column 1: …` or `repeats the key "metal" at line 4, column 3`; only these
+parse failures say YAML. Errors after parsing name the field, ramp or
+material and the position in a ramp, such as `materials["steel"].ramp[2]`, in
+wording that does not depend on the format, since they also check a reused
+sheet's inline record. The module neither prints nor exits.
 
 #### Material ramps
 
@@ -1173,7 +1224,7 @@ likewise inline, so reuse never opens the library file: for `ramps`
 it is
 
 ```json
-{"source": "materials.json", "sha256": "…", "ramps": {"metal": [12, 13, 14]}, "default": null, "materials": {"steel": {"uses": "metal"}}}
+{"source": "materials.yaml", "sha256": "…", "ramps": {"metal": [12, 13, 14]}, "default": null, "materials": {"steel": {"uses": "metal"}}}
 ```
 
 and a library file's bytes, its ramps, default and entries, and the shade
@@ -1247,12 +1298,13 @@ src/moskophoros/
   imageops.py             shared image operations
   palette.py              ordered exact RGB palette reading and validation
   materials.py            material library reading, validation and warnings
+  yamlfile.py             the strict YAML reader for files the owner writes
 tests/
 ```
 
 - Python 3.13 or newer, matching the Python Blender 5.2 bundles (owner
   decision 2026-09-29, CI foundation design D-5). Runtime dependencies are
-  numpy and Pillow; pytest and ruff are development dependencies.
+  numpy, Pillow and PyYAML; pytest and ruff are development dependencies.
 - `pyproject.toml` states minimum versions; `requirements.lock` pins the
   versions that were tested.
 

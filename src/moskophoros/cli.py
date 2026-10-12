@@ -310,6 +310,10 @@ def _resolve_materials(options: Options, reused_colors) -> Options:
     colors = None if options.palette is None else options.palette.colors
     if options.materials_file is not None:
         path = options.materials_file
+        try:
+            materials.check_path(path)
+        except materials.LibraryError as error:
+            parser.error(f"--materials {error}")
         if colors is None:
             parser.error(
                 f"--materials {str(path)!r}: a library needs a palette; give "
@@ -1238,7 +1242,7 @@ def _build_parser():
         "FILE",
         _path,
         None,
-        "draw materials from the ramps of a JSON material library; needs a palette",
+        "draw materials from the ramps of a YAML material library; needs a palette",
     )
     parser.add_argument(
         "--no-materials",

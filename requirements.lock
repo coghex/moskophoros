@@ -16,6 +16,8 @@ pygments==2.21.0
     # via pytest
 pytest==9.1.1
     # via moskophoros (pyproject.toml)
+pyyaml==6.0.3
+    # via moskophoros (pyproject.toml)
 ruff==0.16.9
     # via moskophoros (pyproject.toml)
 uv==0.12.21

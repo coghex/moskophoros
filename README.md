@@ -49,8 +49,9 @@ new frame that does not fit the cell is an overflow error (exit 4).
 after averaging; mode maps before voting, so nearby shades pool their votes.
 An earlier sheet's palette is reused from its JSON without the original file;
 `--palette FILE` replaces it and `--no-palette` drops it.
-`--materials library.json` draws each named material in the model from the
-ramps of a shared material library, on the palette (so it needs one): the same
+`--materials library.yaml` draws each named material in the model from the
+ramps of a shared YAML material library (`.yaml` or `.yml`; JSON libraries are
+refused), on the palette (so it needs one): the same
 `steel` on another model gets the same colours, and a material the library does
 not know takes its default ramp or the ordinary look, named in a warning.
 The library is recorded in the sheet's JSON and reused with `--settings-from`
@@ -67,7 +68,7 @@ exit codes and how scale and the ground point are chosen, is in
 
 ## Requirements
 
-- Python 3.13 or newer, with numpy and Pillow
+- Python 3.13 or newer, with numpy, Pillow and PyYAML
 - Blender, run headless for rendering. The supported version is recorded in
   [docs/design.md](docs/design.md#supported-blender-version).
 

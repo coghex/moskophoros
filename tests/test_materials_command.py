@@ -6,10 +6,12 @@ import copy
 import hashlib
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
+import yaml
 from glb_writer import GlbWriter
 from PIL import Image
 from test_command import PLAIN_STYLE, Setup, run
@@ -45,9 +47,9 @@ def palette_file(directory, colors=COLORS, name="palette.hex"):
     return path
 
 
-def library_file(directory, document=None, name="materials.json"):
+def library_file(directory, document=None, name="materials.yaml"):
     path = Path(directory) / name
-    path.write_text(json.dumps(LIBRARY if document is None else document))
+    path.write_text(yaml.safe_dump(LIBRARY if document is None else document))
     return path
 
 
@@ -127,10 +129,10 @@ def forbid_blender(monkeypatch):
 @pytest.mark.parametrize(
     "args",
     [
-        ("--materials", "a.json", "--materials", "b.json"),
+        ("--materials", "a.yaml", "--materials", "b.yaml"),
         ("--no-materials", "--no-materials"),
-        ("--materials", "a.json", "--no-materials"),
-        ("--no-materials", "--materials", "a.json"),
+        ("--materials", "a.yaml", "--no-materials"),
+        ("--no-materials", "--materials", "a.yaml"),
     ],
 )
 def test_materials_option_conflicts_and_repeats_are_usage_errors(args, capsys):
@@ -140,7 +142,7 @@ def test_materials_option_conflicts_and_repeats_are_usage_errors(args, capsys):
 
 
 def test_materials_parsing_reads_no_files(tmp_path):
-    path = tmp_path / "absent.json"
+    path = tmp_path / "absent.yaml"
     options = cli.parse_args(["--materials", str(path), "model.glb", "out.png"])
     assert options.materials_file == path
     assert options.explicit == {"materials"}
@@ -166,28 +168,57 @@ def library_with(**changes):
 @pytest.mark.parametrize(
     ("kind", "mention"),
     [
-        ("absent", "absent.json"),
-        ("not-json", "materials.json"),
+        ("absent", "absent.yaml"),
+        ("json", "libraries are YAML"),
+        ("absent-json", "libraries are YAML"),
+        ("not-yaml", "is not valid YAML at line 1, column 2"),
+        ("tag", "tags are not allowed"),
+        ("recursive-alias", "inside its own anchor"),
         ("bad-schema", "schema"),
         ("outside-palette", 'materials["glass"].ramp[0]'),
         ("unknown-ramp", 'materials["steel"].uses'),
         ("unknown-field", "unknown field"),
         ("empty-ramp", 'ramps["metal"]'),
-        ("repeated-key", "repeats the key"),
+        ("repeated-key", 'repeats the key "schema" at line 2, column 1'),
+        ("not-a-string-key", "materials: key 1 is not a string"),
+        ("huge-integer", "digits, too long to read at line"),
+        ("escape-past-unicode", "cannot read a token"),
+        ("deep-nesting", "it is nested too deeply"),
         ("bad-default", "default"),
     ],
 )
 def test_every_library_error_is_exit_2_before_blender_and_names_file_and_entry(
     setup, capsys, monkeypatch, kind, mention
 ):
-    path = setup.tmp_path / "materials.json"
+    path = setup.tmp_path / "materials.yaml"
     document = library_with()
     if kind == "absent":
+        path = setup.tmp_path / "absent.yaml"
+    elif kind == "json":
+        path = setup.tmp_path / "materials.json"
+        path.write_text(json.dumps(document))
+    elif kind == "absent-json":
         path = setup.tmp_path / "absent.json"
-    elif kind == "not-json":
+    elif kind == "not-yaml":
         path.write_text("{")
+    elif kind == "tag":
+        path.write_text(yaml.safe_dump(document) + "extra: !!int 0x0F\n")
+    elif kind == "recursive-alias":
+        path.write_text("ramps: &r {metal: *r}\n")
     elif kind == "repeated-key":
-        path.write_text('{"schema": "x", "schema": "x"}')
+        path.write_text("schema: x\nschema: x\n")
+    elif kind == "huge-integer":
+        digits = "9" * (sys.get_int_max_str_digits() + 1)
+        document["ramps"]["metal"] = [1]
+        path.write_text(yaml.safe_dump(document).replace("- 1\n", f"- {digits}\n", 1))
+    elif kind == "escape-past-unicode":
+        path.write_text(yaml.safe_dump(document) + 'extra: "\\U00110000"\n')
+    elif kind == "deep-nesting":
+        path.write_text("[" * 100_000)
+    elif kind == "not-a-string-key":
+        path.write_text(
+            "schema: moskophoros.materials/1\nramps: {}\nmaterials: {1: ordinary}\n"
+        )
     else:
         if kind == "bad-schema":
             document["schema"] = "moskophoros.materials/0"
@@ -201,7 +232,7 @@ def test_every_library_error_is_exit_2_before_blender_and_names_file_and_entry(
             document["ramps"]["metal"] = []
         elif kind == "bad-default":
             document["default"] = "nope"
-        path.write_text(json.dumps(document))
+        path.write_text(yaml.safe_dump(document))
     forbid_blender(monkeypatch)
     argv = setup.argv(
         "--palette", str(palette_file(setup.tmp_path)), "--materials", str(path)
@@ -262,7 +293,7 @@ def test_the_library_is_read_once_and_parsed_and_hashed_as_the_same_bytes(
     )
     assert reads == [path]
     assert options.materials.sha256 == hashlib.sha256(real(path)).hexdigest()
-    assert options.materials.source == "materials.json"
+    assert options.materials.source == "materials.yaml"
 
 
 # Recording
@@ -285,7 +316,7 @@ def test_a_run_records_the_library_inline_and_the_shade_range(setup, capsys):
     assert style["shade_range"] == DEFAULT_RANGE
     record = style["materials"]
     assert list(record) == ["source", "sha256", "ramps", "default", "materials"]
-    assert record["source"] == "materials.json"
+    assert record["source"] == "materials.yaml"
     assert record["ramps"] == LIBRARY["ramps"]
     assert record["default"] is None
     assert record["materials"] == LIBRARY["materials"]
@@ -544,7 +575,7 @@ def test_a_reused_sheet_reproduces_the_look_without_the_files(setup, capsys):
     named_hero(setup, HERO_MATERIALS)
     sheet = recorded(setup, capsys, library=library_with(default="cloth"))
     original = setup.png.read_bytes()
-    (setup.tmp_path / "materials.json").unlink()
+    (setup.tmp_path / "materials.yaml").unlink()
     (setup.tmp_path / "palette.hex").unlink()
     again = setup.out / "again.png"
     argv = setup.argv("--settings-from", str(sheet), "--no-preview", outfile=again)
@@ -559,7 +590,7 @@ def test_a_reused_sheet_reproduces_the_look_without_the_files(setup, capsys):
 def test_a_reused_library_warns_about_the_model_it_is_used_on(setup, capsys):
     named_hero(setup, HERO_MATERIALS)
     sheet = recorded(setup, capsys)
-    (setup.tmp_path / "materials.json").unlink()
+    (setup.tmp_path / "materials.yaml").unlink()
     status, _, err = run(
         capsys,
         setup.argv("--settings-from", str(sheet), "--no-preview"),
@@ -589,7 +620,7 @@ def test_a_reused_shade_range_is_kept_when_an_explicit_library_replaces_the_libr
     document = json.loads(sheet.read_text())
     document["settings"]["style"]["shade_range"] = [140, 200]
     sheet.write_text(json.dumps(document))
-    replacement = library_file(setup.tmp_path, library_with(), name="other.json")
+    replacement = library_file(setup.tmp_path, library_with(), name="other.yaml")
     assert (
         run(
             capsys,
@@ -605,7 +636,7 @@ def test_a_reused_shade_range_is_kept_when_an_explicit_library_replaces_the_libr
     )
     style = json.loads(setup.json.read_text())["settings"]["style"]
     assert style["shade_range"] == [140, 200]
-    assert style["materials"]["source"] == "other.json"
+    assert style["materials"]["source"] == "other.yaml"
     assert sheet_colours(setup.png) == {CLEAR, opaque(1)}
 
 
@@ -643,6 +674,8 @@ def test_an_older_sheet_has_no_library_or_range_fields(tmp_path, capsys):
 # Malformed `/3` style fields
 
 
+# A record from before libraries were YAML: its `.json` source is only a label,
+# so the sheet still reuses without the file.
 GOOD_RECORD = {
     "source": "materials.json",
     "sha256": "ab" * 32,
@@ -701,7 +734,7 @@ def test_a_well_formed_library_record_reads(tmp_path):
         ),
         (
             {"materials": GOOD_RECORD | {"ramps": []}},
-            "settings.style.materials: ramps: expected an object",
+            "settings.style.materials: ramps: expected a mapping",
         ),
         (
             {"materials": GOOD_RECORD | {"ramps": {"metal": [1, 8]}}},
@@ -891,14 +924,14 @@ def test_an_explicit_library_replaces_the_reused_one_with_any_palette_in_force(
 ):
     document = library_with()
     document["materials"] = {"cloth": {"ramp": [0, 1]}}
-    path = library_file(tmp_path, document, name="mine.json")
+    path = library_file(tmp_path, document, name="mine.yaml")
     options = resolved(tmp_path, "--materials", str(path))
-    assert options.materials.source == "mine.json"
+    assert options.materials.source == "mine.yaml"
     assert "cloth" in options.materials.library.materials
     tiny = palette_file(tmp_path, COLORS[:2], name="tiny.hex")
-    small = tmp_path / "small.json"
+    small = tmp_path / "small.yml"
     small.write_text(
-        json.dumps(
+        yaml.safe_dump(
             {
                 "schema": materials.SCHEMA,
                 "ramps": {"r": [0, 1]},
@@ -908,7 +941,7 @@ def test_an_explicit_library_replaces_the_reused_one_with_any_palette_in_force(
     )
     options = resolved(tmp_path, "--palette", str(tiny), "--materials", str(small))
     assert options.palette.source == "tiny.hex"
-    assert options.materials.source == "small.json"
+    assert options.materials.source == "small.yml"
 
 
 def test_an_explicit_library_is_validated_against_the_palette_in_force(
@@ -925,14 +958,14 @@ def test_an_explicit_library_is_validated_against_the_palette_in_force(
         str(library_file(tmp_path)),
     )
     assert (
-        "materials.json" in err and "is not an index into the 2-colour palette" in err
+        "materials.yaml" in err and "is not an index into the 2-colour palette" in err
     )
 
 
 def test_an_invalid_reused_library_is_an_error_whatever_overrides_it(tmp_path, capsys):
     bad = GOOD_RECORD | {"ramps": {"metal": [1, 2, 9]}}
     sheet = style_sheet(tmp_path, materials=bad)
-    mine = library_file(tmp_path, library_with(), name="mine.json")
+    mine = library_file(tmp_path, library_with(), name="mine.yaml")
     other = palette_file(tmp_path, COLORS[:3], name="other.hex")
     for args in (
         (),
