@@ -52,7 +52,7 @@ def test_defaults():
         supersample=8,
         reduce="plain",
         settings_from=None,
-        no_preview=False,
+        previews=True,
         work_dir=None,
         blender=None,
         any_blender=False,
@@ -131,7 +131,7 @@ def test_explicit_options_are_recorded_apart_from_defaults_and_presets():
         "--no-preview",
     )
     assert options.explicit == frozenset(
-        {"view", "start_angle", "fps", "clip", "no_preview"}
+        {"view", "start_angle", "fps", "clip", "previews"}
     )
     # Preset-derived and default values are not explicit, even when an
     # explicit value equals the default.
@@ -149,6 +149,7 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
             *["--cell", "32x48", "--ground", "1,2,3", "--ground-px", "16,40"],
             *["--root-motion", "keep", "--supersample", "4", "--reduce", "plain"],
             *["--settings-from", "old.json", "--no-preview"],
+            *["--config", "a.yaml", "--config", "b.yaml", "--no-user-config"],
             *["--work-dir", "work", "--blender", "/opt/blender", "--any-blender"],
             *POSITIONALS,
         ]
@@ -165,6 +166,7 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         "materials",
         "no_materials",
         "shade_range",
+        "origins",
     }
     assert options == cli.Options(
         infile=Path("in.glb"),
@@ -185,11 +187,13 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         supersample=4,
         reduce="plain",
         settings_from=Path("old.json"),
-        no_preview=True,
+        previews=False,
         work_dir=Path("work"),
         blender=Path("/opt/blender"),
         any_blender=True,
         explicit=options.explicit,
+        configs=(Path("a.yaml"), Path("b.yaml")),
+        no_user_config=True,
     )
 
 
@@ -494,6 +498,9 @@ DESIGN_OPTIONS = {
     "--ppm N": "auto",
     "--cell WxH": "reused by --settings-from, else fitted to the model with --ppm, "
     "else 64x64",
+    "--config FILE": "none",
+    "--no-user-config": "off",
+    "--preview": "on",
     "--ground X,Y,Z": "0,0,0",
     "--ground-px X,Y": "auto",
     "--root-motion MODE": "error",

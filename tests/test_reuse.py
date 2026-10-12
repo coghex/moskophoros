@@ -32,6 +32,7 @@ SETTINGS = {
     "ground_m": {"x": 0.1, "y": -0.2, "z": 0.3},
     "ground_px": {"x": 24, "y": 37},
     "root_motion": "keep",
+    "previews": False,
     "style": {
         "reduce": "plain",
         "palette": None,
@@ -40,12 +41,6 @@ SETTINGS = {
     },
     "clips": [{"name": "walk", "loop": True}, {"name": "attack", "loop": False}],
 }
-# The same settings as an older `/2` sheet records them: a style without a
-# material library or shade range.
-PREVIOUS_SETTINGS = copy.deepcopy(SETTINGS)
-PREVIOUS_SETTINGS["style"] = {"reduce": "plain", "palette": None}
-# And as an older `/1` sheet records them: without a style.
-LEGACY_SETTINGS = {name: SETTINGS[name] for name in SETTINGS if name != "style"}
 REUSED = {
     "view": "side",
     "pitch": 0.0,
@@ -59,20 +54,32 @@ REUSED = {
     "ground": (0.1, -0.2, 0.3),
     "ground_px": (24, 37),
     "root_motion": "keep",
+    "previews": False,
+    "clip": ("walk", "attack"),
+    "once": ("attack",),
     "reduce": "plain",
 }
 
 
 def write_sheet(tmp_path, settings=None, name="old.json", **document):
     path = tmp_path / name
-    contents = {"schema": "moskophoros.sheet/3"} | document
+    contents = {"schema": "moskophoros.sheet/4"} | document
     contents["settings"] = copy.deepcopy(SETTINGS if settings is None else settings)
     path.write_text(json.dumps(contents, ensure_ascii=False), encoding="utf-8")
     return path
 
 
 def parse(path, *options):
-    return cli.parse_args(["--settings-from", str(path), *options, "in.glb", "out.png"])
+    return cli.parse_args(
+        [
+            "--settings-from",
+            str(path),
+            "--no-user-config",
+            *options,
+            "in.glb",
+            "out.png",
+        ]
+    )
 
 
 def reuse(path, *options):
@@ -99,18 +106,6 @@ def rejected(capsys, path, *options):
     return raised.value.message.removeprefix(prefix)
 
 
-def write_previous_sheet(tmp_path, settings=None, name="old.json"):
-    """A `moskophoros.sheet/2` sheet, with `PREVIOUS_SETTINGS` by default."""
-    settings = PREVIOUS_SETTINGS if settings is None else settings
-    return write_sheet(tmp_path, settings, name, schema="moskophoros.sheet/2")
-
-
-def write_legacy_sheet(tmp_path, settings=None, name="old.json"):
-    """A `moskophoros.sheet/1` sheet, with `LEGACY_SETTINGS` by default."""
-    settings = LEGACY_SETTINGS if settings is None else settings
-    return write_sheet(tmp_path, settings, name, schema="moskophoros.sheet/1")
-
-
 def edited(changes=(), removed=(), base=SETTINGS):
     """`base` with dotted paths set to values, or removed."""
     settings = copy.deepcopy(base)
@@ -132,9 +127,9 @@ def edited(changes=(), removed=(), base=SETTINGS):
 # Without reuse
 
 
-def test_without_settings_from_the_parsed_options_are_kept():
+def test_without_settings_from_or_settings_files_the_parsed_options_are_kept():
     options = cli.parse_args(["--pitch", "45", "in.glb", "out.png"])
-    assert cli.resolve_settings(options) is options
+    assert cli.resolve_settings(options) == options
 
 
 def test_parsing_still_reads_no_settings_file(tmp_path):
@@ -149,8 +144,7 @@ def test_parsing_still_reads_no_settings_file(tmp_path):
 def test_every_reused_value_is_carried_over(tmp_path):
     options = reuse(write_sheet(tmp_path))
     assert values(options) == REUSED
-    assert options.explicit == {"settings_from"}
-    assert (options.clip, options.once) == (None, ())
+    assert options.explicit == {"settings_from", "no_user_config"}
 
 
 def test_read_settings_returns_the_reused_values(tmp_path):
@@ -174,13 +168,22 @@ def test_read_settings_returns_the_reused_values(tmp_path):
         ("--pitch", "10", {"pitch": 10.0, "view": "custom"}),
         ("--directions", "4", {"directions": 4, "view": "custom"}),
         ("--start-angle", "45", {"start_angle": 45.0, "view": "custom"}),
+        ("--preview", None, {"previews": True}),
+        ("--cell", "auto", {"cell": None}),
     ],
 )
 def test_each_explicit_option_overrides_its_reused_value(
     tmp_path, option, value, changed
 ):
-    options = reuse(write_sheet(tmp_path), option, value)
+    options = reuse(write_sheet(tmp_path), option, *([] if value is None else [value]))
     assert values(options) == REUSED | changed
+
+
+def test_no_preview_keeps_a_sheet_made_without_previews_without_them(tmp_path):
+    with_previews = write_sheet(tmp_path, edited({"previews": True}), name="p.json")
+    assert reuse(with_previews).previews is True
+    assert reuse(with_previews, "--no-preview").previews is False
+    assert reuse(write_sheet(tmp_path)).previews is False
 
 
 def test_a_matching_default_given_explicitly_still_wins(tmp_path):
@@ -255,32 +258,95 @@ def test_a_reused_preset_name_keeps_its_recorded_values(tmp_path):
     assert (options.view, options.pitch, options.directions) == ("iso", 31.0, 2)
 
 
-# Clips
+# Clips (settings design D-19 and D-27)
 
 
-def test_clips_and_once_come_from_the_command_line(tmp_path):
+def test_the_loaded_clips_and_one_shot_marks_stay_without_clip_or_once(tmp_path):
+    options = reuse(write_sheet(tmp_path))
+    assert (options.clip, options.once) == (("walk", "attack"), ("attack",))
+
+
+def test_an_explicit_clip_replaces_the_selection_and_its_marks(tmp_path):
     options = reuse(
         write_sheet(tmp_path), "--clip", "run", "--clip", "walk", "--once", "run"
     )
     assert (options.clip, options.once) == (("run", "walk"), ("run",))
-
-
-def test_reused_one_shot_markings_are_not_restored(tmp_path):
-    options = reuse(write_sheet(tmp_path))
-    assert (options.clip, options.once) == (None, ())
+    options = reuse(write_sheet(tmp_path), "--clip", "attack")
+    assert (options.clip, options.once) == (("attack",), ())
 
 
 @pytest.mark.parametrize(
-    "clips", [[], "nonsense", None, [{"name": 5, "loop": "x", "extra": 1}], {}]
+    ("once", "marked"),
+    [(["walk"], ("walk",)), (["walk", "attack"], ("walk", "attack"))],
 )
-def test_the_reused_clips_are_never_read(tmp_path, clips):
-    options = reuse(write_sheet(tmp_path, edited({"clips": clips})))
-    assert values(options) == REUSED
+def test_once_alone_replaces_the_loaded_marks(tmp_path, once, marked):
+    options = []
+    for name in once:
+        options += ["--once", name]
+    reused = reuse(write_sheet(tmp_path), *options)
+    assert (reused.clip, reused.once) == (("walk", "attack"), marked)
 
 
-def test_reused_clips_may_be_absent(tmp_path):
-    options = reuse(write_sheet(tmp_path, edited(removed=["clips"])))
-    assert values(options) == REUSED
+def test_once_naming_a_clip_outside_the_loaded_list_is_a_usage_error(tmp_path, capsys):
+    with pytest.raises(cli.UsageError) as raised:
+        reuse(write_sheet(tmp_path), "--once", "run")
+    assert raised.value.message == (
+        "argument --once: 'run' is not among the loaded sheet's clips: 'walk', 'attack'"
+    )
+    assert capsys.readouterr().err.splitlines()[0] == USAGE_LINE
+
+
+@pytest.mark.parametrize(
+    ("clips", "problem"),
+    [
+        ([], "expected a nonempty list of clips, got []"),
+        ("nonsense", 'expected a nonempty list of clips, got "nonsense"'),
+        ({}, "expected a nonempty list of clips, got {}"),
+        (
+            [{"name": "walk"}],
+            '[0]: expected exactly {"name": NAME, "loop": BOOLEAN}, got {"name": "walk"}',
+        ),
+        (
+            [{"name": "walk", "loop": True, "extra": 1}],
+            '[0]: expected exactly {"name": NAME, "loop": BOOLEAN}, got '
+            '{"name": "walk", "loop": true, "extra": 1}',
+        ),
+        (["walk"], '[0]: expected exactly {"name": NAME, "loop": BOOLEAN}, got "walk"'),
+        ([{"name": 5, "loop": True}], "[0].name: expected a nonempty clip name, got 5"),
+        (
+            [{"name": "", "loop": True}],
+            '[0].name: expected a nonempty clip name, got ""',
+        ),
+        ([{"name": "a", "loop": 1}], "[0].loop: expected true or false, got 1"),
+        (
+            [{"name": "a", "loop": True}, {"name": "a", "loop": False}],
+            '[1].name: the clip "a" is recorded twice',
+        ),
+    ],
+)
+def test_a_malformed_clip_selection_is_rejected(tmp_path, capsys, clips, problem):
+    path = write_sheet(tmp_path, edited({"clips": clips}))
+    assert rejected(capsys, path) == f"settings.clips: {problem}"
+
+
+@pytest.mark.parametrize("options", [(), ("--clip", "walk"), ("--once", "walk")])
+def test_a_malformed_clip_selection_is_rejected_even_when_clip_replaces_it(
+    tmp_path, capsys, options
+):
+    path = write_sheet(tmp_path, edited({"clips": None}))
+    assert rejected(capsys, path, *options) == "settings.clips: must be set, got null"
+    path = write_sheet(tmp_path, edited(removed=["clips"]))
+    assert rejected(capsys, path, *options) == "settings.clips: missing"
+
+
+@pytest.mark.parametrize("value", [None, "true", 1, 0])
+def test_previews_must_be_a_boolean(tmp_path, capsys, value):
+    path = write_sheet(tmp_path, edited({"previews": value}))
+    problem = rejected(capsys, path, "--preview")
+    if value is None:
+        assert problem == "settings.previews: must be set, got null"
+    else:
+        assert problem.startswith("settings.previews: expected true or false, got ")
 
 
 # What the file must be
@@ -288,8 +354,7 @@ def test_reused_clips_may_be_absent(tmp_path):
 
 def test_a_document_with_only_schema_and_settings_is_enough(tmp_path):
     path = tmp_path / "minimal.json"
-    settings = edited(removed=["clips"])
-    path.write_text(json.dumps({"schema": "moskophoros.sheet/3", "settings": settings}))
+    path.write_text(json.dumps({"schema": "moskophoros.sheet/4", "settings": SETTINGS}))
     assert values(reuse(path)) == REUSED
 
 
@@ -357,7 +422,7 @@ def test_a_deeply_nested_file_is_rejected(tmp_path, capsys):
     ("text", "key"),
     [
         (
-            '{"schema": "moskophoros.sheet/1", "schema": "moskophoros.sheet/1"}',
+            '{"schema": "moskophoros.sheet/4", "schema": "moskophoros.sheet/4"}',
             "schema",
         ),
         ('{"settings": {"fps": 12, "fps": 12}}', "fps"),
@@ -372,10 +437,11 @@ def test_a_repeated_key_anywhere_is_rejected(tmp_path, capsys, text, key):
     assert rejected(capsys, path) == f"repeats the key {key!r}"
 
 
-NOT_A_SHEET = (
-    "is not a moskophoros.sheet/3 or moskophoros.sheet/2 or moskophoros.sheet/1 "
-    "document"
-)
+NOT_A_SHEET = "is not a moskophoros.sheet/4 document"
+
+
+def older(schema):
+    return f"is a {schema} sheet; only moskophoros.sheet/4 sheets load, so generate it again"
 
 
 @pytest.mark.parametrize(
@@ -383,32 +449,27 @@ NOT_A_SHEET = (
     [
         ([], f"{NOT_A_SHEET}: not a JSON object"),
         ({}, f"{NOT_A_SHEET}: schema is missing"),
+        ({"schema": "moskophoros.sheet/3"}, older("moskophoros.sheet/3")),
+        ({"schema": "moskophoros.sheet/2"}, older("moskophoros.sheet/2")),
+        ({"schema": "moskophoros.sheet/1"}, older("moskophoros.sheet/1")),
+        ({"schema": "moskophoros.sheet/5"}, older("moskophoros.sheet/5")),
         (
-            {"schema": "moskophoros.sheet/4"},
-            f'{NOT_A_SHEET}: schema is "moskophoros.sheet/4"',
-        ),
-        (
-            {"schema": "moskophoros.sheet/0"},
-            f'{NOT_A_SHEET}: schema is "moskophoros.sheet/0"',
-        ),
-        (
-            {"schema": " moskophoros.sheet/2"},
-            f'{NOT_A_SHEET}: schema is " moskophoros.sheet/2"',
+            {"schema": " moskophoros.sheet/4"},
+            f'{NOT_A_SHEET}: schema is " moskophoros.sheet/4"',
         ),
         ({"schema": 1}, f"{NOT_A_SHEET}: schema is 1"),
         (
-            {"schema": ["moskophoros.sheet/2"]},
-            f'{NOT_A_SHEET}: schema is ["moskophoros.sheet/2"]',
+            {"schema": ["moskophoros.sheet/4"]},
+            f'{NOT_A_SHEET}: schema is ["moskophoros.sheet/4"]',
         ),
         ({"schema": None}, f"{NOT_A_SHEET}: schema is null"),
-        ({"schema": "moskophoros.sheet/2"}, "settings: missing"),
-        ({"schema": "moskophoros.sheet/1"}, "settings: missing"),
+        ({"schema": "moskophoros.sheet/4"}, "settings: missing"),
         (
-            {"schema": "moskophoros.sheet/2", "settings": None},
+            {"schema": "moskophoros.sheet/4", "settings": None},
             "settings: must be set, got null",
         ),
         (
-            {"schema": "moskophoros.sheet/1", "settings": []},
+            {"schema": "moskophoros.sheet/4", "settings": []},
             "settings: expected an object, got []",
         ),
     ],
@@ -443,9 +504,13 @@ REUSED_FIELDS = [
     "ground_px.x",
     "ground_px.y",
     "root_motion",
+    "previews",
     "style",
     "style.reduce",
     "style.palette",
+    "style.materials",
+    "style.shade_range",
+    "clips",
 ]
 
 
@@ -632,40 +697,15 @@ def test_an_explicit_reduce_overrides_the_reused_one(tmp_path, sheet, explicit):
     assert values(options) == REUSED | {"reduce": explicit}
 
 
-def test_a_legacy_sheet_with_an_explicit_mode_records_mode(tmp_path):
-    options = reuse(write_legacy_sheet(tmp_path), "--reduce", "mode")
-    assert cli.style_record(options) == PLAIN | {"reduce": "mode"}
-
-
-# Older `/1` sheets
-
-
-def test_a_legacy_sheet_reuses_as_plain(tmp_path):
-    options = reuse(write_legacy_sheet(tmp_path))
-    assert values(options) == REUSED
-    assert cli.style_record(options) == PLAIN
-
-
-def test_a_legacy_sheet_with_an_explicit_reduce_records_it(tmp_path):
-    options = reuse(write_legacy_sheet(tmp_path), "--reduce", "plain")
-    assert options.reduce == "plain"
-    assert "reduce" in options.explicit
-
-
-def test_a_legacy_sheet_carrying_a_style_is_refused(tmp_path, capsys):
-    path = write_legacy_sheet(tmp_path, SETTINGS)
-    assert rejected(capsys, path) == "settings.style: unknown field"
-
-
-@pytest.mark.parametrize("field", ["fps", "view.directions", "ground_px"])
-def test_a_legacy_sheet_is_checked_as_before(tmp_path, capsys, field):
-    path = write_legacy_sheet(tmp_path, edited({field: None}, base=LEGACY_SETTINGS))
-    assert rejected(capsys, path) == f"settings.{field}: must be set, got null"
-
-
-def test_a_legacy_sheet_missing_a_field_names_it(tmp_path, capsys):
-    path = write_legacy_sheet(tmp_path, edited(removed=["fps"], base=LEGACY_SETTINGS))
-    assert rejected(capsys, path) == "settings.fps: missing"
+@pytest.mark.parametrize(
+    "schema", ["moskophoros.sheet/3", "moskophoros.sheet/2", "moskophoros.sheet/1"]
+)
+@pytest.mark.parametrize("options", [(), ("--reduce", "plain"), ("--clip", "walk")])
+def test_an_older_sheet_is_a_usage_error_whatever_overrides_it(
+    tmp_path, capsys, schema, options
+):
+    path = write_sheet(tmp_path, schema=schema)
+    assert rejected(capsys, path, *options) == older(schema)
 
 
 # Fixed configuration
@@ -781,7 +821,7 @@ PLAIN = {
 }
 
 
-def _encode(settings, clip_names, once_names, style=PLAIN):
+def _encode(settings, clip_names, once_names, style=PLAIN, previews=True):
     selected = gltf.select_clips(SUBJECT, clip_names, once_names)
     view = views.View(
         settings.pitch, settings.directions, settings.start_angle, settings.model_yaw
@@ -798,6 +838,7 @@ def _encode(settings, clip_names, once_names, style=PLAIN):
         subject="hero",
         settings=settings,
         style=style,
+        previews=previews,
         selected_clips=selected,
         image_path=Path("hero.png"),
     )
@@ -811,6 +852,7 @@ def _rerun(path, *options):
         resolved.clip or (),
         resolved.once,
         cli.style_record(resolved),
+        resolved.previews,
     )
 
 
@@ -840,12 +882,37 @@ def test_reusing_a_sheet_with_the_same_clips_gives_the_same_settings(
     assert again.json == original.json
 
 
+@pytest.mark.parametrize("previews", [True, False])
+@pytest.mark.parametrize(
+    "selection",
+    [
+        (),
+        ("--once", "attack"),
+        ("--clip", "attack", "--clip", "walk"),
+        ("--clip", "walk", "--once", "walk"),
+    ],
+)
+def test_loading_a_sheet_with_no_options_reproduces_it(tmp_path, selection, previews):
+    """Settings design D-16: the loaded sheet supplies every setting, the
+    clip selection, its one-shot marks and the previews flag included."""
+    parsed = cli.parse_args([*selection, "in.glb", "out.png"])
+    original = _encode(
+        ORIGINALS["iso-true"], parsed.clip or (), parsed.once, previews=previews
+    )
+    path = tmp_path / "hero.json"
+    path.write_bytes(original.json)
+
+    assert _rerun(path).json == original.json
+    assert json.loads(original.json)["settings"]["previews"] is previews
+
+
 @pytest.mark.parametrize(
     ("first", "second"),
     [
-        (("--once", "attack"), ()),
+        (("--once", "attack"), ("--once", "walk")),
         ((), ("--once", "walk")),
         (("--clip", "walk", "--clip", "attack"), ("--clip", "attack")),
+        (("--once", "attack"), ("--clip", "walk", "--clip", "attack")),
     ],
 )
 def test_reusing_with_other_clip_markings_changes_settings_and_fingerprint(
@@ -924,7 +991,13 @@ def test_reading_the_settings_file_is_the_only_effect(tmp_path, capsys, valid):
     model = tmp_path / "in.glb"
     model.write_bytes(b"glTF")
     path = write_sheet(tmp_path, None if valid else edited({"fps": 0}))
-    argv = ["--settings-from", str(path), str(model), str(tmp_path / "out.png")]
+    argv = [
+        "--settings-from",
+        str(path),
+        "--no-user-config",
+        str(model),
+        str(tmp_path / "out.png"),
+    ]
     before = sorted(
         (str(p), p.stat().st_mtime_ns) for p in [tmp_path, *tmp_path.rglob("*")]
     )
@@ -943,7 +1016,8 @@ def test_reading_the_settings_file_is_the_only_effect(tmp_path, capsys, valid):
             assert valid
 
     opened = [args for event, args in events if event == "open"]
-    assert [Path(args[0]) for args in opened] == [path]
+    defaults = Path(cli.layered.__file__).with_name("defaults.yaml")
+    assert [Path(args[0]) for args in opened] == [defaults, path]
     assert all(args[1] in ("r", "rb") for args in opened)
     assert [event for event, _ in events if event.startswith(EFFECTS)] == []
     after = sorted(
@@ -963,21 +1037,6 @@ def test_a_reused_sheet_round_trips_its_style(tmp_path, options):
     again = _rerun(path, *options)
 
     assert json.loads(again.json)["settings"]["style"] == PLAIN
-    assert again.json == original.json
-
-
-@pytest.mark.parametrize("options", [(), ("--reduce", "plain")])
-def test_a_reused_legacy_sheet_gives_the_same_sheet_as_plain(tmp_path, options):
-    original = _encode(ORIGINALS["iso"], (), ())
-    legacy = json.loads(original.json)
-    legacy["schema"] = "moskophoros.sheet/1"
-    del legacy["settings"]["style"]
-    path = tmp_path / "hero.json"
-    path.write_text(json.dumps(legacy, indent=2, ensure_ascii=False) + "\n")
-
-    again = _rerun(path, *options)
-
-    assert json.loads(again.json)["schema"] == "moskophoros.sheet/3"
     assert again.json == original.json
 
 

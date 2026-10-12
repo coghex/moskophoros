@@ -37,6 +37,31 @@ def load(data):
 
     Raises `YamlError` for bad input.
     """
+    return _load(data, located=False)[0]
+
+
+def load_located(data):
+    """`load`'s document, with where each part of it is written.
+
+    Returns `(document, marks)`. `marks` maps a path, a tuple of mapping keys
+    and sequence indices from the root, to the `(line, column)` of that
+    mapping key or sequence item, counted from 1; the empty path is the
+    document itself. A node reached again through an alias is not walked
+    again, so the parts below an alias have no marks of their own: `locate`
+    falls back to the nearest marked ancestor.
+    """
+    return _load(data, located=True)
+
+
+def locate(marks, path):
+    """The `(line, column)` of `path`, or of its nearest marked ancestor."""
+    path = tuple(path)
+    while path not in marks:
+        path = path[:-1]
+    return marks[path]
+
+
+def _load(data, located):
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError as error:
@@ -54,7 +79,8 @@ def load(data):
                 "holds more than one YAML document; the second starts at "
                 + _where(second.start_mark)
             )
-        return loader.construct_document(node)
+        document = loader.construct_document(node)
+        return document, (_marks(loader, node) if located else None)
     except YamlError:
         raise
     except _Refused as error:
@@ -168,6 +194,33 @@ def _integer(_, node):
 
 _Loader.add_constructor(_YAML_TAG + "int", _integer)
 _Loader.add_constructor(_YAML_TAG + "float", lambda _, node: float(node.value))
+
+
+def _marks(loader, root):
+    marks = {(): _position(root.start_mark)}
+    walked = {id(root)}
+    pending = [((), root)]
+    while pending:
+        path, node = pending.pop()
+        if isinstance(node, yaml.MappingNode):
+            children = [
+                (loader.construct_object(key, deep=True), key, value)
+                for key, value in node.value
+            ]
+        elif isinstance(node, yaml.SequenceNode):
+            children = [(index, item, item) for index, item in enumerate(node.value)]
+        else:
+            continue
+        for step, marked, child in children:
+            marks[(*path, step)] = _position(marked.start_mark)
+            if id(child) not in walked:
+                walked.add(id(child))
+                pending.append(((*path, step), child))
+    return marks
+
+
+def _position(mark):
+    return mark.line + 1, mark.column + 1
 
 
 def _where(mark):

@@ -15,7 +15,7 @@ import yaml
 from glb_writer import GlbWriter
 from PIL import Image
 from test_command import PLAIN_STYLE, Setup, run
-from test_reuse import edited, write_legacy_sheet, write_previous_sheet, write_sheet
+from test_reuse import edited, write_sheet
 
 from moskophoros import cli, materials, stylize
 from moskophoros.capture import backend
@@ -310,7 +310,7 @@ def test_a_run_records_the_library_inline_and_the_shade_range(setup, capsys):
     named_hero(setup, HERO_MATERIALS)
     run_with_library(setup, capsys, "--no-preview")
     description = json.loads(setup.json.read_text())
-    assert description["schema"] == "moskophoros.sheet/3"
+    assert description["schema"] == "moskophoros.sheet/4"
     style = description["settings"]["style"]
     assert list(style) == ["reduce", "palette", "materials", "shade_range"]
     assert style["shade_range"] == DEFAULT_RANGE
@@ -640,38 +640,20 @@ def test_a_reused_shade_range_is_kept_when_an_explicit_library_replaces_the_libr
     assert sheet_colours(setup.png) == {CLEAR, opaque(1)}
 
 
-def test_a_version_2_sheet_reuses_with_no_library_and_the_default_range(tmp_path):
-    path = write_previous_sheet(tmp_path)
-    options = cli.resolve_settings(
-        cli.parse_args(["--settings-from", str(path), "model.glb", "out.png"])
-    )
-    assert options.materials is None
-    assert options.shade_range == backend.DEFAULT_SHADE_RANGE
-    assert cli.style_record(options) == PLAIN_STYLE
-
-
-def test_a_legacy_sheet_reuses_with_no_library_and_the_default_range(tmp_path):
-    options = cli.resolve_settings(
-        cli.parse_args(
-            ["--settings-from", str(write_legacy_sheet(tmp_path)), "m.glb", "o.png"]
-        )
-    )
-    assert cli.style_record(options) == PLAIN_STYLE
-
-
-def test_an_older_sheet_has_no_library_or_range_fields(tmp_path, capsys):
-    path = write_previous_sheet(
-        tmp_path,
-        edited({"style.materials": None, "style.shade_range": [84, 191]}),
-    )
+@pytest.mark.parametrize("schema", ["moskophoros.sheet/3", "moskophoros.sheet/2"])
+def test_a_sheet_from_before_previews_were_recorded_no_longer_loads(
+    tmp_path, capsys, schema
+):
+    path = write_sheet(tmp_path, schema=schema)
     with pytest.raises(cli.UsageError):
         cli.read_settings(path)
-    err = capsys.readouterr().err
-    assert "settings.style.materials: unknown field" in err
-    assert "settings.style.shade_range: unknown field" in err
+    assert (
+        f"is a {schema} sheet; only moskophoros.sheet/4 sheets load"
+        in capsys.readouterr().err
+    )
 
 
-# Malformed `/3` style fields
+# Malformed style fields
 
 
 # A record from before libraries were YAML: its `.json` source is only a label,
@@ -815,7 +797,7 @@ def test_a_bad_shade_range_is_an_error_even_when_the_library_is_null(tmp_path, c
     assert "settings.style.shade_range: expected 0 <= lo" in capsys.readouterr().err
 
 
-def test_a_style_member_missing_from_a_version_3_sheet_is_an_error(tmp_path, capsys):
+def test_a_style_member_missing_from_a_sheet_is_an_error(tmp_path, capsys):
     for member in ("materials", "shade_range"):
         style = {
             "reduce": "plain",

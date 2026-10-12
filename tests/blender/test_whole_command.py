@@ -221,6 +221,44 @@ def test_settings_reuse_with_an_explicit_override(capsys, found, model, earlier,
     assert after == before | {"fps": 2.0}
 
 
+@pytest.mark.parametrize("previews", [(), ("--no-preview",)], ids=["on", "off"])
+def test_a_sheet_regenerated_from_itself_is_byte_identical(
+    capsys, found, model, tmp_path, previews
+):
+    """Settings design D-16: loading a sheet, with the same model and no
+    other options, gives the same PNG, JSON and previews, the clip selection,
+    its one-shot marks and the previews flag included."""
+    first, again = tmp_path / "first", tmp_path / "again"
+    first.mkdir()
+    again.mkdir()
+    status, _, err = run(
+        capsys,
+        found,
+        model,
+        first / "hero.png",
+        *SHEET,
+        "--model-yaw",
+        "15",
+        *previews,
+        base=[*FAST, "--no-user-config"],
+    )
+    assert (status, err) == (0, "")
+    status, _, err = run(
+        capsys,
+        found,
+        model,
+        again / "hero.png",
+        "--settings-from",
+        str(first / "hero.json"),
+        "--no-user-config",
+        base=[],
+    )
+    assert (status, err) == (0, "")
+    assert listing(again) == listing(first)
+    expected = OUTPUTS if not previews else ["hero.json", "hero.png"]
+    assert sorted(listing(again)) == expected
+
+
 # One failing run per exit code, each leaving the earlier outputs as they were
 
 

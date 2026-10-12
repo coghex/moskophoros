@@ -1,0 +1,12 @@
+# moskophoros's shipped defaults: every setting a settings file can hold, with
+# the value used when no layer above sets it. A user file
+# ($XDG_CONFIG_HOME/moskophoros/config.yaml, else
+# ~/.config/moskophoros/config.yaml) or a --config file may set any of them;
+# a key it leaves out falls through to the layer below.
+version: 1
+cell: auto       # WxH in pixels, each 1 to 4096; auto: fitted with the pixels
+                 # per meter in force, else 64x64
+fps: 12          # target sampling rate, greater than 0
+palette: null    # a .hex, .gpl or .png palette, relative to the file; null: none
+materials: null  # a .yaml or .yml material library; null: none; needs a palette
+previews: true   # false: write no animated previews

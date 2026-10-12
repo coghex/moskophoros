@@ -264,7 +264,7 @@ def test_a_run_writes_the_sheet_its_json_and_a_preview_per_clip(setup, capsys):
         "hero.walk.gif",
     ]
     description = json.loads(setup.json.read_text())
-    assert description["schema"] == "moskophoros.sheet/3"
+    assert description["schema"] == "moskophoros.sheet/4"
     assert description["settings"]["style"] == PLAIN_STYLE
     assert description["image"]["file"] == "hero.png"
     assert [(c["name"], c["loop"]) for c in description["clips"]] == [
@@ -335,6 +335,7 @@ def test_the_fingerprint_reaches_the_frames_before_stylize(setup, capsys, monkey
         "ground_m": {"x": 0.0, "y": 0.0, "z": 0.0},
         "ground_px": {"x": 8, "y": 15},
         "root_motion": "error",
+        "previews": True,
         "style": PLAIN_STYLE,
         "clips": [{"name": "walk", "loop": True}, {"name": "attack", "loop": False}],
     }
@@ -975,10 +976,7 @@ def test_a_bad_settings_file_is_a_usage_error(setup, capsys):
     bad.write_text("{}")
     status, _, err = run(capsys, setup.argv("--settings-from", str(bad)))
     assert status == 2
-    assert (
-        "is not a moskophoros.sheet/3 or moskophoros.sheet/2 or "
-        "moskophoros.sheet/1 document"
-    ) in err
+    assert "is not a moskophoros.sheet/4 document" in err
     assert setup.listing() == earlier
 
 

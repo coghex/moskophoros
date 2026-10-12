@@ -40,10 +40,13 @@ moskophoros --clip walk --cell 48x48 hero.glb out/hero-small.png
 ```
 
 Outputs are published only when the whole run succeeds, so a failed run leaves
-earlier outputs as they were. `--settings-from hero.json` reuses an earlier
-sheet's view, scale, cell, ground point and style, so new clips line up with
-it: the scale, cell and ground pixel are fixed rather than fitted again, and a
-new frame that does not fit the cell is an overflow error (exit 4).
+earlier outputs as they were. `--settings-from hero.json` loads every setting
+of an earlier sheet: its view, scale, cell, ground point, style, previews and
+clip selection. Rerun with the same model and nothing else, it reproduces the
+sheet byte for byte. Give `--clip` to choose other clips that line up with it:
+the scale, cell and ground pixel are fixed rather than fitted again, and a
+new frame that does not fit the cell is an overflow error (exit 4). Only
+sheets from this version load; generate older ones again.
 `--reduce mode` keeps the most common colour in each supersampled block.
 `--palette colours.hex` (also `.gpl` or `.png`) adds palette mapping: plain maps
 after averaging; mode maps before voting, so nearby shades pool their votes.
@@ -58,6 +61,25 @@ The library is recorded in the sheet's JSON and reused with `--settings-from`
 without the original file; `--materials FILE` replaces it and `--no-materials`
 drops it. See [docs/design.md](docs/design.md#material-libraries) for the file
 format.
+
+The cell, fps, palette, library and previews can also come from YAML settings
+files. `~/.config/moskophoros/config.yaml` (or
+`$XDG_CONFIG_HOME/moskophoros/config.yaml`) holds your own defaults, and
+`--config look.yaml`, repeatable, applies a file as if its values were given
+as options; command-line options still win. Paths in a file are relative to
+it, and `~` is your home directory:
+
+```yaml
+cell: 48x48        # or auto
+fps: 12
+palette: ~/palettes/vince-128.gpl
+materials: robot-library.yaml
+previews: false
+```
+
+Your own file never changes a sheet loaded with `--settings-from`, while a
+`--config` file does. `--no-user-config` skips your file. See
+[docs/design.md](docs/design.md#settings-files).
 
 `moskophoros --help` lists every option.
 
