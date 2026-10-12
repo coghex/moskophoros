@@ -20,6 +20,7 @@ concrete precondition
 The slices below are a **proposal** awaiting the owner's signoff (Q-9).
 
 - [ ] EPIC. Configure moskophoros from layered YAML settings and command-line overrides
+- [ ] SET-0. Read material libraries from YAML instead of JSON
 - [ ] SET-1. Load layered YAML settings for the existing options
 - [ ] SET-2. Make the shading constants settings and command-line options
 - [ ] SET-3. Add per-material settings
@@ -393,6 +394,56 @@ overrides and yaml global/user defaults". The settings model stays a plain
 data structure that a UI could edit. The UI is not designed here. Affects
 every slice.
 
+### D-6. Raw shading values, no named presets yet
+
+Decided by the owner on 2026-10-11, round 3. This resolves Q-10, with none of
+its readings taken in full. "I want those 4 values as settings, forget ambient
+and soft, i will save those for later, eventually we can have presets like
+that, but for now i want to control raw values."
+
+- The settings are the raw AO distance, occlusion weight, convexity weight
+  and shade range.
+- Named shading presets, and the names "ambient" and "soft", are deferred.
+- R1 and R2 stay reference values for verification only.
+- Whether each value is global, per material or both is Q-12.
+
+Affects SET-2 and SET-3.
+
+### D-7. Every file the owner writes is YAML; the material library moves first
+
+Decided by the owner on 2026-10-11, round 3. This partly resolves Q-3.
+
+- "Everything yaml, the agent choosing json was a mistake, i like that yaml
+  has comments, and is more readable to me … so everything gets yamled, i
+  will do that first."
+- The JSON material library is replaced by a YAML library file. This lands
+  first, as its own issue (SET-0), which also brings the PyYAML pin and a
+  strict YAML reader that the settings loader reuses.
+- This supersedes the format part of material styling D-8 ("The library is a
+  JSON file"). The tool still only reads the library.
+- Still open (Q-13): whether the sheet's own description becomes YAML too,
+  and how existing `.json` libraries are treated.
+
+Affects SET-0 and SET-3.
+
+### D-8. Precedence: defaults < user file < loaded sheet < `--config` < options
+
+Decided by the owner on 2026-10-11, round 3. This resolves Q-4 and adopts
+P-4: "yea, that is fine".
+
+- The order, lowest to highest: shipped defaults, the user file, a loaded
+  sheet (`--settings-from`, or loading a sheet in a future UI), `--config`
+  files, then command-line options.
+- The same order applies in the UI and on the command line.
+- Consequences:
+  - The everyday user file never changes a reused sheet, so the sheet
+    reproduces itself (V-2) and keeps its size (V-7).
+  - A `--config` named on the same command line is explicit, so it does
+    override the sheet.
+  - The sheet must record every setting, so it can be loaded back (Q-5).
+
+Affects SET-1.
+
 ## Open questions
 
 ### Q-1. Which settings exist, and which stay command-line only?
@@ -421,6 +472,18 @@ and the slice boundaries. Resolved by the owner's list.
   - what the dials are (Q-10);
   - what frame count means (Q-11);
   - whether scale covers the cell.
+
+**Owner clarification, 2026-10-11 (round 3):**
+
+- "Scale" meant **image size**, the cell (`--cell WxH`). The owner generates
+  48×48 today but needs arbitrary sizes.
+- The dials are the raw values (D-6).
+- The first-slice candidates are now:
+  - the cell;
+  - fps;
+  - frame count (Q-11);
+  - the raw shading values.
+- The agent's suggestion to add the palette and library paths is unanswered.
 
 ### Q-2. What are the per-material settings?
 
@@ -468,6 +531,8 @@ palette. Resolved by the owner.
   files the owner writes.
 
 ### Q-4. Where does `--settings-from` sit among the layers?
+
+**Resolved by D-8.**
 
 The proposal is above `--config`, below the command line, so a reused sheet
 ignores the user file and `--config`. Alternatives: below the user file, or
@@ -531,7 +596,40 @@ the error, unknown-key and versioning proposals in P-2. Resolved by the owner.
 
 Resolved by the owner.
 
+### Q-12. Global, per material, or both?
+
+The owner: "i guess these would be per material, maybe we dont need a global,
+you tell me."
+
+**Agent recommendation:**
+
+- Each of the four values has a global default, and any material may override
+  any of them.
+- AO samples is global only, if it is a setting at all.
+
+Reasons:
+
+- Without a global value, every material entry repeats all four values, and
+  a model with an unlisted material has none.
+- A global value is what the defaults file and `--config` naturally hold.
+- It mirrors the library's existing default ramp.
+
+Weights and AO distance act in capture, per material shader. The range acts in
+stylize. Resolved by the owner.
+
+### Q-13. What else does "everything yaml" cover?
+
+- Does the sheet's description (`hero.json`) become YAML? Vision V-2 fixes a
+  JSON description, the sheet is read by programs, and `--settings-from`
+  reads it. The agent recommends it stays JSON.
+- Are existing `.json` libraries refused with a hint to convert them, or still
+  read?
+
+Resolved by the owner.
+
 ### Q-10. What are the "ambient" and "soft" shading dials?
+
+**Resolved by D-6:** raw values now, named presets later.
 
 The owner calls them "the two shading dials … ambient (known in my work
 currently as R1) and soft (R2)". R1 and R2 are each a full set of four values,
@@ -594,6 +692,28 @@ Proposal:
 
 **Proposal**, pending Q-1 to Q-9. Every slice amends design.md in its own pull
 request, because tests read design.md.
+
+### SET-0. Read material libraries from YAML instead of JSON
+
+- **Outcome:** `--materials FILE` reads a YAML library with the same fields
+  and validation as today, through a strict YAML reader the settings loader
+  will reuse. The owner asked for its issue to be drafted first (D-7).
+- **Scope:** the strict reader; the PyYAML pin; the library reader; tests;
+  the design §CLI and §Material libraries amendments; the README.
+- **Phase:** 0.
+- **Depends on:** none.
+- **Ordering:** can land first.
+- **Relevant decisions:** D-1, D-7.
+- **Acceptance signals:** the same library content in YAML gives the same
+  `Library`, and byte-identical sheet PNGs and previews. YAML 1.1 traps,
+  duplicate keys and multiple documents are refused with named errors before
+  Blender starts.
+- **Out of scope:**
+  - per-material shading fields (SET-3);
+  - the settings loader (SET-1);
+  - the sheet's format;
+  - palette formats.
+- **Open questions:** Q-13.
 
 ### SET-1. Load layered YAML settings for the existing options
 
