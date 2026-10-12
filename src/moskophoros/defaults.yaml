@@ -7,6 +7,8 @@ version: 1
 cell: auto       # WxH in pixels, each 1 to 4096; auto: fitted with the pixels
                  # per meter in force, else 64x64
 fps: 12          # target sampling rate, greater than 0
+frames: auto     # each clip's frame count, 1 or more; auto: by duration.
+                 # A clips: mapping may give each clip its own
 palette: null    # a .hex, .gpl or .png palette, relative to the file; null: none
 materials: null  # a .yaml or .yml material library; null: none; needs a palette
 previews: true   # false: write no animated previews

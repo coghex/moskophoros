@@ -45,8 +45,9 @@ def box(x0, y0, z0, x1, y1, z1):
 def rigged_model(directory):
     """A body on joint `hips` and a head on its child joint `head`.
 
-    `walk` sways the head and returns, `attack` raises it 0.4 m, and `slide`
-    moves the hips 1 m across the ground.
+    `walk` sways the head and returns, `attack` raises it 0.4 m, `slide`
+    moves the hips 1 m across the ground, and `nod` tips the head forward
+    over 0.5 s.
     """
     model = GlbWriter()
     head_joint = model.node("head", translation=(0.0, 0.5, 0.0))
@@ -86,6 +87,10 @@ def rigged_model(directory):
     model.animation(
         "slide",
         [(hips, "translation", [0.0, 1.0], [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0)])],
+    )
+    model.animation(
+        "nod",
+        [(head_joint, "translation", [0.0, 0.5], [(0.0, 0.5, 0.0), (0.0, 0.5, 0.06)])],
     )
     return model.write(directory, "hero")
 
@@ -258,6 +263,127 @@ def test_a_sheet_regenerated_from_itself_is_byte_identical(
     assert listing(again) == listing(first)
     expected = OUTPUTS if not previews else ["hero.json", "hero.png"]
     assert sorted(listing(again)) == expected
+
+
+# Frame counts (settings design D-13, D-16, D-31, D-33, D-38)
+
+FRAMES_CONFIG = """\
+frames: 4
+clips:
+  attack: {frames: 3}
+  nod: {frames: auto}
+  slide: {frames: 1}
+"""
+
+
+def test_counts_retime_the_sheet_and_its_previews(capsys, found, model, tmp_path):
+    config = tmp_path / "frames.yaml"
+    config.write_text(FRAMES_CONFIG)
+    out = tmp_path / "out"
+    out.mkdir()
+    status, _, err = run(
+        capsys,
+        found,
+        model,
+        out / "hero.png",
+        *SHEET,
+        "--config",
+        str(config),
+        base=[
+            "--supersample",
+            "2",
+            "--cell",
+            "16x16",
+            "--fps",
+            "12",
+            "--no-user-config",
+        ],
+    )
+    assert status == 0, err
+    # The file's global names attack, which keeps its own (D-41).
+    assert err == (
+        "moskophoros: warning: the global frame count 4 does not reach the clips "
+        'with their own: "attack" (3)\n'
+    )
+    description = json.loads((out / "hero.json").read_text())
+    clips = {clip["name"]: clip for clip in description["clips"]}
+    # walk takes the global 4 over 1 s; attack, a one-shot, its own 3 over
+    # 0.5 s. Each frame lasts exactly 1/12 s.
+    assert [
+        (
+            clips[name]["frame_count"],
+            clips[name]["frame_duration_s"],
+            clips[name]["time_scale"],
+        )
+        for name in ("walk", "attack")
+    ] == [(4, 1 / 12, 3.0), (3, 1 / 12, 3.0)]
+    times = {
+        name: sorted(
+            {
+                frame["time_s"]
+                for frame in description["frames"]
+                if frame["clip"] == name
+            }
+        )
+        for name in ("walk", "attack")
+    }
+    assert times == {"walk": [0.0, 0.25, 0.5, 0.75], "attack": [0.0, 0.25, 0.5]}
+    # The GIFs round 1/12 s to 80 ms; a one-shot holds its last frame 500 ms
+    # longer.
+    for name, delays in (("walk", [80] * 4), ("attack", [80, 80, 580])):
+        with Image.open(out / f"hero.{name}.gif") as image:
+            seen = []
+            for index in range(image.n_frames):
+                image.seek(index)
+                seen.append(image.info["duration"])
+        assert seen == delays, name
+
+
+def test_a_counted_sheet_regenerated_from_itself_is_byte_identical(
+    capsys, found, model, tmp_path
+):
+    """Settings design D-16 with counts: a global count (walk), a clip's own
+    count (attack), a clip's own auto (nod) and a one-frame clip (slide)."""
+    config = tmp_path / "frames.yaml"
+    config.write_text(FRAMES_CONFIG)
+    first, again = tmp_path / "first", tmp_path / "again"
+    first.mkdir()
+    again.mkdir()
+    selection = [*SHEET, "--clip", "nod", "--clip", "slide", "--root-motion", "keep"]
+    status, _, err = run(
+        capsys,
+        found,
+        model,
+        first / "hero.png",
+        *selection,
+        "--config",
+        str(config),
+        base=[*FAST, "--no-user-config"],
+    )
+    assert status == 0, err
+    assert "does not reach the clips with their own" in err
+    recorded = json.loads((first / "hero.json").read_text())
+    assert recorded["settings"]["frames"] == 4
+    assert [clip["frames"] for clip in recorded["settings"]["clips"]] == [
+        None,
+        3,
+        "auto",
+        1,
+    ]
+    assert [clip["frame_count"] for clip in recorded["clips"]] == [4, 3, 2, 1]
+    config.unlink()
+    status, _, err = run(
+        capsys,
+        found,
+        model,
+        again / "hero.png",
+        "--settings-from",
+        str(first / "hero.json"),
+        "--no-user-config",
+        base=[],
+    )
+    assert (status, err) == (0, "")
+    assert listing(again) == listing(first)
 
 
 # One failing run per exit code, each leaving the earlier outputs as they were

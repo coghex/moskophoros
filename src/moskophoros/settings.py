@@ -221,6 +221,28 @@ def _nameable(text):
     os.fsencode(text)
 
 
+def _check_frames(value):
+    """A frame count as a file gives it: `auto` or a whole number of 1 or
+    more, an integer, never `8.0`, `"8"` or a boolean (settings design
+    D-34)."""
+    if value == AUTO or (type(value) is int and value >= 1):
+        return value
+    raise _Bad(f"expected a whole number 1 or more, or {AUTO}, got {_shown(value)}")
+
+
+def _check_clip_frames(value):
+    """A clip's own frame count: a count, `auto`, or null to take the global
+    count (settings design D-31)."""
+    if value is None:
+        return None
+    try:
+        return _check_frames(value)
+    except _Bad:
+        raise _Bad(
+            f"expected a whole number 1 or more, {AUTO} or null, got {_shown(value)}"
+        ) from None
+
+
 def _check_previews(value):
     if not isinstance(value, bool):
         raise _Bad(f"expected true or false, got {_shown(value)}")
@@ -241,6 +263,13 @@ SCHEMA = MappingProxyType(
             "frames per second",
             12,
             _check_fps,
+        ),
+        "frames": Setting(
+            "how many frames each clip is sampled to, retimed so each lasts "
+            "1/fps, a whole number 1 or more, or auto: sampled by duration",
+            "frames",
+            AUTO,
+            _check_frames,
         ),
         "palette": Setting(
             "a .hex, .gpl or .png palette file, or null for none",
@@ -292,6 +321,20 @@ SCHEMA = MappingProxyType(
         ),
     }
 )
+# A clip's own settings, in a file's `clips` mapping keyed by clip name;
+# each beats the global setting of the same name (settings design D-17,
+# D-26). Clips the model lacks, or that are not selected, are unused.
+CLIP_SCHEMA = MappingProxyType(
+    {
+        "frames": Setting(
+            "the clip's own frame count, a whole number 1 or more, auto, or "
+            "null to take the global count",
+            "frames",
+            None,
+            _check_clip_frames,
+        ),
+    }
+)
 # The groups of settings a file writes as a nested mapping, such as `shade`;
 # each of its keys is a setting of its own, merged key by key.
 GROUPS = frozenset(name.split(".")[0] for name in SCHEMA if "." in name)
@@ -335,8 +378,12 @@ def read_bytes(data, *, source, directory):
         if type(version) is not int or version != VERSION:
             refuse(("version",), f"expected {VERSION}, got {_shown(version)}")
     entries = []
+    clips = {}
     for key, value in document.items():
         if key == "version":
+            continue
+        if key == "clips":
+            clips = _read_clips(value, refuse, marks, source)
             continue
         if key not in GROUPS:
             entries.append(((key,), value))
@@ -369,7 +416,39 @@ def read_bytes(data, *, source, directory):
                 refuse(path, error.problem)
         layer[key] = checked
         layer.where[key] = yamlfile.locate(marks, path)
+    if clips:
+        layer["clips"] = clips
     return layer
+
+
+def _read_clips(value, refuse, marks, source):
+    """A file's `clips` mapping: each named clip's own settings, as
+    `{clip name: frames}` for the clips that give a frame count, null
+    included. Every entry is checked, whether or not the model has it."""
+    if not isinstance(value, dict):
+        refuse(("clips",), f"expected a mapping of clips by name, got {_shown(value)}")
+    clips = {}
+    for name, entry in value.items():
+        if not isinstance(name, str) or not name:
+            line, column = yamlfile.locate(marks, ("clips", name))
+            raise SettingsError(
+                source,
+                f"clips: the key {_shown(name)} is not a clip name at line {line}, "
+                f"column {column}",
+            )
+        if not isinstance(entry, dict):
+            refuse(
+                ("clips", name),
+                f"expected a mapping of the clip's settings, got {_shown(entry)}",
+            )
+        for member, member_value in entry.items():
+            if member not in CLIP_SCHEMA:
+                refuse(("clips", name, member), "unknown key")
+            try:
+                clips[name] = CLIP_SCHEMA[member].check(member_value)
+            except _Bad as error:
+                refuse(("clips", name, member), error.problem)
+    return clips
 
 
 def read_file(path, *, source, required):
@@ -411,6 +490,10 @@ def merge(*layers):
     of the last layer that has it."""
     merged = Layer()
     for layer in layers:
+        clips = {**merged.get("clips", {}), **layer.get("clips", {})}
         merged.update(layer)
+        if clips:
+            # Per-clip entries merge by clip name (settings design D-22).
+            merged["clips"] = clips
         merged.where.update(getattr(layer, "where", {}))
     return merged

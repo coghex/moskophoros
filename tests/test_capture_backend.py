@@ -119,6 +119,7 @@ def expected_settings(ppm, cell, ground_px):
         },
         "model_yaw_deg": 0.0,
         "fps": 4.0,
+        "frames": "auto",
         "supersample": 2,
         "pixels_per_meter": ppm,
         "cell": cell,
@@ -132,7 +133,10 @@ def expected_settings(ppm, cell, ground_px):
             "convexity_weight": 1.0,
             "materials": [],
         },
-        "clips": [{"name": "walk", "loop": True}, {"name": "attack", "loop": False}],
+        "clips": [
+            {"name": "walk", "loop": True, "frames": None},
+            {"name": "attack", "loop": False, "frames": None},
+        ],
     }
 
 
@@ -899,3 +903,79 @@ def test_each_capture_value_changes_the_job_s_digest(changed):
         return job_sha256(job)
 
     assert digest(replace(DEFAULT_SHADE, **changed)) != digest(DEFAULT_SHADE)
+
+
+# Frame counts in the job (settings design D-13, D-31)
+
+
+@pytest.mark.parametrize("value", [0, -1, True, 2.0, "8", "Auto", None])
+def test_an_invalid_global_frame_count_is_a_malformed_job(value):
+    with pytest.raises(MalformedJob, match="frames"):
+        build_job(
+            "measure",
+            SOURCE,
+            "hero",
+            replace(MEASURE_SETTINGS, frames=value),
+            CLIPS,
+            frames(),
+            "/work/measure",
+        )
+
+
+@pytest.mark.parametrize("value", [0, -2, True, 1.5, "6", "AUTO"])
+def test_an_invalid_clip_frame_count_is_a_malformed_job(value):
+    clips = (replace(CLIPS[0], frames=value), CLIPS[1])
+    with pytest.raises(MalformedJob, match="frame count"):
+        build_job(
+            "measure",
+            SOURCE,
+            "hero",
+            MEASURE_SETTINGS,
+            clips,
+            frames(),
+            "/work/measure",
+        )
+
+
+def test_frames_inconsistent_with_the_counts_are_a_malformed_job():
+    counted = (replace(CLIPS[0], frames=3), CLIPS[1])
+    # Frames sampled automatically do not match a clip counted to 3.
+    with pytest.raises(MalformedJob, match="frames are not the ones"):
+        build_job(
+            "measure",
+            SOURCE,
+            "hero",
+            MEASURE_SETTINGS,
+            counted,
+            frames(),
+            "/work/measure",
+        )
+    with pytest.raises(MalformedJob, match="frames are not the ones"):
+        build_job(
+            "measure",
+            SOURCE,
+            "hero",
+            replace(MEASURE_SETTINGS, frames=5),
+            CLIPS,
+            frames(),
+            "/work/measure",
+        )
+
+
+def test_the_job_carries_the_counts_and_a_changed_count_changes_its_digest():
+    def job(global_, own):
+        clips = (replace(CLIPS[0], frames=own), CLIPS[1])
+        settings = replace(MEASURE_SETTINGS, frames=global_)
+        requested = sampling.frames("hero", clips, VIEW, 4.0, global_)
+        return build_job("measure", SOURCE, "hero", settings, clips, requested, "/w")
+
+    base = job(3, None)
+    assert base["settings"]["frames"] == 3
+    assert [clip["frames"] for clip in base["settings"]["clips"]] == [None, None]
+    assert job(3, 2)["settings"]["clips"][0]["frames"] == 2
+    assert job(3, "auto")["settings"]["clips"][0]["frames"] == "auto"
+    digests = {
+        job_sha256(job(global_, own))
+        for global_, own in ((3, None), (4, None), (3, 2), (3, "auto"))
+    }
+    assert len(digests) == 4

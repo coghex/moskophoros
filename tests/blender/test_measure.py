@@ -648,6 +648,23 @@ def _shade(key, value):
 _MISSING = object()
 
 
+def _global_frames(value):
+    def change(job):
+        job["settings"]["frames"] = value
+
+    return change
+
+
+def _clip_frames(value):
+    def change(job):
+        if value is _MISSING:
+            del job["settings"]["clips"][0]["frames"]
+        else:
+            job["settings"]["clips"][0]["frames"] = value
+
+    return change
+
+
 @pytest.mark.parametrize(
     ("change", "message"),
     [
@@ -724,6 +741,12 @@ _MISSING = object()
             ),
             "settings.shade.materials is not in ascending, distinct material order",
         ),
+        (_global_frames(0), "settings.frames"),
+        (_global_frames("8"), "settings.frames"),
+        (_global_frames(True), "settings.frames"),
+        (_clip_frames(0), "settings.clips does not list the job's clips"),
+        (_clip_frames(2.0), "settings.clips does not list the job's clips"),
+        (_clip_frames(_MISSING), "settings.clips does not list the job's clips"),
     ],
     ids=[
         "static clip with a range",
@@ -745,6 +768,12 @@ _MISSING = object()
         "a material's negative weight",
         "a material's samples",
         "materials out of order",
+        "global frames 0",
+        "global frames string",
+        "global frames boolean",
+        "clip frames 0",
+        "clip frames float",
+        "clip frames missing",
     ],
 )
 def test_an_inconsistent_job_fails_before_importing(found, tmp_path, change, message):

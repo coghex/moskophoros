@@ -94,9 +94,9 @@ def test_a_missing_user_file_is_not_an_error():
 
 
 def test_a_bad_user_file_is_a_usage_error_naming_it(capsys):
-    path = user_file("fps: 6\nframes: 8\n")
+    path = user_file("fps: 6\nsupersample: 8\n")
     assert refused(capsys) == (
-        f"the user settings {str(path)!r}: frames: unknown key at line 2, column 1"
+        f"the user settings {str(path)!r}: supersample: unknown key at line 2, column 1"
     )
 
 
@@ -406,10 +406,10 @@ def bad_settings(kind, tmp_path):
     if kind == "missing-config":
         return ["--config", str(tmp_path / "absent.yaml")]
     if kind == "user-unknown-key":
-        user_file("frames: 8\n")
+        user_file("supersample: 8\n")
         return []
     texts = {
-        "unknown-key": "clips: {}\n",
+        "unknown-key": "view: side\n",
         "unknown-version": "version: 2\n",
         "wrong-type": "fps: fast\n",
         "out-of-range": "cell: 0x0\n",
@@ -844,7 +844,10 @@ def recorded_clips(setup):
 def test_neither_clip_nor_once_keeps_the_loaded_selection(setup, capsys):
     sheet = sheet_from_a_run(setup, capsys)
     before = recorded_clips(setup)
-    assert before == [{"name": "walk", "loop": True}, {"name": "attack", "loop": False}]
+    assert before == [
+        {"name": "walk", "loop": True, "frames": None},
+        {"name": "attack", "loop": False, "frames": None},
+    ]
     assert run(capsys, reload(setup, sheet))[0] == 0
     assert recorded_clips(setup) == before
 
@@ -853,8 +856,8 @@ def test_once_alone_replaces_the_loaded_marks(setup, capsys):
     sheet = sheet_from_a_run(setup, capsys)
     assert run(capsys, reload(setup, sheet, "--once", "walk"))[0] == 0
     assert recorded_clips(setup) == [
-        {"name": "walk", "loop": False},
-        {"name": "attack", "loop": True},
+        {"name": "walk", "loop": False, "frames": None},
+        {"name": "attack", "loop": True, "frames": None},
     ]
 
 
@@ -865,7 +868,7 @@ def test_once_naming_a_clip_outside_the_loaded_list_is_exit_2(
     # Narrow the loaded list to `walk`: `attack` exists in the model but not
     # in the list.
     document = json.loads(sheet.read_text())
-    document["settings"]["clips"] = [{"name": "walk", "loop": True}]
+    document["settings"]["clips"] = [{"name": "walk", "loop": True, "frames": None}]
     sheet.write_text(json.dumps(document))
     forbid_blender(monkeypatch)
     status, _, err = run(capsys, reload(setup, sheet, "--once", "attack"))
@@ -876,13 +879,13 @@ def test_once_naming_a_clip_outside_the_loaded_list_is_exit_2(
 def test_clip_resets_the_loaded_selection(setup, capsys):
     sheet = sheet_from_a_run(setup, capsys)
     assert run(capsys, reload(setup, sheet, "--clip", "attack"))[0] == 0
-    assert recorded_clips(setup) == [{"name": "attack", "loop": True}]
+    assert recorded_clips(setup) == [{"name": "attack", "loop": True, "frames": None}]
 
 
 def test_a_recorded_clip_missing_from_the_model_is_exit_3(setup, capsys):
     sheet = sheet_from_a_run(setup, capsys)
     document = json.loads(sheet.read_text())
-    document["settings"]["clips"].append({"name": "leap", "loop": True})
+    document["settings"]["clips"].append({"name": "leap", "loop": True, "frames": None})
     sheet.write_text(json.dumps(document))
     status, _, err = run(capsys, reload(setup, sheet))
     assert status == 3
@@ -898,7 +901,7 @@ def test_an_older_sheet_is_exit_2_naming_its_schema_and_the_supported_one(
     forbid_blender(monkeypatch)
     status, _, err = run(capsys, reload(setup, sheet))
     assert status == 2
-    assert "moskophoros.sheet/3" in err and "moskophoros.sheet/6" in err
+    assert "moskophoros.sheet/3" in err and "moskophoros.sheet/7" in err
 
 
 def test_a_reloaded_sheet_without_previews_writes_none(setup, capsys):

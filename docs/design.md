@@ -60,7 +60,8 @@ moskophoros [options] <infile.glb> <outfile.png>
 | `--occlusion-weight W` | `0.25` | How much occlusion by other surfaces lightens the shade, finite and 0 or greater. A [settings file](#settings-files) may set it. |
 | `--convexity-weight W` | `1.0` | How much a surface's own convexity lightens the shade, finite and 0 or greater. A [settings file](#settings-files) may set it. |
 | `--shade-range LO,HI` | `84,191` | The 8-bit shade values a material's ramp spans, two integers with `0 ≤ LO < HI ≤ 255`. See [Material ramps](#material-ramps). A [settings file](#settings-files) may set it. |
-| `--settings-from FILE` | none | Load every recorded setting of an earlier `moskophoros.sheet/6` sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
+| `--frames N` | `auto` | How many frames each clip is sampled to, a whole number 1 or more, retimed so every frame lasts `1/fps`; `auto` samples by duration. A clip's own count, set in a [settings file](#settings-files), beats it. See [Clips and sampling](#clips-and-sampling). |
+| `--settings-from FILE` | none | Load every recorded setting of an earlier `moskophoros.sheet/7` sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
 | `--config FILE` | none | Repeatable. Read settings from a YAML file; later files win, and its values act as the options would. See [Settings files](#settings-files). |
 | `--no-user-config` | off | Skip the user settings file. |
 | `--preview` | on | Write the animated previews, also over a sheet or settings file without them; cannot accompany `--no-preview`. |
@@ -122,6 +123,8 @@ default; a test keeps the two in agreement.
 |---|---|---|---|
 | `cell` | `--cell WxH` | `auto` | `WxH`, each side 1 to 4096, or `auto` |
 | `fps` | `--fps N` | `12` | a finite number greater than 0 |
+| `frames` | `--frames N` | `auto` | a whole number 1 or more, or `auto` |
+| `clips.NAME.frames` | none: files only | none | a whole number 1 or more, `auto`, or `null` to take `frames` |
 | `palette` | `--palette FILE`, `--no-palette` | `null` | a palette file path, or `null` for none |
 | `materials` | `--materials FILE`, `--no-materials` | `null` | a material library path, or `null` for none |
 | `previews` | `--preview`, `--no-preview` | `true` | `true` or `false` |
@@ -135,7 +138,17 @@ The `shade` settings are a nested mapping in a file, and each is a setting of
 its own: they merge key by key across the layers, so a file may set one and
 inherit the rest, while `shade.range`, a list, replaces whole (owner
 decisions 2026-10-11 and 2026-10-12, settings design D-3, D-9, D-12, D-22,
-D-30 and D-42). They are global values; per-material values come later.
+D-30 and D-42). They are global values; each material may override them in
+its library entry.
+
+`clips` is a mapping keyed by clip name, each entry a mapping of that clip's
+own settings, so far only `frames` (owner decisions 2026-10-11, settings
+design D-17, D-22, D-31 and D-34). Per-clip values are set in files only.
+Entries merge by clip name across the layers, the loaded sheet's included,
+and a higher layer's `null` clears a lower one's count. An entry naming a
+clip the model does not have, or one not selected, is unused, though it is
+still checked. An unknown key in an entry, or a bad count, is an error
+naming the file, the key path (`clips.Jump.frames`) and the line.
 
 **Layers.** Lowest first, each a partial set of settings; a setting a layer
 leaves out falls through to the layer below:
@@ -201,6 +214,9 @@ fps: 12
 palette: ~/palettes/vince-128.gpl
 materials: robot-library.yaml   # relative to this file
 previews: true          # false: write no animated previews
+frames: 8               # or auto
+clips:
+  Jump: {frames: 6}     # its own count; auto: by duration; null: take frames
 shade:                  # set any of them; the rest fall through
   ao_distance_m: 1.2
   occlusion_weight: 0.5
@@ -226,6 +242,10 @@ decision 2026-10-01):
 - `--palette` together with `--no-palette`, or either option repeated.
 - `--materials` together with `--no-materials`, or either option repeated.
 - `--preview` together with `--no-preview`, or either option repeated.
+- `--frames` not a decimal whole number 1 or more, nor `auto`; in a file, a
+  count that is not a YAML integer 1 or more (never `8.0`, `"8"` or a
+  boolean), nor `auto`, nor (for a clip) `null`. There is no upper bound;
+  the sheet and GIF limits still apply (settings design D-34).
 - `--ao-distance` not finite and greater than 0; `--ao-samples` not a whole
   number from 1 to 128, the limit stated (settings design D-42); a
   `--occlusion-weight` or `--convexity-weight` not finite and 0 or greater; a
@@ -416,19 +436,52 @@ target weight not animated by the clip takes its default (the mesh's
 samplers' input accessor `min`/`max` values, which glTF requires. Its duration
 is `d = t1 − t0`.
 
-**Sample times.** With `n = max(1, floor(d · fps + 0.5))`:
+**Frame counts.** A clip's frame count is its own value, a count or `auto`,
+when it has one; else the global `frames` (`--frames`, or a
+[settings file](#settings-files)), whatever layer each came from (owner
+decisions 2026-10-11, settings design D-13, D-26, D-31). `auto` samples by
+duration.
 
-| Clip | Frames | Sample times | Frame duration |
-|---|---|---|---|
-| looping (default) | `n` | `t0 + k·d/n`, for k = 0 … n−1 | `d/n` |
-| one-shot (`--once`) | `n + 1` | `t0 + k·d/n`, for k = 0 … n | `d/n` |
-| `d = 0`, or the `static` clip | 1 | `t0` (0 for `static`) | `1/fps` |
+**Sample times.** With `n = max(1, floor(d · fps + 0.5))`, for a clip whose
+count is `auto`:
+
+| Clip | Frames | Sample times | Frame duration | `time_scale` |
+|---|---|---|---|---|
+| looping (default) | `n` | `t0 + k·d/n`, for k = 0 … n−1 | `d/n` | 1 |
+| one-shot (`--once`) | `n + 1` | `t0 + k·d/n`, for k = 0 … n | `d/n` | 1 |
+| `d = 0`, or the `static` clip | 1 | `t0` (0 for `static`) | `1/fps` | 1 |
+
+With a count `N`, the clip is retimed so every frame lasts exactly `1/fps`
+(settings design D-13, D-33, D-38):
+
+| Clip | Frames | Sample times | Frame duration | `time_scale` |
+|---|---|---|---|---|
+| looping, `N ≥ 2` | `N` | `t0 + k·d/N`, for k = 0 … N−1 | `1/fps` | `d·fps/N` |
+| one-shot, `N ≥ 2` | `N` | `t0 + k·d/(N−1)`, for k = 0 … N−1 | `1/fps` | `d·fps/(N−1)` |
+| `N = 1`, loop or one-shot: a still | 1 | `t0` | `1/fps` | 1 |
+| `d = 0`, or the `static` clip | 1 | `t0` (0 for `static`) | `1/fps` | 1 |
 
 A loop leaves out its endpoint, which would duplicate its first frame. A
-one-shot keeps its final pose. Samples are spaced evenly over the exact
-duration, so the effective rate `n/d` can differ slightly from `--fps`; the
-JSON records each clip's actual frame duration. How long to hold a one-shot's
-last frame is the consumer's choice.
+one-shot keeps its final pose: its last sample is `t1` itself. Sampled by
+duration, samples are spaced evenly over the exact duration, so the
+effective rate `n/d` can differ slightly from `--fps`; the JSON records each
+clip's actual frame duration and its `time_scale`, the retiming factor. How
+long to hold a one-shot's last frame is the consumer's choice. A clip of zero
+duration and `static`, the synthetic clip with no animation index, always
+have one frame, whatever their count (D-25); an authored animation named
+`static` is an ordinary clip.
+
+**Warnings** (settings design D-25, D-26, D-41), neither an error nor a
+change to the output:
+
+- When `--frames` or a `--config` file sets the global count, as a count or
+  `auto`, one warning names every selected clip whose own value, a count or
+  `auto`, beats it, even an equal one. Zero-duration and `static` clips are
+  left out. A global from the shipped defaults, the user file or a loaded
+  sheet warns nothing.
+- A selected zero-duration or `static` clip whose own count is above 1 is
+  named as keeping one frame.
+- A `clips` entry for a clip not selected warns nothing.
 
 Each sample is evaluated at its exact time, not rounded to a timeline frame.
 
@@ -541,12 +594,17 @@ D-27):
   it names are exactly the one-shots. Each name must be in the loaded clip
   list; a name that is not is a usage error.
 - Without `--clip` or `--once`, the loaded list and marks stay.
+- Each recorded clip's own frame count, a count, `auto` or `null`, loads
+  with the global `settings.frames`. Per-clip counts merge by clip name, so
+  an explicit `--clip` replaces the selection and its marks but not the
+  counts: a re-selected clip keeps its loaded count. A `--frames` reaches
+  every clip whose value is `null` (settings design D-31, D-39).
 - The final selection is checked against the model: a retained loaded clip
   the model no longer has is an input error (exit 3) naming the clip. A clip
   that `--clip` replaced need not exist.
 
-Only the current sheet schema, `moskophoros.sheet/6`, loads (owner decision
-2026-10-11, settings design D-24). A sheet of any other schema, `/1` to `/5`
+Only the current sheet schema, `moskophoros.sheet/7`, loads (owner decision
+2026-10-11, settings design D-24). A sheet of any other schema, `/1` to `/6`
 included, is a usage error naming its schema and the supported one. A file
 that is unreadable, or not a sheet document, is a usage error.
 
@@ -800,7 +858,7 @@ keys, missing required fields and invalid numeric values are rejected.
 | `mode` | `measure` or `render`. |
 | `source` | Absolute `path` to the original GLB, its `sha256` and the selected original glTF `scene` index. |
 | `subject`, `variant` | Input stem and `default`, matching every requested frame address. |
-| `settings` | The accepted sheet settings, using resolved option values. In measure mode, `pixels_per_meter`, `cell` and `ground_px` are null: fitting belongs to the caller. In render mode all three are resolved, fixed values. `shade` carries the shade's capture values, exactly `ao_distance_m` (finite, greater than 0), `ao_samples` (an integer, 1 to 128), `occlusion_weight` and `convexity_weight` (finite, 0 or greater), and `materials`: for each glTF material whose library entry gives its own `ao_distance_m`, `occlusion_weight` or `convexity_weight`, in ascending material order, exactly `material` (its glTF index) and its three resolved capture values, each its own or the global. Both the launcher and the script check them. Of the style, the job carries only those per-material values (owner decision 2026-10-11, settings design D-36, amending the rule below): the sheet's ramps, palette, reduction, default ramp, `previews` and shade ranges are left out, as they act after capture, so the job and its `job_sha256` are the same whatever they are (owner decisions 2026-10-04, 2026-10-12). |
+| `settings` | The accepted sheet settings, using resolved option values, with the global frame count `frames` and each clip entry's own `frames` as given, which the script checks (a count, `auto`, or for a clip `null`); the job's `frames` list already holds the times they sample, so Blender never resamples, and `time_scale` is not in the job. In measure mode, `pixels_per_meter`, `cell` and `ground_px` are null: fitting belongs to the caller. In render mode all three are resolved, fixed values. `shade` carries the shade's capture values, exactly `ao_distance_m` (finite, greater than 0), `ao_samples` (an integer, 1 to 128), `occlusion_weight` and `convexity_weight` (finite, 0 or greater), and `materials`: for each glTF material whose library entry gives its own `ao_distance_m`, `occlusion_weight` or `convexity_weight`, in ascending material order, exactly `material` (its glTF index) and its three resolved capture values, each its own or the global. Both the launcher and the script check them. Of the style, the job carries only those per-material values (owner decision 2026-10-11, settings design D-36, amending the rule below): the sheet's ramps, palette, reduction, default ramp, `previews` and shade ranges are left out, as they act after capture, so the job and its `job_sha256` are the same whatever they are (owner decisions 2026-10-04, 2026-10-12). |
 | `clips` | Selected clips in sheet order. Each carries its original `animation_index`, `name`, `t0_s`, `t1_s` and candidate `roots`. The synthetic `static` clip has a null animation index, zero endpoints and no animated roots. |
 | `clips[].roots` | Each candidate root's original `node_index` and optional original `node_name`, determined using the accepted ancestry rule. Indices identify nodes; names are diagnostics, never assumed unique. |
 | `frames` | The exact requested samples in sheet order: clip, direction, then sample. Each carries an `address`, sample `index` and direction `angle_deg`. The address has `subject`, `variant`, `clip`, `direction` and `time_s`. |
@@ -1336,11 +1394,11 @@ through unchanged.
 - Cells are packed with no gaps; unused cells are fully transparent.
 - Output is an 8-bit RGBA PNG written by Pillow with no text or time chunks.
 
-**JSON (`moskophoros.sheet/6`).**
+**JSON (`moskophoros.sheet/7`).**
 
 ```json
 {
-  "schema": "moskophoros.sheet/6",
+  "schema": "moskophoros.sheet/7",
   "generator": {
     "tool": "moskophoros", "version": "0.1.0",
     "python": "3.x.y", "numpy": "x.y.z", "pillow": "x.y.z",
@@ -1356,6 +1414,7 @@ through unchanged.
               "pitch_deg": 30.0, "directions": 8, "start_angle_deg": 0.0 },
     "model_yaw_deg": 0.0,
     "fps": 12.0,
+    "frames": "auto",
     "supersample": 8,
     "pixels_per_meter": 24.5,
     "cell": { "width": 48, "height": 48 },
@@ -1367,15 +1426,16 @@ through unchanged.
                "occlusion_weight": 0.25, "convexity_weight": 1.0,
                "range": [84, 191] },
     "style": { "reduce": "plain", "palette": null, "materials": null },
-    "clips": [ { "name": "walk", "loop": true },
-               { "name": "attack", "loop": false } ]
+    "clips": [ { "name": "walk", "loop": true, "frames": null },
+               { "name": "attack", "loop": false, "frames": null } ]
   },
   "fingerprint": "sha256:...",
   "image": { "file": "hero.png", "width": 576, "height": 768 },
   "directions": [ { "index": 0, "angle_deg": 0.0, "label": "south" } ],
   "clips": [
     { "name": "walk", "loop": true, "duration_s": 1.0,
-      "frame_count": 12, "frame_duration_s": 0.08333333333333333 }
+      "frame_count": 12, "frame_duration_s": 0.08333333333333333,
+      "time_scale": 1.0 }
   ],
   "frames": [
     { "clip": "walk", "direction": 0, "index": 0, "time_s": 0.0,
@@ -1402,6 +1462,14 @@ through unchanged.
   It sits between `shade` and `clips`. Export writes and fingerprints the record the
   command resolved without interpreting it, so a new look changes neither
   export nor capture (owner decisions 2026-10-04, 2026-10-07).
+- `settings.frames` records the global frame count as given, `auto` or a
+  count, directly after `settings.fps`; each `settings.clips` entry runs
+  `name`, `loop` and `frames`, the clip's own value as given: a count,
+  `auto` or `null`. Counts are recorded as given, never resolved; each
+  top-level `clips` entry's `frame_count` is the resolved number, and its
+  `time_scale`, directly after `frame_duration_s`, the retiming factor
+  (owner decisions 2026-10-11, settings design D-24, D-31, D-40). Inside the
+  fingerprint.
 - `settings.previews` records whether the run wrote the animated previews, a
   boolean between `root_motion` and `shade`, inside the fingerprint (owner
   decision 2026-10-11, settings design D-28).
@@ -1415,8 +1483,9 @@ through unchanged.
   document without per-material shading in the inline library record, and
   `moskophoros.sheet/4` recorded the
   capture values in `generator.shade` and the range as
-  `settings.style.shade_range`; [reuse](#scale-and-ground-point) loads only
-  `/6` (settings design D-24).
+  `settings.style.shade_range`; `moskophoros.sheet/6` had no frame counts or
+  `time_scale`; [reuse](#scale-and-ground-point) loads only `/7` (settings
+  design D-24).
 - `fingerprint` is the SHA-256 of the canonical JSON (sorted keys, no
   whitespace, UTF-8) of `generator`, `source.sha256` and `settings`. The
   hashed object mirrors the sheet's own structure:

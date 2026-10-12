@@ -166,3 +166,104 @@ def test_frames_are_deterministic():
     clips = [looping(animation("walk", 0.0, 1.0)), one_shot(animation("hit", 0.0, 0.3))]
     view = View(30.0, 8, 0.0, model_yaw=45.0)
     assert frames("hero", clips, view, 12) == frames("hero", clips, view, 12)
+
+
+# Frame counts (settings design D-13, D-25, D-26, D-31, D-33, D-38)
+
+
+def counted(clip, frames, once=False):
+    return SelectedClip(clip, one_shot=once, frames=frames)
+
+
+def test_a_looping_clip_with_a_count_samples_d_over_n_and_lasts_one_over_fps():
+    result = sample(counted(animation("walk", 0.5, 1.5), 8), 12)
+    assert result.frame_count == 8
+    assert result.times == tuple(0.5 + k * 1.0 / 8 for k in range(8))
+    assert result.frame_duration == 1 / 12
+    assert result.time_scale == 1.0 * 12 / 8
+
+
+def test_a_one_shot_with_a_count_ends_at_t1_and_lasts_one_over_fps():
+    result = sample(counted(animation("jump", 0.25, 1.75), 6, once=True), 12)
+    assert result.frame_count == 6
+    assert result.times == (*(0.25 + k * 1.5 / 5 for k in range(5)), 1.75)
+    assert result.times[-1] == 1.75
+    assert result.frame_duration == 1 / 12
+    assert result.time_scale == 1.5 * 12 / 5
+
+
+@pytest.mark.parametrize("once", [False, True], ids=["loop", "one-shot"])
+def test_a_count_of_one_is_a_still(once):
+    result = sample(counted(animation("walk", 0.5, 1.5), 1, once), 12)
+    assert result == Sampling(1, (0.5,), 1 / 12, 1.0)
+
+
+@pytest.mark.parametrize("frames", [1, 2, 7, "auto", None])
+@pytest.mark.parametrize("global_", [3, "auto"])
+def test_zero_duration_and_static_keep_one_frame(frames, global_):
+    for clip, t0 in ((animation("pose", 0.25, 0.25), 0.25), (STATIC, 0.0)):
+        for once in (False, True):
+            result = sample(counted(clip, frames, once), 12, global_)
+            assert result == Sampling(1, (t0,), 1 / 12, 1.0)
+
+
+@pytest.mark.parametrize("once", [False, True])
+@pytest.mark.parametrize("duration", [0.04, 0.5, 1.0, 1.3, 7.25])
+def test_auto_samples_exactly_as_before(once, duration):
+    clip = animation("walk", 0.25, 0.25 + duration)
+    before = sample(SelectedClip(clip, once), 12)
+    for selected, global_ in (
+        (counted(clip, "auto", once), 8),
+        (counted(clip, None, once), "auto"),
+        (counted(clip, "auto", once), "auto"),
+    ):
+        assert sample(selected, 12, global_) == before
+    assert before.time_scale == 1.0
+
+
+def test_a_clips_own_value_beats_the_global_and_null_takes_it():
+    clip = animation("walk", 0.0, 1.0)
+    assert sample(counted(clip, 4), 12, 9).frame_count == 4
+    assert sample(counted(clip, None), 12, 9).frame_count == 9
+    assert sample(counted(clip, "auto"), 12, 9).frame_count == 12
+    assert sample(counted(clip, None), 12, "auto").frame_count == 12
+
+
+@pytest.mark.parametrize("n", [2, 3, 8, 97])
+@pytest.mark.parametrize("fps", [1, 7.5, 12, 30])
+def test_every_counted_frame_lasts_exactly_one_over_fps(n, fps):
+    for once in (False, True):
+        result = sample(counted(animation("walk", 0.1, 2.3), n, once), fps)
+        assert result.frame_count == n == len(result.times)
+        assert result.frame_duration == 1 / fps
+        steps = n - 1 if once else n
+        assert result.time_scale == (2.3 - 0.1) * fps / steps
+
+
+def test_an_animation_named_static_takes_its_count():
+    clip = animation("static", 0.0, 1.0)
+    result = sample(counted(clip, 4), 12)
+    assert result.frame_count == 4
+    assert result.time_scale == 12 / 4
+
+
+@pytest.mark.parametrize("frames", [0, -1, True, 2.0])
+def test_a_bad_count_is_a_bug(frames):
+    with pytest.raises(ValueError, match="a frame count must be 1 or more"):
+        sample(counted(animation("walk", 0.0, 1.0), frames), 12)
+
+
+def test_frames_use_the_resolved_counts():
+    view = View(0.0, 1, 0.0)
+    walk = counted(animation("walk", 0.0, 1.0), None)
+    jump = counted(animation("jump", 0.0, 1.0, 1), 3, once=True)
+    result = frames("hero", (walk, jump), view, 12, 4)
+    assert [(f.address.clip, f.address.time_s, f.index) for f in result] == [
+        ("walk", 0.0, 0),
+        ("walk", 0.25, 1),
+        ("walk", 0.5, 2),
+        ("walk", 0.75, 3),
+        ("jump", 0.0, 0),
+        ("jump", 0.5, 1),
+        ("jump", 1.0, 2),
+    ]

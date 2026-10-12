@@ -29,13 +29,28 @@ SHADE = "shade"
 BACKGROUND = -1
 
 
+# A frame count that leaves sampling to the clip's duration.
+AUTO = "auto"
+
+
 @dataclass(frozen=True)
 class Sampling:
-    """One clip's samples: `times` in seconds, each lasting `frame_duration`."""
+    """One clip's samples: `times` in seconds, each lasting `frame_duration`,
+    and `time_scale`, the retiming factor (settings design D-33): 1 for
+    automatic sampling and for one frame."""
 
     frame_count: int
     times: tuple[float, ...]
     frame_duration: float
+    time_scale: float = 1.0
+
+
+def count(selected, frames=AUTO):
+    """The frame count `selected` samples with, or None for automatic
+    sampling: its own count or `"auto"`, else the global `frames` (settings
+    design D-26, D-31)."""
+    own = frames if selected.frames is None else selected.frames
+    return None if own == AUTO else own
 
 
 @dataclass(frozen=True)
@@ -103,14 +118,23 @@ class Identities:
         return len(self.names) + 1
 
 
-def sample(selected, fps):
-    """The samples of `selected`, a `gltf.SelectedClip`, at target `fps`.
+def sample(selected, fps, frames=AUTO):
+    """The samples of `selected`, a `gltf.SelectedClip`, at target `fps`,
+    with `frames` the global frame count as given.
 
     The synthetic `static` clip, which has no animation index, and any clip of
-    zero duration have one frame at `t0` lasting `1/fps`. Otherwise, with
-    `n = max(1, floor(d · fps + 0.5))`, a looping clip has `n` frames and a
-    one-shot clip `n + 1`, at `t0 + k·d/n`, each lasting `d/n`. A one-shot
-    clip's last sample is `t1` itself, which `t0 + n·d/n` can miss by rounding.
+    zero duration have one frame at `t0` lasting `1/fps`, whatever its count
+    (settings design D-25). A clip whose count resolves to `"auto"` (`count`)
+    samples by duration: with `n = max(1, floor(d · fps + 0.5))`, a looping
+    clip has `n` frames and a one-shot clip `n + 1`, at `t0 + k·d/n`, each
+    lasting `d/n`. A one-shot clip's last sample is `t1` itself, which
+    `t0 + n·d/n` can miss by rounding.
+
+    With a count `N` (settings design D-13, D-33, D-38), every frame lasts
+    exactly `1/fps`: a looping clip samples `t0 + k·d/N` and a one-shot clip
+    `t0 + k·d/(N − 1)` for k = 0 … N − 1, its last sample `t1` itself, with
+    `time_scale` `d·fps/N` or `d·fps/(N − 1)`; `N` = 1 is a still, one frame
+    at `t0` with `time_scale` 1.
     """
     if not (math.isfinite(fps) and fps > 0):
         raise ValueError(f"fps must be finite and greater than 0, got {fps!r}")
@@ -120,6 +144,17 @@ def sample(selected, fps):
     duration = clip.t1 - clip.t0
     if duration == 0:
         return Sampling(1, (clip.t0,), 1 / fps)
+    given = count(selected, frames)
+    if given is not None:
+        if isinstance(given, bool) or not isinstance(given, int) or given < 1:
+            raise ValueError(f"a frame count must be 1 or more, got {given!r}")
+        if given == 1:
+            return Sampling(1, (clip.t0,), 1 / fps)
+        steps = given if not selected.one_shot else given - 1
+        times = tuple(clip.t0 + k * duration / steps for k in range(steps))
+        if selected.one_shot:
+            times += (clip.t1,)
+        return Sampling(given, times, 1 / fps, duration * fps / steps)
     n = max(1, math.floor(duration * fps + 0.5))
     times = tuple(clip.t0 + k * duration / n for k in range(n))
     if selected.one_shot:
@@ -127,8 +162,9 @@ def sample(selected, fps):
     return Sampling(len(times), times, duration / n)
 
 
-def frames(subject, selected_clips, view, fps):
-    """Every requested frame of `subject` (its name) in sheet order.
+def frames(subject, selected_clips, view, fps, frame_count=AUTO):
+    """Every requested frame of `subject` (its name) in sheet order, with
+    `frame_count` the global frame count as given.
 
     Raises `ValueError` if two frames would share an address, such as two
     selected clips with one name.
@@ -136,7 +172,7 @@ def frames(subject, selected_clips, view, fps):
     directions = views.directions(view)
     result = []
     for selected in selected_clips:
-        times = sample(selected, fps).times
+        times = sample(selected, fps, frame_count).times
         for direction in directions:
             for index, time_s in enumerate(times):
                 address = FrameAddress(

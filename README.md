@@ -80,8 +80,20 @@ materials:
     shade: {range: [120, 255], convexity_weight: 0.5}
 ```
 
-The cell, fps, palette, library, previews and shading values can also come
-from YAML settings files. `~/.config/moskophoros/config.yaml` (or
+`--frames N` samples every clip to N frames, retimed so each frame lasts
+`1/fps` (a one-shot still ends on its last pose; `--frames 1` makes a still);
+`--frames auto`, the default, samples by duration. A settings file can give a
+clip its own count, which beats the global one:
+
+```yaml
+frames: 8
+clips:
+  Jump: {frames: 6}
+  Idle: {frames: auto}   # by duration; null: take frames
+```
+
+The cell, fps, frame count, palette, library, previews and shading values can
+also come from YAML settings files. `~/.config/moskophoros/config.yaml` (or
 `$XDG_CONFIG_HOME/moskophoros/config.yaml`) holds your own defaults, and
 `--config look.yaml`, repeatable, applies a file as if its values were given
 as options; command-line options still win. Paths in a file are relative to

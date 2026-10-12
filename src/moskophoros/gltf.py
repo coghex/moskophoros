@@ -79,8 +79,13 @@ class Subject:
 
 @dataclass(frozen=True)
 class SelectedClip:
+    """A selected clip, whether it is a one-shot, and its own frame count as
+    given: a count, `"auto"`, or None to take the global count (settings
+    design D-31)."""
+
     clip: Clip
     one_shot: bool
+    frames: int | str | None = None
 
 
 def read_glb(path):
