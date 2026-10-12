@@ -361,9 +361,11 @@ def _apply_layer(options, values, sources, mark=True):
         if explicit & {name, none_field}:
             continue
         if value is not None or mark:
-            origins[name] = next(
-                label for label, layer in reversed(sources) if name in layer
+            label, layer = next(
+                (label, layer) for label, layer in reversed(sources) if name in layer
             )
+            line, column = layer.where[name]
+            origins[name] = f"{label}: {name} (line {line}, column {column})"
         changes[path_field] = value
         changes[none_field] = mark and value is None
         if mark:
@@ -388,13 +390,17 @@ def _apply_defaults(options, defaults, user):
     return _apply_layer(options, merged, sources, mark=False)
 
 
+def _unreadable(error):
+    """Why a palette or library file cannot be read: any `OSError`, such as
+    a missing file, a directory, no permission, a name too long or a loop of
+    links, or a path the file system cannot name."""
+    return f"cannot be read: {getattr(error, 'strerror', None) or error}"
+
+
 def _origin(options, name, option):
     """How errors name the source of a palette or library setting: `option`
-    when the command line gave it, else the settings file and key."""
-    origin = options.origins.get(name)
-    if origin is None:
-        return option
-    return f"{origin}: {name}"
+    when the command line gave it, else the settings file, key and line."""
+    return options.origins.get(name, option)
 
 
 def _resolve_palette(options: Options) -> Options:
@@ -407,10 +413,8 @@ def _resolve_palette(options: Options) -> Options:
             _build_parser()[0].error(f"{name} {str(path)!r}: {error}")
         try:
             data = path.read_bytes()
-        except OSError as error:
-            _build_parser()[0].error(
-                f"{name} {str(path)!r}: cannot be read: {error.strerror or error}"
-            )
+        except (OSError, ValueError) as error:
+            _build_parser()[0].error(f"{name} {str(path)!r}: {_unreadable(error)}")
         try:
             colors = palette.read_palette_bytes(data, source=path)
         except palette.PaletteError as error:
@@ -454,10 +458,8 @@ def _resolve_materials(options: Options, reused_colors) -> Options:
             parser.error(f"{name} {str(path)!r}: {error}")
         try:
             data = path.read_bytes()
-        except OSError as error:
-            parser.error(
-                f"{name} {str(path)!r}: cannot be read: {error.strerror or error}"
-            )
+        except (OSError, ValueError) as error:
+            parser.error(f"{name} {str(path)!r}: {_unreadable(error)}")
         try:
             library = materials.read_library_bytes(data, colors, source=path)
         except materials.LibraryError as error:

@@ -165,11 +165,16 @@ later slice's such as `frames`, `clips` or `shade`, an unknown version, a
 value of the wrong type or out of range, or any YAML error is a usage error
 (exit 2) naming the file, the key and the line. A path inside a settings file
 resolves relative to that file's directory, with a leading `~` expanded;
-paths on the command line resolve as before. Every participating file is
-read and checked first, but only the palette and library that survive the
-merge are read, so an overridden path need not exist. Errors about a palette
-or library from a settings file name that file and key, such as
-`--config 'look.yaml': palette '/art/p.gpl': cannot be read: …`.
+paths on the command line resolve as before. Every path a settings file
+supplies must be one the file system can name: one holding a NUL character
+or a lone surrogate (from a `\uD800` escape) is refused while the file is
+read. Every participating file is read and checked first, but only the
+palette and library that survive the merge are read, so an overridden path
+need not exist. Any failure to read a palette or library a settings file
+names, whether missing, a directory, without permission, a name too long or
+a loop of links, is a usage error naming the settings file, the key and its
+line, such as
+`--config 'look.yaml': palette (line 3, column 1) '/art/p.gpl': cannot be read: …`.
 
 ```yaml
 version: 1

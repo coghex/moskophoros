@@ -280,8 +280,8 @@ def test_a_leading_tilde_expands_to_home(tmp_path, monkeypatch):
 def test_a_file_path_error_names_the_settings_file(tmp_path, capsys):
     path = config(tmp_path, "palette: missing.hex\n")
     assert refused(capsys, "--config", str(path)) == (
-        f"--config {str(path)!r}: palette {str(tmp_path / 'missing.hex')!r}: "
-        "cannot be read: No such file or directory"
+        f"--config {str(path)!r}: palette (line 1, column 1) "
+        f"{str(tmp_path / 'missing.hex')!r}: cannot be read: No such file or directory"
     )
 
 
@@ -325,7 +325,9 @@ def test_a_config_palette_of_other_colours_beside_a_reused_library_is_refused(
     message = refused(
         capsys, "--settings-from", str(style_sheet(tmp_path)), "--config", str(path)
     )
-    assert message.startswith(f"--config {str(path)!r}: palette {str(other)!r}: ")
+    assert message.startswith(
+        f"--config {str(path)!r}: palette (line 1, column 1) {str(other)!r}: "
+    )
     assert "its colours differ from the reused palette" in message
 
 
@@ -335,8 +337,8 @@ def test_a_config_null_palette_beside_a_reused_library_is_refused(tmp_path, caps
         capsys, "--settings-from", str(style_sheet(tmp_path)), "--config", str(path)
     )
     assert message == (
-        f"--config {str(path)!r}: palette: the reused material library needs a "
-        "palette; also give --no-materials to drop it"
+        f"--config {str(path)!r}: palette (line 1, column 1): the reused material "
+        "library needs a palette; also give --no-materials to drop it"
     )
 
 
@@ -467,6 +469,88 @@ def test_a_nul_in_a_settings_path_names_the_file_key_and_line(tmp_path, capsys):
         f"--config {str(path)!r}: materials: expected a file path without a NUL "
         "character, got 'a\\x00b' at line 2, column 1"
     )
+
+
+# Every path a settings file names: one validator, and every failure to read
+# what it names, a located usage error before Blender.
+
+
+def unusable(kind, directory, suffix):
+    """A path, as a settings file in `directory` writes it, that cannot be
+    read in way `kind`, and the problem the command reports for it."""
+    name = "p" + suffix
+    if kind == "missing":
+        return name, "cannot be read: No such file or directory"
+    if kind == "directory":
+        (directory / name).mkdir()
+        return name, "cannot be read: Is a directory"
+    if kind == "no-permission":
+        (directory / name).write_text("000000\n")
+        (directory / name).chmod(0)
+        return name, "cannot be read: Permission denied"
+    if kind == "name-too-long":
+        return "x" * 300 + suffix, "cannot be read: File name too long"
+    if kind == "link-loop":
+        (directory / name).symlink_to(directory / name)
+        return name, "cannot be read: Too many levels of symbolic links"
+    if kind == "nul":
+        given = f'"bad\\0/{name}"'
+        return given, "expected a file path without a NUL character"
+    if kind == "surrogate":
+        return (
+            f'"bad\\uD800/{name}"',
+            f"expected a file path the file system can name, got 'bad\\ud800/{name}': "
+            "surrogates not allowed",
+        )
+    raise AssertionError(kind)
+
+
+@pytest.mark.parametrize("where", ["config", "user"])
+@pytest.mark.parametrize("key", ["palette", "materials"])
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "missing",
+        "directory",
+        "no-permission",
+        "name-too-long",
+        "link-loop",
+        "nul",
+        "surrogate",
+    ],
+)
+def test_every_unusable_settings_path_is_exit_2_naming_file_key_and_line(
+    setup, capsys, monkeypatch, kind, key, where
+):
+    if kind == "no-permission" and os.geteuid() == 0:
+        pytest.fail("this case needs a user that file permissions apply to")
+    if where == "config":
+        directory = setup.tmp_path / "conf"
+        directory.mkdir()
+    else:
+        directory = Path(os.environ["XDG_CONFIG_HOME"], "moskophoros")
+        directory.mkdir(parents=True)
+    written, problem = unusable(
+        kind, directory, ".hex" if key == "palette" else ".yaml"
+    )
+    text = f"palette: {palette_file(setup.tmp_path)}\n" if key == "materials" else ""
+    text += f"{key}: {written}\n"
+    line = text.count("\n")
+    if where == "config":
+        path = config(directory, text)
+        label, args = f"--config {str(path)!r}", ["--config", str(path)]
+    else:
+        path = user_file(text)
+        label, args = f"the user settings {str(path)!r}", []
+    forbid_blender(monkeypatch)
+    status, out, err = run(capsys, setup.argv(*args))
+    assert (status, out) == (2, "")
+    message = err.splitlines()[-1]
+    assert message.startswith(f"moskophoros: error: {label}: {key}")
+    assert f"line {line}, column 1" in message
+    assert problem in message
+    assert setup.calls() == []
+    assert not setup.png.exists()
 
 
 # Isolation from the owner's own user file

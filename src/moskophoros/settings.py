@@ -42,6 +42,15 @@ class SettingsError(Exception):
         super().__init__(f"{source}: {problem}")
 
 
+class Layer(dict):
+    """A layer's settings, with `where` mapping each name to the `(line,
+    column)` it is written at, for errors about the file it names."""
+
+    def __init__(self, values=(), where=None):
+        super().__init__(values)
+        self.where = dict(where or {})
+
+
 class _Bad(Exception):
     """A value its setting refuses; `problem` reads after the key path."""
 
@@ -122,10 +131,27 @@ def _check_path(value):
         return None
     if not isinstance(value, str) or not value:
         raise _Bad(f"expected a file path or null, got {_shown(value)}")
-    if "\0" in value:
-        # No file system accepts it, and Python refuses to open such a path.
-        raise _Bad(f"expected a file path without a NUL character, got {_shown(value)}")
     return value
+
+
+def usable_path(path, given):
+    """`path`, resolved from the settings value `given`, if the file system
+    can name it; else `_Bad` naming `given`. Every path a settings file
+    supplies passes here, so no path can fail on being opened for what it
+    is rather than for what is at it."""
+    text = os.fspath(path)
+    if "\0" in text:
+        # No file system accepts it, and Python refuses to open such a path.
+        raise _Bad(f"expected a file path without a NUL character, got {_shown(given)}")
+    try:
+        os.fsencode(text)
+    except (ValueError, UnicodeError) as error:
+        reason = getattr(error, "reason", None) or str(error)
+        raise _Bad(
+            f"expected a file path the file system can name, got {_shown(given)}: "
+            f"{reason}"
+        ) from None
+    return path
 
 
 def _check_previews(value):
@@ -207,7 +233,7 @@ def read_bytes(data, *, source, directory):
         version = document["version"]
         if type(version) is not int or version != VERSION:
             refuse(("version",), f"expected {VERSION}, got {_shown(version)}")
-    layer = {}
+    layer = Layer()
     for key, value in document.items():
         if key == "version":
             continue
@@ -219,8 +245,14 @@ def read_bytes(data, *, source, directory):
         except _Bad as error:
             refuse((key,), error.problem)
         if setting.path and checked is not None:
-            checked = Path(directory, os.path.expanduser(checked))
+            try:
+                checked = usable_path(
+                    Path(directory, os.path.expanduser(checked)), value
+                )
+            except _Bad as error:
+                refuse((key,), error.problem)
         layer[key] = checked
+        layer.where[key] = yamlfile.locate(marks, (key,))
     return layer
 
 
@@ -234,9 +266,9 @@ def read_file(path, *, source, required):
         if not required:
             return None
         raise SettingsError(source, "does not exist") from None
-    except OSError as error:
+    except (OSError, ValueError) as error:
         raise SettingsError(
-            source, f"cannot be read: {error.strerror or error}"
+            source, f"cannot be read: {getattr(error, 'strerror', None) or error}"
         ) from None
     return read_bytes(data, source=source, directory=path.parent)
 
@@ -261,7 +293,8 @@ def user_file(environ):
 def merge(*layers):
     """Lay `layers` over each other, lowest first: each key takes the value
     of the last layer that has it."""
-    merged = {}
+    merged = Layer()
     for layer in layers:
         merged.update(layer)
+        merged.where.update(getattr(layer, "where", {}))
     return merged
