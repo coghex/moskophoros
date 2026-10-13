@@ -357,9 +357,42 @@ Decided 2026-10-13 (material styling D-27). Keeping the maps aligned with
 the colour sheet at small cell sizes is hard. Normals are averaged, never
 palette-mapped. The arc plans for the owner's visual check.
 
+### D-9. The normal map is written on every run, with an opt-out
+
+Decided 2026-10-13 by the owner in this design's session ("all of your
+recommendations are correct"; resolves Q-1, option A). Every run writes the
+normal map beside the colour sheet, as previews are written today. It can be
+turned off, by an option such as `--no-normals` and a setting such as
+`normals: false` (names are Q-6's and Q-7's). The colour sheet is designed
+to be lit live, and a sheet without its normal map is half an asset; the
+capture cost, about 10 % more auxiliary render time ([Spike 1](#spike-1)),
+is paid on every run.
+
+### D-10. The depth map: camera depth in sheet pixels, 16-bit greyscale, off by default
+
+Decided 2026-10-13 by the owner in this design's session (resolves Q-2, as
+recommended).
+
+- **Quantity:** camera depth, each pixel's distance toward the viewer from
+  the plane through the ground point that faces the camera, positive toward
+  the viewer like the normal's z. It is relative to the ground point because
+  the camera's own distance changes per frame. With the pixel's position,
+  `pixels_per_meter` and `ground_px`, a game recovers the pixel's position in
+  camera space at every pitch. Height above the ground is not stored; it
+  follows from depth at any pitch above 0.
+- **Units:** sheet pixels, one unit being `1 / pixels_per_meter` metres, the
+  same units as the pixel's x and y.
+- **Encoding:** a 16-bit greyscale PNG, `value = 32768 + round(16 · depth)`,
+  in 1/16-pixel steps; 0 is reserved for "no surface", so depths from
+  −2047.9375 to +2047.9375 pixels are encodable, covering any cell up to the
+  4096 limit.
+- **Default:** off; written only when asked (D-3).
+
 ## Open questions
 
 ### Q-1. Is the normal map written on every run, or only when asked?
+
+**Resolved by D-9** (option A). Kept for the alternative.
 
 D-2 makes the normal map *the* lighting sheet; D-3 makes only the depth map
 optional. Options:
@@ -375,6 +408,9 @@ live, and a sheet without its normal map is half an asset. Affects every
 slice's outputs, settings and cost.
 
 ### Q-2. What does the depth map store, and how?
+
+**Resolved by D-10** (every recommendation below). Kept for the
+alternatives.
 
 - **Quantity.** *Camera depth*: each pixel's distance toward the viewer
   from the plane through the ground point facing the camera, positive toward
@@ -399,6 +435,12 @@ slice's outputs, settings and cost.
 - **Default:** off, written only when asked (D-3 calls it optional).
 
 ### Q-3. What is the light flag, and what does the lit preview write?
+
+*Owner's answer, 2026-10-13, being clarified before it is recorded as a
+decision:* "for 3, the point light is optional for the cli, no --light flag
+and we should have no light other than ambient." The other recommendations
+below were accepted ("all of your recommendations are correct"); what the
+answer means for a directional light and for the flag is asked next.
 
 - **Kind of light.** A **directional** light needs only the normal map. A
   **point** light at a position needs the depth map too. **Recommendation:
