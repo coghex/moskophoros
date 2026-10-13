@@ -10,7 +10,10 @@ and a depth is a point's distance toward the viewer from the ground point,
 (P − G) · toward.
 """
 
+import json
 import math
+import subprocess
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -402,3 +405,93 @@ def test_small_and_uneven_frames_are_the_corner_of_an_uncropped_render(
         samples = backend.read_wide_png(a[name])
         corner = backend.read_wide_png(b[name])[:height, :width]
         np.testing.assert_array_equal(samples, corner, err_msg=name)
+
+
+# Restoration (requirement 2)
+
+RESTORE_PROBE = """
+import importlib.util, json, os, sys, tempfile
+import bpy
+
+path = sys.argv[sys.argv.index("--") + 1]
+spec = importlib.util.spec_from_file_location("probe_script", path)
+script = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(script)
+scene = bpy.context.scene
+cube = bpy.data.objects["Cube"]
+cube.data.materials.clear()
+script.configure_render(scene, {
+    "supersample": 1, "cell": {"width": 8, "height": 6},
+})
+
+
+def state():
+    image = scene.render.image_settings
+    return {
+        "aovs": [(aov.name, aov.type) for aov in bpy.context.view_layer.aovs],
+        "image": [
+            getattr(image, name)
+            for name in ("media_type", "file_format", "color_mode", "color_depth",
+                         "exr_codec")
+        ],
+        "render": [scene.render.engine, scene.render.filepath],
+        "cycles": [scene.cycles.samples, scene.cycles.seed],
+        "materials": sorted(m.name for m in bpy.data.materials),
+        "slots": len(cube.data.materials),
+    }
+
+
+before = state()
+shade = {"ao_distance_m": 0.3, "ao_samples": 4, "occlusion_weight": 0.25,
+         "convexity_weight": 1.0, "materials": []}
+auxiliary = script.Auxiliary(scene, [cube], {}, shade)
+scratch = tempfile.mkdtemp()
+tga, exr = os.path.join(scratch, "a.tga"), os.path.join(scratch, "a.exr")
+auxiliary.apply(tga)
+during = state()
+try:
+    bpy.ops.render.render(write_still=True)
+    script.save_exr(scene, exr)
+finally:
+    auxiliary.restore()
+layer = bpy.context.view_layer.name
+names = [f"{layer}.normal.{axis}" for axis in "RGB"] + [f"{layer}.depth.X"]
+channels = script.read_exr(exr, 8, 6, names)
+print("PROBE " + json.dumps({
+    "before": before, "during": during, "after": state(),
+    "lengths": sorted({len(values) for values in channels.values()}),
+}))
+"""
+
+
+def test_the_auxiliary_render_restores_every_aov_and_setting(found, tmp_path):
+    probe = tmp_path / "probe.py"
+    probe.write_text(RESTORE_PROBE)
+    completed = subprocess.run(
+        [
+            str(found.path),
+            "-b",
+            "--factory-startup",
+            "-noaudio",
+            "--python",
+            str(probe),
+            "--",
+            str(Path(blender.__file__).with_name("blender_script.py")),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    lines = [
+        line for line in completed.stdout.splitlines() if line.startswith("PROBE ")
+    ]
+    assert completed.returncode == 0 and lines, completed.stdout + completed.stderr
+    probed = json.loads(lines[0].removeprefix("PROBE "))
+    # While it runs: the two AOVs, the stand-in and Cycles; after it, nothing.
+    assert probed["during"]["aovs"] == [["normal", "COLOR"], ["depth", "VALUE"]]
+    assert "moskophoros.no-material" in probed["during"]["materials"]
+    assert probed["during"]["render"][0] == "CYCLES"
+    assert probed["after"] == probed["before"]
+    assert probed["before"]["aovs"] == []
+    assert probed["before"]["image"][:2] == ["IMAGE", "PNG"]
+    assert probed["lengths"] == [48]

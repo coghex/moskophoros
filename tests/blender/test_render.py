@@ -440,12 +440,17 @@ def test_the_result_records_the_renderer_and_studio_light(found, tmp_path):
     }
     phase = tmp_path / "work" / "render"
     listing = sorted(p.relative_to(phase).as_posix() for p in phase.rglob("*"))
+    # No scratch render, TGA or OpenEXR, is left in the phase directory.
     assert listing == [
         "color",
         "color/000000.png",
+        "depth",
+        "depth/000000.png",
         "job.json",
         "matid",
         "matid/000000.png",
+        "normal",
+        "normal/000000.png",
         "result.json",
         "shade",
         "shade/000000.png",
