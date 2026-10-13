@@ -62,6 +62,10 @@ anything newer than the date below.
   [tools/README.md](tools/README.md).
 - **Acceptance renders** of the owner's test model live outside git, under
   `~/.local/share/moskophoros-acceptance/` on the owner's Mac.
+- **The owner's user settings** (`~/.config/moskophoros/config.yaml`) set
+  their working palette, Vince 144 (Vince 128 plus a 16-step grey ramp,
+  chosen 2026-10-13), for every run without `--palette`. Pass
+  `--no-user-config` for any render that must match shipped defaults.
 
 ## Kanban pull-request flow
 
