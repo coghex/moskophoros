@@ -153,6 +153,8 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
             *["--shade-range", "120,188", "--frames", "8"],
             *["--settings-from", "old.json", "--no-preview", "--no-normals"],
             "--depth",
+            *["--light", "-20,30,40", "--light-intensity", "2"],
+            *["--light-ambient", "0.5"],
             *["--config", "a.yaml", "--config", "b.yaml", "--no-user-config"],
             *["--work-dir", "work", "--blender", "/opt/blender", "--any-blender"],
             *POSITIONALS,
@@ -206,6 +208,9 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         frames=8,
         normals=False,
         depth=True,
+        light=(-20.0, 30.0, 40.0),
+        light_intensity=2.0,
+        light_ambient=0.5,
     )
 
 

@@ -181,6 +181,31 @@ def _check_range(value):
     raise _Bad(f"expected [lo, hi], two integers with 0 <= lo < hi <= 255, got {shown}")
 
 
+def _check_light_position(value):
+    """A light's position: `null`, no light, or three finite numbers
+    `[x, y, z]`, never booleans."""
+    if value is None:
+        return None
+    if isinstance(value, list) and len(value) == 3:
+        try:
+            return tuple(_finite(coordinate, "") for coordinate in value)
+        except _Bad:
+            pass
+    shown = (
+        "[" + ", ".join(map(_shown, value)) + "]"
+        if isinstance(value, list)
+        else _shown(value)
+    )
+    raise _Bad(f"expected [x, y, z], three finite numbers, or null, got {shown}")
+
+
+def _check_ambient(value):
+    number = _finite(value, "from 0 to 1")
+    if not 0 <= number <= 1:
+        raise _Bad(f"expected a finite number from 0 to 1, got {_shown(value)}")
+    return number
+
+
 def _check_path(value):
     if value is None:
         return None
@@ -293,6 +318,26 @@ SCHEMA = MappingProxyType(
         ),
         "depth": Setting(
             "whether the depth map is written", None, False, _check_previews
+        ),
+        "light.position": Setting(
+            "the preview light's position in the camera's frame, from the "
+            "ground point: [x, y, z] with x screen right, y screen up and z "
+            "toward the viewer, or null for no light",
+            "sheet pixels",
+            None,
+            _check_light_position,
+        ),
+        "light.intensity": Setting(
+            "how strongly the light lights a surface facing it, 0 or greater",
+            None,
+            1.0,
+            _check_weight,
+        ),
+        "light.ambient": Setting(
+            "how bright a surface facing away from the light is, 0 to 1",
+            None,
+            0.3,
+            _check_ambient,
         ),
         "shade.ao_distance_m": Setting(
             "how far ambient occlusion looks for other surfaces, greater than 0",

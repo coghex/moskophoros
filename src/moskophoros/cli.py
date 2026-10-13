@@ -97,7 +97,7 @@ ROOT_MOTION_MODES = ("error", "keep")
 # The values --reduce accepts; the first is the default.
 REDUCTIONS = ("plain", "mode")
 # The only sheet schema `--settings-from` loads (settings design D-24).
-SHEET_SCHEMA = "moskophoros.sheet/9"
+SHEET_SCHEMA = "moskophoros.sheet/10"
 _MAX_DIGITS = 4300
 _VIEW_FIELDS = ("view", "pitch", "directions", "start_angle")
 _REPEATABLE = frozenset({"--clip", "--once", "--config"})
@@ -110,6 +110,9 @@ _SETTING_FIELDS = MappingProxyType(
         "shade.occlusion_weight": "occlusion_weight",
         "shade.convexity_weight": "convexity_weight",
         "shade.range": "shade_range",
+        "light.position": "light",
+        "light.intensity": "light_intensity",
+        "light.ambient": "light_ambient",
     }
 )
 # The file settings that are paths, with the `Options` fields a path and a
@@ -202,6 +205,12 @@ class Options:
     normals: bool = layered.DEFAULTS["normals"]
     # Whether the depth map is written (lighting sheet design D-3, D-18).
     depth: bool = layered.DEFAULTS["depth"]
+    # The preview light (lighting sheet design D-13, D-14, D-18): its
+    # position in sheet pixels from the ground point in the camera's frame,
+    # or None for no light, its intensity and its ambient level.
+    light: tuple[float, float, float] | None = layered.DEFAULTS["light.position"]
+    light_intensity: float = layered.DEFAULTS["light.intensity"]
+    light_ambient: float = layered.DEFAULTS["light.ambient"]
 
 
 class UsageError(SystemExit):
@@ -232,6 +241,8 @@ def parse_args(argv: Sequence[str]) -> Options:
         parser.error("--normals and --no-normals cannot be given together")
     if args.depth and args.no_depth:
         parser.error("--depth and --no-depth cannot be given together")
+    if args.light is not None and args.no_light:
+        parser.error("--light and --no-light cannot be given together")
 
     once = tuple(args.once or ())
     clip = None if args.clip is None else tuple(args.clip)
@@ -247,6 +258,8 @@ def parse_args(argv: Sequence[str]) -> Options:
         explicit = (explicit - {"no_normals"}) | {"normals"}
     if "no_depth" in explicit:
         explicit = (explicit - {"no_depth"}) | {"depth"}
+    if "no_light" in explicit:
+        explicit = (explicit - {"no_light"}) | {"light"}
     explicit = frozenset(explicit)
     preset = PRESETS[args.view]
     overrides = {"pitch", "directions", "start_angle"} & explicit
@@ -298,6 +311,9 @@ def parse_args(argv: Sequence[str]) -> Options:
             else layered.DEFAULTS["normals"]
         ),
         depth=(not args.no_depth if "depth" in explicit else layered.DEFAULTS["depth"]),
+        light=args.light,
+        light_intensity=args.light_intensity,
+        light_ambient=args.light_ambient,
     )
 
 
@@ -326,6 +342,9 @@ class ReusedSettings:
     previews: bool
     normals: bool
     depth: bool
+    light: tuple[float, float, float] | None
+    light_intensity: float
+    light_ambient: float
     clip: tuple[str, ...]
     once: tuple[str, ...]
     frames: int | str
@@ -636,6 +655,9 @@ def read_settings(path) -> ReusedSettings:
         previews=checked["previews"],
         normals=checked["normals"],
         depth=checked["depth"],
+        light=checked["light"]["position"],
+        light_intensity=checked["light"]["intensity"],
+        light_ambient=checked["light"]["ambient"],
         frames=checked["frames"],
         clip_frames=MappingProxyType(
             {entry["name"]: entry["frames"] for entry in checked["clips"]}
@@ -850,7 +872,18 @@ def _command(options):
     preview_paths = export.preview_paths(outfile, selected) if options.previews else ()
     normal_paths = [export.normal_path(outfile)] if options.normals else []
     depth_paths = [export.depth_path(outfile)] if options.depth else []
-    _check_targets([outfile, json_path, *normal_paths, *depth_paths, *preview_paths])
+    light = export.Light(options.light, options.light_intensity, options.light_ambient)
+    lit = options.previews and light.position is not None
+    lit_paths = export.lit_preview_paths(outfile, selected) if lit else ()
+    if light.position is not None and not options.previews:
+        _report(
+            "warning",
+            f"the light at {_coordinates(light.position)} is recorded but unused: "
+            "previews are off, so no lit preview is written",
+        )
+    _check_targets(
+        [outfile, json_path, *normal_paths, *depth_paths, *preview_paths, *lit_paths]
+    )
     view = views.View(
         options.pitch, options.directions, options.start_angle, options.model_yaw
     )
@@ -937,6 +970,7 @@ def _command(options):
                     previews=options.previews,
                     normals=options.normals,
                     depth=options.depth,
+                    light=light,
                 ),
                 source.sha256,
             )
@@ -978,6 +1012,7 @@ def _command(options):
         previews=options.previews,
         normals=options.normals,
         depth=options.depth,
+        light=light,
         selected_clips=selected,
         image_path=outfile,
     )
@@ -994,7 +1029,28 @@ def _command(options):
         outputs += zip(
             preview_paths, (preview.gif for preview in previews), strict=True
         )
+    if lit:
+        # The depth range is checked here too: the lit previews use the
+        # encoded depth (lighting sheet design D-21, D-24).
+        lit_previews = export.lit_previews(
+            frames,
+            subject=subject.name,
+            settings=settings,
+            selected_clips=selected,
+            light=light,
+        )
+        for preview in lit_previews:
+            for warning in preview.warnings:
+                _report("warning", warning)
+        outputs += zip(
+            lit_paths, (preview.gif for preview in lit_previews), strict=True
+        )
     publish(outputs)
+
+
+def _coordinates(point):
+    """`(x, y, z)` with each coordinate in its shortest form."""
+    return "(" + ", ".join(repr(float(value)) for value in point) + ")"
 
 
 def _frame_warnings(options, selected):
@@ -1441,6 +1497,22 @@ def _cell(text):
     return cell
 
 
+_ambient = _from_to(_number, 0, 1)
+
+
+def _light(text):
+    parts = text.split(",")
+    try:
+        if len(parts) != 3:
+            raise argparse.ArgumentTypeError(text)
+        x, y, z = (_number(part) for part in parts)
+    except argparse.ArgumentTypeError:
+        raise argparse.ArgumentTypeError(
+            f"expected X,Y,Z, three finite numbers, got {text!r}"
+        ) from None
+    return x, y, z
+
+
 def _ground(text):
     parts = text.split(",")
     try:
@@ -1722,7 +1794,7 @@ def _build_parser():
         action=_Files,
         help="read settings from a YAML file; repeatable, later files winning. "
         "A settings file may set cell, fps, palette, materials, previews, "
-        "normals and depth; "
+        "normals, depth and light; "
         "its values act as the options would. The user file and the shipped "
         "defaults give the defaults below any loaded sheet (default: none)",
     )
@@ -1768,6 +1840,35 @@ def _build_parser():
         "writes it; an earlier one is left as it is (default: off)",
     )
     single(
+        "--light",
+        "X,Y,Z",
+        _light,
+        defaults["light.position"],
+        "place a point light and write lit previews, <stem>-lit.<clip>.gif, "
+        "beside the flat ones: X screen right, Y screen up and Z toward the "
+        "viewer, in sheet pixels from the ground point (default: none)",
+    )
+    parser.add_argument(
+        "--no-light",
+        action=_Flag,
+        help="place no light, dropping a reused or configured one (default: off)",
+    )
+    single(
+        "--light-intensity",
+        "I",
+        _weight,
+        defaults["light.intensity"],
+        "how strongly the light lights a surface facing it, 0 or greater "
+        "(default: 1.0)",
+    )
+    single(
+        "--light-ambient",
+        "A",
+        _ambient,
+        defaults["light.ambient"],
+        "how bright a surface facing away from the light is, 0 to 1 (default: 0.3)",
+    )
+    single(
         "--work-dir",
         "DIR",
         _path,
@@ -1795,6 +1896,7 @@ def _build_parser():
         "--no-normals",
         "--depth",
         "--no-depth",
+        "--no-light",
         "--no-user-config",
         "--any-blender",
         "--no-palette",
@@ -2007,6 +2109,20 @@ def _shade_range(value):
     return lo, hi
 
 
+def _light_position(value):
+    """A recorded light position: a list of three numbers, never booleans,
+    each finite; `null`, no light, is allowed by its shape."""
+    if (
+        not isinstance(value, list)
+        or len(value) != 3
+        or any(isinstance(v, bool) or not isinstance(v, int | float) for v in value)
+    ):
+        raise argparse.ArgumentTypeError(
+            f"expected [x, y, z], three numbers, or null, got {_shown(value)}"
+        )
+    return tuple(_number(repr(coordinate)) for coordinate in value)
+
+
 def _previews(value):
     if not isinstance(value, bool):
         raise argparse.ArgumentTypeError(f"expected true or false, got {_shown(value)}")
@@ -2103,6 +2219,11 @@ _SETTINGS = {
     "previews": _previews,
     "normals": _previews,
     "depth": _previews,
+    "light": {
+        "position": _Nullable(_light_position),
+        "intensity": _reused(_weight),
+        "ambient": _reused(_ambient),
+    },
     "shade": {
         "ao_distance_m": _reused(_positive),
         "ao_samples": _reused(_ao_samples),

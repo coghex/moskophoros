@@ -14,6 +14,11 @@ materials: null  # a .yaml or .yml material library; null: none; needs a palette
 previews: true   # false: write no animated previews
 normals: true    # false: write no normal map (<stem>.normal.png)
 depth: false     # true: write the depth map (<stem>.depth.png)
+light:           # a point light for lit previews (<stem>-lit.<clip>.gif)
+  position: null         # [x, y, z] in sheet pixels from the ground point,
+                         # x right, y up, z toward the viewer; null: no light
+  intensity: 1.0         # 0 or greater
+  ambient: 0.3           # a surface facing away from the light, 0 to 1
 shade:           # the material ramps' shade (design §Capture, Shade)
   ao_distance_m: 0.3     # how far occlusion looks, meters, greater than 0
   ao_samples: 64         # samples per pixel, 1 to 128
