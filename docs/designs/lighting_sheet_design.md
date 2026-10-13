@@ -31,7 +31,7 @@ slice.
 
 - [x] EPIC. Light sprites live: a normal map, an optional depth map and lit previews — [#95]
 - [x] LIT-1. Capture normal and depth buffers on every render — [#96]
-- [ ] LIT-2. Reduce normals and depth to the sheet's pixels
+- [x] LIT-2. Reduce normals and depth to the sheet's pixels — [#97]
 - [ ] LIT-3. Write the normal map, record it and reuse it
 - [ ] LIT-4. Write the optional depth map
 - [ ] LIT-5. Light the previews with an optional point light
