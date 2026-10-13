@@ -7,8 +7,9 @@ Frames arrive one at a time and may carry named buffers beside their colour;
 `identities`, a `sampling.Identities`, is the asset's identity list that a
 frame's identity buffer indexes. Without a material `library` the reductions
 read only the colour. With one, each block also takes its winning material's
-ramp entry. Each returns ordinary reduced colour frames carrying no buffers,
-and lets go of a frame, with all its buffers, before asking for the next.
+ramp entry. No reduction reads the normal or depth buffers yet. Each returns
+ordinary reduced colour frames carrying no buffers, and lets go of a frame,
+with all its buffers, before asking for the next.
 """
 
 import numpy as np

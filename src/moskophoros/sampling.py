@@ -7,8 +7,9 @@ time order. Everything here is pure.
 
 After capture, stages pass `ImageFrame`s: an address, its pixels, the
 metadata attached to it and any further named buffers. `IDENTITY`, `SHADE`,
-`BACKGROUND` and `Identities` define the identity and shade buffers stylize
-receives beside the colour (design §Pipeline, Frames into stylize).
+`NORMAL`, `DEPTH`, `BACKGROUND` and `Identities` define the identity, shade,
+normal and depth buffers stylize receives beside the colour (design
+§Pipeline, Frames into stylize).
 """
 
 import math
@@ -21,9 +22,11 @@ from moskophoros import views
 # Slice 1 has one variant.
 VARIANT = "default"
 
-# The names of a frame's identity and shade buffers.
+# The names of a frame's identity, shade, normal and depth buffers.
 IDENTITY = "identity"
 SHADE = "shade"
+NORMAL = "normal"
+DEPTH = "depth"
 
 # The identity array's value where no surface was hit; never an index.
 BACKGROUND = -1
@@ -86,9 +89,16 @@ class ImageFrame:
     same height and width as `pixels`; only frames going into stylize carry
     any. Under `IDENTITY`, an `int32` array of shape `(height, width)` holds
     each pixel's index into the asset's `Identities`, or `BACKGROUND`; under
-    `SHADE`, a `uint8` array of shape `(height, width)` holds its shade. The
-    command decodes and validates them; stylize trusts them. A buffer under
-    any other name is a capture buffer as loaded, an image like `pixels`.
+    `SHADE`, a `uint8` array of shape `(height, width)` holds its shade.
+    Under `NORMAL`, a `float32` array of shape `(height, width, 3)` holds the
+    unit normal of the surface each pixel sampled, in the frame's camera
+    space (+X screen right, +Y screen up, +Z toward the viewer), or
+    `(0, 0, 0)` where no surface was hit; under `DEPTH`, a `float32` array
+    of shape `(height, width)` holds that surface's depth in meters, positive
+    toward the viewer from the ground point's camera depth, or NaN where no
+    surface was hit. The command decodes and validates them; stylize trusts
+    them. A buffer under any other name is a capture buffer as loaded, an
+    image like `pixels`.
     """
 
     address: FrameAddress

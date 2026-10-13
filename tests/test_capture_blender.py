@@ -17,7 +17,9 @@ import textwrap
 import threading
 from pathlib import Path
 
+import numpy as np
 import pytest
+from capture_buffers import write_depth, write_normal
 from PIL import Image
 from shading import DEFAULT_SHADE
 
@@ -327,16 +329,23 @@ SHADE = {
     "pixel_filter": "BOX",
     "filter_width_px": 0.01,
 }
-RENDER_BUFFERS = {name: f"{name}/000000.png" for name in ("color", "matid", "shade")}
+RENDER_BUFFERS = {
+    name: f"{name}/000000.png"
+    for name in ("color", "matid", "shade", "normal", "depth")
+}
 
 
 def copy_buffers(tmp_path, color):
     """Fake-capture code writing the one frame's buffers: `color`, and a
-    material-ID and shade buffer showing "no material" shaded 137."""
+    material-ID, shade, normal and depth buffer showing "no material" shaded
+    137, facing the viewer at depth 0."""
     sources = {"color": color}
     for name, pixel in (("matid", (255, 255, 0, 255)), ("shade", (137,) * 3 + (255,))):
         sources[name] = tmp_path / f"{name}.png"
         Image.new("RGBA", (8, 6), pixel).save(sources[name])
+    covered = np.ones((6, 8), dtype=bool)
+    sources["normal"] = write_normal(tmp_path / "normal.png", covered)
+    sources["depth"] = write_depth(tmp_path / "depth.png", covered)
     return "import shutil\n" + "".join(
         f"pathlib.Path({name!r}).mkdir()\n"
         f"shutil.copy({str(sources[name])!r}, {RENDER_BUFFERS[name]!r})\n"

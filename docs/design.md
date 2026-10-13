@@ -683,13 +683,15 @@ A frame going into stylize carries its colour pixels and, beside them,
 further named buffers of the same height and width (`ImageFrame.buffers`).
 The command loads every buffer the capture result names for a frame: `color`
 becomes the frame's pixels; `matid` and `shade` are decoded into the
-identity and shade arrays below; and any other buffer is carried under its
-own name as an 8-bit RGBA array. The reductions read only the colour, unless
-they are given a material library, which also reads the identity and shade
-arrays (see [Material ramps](#material-ramps)).
+identity and shade arrays below, `normal` and `depth` into the normal and
+depth arrays; and any other buffer is carried under its own name as an
+8-bit RGBA array. The reductions read only the colour, unless they are given
+a material library, which also reads the identity and shade arrays (see
+[Material ramps](#material-ramps)). No reduction reads the normal or depth
+arrays yet (lighting sheet design LIT-2 reduces them).
 
-Two buffer names are reserved for material identity and shade, with this
-interface:
+Four buffer names are reserved, for material identity, shade, normal and
+depth, with this interface:
 
 - Per asset, an **identity list** (`sampling.Identities`): each distinct name
   of an eligible (`OPAQUE` or `MASK`) material, in a fixed order (by its
@@ -701,6 +703,16 @@ interface:
   `int32`, shape `(height, width)`, each value an index into the identity
   list or `sampling.BACKGROUND` (−1), which is never an index. Under `shade`
   (`sampling.SHADE`), a **shade array**: `uint8`, shape `(height, width)`.
+- Per frame, under `normal` (`sampling.NORMAL`), a **normal array**:
+  `float32`, shape `(height, width, 3)`, the unit normal of the surface each
+  pixel sampled, in the frame's camera space (+X screen right, +Y screen up,
+  +Z toward the viewer), and `(0, 0, 0)` where no surface was hit. Under
+  `depth` (`sampling.DEPTH`), a **depth array**: `float32`, shape
+  `(height, width)`, that surface's depth in meters toward the viewer from
+  the ground point's camera depth, any finite value, and NaN where no
+  surface was hit. Both decode the [capture's](#capture) buffers exactly:
+  the depth is the buffer's 32-bit float, and each normal component
+  `2 · v / 65535 − 1` of its 16-bit value `v`.
 - The command decodes and validates both arrays; stylize never does. It
   joins the render result's material table
   ([result format](#result-format)) with the glTF material identities
@@ -711,7 +723,8 @@ interface:
   alpha mode), an unnamed material or a primitive without one decodes to
   the no-identity class. The shade array is the shade buffer's red channel.
   A table entry naming a material the model does not have is a backend
-  error (exit 5), like any invalid capture result.
+  error (exit 5), like any invalid capture result. The normal and depth
+  arrays are the command's to decode too.
 
 Frames are loaded one at a time, as stylize reduces them. Stylize returns an
 ordinary reduced colour frame with no buffers, and releases a frame's
@@ -733,7 +746,8 @@ The CLI calls Blender twice, each time as a separate process:
    motion and resolves scale, cell and ground pixel.
 2. **Render.** Renders every frame at supersampled size `(W·s) × (H·s)`, with
    the ground point projected to `(gx·s, gy·s)`: its colour, then its
-   material-ID and shade buffers in one auxiliary render (below).
+   material-ID, shade, normal and depth buffers in one auxiliary render
+   (below).
 
 The job JSON carries all settings, sample times and the output directory.
 Blender writes a manifest JSON listing each frame's address and file.
@@ -760,10 +774,12 @@ clip may carry into the next one. This implements the rule in
 - No shadows, cavity, outline or depth of field.
 - Film transparent. View transform `Standard`, look `None`, exposure 0, gamma 1.
 
-**Capture output:** three 8-bit RGBA PNGs per frame, whether or not a
-material library is used (material styling D-13): the colour, the
-material-ID buffer and the shade buffer. The colour holds Workbench's
-antialiased coverage in sRGB with straight alpha. Every `use_stamp_*` render
+**Capture output:** five PNGs per frame, whether or not a material library
+is used, a light is placed or a map is written (material styling D-13;
+lighting sheet design D-12): the colour, the material-ID buffer and the shade
+buffer, each 8-bit RGBA, and the normal and depth buffers, each 16-bit RGBA
+(below). The colour holds Workbench's antialiased coverage in sRGB with
+straight alpha. Every `use_stamp_*` render
 setting is off, so Blender writes no date or render-time metadata and
 identical frames are identical files. The manifest format lists buffers by
 name, so further buffers can be added without changing it.
@@ -824,9 +840,58 @@ renders ran before it. The colour itself is unchanged.
   crease and an isolated convex curve take different bands; that rationale
   and the distinct-band guarantee hold at the default shading values only.
 
-Blender writes the material-ID and shade PNGs itself from the render's
-pixels, with nothing but those pixels in them, since Cycles adds render-time
-text to the files it saves.
+**Normal and depth buffers** (lighting sheet design D-2, D-10, D-11, D-12,
+D-16 and D-21, and its Spike 1, which holds the measurements). The same
+auxiliary render gives both, from the same camera sample as the material ID
+and shade, through two shader outputs (AOVs) that every replacement shader,
+the stand-in's included, writes beside its emission: Geometry *Normal*
+through a Vector Transform (normal, world to camera) to a colour AOV
+`normal`, and Camera Data *View Z Depth* to a value AOV `depth`. The two
+view-layer AOVs are added for the render and removed after it, with every
+other change. After the render, its result is also saved, every pass and AOV,
+as an uncompressed multilayer OpenEXR of 32-bit floats in the script's
+scratch directory (the image settings' media type set to multilayer before
+the format, and every image setting restored), which the script reads with
+the standard library and removes.
+
+- *Normal:* the unit **shading** normal, the model's interpolated vertex
+  normals rather than the flat face normal, in the frame's camera space: +X
+  screen right, +Y screen up, +Z toward the viewer. Cycles' camera looks
+  along −Z, so this is the AOV's `(x, y, −z)`. No material property reaches
+  it, normal textures included (D-16). A surface seen from behind reads its
+  normal flipped toward the viewer, as Cycles shades it, and interpolated
+  normals at a silhouette can point slightly away from the viewer (z below
+  0).
+- *Depth:* the surface's depth toward the viewer from the ground point,
+  `ground_view_z − view_z` in meters, where `view_z` is the distance along
+  the camera's viewing axis (*View Z Depth*) and `ground_view_z` the ground
+  point's, taken per frame, since the camera's distance changes per frame
+  (it stands clear of the subject's reach). Positive is nearer the viewer
+  than the ground point, like the normal's z (D-10). `ground_view_z` comes
+  from the camera transform Blender stores, in single precision, the camera
+  Cycles measures from. Cycles works in single precision, so a depth is as
+  precise as the float32 spacing of the surface's coordinates: about
+  10⁻⁶ m near the origin, about 1 mm 10 km from it. Any depth is held: the
+  depth map's range (D-21) limits only that map, and capture is never
+  limited by it.
+- *Coverage:* each buffer marks a pixel as a surface where its AOV holds a
+  value: a unit normal is never `(0, 0, 0)`, and a view depth is never 0,
+  since the camera's near plane is in front of every surface. That is
+  exactly where the render hit a surface, the material ID's coverage.
+- *Encoding:* each buffer is a 16-bit RGBA PNG at the supersampled size,
+  `normal/000000.png` and `depth/000000.png` with the colour's ordinal, every
+  row unfiltered and no chunk but IHDR, IDAT and IEND. Alpha is 65535 on a
+  surface, and every sample is 0 off one. The normal stores each component
+  `n` as `floor((n + 1) / 2 · 65535 + ½)` in red, green and blue: at most
+  1.5 · 10⁻⁵ from the AOV's value. The depth stores the 32-bit float nearest
+  `ground_view_z − view_z`: its big-endian bits are red (the high half) and
+  green (the low half), with blue 0. A covered depth of exactly 0 is
+  therefore `(0, 0, 0, 65535)`, distinct from no surface.
+
+Blender writes the material-ID, shade, normal and depth PNGs itself from the
+render's pixels, with nothing but those pixels in them, since Cycles adds
+render-time text to the files it saves, the OpenEXR's included; identical
+frames are identical files.
 
 **Finding Blender:** `--blender`, then `$MOSKOPHOROS_BLENDER`, then `blender`
 on `PATH`, then `/Applications/Blender.app/Contents/MacOS/Blender` on macOS.
@@ -894,7 +959,7 @@ never interprets human-readable stdout as a manifest.
 | `frames[].bounds_m` | Measure only: finite, nonnegative `L`, `R`, `U`, `D` as defined by the product design. |
 | `frames[].height_m` | Measure only: evaluated subject height along the glTF vertical axis, for the accepted unit warning. |
 | `roots` | Measure only: one entry per requested clip/root pair, with `clip`, `node_index`, `node_name` and nonnegative finite `travel_m`. Include zero travel. Evaluate the clip endpoints, even when the loop's render samples omit its endpoint. |
-| `frames[].buffers` | Render only: map from buffer name to relative file path. `color`, `matid` and `shade` are mandatory; extra named buffers can be described without changing the frame structure. |
+| `frames[].buffers` | Render only: map from buffer name to relative file path. `color`, `matid`, `shade`, `normal` and `depth` are mandatory; extra named buffers can be described without changing the frame structure. |
 | `materials` | Render only: the asset's material table, one entry per material-ID code used, each `{"id": code, "material": index}` mapping a code to a glTF material index, or to `null` for "no material". Background (0) is never in it. |
 
 Every result frame includes its full `address`. Sample indices and angles
@@ -903,8 +968,9 @@ Measure mode writes no color buffers. Render mode writes no new fitting or
 root-motion verdict: the caller has already accepted the measurement.
 
 The color path is `color/000000.png`, with a six-digit ordinal in
-request order; the ordinal can grow beyond six digits. The material-ID and
-shade paths are `matid/000000.png` and `shade/000000.png` alike. Clip and subject names
+request order; the ordinal can grow beyond six digits. The material-ID,
+shade, normal and depth paths are `matid/000000.png`, `shade/000000.png`,
+`normal/000000.png` and `depth/000000.png` alike. Clip and subject names
 never become capture filenames. Each file is the accepted high-resolution
 color buffer. The launcher validates that referenced files exist, remain
 within the phase directory, have the required dimensions and decode in the
@@ -921,7 +987,21 @@ The launcher also rejects, as a backend error (exit 5):
 - a shade pixel whose red, green and blue differ, or whose alpha is other
   than 0 or 255;
 - a pixel where the two disagree: a background ID must have shade
-  `(0, 0, 0, 0)`, and every other ID shade alpha 255.
+  `(0, 0, 0, 0)`, and every other ID shade alpha 255;
+- a normal or depth buffer that is missing or at another path, or a file
+  that is not a 16-bit RGBA PNG of the supersampled size in the
+  [capture's encoding](#capture) (non-interlaced, every row unfiltered, no
+  chunk but IHDR, IDAT and IEND);
+- a normal or depth pixel that is not exactly an encoded value: alpha other
+  than 0 or 65535, or no surface other than `(0, 0, 0, 0)`;
+- a normal or depth pixel whose coverage differs from the material ID's, in
+  either direction: a surface where the ID is background, or none where it
+  is not;
+- a surface's normal that is not a finite vector of unit length within
+  `10⁻³` (the encoding moves it by at most 2.7 · 10⁻⁵; a normal pointing
+  away from the viewer is accepted, since silhouettes produce them);
+- a surface's depth that is not a finite 32-bit float, or whose blue is not
+  0.
 
 The caller combines actual render provenance with its generator, source and
 resolved settings to compute the accepted sheet fingerprint. It attaches that
@@ -1642,7 +1722,7 @@ Decided later, each when its trigger arrives:
 
 | Item | Trigger |
 |---|---|
-| Auxiliary capture buffers (depth, normal, base color, material ID) | The first style pass that needs them: per-material colour ramps, which need material IDs (owner decision 2026-10-04). |
+| Auxiliary capture buffers (base color, material ID) | The first style pass that needs them: per-material colour ramps, which need material IDs (owner decision 2026-10-04). |
 | Per-material colour ramps | The owner starts a later style arc. |
 | A free chain of passes beyond the four looks | The owner requests it. Settings files are delivered (owner decision 2026-10-11, settings design D-2). |
 | Quantized palette extraction from many-colour art, as a standalone command | The owner requests it. |
