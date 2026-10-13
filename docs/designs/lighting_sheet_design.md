@@ -128,10 +128,19 @@ in the frame's camera space, and every transparent pixel of the colour sheet
 transparent in it too. A game loads both, picks the frame for the unit's
 facing as it does today, and lights it with any light it likes.
 
-Asking for depth adds a depth map in the same layout. Placing a light, for
-example `--light <direction>`, adds lit previews: the flat sprite lit with
-its own normal map by the documented formula a game shader would use. The
-colour sheet and the flat previews never change because a light was given.
+Asking for depth adds a depth map in the same layout (D-10). Placing a
+light, `--light X,Y,Z` (D-13), adds lit previews: the flat sprite lit with
+its own normal map and depth by the documented formula a game shader would
+use. The colour sheet and the flat previews never change because a light was
+given.
+
+**What a game needs.** The normal map says which way each pixel faces; that
+is all a game needs for a distant light such as the sun. For a light at a
+position, the game also needs where each pixel is, to know the light's
+direction from it: the depth map gives that exactly. A game using only the
+normal map treats every pixel as lying on the sprite's flat plane, which is
+exact for a distant light and close for a near one. The lit preview uses
+both maps, so it shows the exact case.
 
 ## Scope
 
@@ -388,7 +397,58 @@ recommended).
   4096 limit.
 - **Default:** off; written only when asked (D-3).
 
+### D-11. Normal and depth come from the existing auxiliary render
+
+Decided 2026-10-13 by the owner in this design's session (resolves Q-8, as
+recommended). The auxiliary Cycles render that gives the material ID and
+shade also gives the camera-space shading normal and the camera depth,
+through shader outputs (AOVs) from the same camera sample, as
+[Spike 1](#spike-1) proved: exact alignment with the material ID,
+deterministic, colour unchanged, about 10 % more auxiliary render time. No
+second render.
+
+### D-12. Depth is captured on every run
+
+Decided 2026-10-13 by the owner in this design's session ("yes, depth
+capture alongside the run"). Every render captures depth, whether or not the
+depth map is written (D-10) or a light is placed (D-13), as the material ID
+and shade are captured on every run (material styling D-13). The capture job
+stays independent of which maps are written and of the preview light, and
+trying a light never needs a different capture.
+
+### D-13. One optional point light, `--light X,Y,Z`, for lit previews
+
+Decided 2026-10-13 by the owner in this design's session (resolves Q-3,
+choosing a point light over the recommended directional light; the rest as
+recommended). In the owner's words: "the point light is optional for the
+cli" and "i think just --light is sufficient"; "no --light flag" meant a run
+without the flag, "not that it doesnt exist".
+
+- **One option, `--light X,Y,Z`,** optional. Without it, nothing is lit:
+  every preview is flat, ambient only, exactly as today, and no lit preview
+  is written. There is no separate directional-light option: a point light
+  placed far away acts as a distant one.
+- **Position:** in the camera's frame (x screen right, y screen up, z toward
+  the viewer), in sheet pixels from the ground point, the depth map's units
+  (D-10). The light is therefore fixed to the camera, and every direction of
+  the subject sees it from the same place (V-7).
+- **Per pixel,** the light's direction is from the pixel's own position,
+  recovered from its place in the cell and its captured depth (D-12), to the
+  light; that is why the preview uses depth.
+- **Formula,** documented so a game can match it: Lambert diffuse plus
+  ambient, in linear light, `lit = colour · (ambient + (1 − ambient) ·
+  max(0, N · L))`, a white light, with an ambient level as the other
+  control. How intensity and distance enter it is Q-9.
+- **Outputs:** lit previews beside the flat ones, `<stem>.<clip>.lit.gif`,
+  the flat previews unchanged; the light recorded in the JSON so
+  `--settings-from` reproduces the previews (settings design D-16). Lit
+  colours leave the palette, so a GIF frame may be reduced to 256 colours,
+  with today's warning. No lit sheet PNG.
+
 ## Open questions
+
+Open: Q-4, Q-5, Q-6, Q-7 and Q-9. Resolved: Q-1 by D-9, Q-2 by D-10,
+Q-3 by D-13 (its remainder is Q-9), Q-8 by D-11.
 
 ### Q-1. Is the normal map written on every run, or only when asked?
 
@@ -436,11 +496,10 @@ alternatives.
 
 ### Q-3. What is the light flag, and what does the lit preview write?
 
-*Owner's answer, 2026-10-13, being clarified before it is recorded as a
-decision:* "for 3, the point light is optional for the cli, no --light flag
-and we should have no light other than ambient." The other recommendations
-below were accepted ("all of your recommendations are correct"); what the
-answer means for a directional light and for the flag is asked next.
+**Resolved by D-13**, except the light's intensity and falloff and the
+ambient level's default, which are [Q-9](#q-9-how-strong-is-the-light-and-does-it-fall-off-with-distance).
+The owner chose a point light over the recommended directional one. Kept
+for the alternatives.
 
 - **Kind of light.** A **directional** light needs only the normal map. A
   **point** light at a position needs the depth map too. **Recommendation:
@@ -501,10 +560,40 @@ user file can turn depth on or place a default light. Depends on Q-1 to Q-3.
 ### Q-8. How does Blender produce the normal and depth?
 
 In the same Cycles render as the ID and shade (shader outputs into a float
-image), or a second render per frame. [Spike 1](#spike-1) shows the first
-works: same sample, exact alignment, deterministic, colour unchanged, about
-10 % more auxiliary render time. **Recommendation: adopt it** as the capture
-technique. Awaiting the owner's signoff.
+image), or a second render per frame. **Resolved by D-11**: the first,
+proved by [Spike 1](#spike-1).
+
+### Q-9. How strong is the light, and does it fall off with distance?
+
+D-13 places a point light; the owner asked for its strength to be
+controllable: "we should scale the light intensity by the distance, so that
+up close its a small point light, and at a distance its like the sun, or we
+could just have an --light-intensity flag as well and set it to whatever we
+want, that would be more versitile."
+
+- **A. No falloff, plus `--light-intensity I`** (default 1, multiplying the
+  diffuse term). Brightness depends only on the angle to the light. Far
+  away, the light's direction is the same for every pixel, so it acts as
+  the sun by itself; up close, the direction changes across the sprite, so
+  near surfaces facing it light and others do not. Intensity is set by
+  hand.
+- **B. Inverse-square falloff, plus `--light-intensity`.** Physically
+  correct, and up close it gives a bright spot fading across the sprite. But
+  far away it gets dim, so a "sun" needs a very large intensity, which is
+  hard to choose by hand.
+- **C. Falloff over a stated radius** (`--light-radius`): full strength
+  within it, fading beyond. A common game choice; one more option.
+
+The formula with intensity becomes `lit = colour · min(1, ambient + (1 −
+ambient) · I · max(0, N · L) · falloff)`, clamped per channel in linear
+light.
+
+The **ambient level**, how bright a surface facing away from the light is,
+needs a default. **Recommendation: 0.3**, the owner adjusting it by eye; and
+an option to set it, such as `--light-ambient`.
+
+**Recommendation: A**, the most predictable to tune, and it does what the
+owner described: near, a local light; far, the sun.
 
 ## Verification strategy
 
