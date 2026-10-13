@@ -102,7 +102,7 @@ it, and `~` is your home directory:
 ```yaml
 cell: 48x48        # or auto
 fps: 12
-palette: ~/palettes/vince-128.gpl
+palette: ~/palettes/vince-144.gpl
 materials: robot-library.yaml
 previews: false
 shade:             # set any of them; the rest keep their defaults
