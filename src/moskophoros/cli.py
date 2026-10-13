@@ -923,20 +923,20 @@ def _command(options):
         reduce = {"plain": stylize.plain, "mode": stylize.mode}[options.reduce]
         colors = options.palette.colors if options.palette is not None else None
         identities = lookup.identities
+        # Depth is reduced to sheet pixels at the sheet's scale.
+        scale = {"identities": identities, "pixels_per_meter": settings.ppm}
         if colors is None:
-            reduced = reduce(captured, settings.supersample, identities=identities)
+            reduced = reduce(captured, settings.supersample, **scale)
         elif options.materials is None:
-            reduced = reduce(
-                captured, settings.supersample, palette=colors, identities=identities
-            )
+            reduced = reduce(captured, settings.supersample, palette=colors, **scale)
         else:
             reduced = reduce(
                 captured,
                 settings.supersample,
                 palette=colors,
-                identities=identities,
                 library=options.materials.library,
                 shade_range=options.shade_range,
+                **scale,
             )
         frames = cleanup.passthrough(reduced)
 

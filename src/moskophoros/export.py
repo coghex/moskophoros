@@ -159,9 +159,9 @@ def encode(
 ):
     """Lay out and describe the sheet, returning its PNG and JSON bytes.
 
-    `frames` are the plain `sampling.ImageFrame`s, exactly one for each
+    `frames` are the reduced `sampling.ImageFrame`s, exactly one for each
     frame the selected clips and resolved `settings` request, each the cell
-    size, in any order. `generator` comes from `generator()`, `source` is the
+    size, in any order; the normal and depth maps they carry are not read. `generator` comes from `generator()`, `source` is the
     capture `Source`, `style` is the style record `sheet_settings` takes,
     `selected_clips` are `gltf.SelectedClip`s in selection order,
     `image_path` is where the PNG will be written; only its base name is

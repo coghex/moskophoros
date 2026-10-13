@@ -27,6 +27,9 @@ IDENTITY = "identity"
 SHADE = "shade"
 NORMAL = "normal"
 DEPTH = "depth"
+# The names of a reduced frame's normal and depth maps.
+NORMAL_MAP = "normal_map"
+DEPTH_MAP = "depth_map"
 
 # The identity array's value where no surface was hit; never an index.
 BACKGROUND = -1
@@ -86,8 +89,8 @@ class ImageFrame:
     unchanged. A stage never changes a frame's pixels in place.
 
     `buffers` maps names to the frame's further per-frame arrays, of the
-    same height and width as `pixels`; only frames going into stylize carry
-    any. Under `IDENTITY`, an `int32` array of shape `(height, width)` holds
+    same height and width as `pixels`. Frames going into stylize carry the
+    capture's; a reduced frame carries only its maps. Under `IDENTITY`, an `int32` array of shape `(height, width)` holds
     each pixel's index into the asset's `Identities`, or `BACKGROUND`; under
     `SHADE`, a `uint8` array of shape `(height, width)` holds its shade.
     Under `NORMAL`, a `float32` array of shape `(height, width, 3)` holds the
@@ -99,6 +102,14 @@ class ImageFrame:
     surface was hit. The command decodes and validates them; stylize trusts
     them. A buffer under any other name is a capture buffer as loaded, an
     image like `pixels`.
+
+    A reduced frame, from stylize to cleanup and export, carries its maps:
+    under `NORMAL_MAP`, a `float64` array of shape `(height, width, 3)`, the
+    unit normal of each pixel the colour covers (alpha 255) in the same
+    camera space, `(0, 0, 0)` elsewhere; under `DEPTH_MAP`, a `float64`
+    array of shape `(height, width)`, each covered pixel's depth in sheet
+    pixels toward the viewer from the ground point, a multiple of 1/16, and
+    0 elsewhere (lighting sheet design D-15, D-19).
     """
 
     address: FrameAddress
