@@ -277,7 +277,7 @@ shade:
   occlusion_weight: 0.25
   convexity_weight: 1.0
   range: [84, 191]
-palette: ~/palettes/vince-128.gpl
+palette: ~/palettes/vince-144.gpl
 materials: robot-library.yaml   # relative to this file
 previews: true         # false: write no animated previews
 ```
