@@ -58,9 +58,10 @@ anything newer than the date below.
 - **Acceptance renders** of the owner's test model live outside git, under
   `~/.local/share/moskophoros-acceptance/` on the owner's Mac.
 - **The owner's user settings** (`~/.config/moskophoros/config.yaml`) set
-  their working palette, Vince 144 (Vince 128 plus a 16-step grey ramp,
-  chosen 2026-10-13), for every run without `--palette`. Pass
-  `--no-user-config` for any render that must match shipped defaults.
+  their working palette, Vince 144 (Vince 128 plus a 16-step grey ramp),
+  and their shading (render N3), both chosen 2026-10-13, for every run.
+  The robot's library is `~/.config/moskophoros/libraries/robotexpressive.yaml`.
+  Pass `--no-user-config` for any render that must match shipped defaults.
 
 ## Kanban pull-request flow
 
@@ -81,15 +82,12 @@ anything newer than the date below.
 
 ## Next steps
 
-1. **Owner's look:** the Vince 144 renders of 2026-10-13 are with the
-   owner. Their chosen shading goes in their user settings file, not the
-   shipped defaults.
-2. **Lighting sheet:** the next arc. The owner settled its direction on
+1. **Lighting sheet:** the next arc. The owner settled its direction on
    2026-10-13 in material styling D-27: a flat colour sheet, a normal map, an
    optional depth map, and a lit preview that is never baked. Its own design
    comes next, when the owner asks.
-3. **Guide:** review the work after `bb3c9b4`.
-4. **Deferred, each waiting on a stated trigger:**
+2. **Guide:** review the work after `bb3c9b4`.
+3. **Deferred, each waiting on a stated trigger:**
    - recolouring without a re-render (settings D-18);
    - MAT-8, generated ramps (material styling Q-24);
    - #75, glTF MASK cutouts;
@@ -111,5 +109,5 @@ anything newer than the date below.
 
 ## Open questions
 
-Owner choices only: their default look (above). Deferred design decisions
-and their triggers are listed in design §Deferred.
+None blocking. Deferred design decisions and their triggers are listed in
+design §Deferred.
