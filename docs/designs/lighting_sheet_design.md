@@ -409,7 +409,8 @@ All are the owner's. D-1 to D-8 come from material styling D-27
 (2026-10-13, typed in the moskophoros manager's terminal), recorded here as
 this arc's starting point and not reopened. D-9 to D-23 were decided by the
 owner in this design's session on 2026-10-13, D-21 to D-23 after Review 1;
-D-24 and D-25 after Review 2.
+D-24 and D-25 after Review 2. D-26 was decided by the owner during issue
+processing, relayed by the moskophoros manager.
 
 ### D-1. The colour sheet stays flat
 
@@ -614,7 +615,8 @@ your recommendations, these are approved"; resolves Q-6, as proposed).
   are fixed by the design and named by the schema, not repeated per sheet.
   The new settings (D-18) sit inside `settings`, in the fingerprint, and
   reload with `--settings-from`. Any fixed parameter the normal and depth
-  capture adds joins `generator.shade`'s technique record.
+  capture adds joins `generator.shade`'s technique record; *LIT-3 adds it,
+  with its schema bump (D-26).*
 - Each slice that changes the record bumps the sheet schema, from
   `moskophoros.sheet/7`, as the settings arc did; each bump stops the
   previous schema loading (settings design D-24).
@@ -725,6 +727,16 @@ anything else i will work out during the solve process"). The owner
 re-approved the design after Reviews 1 and 2, with D-20's six slices and
 their added obligations, as ready for issue processing, and asked for no
 further Codex review. Anything else is settled while solving the slices.
+
+### D-26. LIT-3 records the capture's fixed parameters
+
+Decided 2026-10-13 by the owner during issue processing, relayed by the
+moskophoros manager (the owner chose "A: LIT-3 records it"; completes D-17).
+LIT-1 leaves the sheet's JSON byte-identical. The capture result's `backend`
+may report any fixed parameter the normal and depth capture adds, and LIT-3
+adds it to `generator.shade`, with LIT-3's own schema bump. No slice before
+LIT-3 changes `generator` or the schema. The design stays ready for issue
+processing.
 
 ## Open questions
 
@@ -1128,7 +1140,7 @@ delivers, in its own pull request, since tests read the design.
 - **Phase:** 1
 - **Depends on:** `none`
 - **Ordering:** `critical path`
-- **Relevant decisions:** D-2, D-11, D-12, D-16
+- **Relevant decisions:** D-2, D-11, D-12, D-16, D-26
 - **Acceptance signals:** Blender tests on generated fixtures: plane
   normals within a stated tolerance of exact at pitches 0°, 30° and 90° and
   two directions; a smooth sphere's interpolated normals within a stated
@@ -1140,7 +1152,8 @@ delivers, in its own pull request, since tests read the design.
   respectively, repeated at two different camera distances (R-5); and
   depths far beyond the encodable range carried without error, since
   capture is never limited by it (R-1).
-- **Out of scope:** reducing or exporting the maps; any setting or option.
+- **Out of scope:** reducing or exporting the maps; any setting or option;
+  any change to the sheet's JSON, `generator` included (D-26).
 - **Open questions:** `None`
 
 ### LIT-2. Reduce normals and depth to the sheet's pixels
@@ -1173,12 +1186,14 @@ delivers, in its own pull request, since tests read the design.
   `--settings-from`.
 - **Scope:** the map's encoding and layout (D-17); the `normals` setting,
   `--normals` and `--no-normals` (D-18); `maps` and `settings.normals` in
-  the JSON and fingerprint; the schema bump; all-or-nothing publishing;
+  the JSON and fingerprint; any fixed capture parameter LIT-1's result
+  reports added to `generator.shade` (D-26); the schema bump; all-or-nothing
+  publishing;
   design §CLI, §Settings files, §Export and §Reuse amended.
 - **Phase:** 3
 - **Depends on:** LIT-2
 - **Ordering:** `critical path`
-- **Relevant decisions:** D-2, D-9, D-17, D-18
+- **Relevant decisions:** D-2, D-9, D-17, D-18, D-26
 - **Acceptance signals:** the normal map's alpha identical to the colour
   sheet's; encoding round trips; `--no-normals` writes none and records
   `null`; self-reproduction byte-identical; the colour sheet and flat
