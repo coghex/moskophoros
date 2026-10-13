@@ -324,7 +324,8 @@ For each `s×s` block whose colour pixel is covered:
   sample (a thin edge the centre samples missed) faces the viewer.
 - **Depth** (D-19): the mean depth of the same samples, rounded to the
   1/16-pixel step; a covered pixel with no sample takes its covered
-  neighbours' mean, else 0.
+  neighbours' mean, else 0. A block whose normals cancel has samples: only
+  its normal faces the viewer (D-27).
 - Capture and reduction hold depth at any value; only the encoding has a
   range (D-21). A run that writes no depth map and places no light is never
   limited by it.
@@ -410,7 +411,7 @@ All are the owner's. D-1 to D-8 come from material styling D-27
 this arc's starting point and not reopened. D-9 to D-23 were decided by the
 owner in this design's session on 2026-10-13, D-21 to D-23 after Review 1;
 D-24 and D-25 after Review 2. D-26 was decided by the owner during issue
-processing, relayed by the moskophoros manager.
+processing, relayed by the moskophoros manager. D-27 likewise.
 
 ### D-1. The colour sheet stays flat
 
@@ -583,7 +584,8 @@ needed.
 
 *Completed by Review 1 (R-4):* a block whose normals sum to (nearly)
 nothing, `|Σn| < 10⁻⁶`, is treated as a block with no sample and faces the
-viewer, so no pixel's normal is undefined.
+viewer, so no pixel's normal is undefined. *Narrowed by D-27:* only its
+normal falls back; its depth is still its own samples' mean.
 
 ### D-16. Normal textures do not reach the normals, for now
 
@@ -737,6 +739,16 @@ may report any fixed parameter the normal and depth capture adds, and LIT-3
 adds it to `generator.shade`, with LIT-3's own schema bump. No slice before
 LIT-3 changes `generator` or the schema. The design stays ready for issue
 processing.
+
+### D-27. A cancelling block keeps its own depth
+
+Decided 2026-10-13 by the owner during issue processing, relayed by the
+moskophoros manager (the owner chose "A: own depth"; narrows D-15's Review 1
+note and completes D-19). For a covered pixel whose block has surface
+samples but whose normals cancel, `|Σn| < 10⁻⁶`, only the normal falls back:
+it faces the viewer, `(128, 128, 255)`. Its depth is still the mean of its
+own samples, rounded as D-10 rounds, and it counts as a neighbour with
+samples in D-19's fallback. The design stays ready for issue processing.
 
 ## Open questions
 
@@ -1168,12 +1180,12 @@ delivers, in its own pull request, since tests read the design.
 - **Phase:** 2
 - **Depends on:** LIT-1
 - **Ordering:** `critical path`
-- **Relevant decisions:** D-8, D-15, D-19
+- **Relevant decisions:** D-8, D-15, D-19, D-27
 - **Acceptance signals:** pure tests of both reductions, renormalising,
   both fallbacks and transparent pixels; reduced map alpha equal to the
   colour's under every look; outputs of every existing look unchanged.
   From Review 1: half-up encoding (R-3); the cancelling-block and
-  near-zero-sum fallback (R-4); the neighbour fallback's rounding over
+  near-zero-sum fallback (R-4), keeping the block's own depth (D-27); the neighbour fallback's rounding over
   unrounded means (R-3); depth beyond the encodable range reduced without
   error (R-1).
 - **Out of scope:** writing any file; settings.
