@@ -9,6 +9,7 @@ earlier outputs and must leave them byte-identical.
 import json
 import shutil
 
+import numpy as np
 import pytest
 from glb_writer import GlbWriter
 from PIL import Image
@@ -20,7 +21,13 @@ from moskophoros.capture import backend, blender
 pytestmark = pytest.mark.blender
 
 FAST = ["--supersample", "2", "--cell", "16x16", "--fps", "4"]
-OUTPUTS = ["hero.attack.gif", "hero.json", "hero.png", "hero.walk.gif"]
+OUTPUTS = [
+    "hero.attack.gif",
+    "hero.json",
+    "hero.normal.png",
+    "hero.png",
+    "hero.walk.gif",
+]
 
 
 @pytest.fixture(scope="module")
@@ -167,6 +174,19 @@ def test_the_complete_output_set(earlier):
         assert image.mode == "RGBA"
         assert image.size == (4 * 16, 2 * 8 * 16)
         assert image.getextrema()[3] == (0, 255)  # drawn, and transparent around
+        colour = np.asarray(image)
+    # The normal map: the sheet's size and alpha, a unit normal per pixel.
+    assert description["maps"] == {"normal": {"file": "hero.normal.png"}, "depth": None}
+    with Image.open(earlier / "hero.normal.png") as image:
+        assert image.mode == "RGBA"
+        normal = np.asarray(image)
+    np.testing.assert_array_equal(normal[..., 3], colour[..., 3])
+    assert (normal[colour[..., 3] == 0] == 0).all()
+    covered = normal[colour[..., 3] == 255][:, :3].astype(np.float64) * 2 / 255 - 1
+    lengths = np.linalg.norm(covered, axis=-1)
+    assert np.abs(lengths - 1).max() < 0.01
+    # Mostly facing the viewer side of the screen.
+    assert (covered[:, 2] > 0).mean() > 0.9
     for name in ("walk", "attack"):
         with Image.open(earlier / f"hero.{name}.gif") as image:
             assert image.size == (8 * 16 * 4, 16 * 4)
@@ -180,6 +200,7 @@ def test_no_preview_omits_the_gifs(capsys, found, model, tmp_path):
     assert (status, err) == (0, "")
     assert sorted(path.name for path in tmp_path.iterdir()) == [
         "hero.json",
+        "hero.normal.png",
         "hero.png",
     ]
 
@@ -227,13 +248,18 @@ def test_settings_reuse_with_an_explicit_override(capsys, found, model, earlier,
     assert after == before | {"fps": 2.0}
 
 
-@pytest.mark.parametrize("previews", [(), ("--no-preview",)], ids=["on", "off"])
+@pytest.mark.parametrize(
+    "previews",
+    [(), ("--no-preview",), ("--no-normals",)],
+    ids=["on", "off", "no normals"],
+)
 def test_a_sheet_regenerated_from_itself_is_byte_identical(
     capsys, found, model, tmp_path, previews
 ):
     """Settings design D-16: loading a sheet, with the same model and no
-    other options, gives the same PNG, JSON and previews, the clip selection,
-    its one-shot marks and the previews flag included."""
+    other options, gives the same PNG, JSON, normal map and previews, the
+    clip selection, its one-shot marks and the previews and normals flags
+    included."""
     first, again = tmp_path / "first", tmp_path / "again"
     first.mkdir()
     again.mkdir()
@@ -261,7 +287,11 @@ def test_a_sheet_regenerated_from_itself_is_byte_identical(
     )
     assert (status, err) == (0, "")
     assert listing(again) == listing(first)
-    expected = OUTPUTS if not previews else ["hero.json", "hero.png"]
+    expected = {
+        (): OUTPUTS,
+        ("--no-preview",): ["hero.json", "hero.normal.png", "hero.png"],
+        ("--no-normals",): [name for name in OUTPUTS if name != "hero.normal.png"],
+    }[previews]
     assert sorted(listing(again)) == expected
 
 

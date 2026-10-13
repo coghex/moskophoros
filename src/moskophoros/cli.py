@@ -97,7 +97,7 @@ ROOT_MOTION_MODES = ("error", "keep")
 # The values --reduce accepts; the first is the default.
 REDUCTIONS = ("plain", "mode")
 # The only sheet schema `--settings-from` loads (settings design D-24).
-SHEET_SCHEMA = "moskophoros.sheet/7"
+SHEET_SCHEMA = "moskophoros.sheet/8"
 _MAX_DIGITS = 4300
 _VIEW_FIELDS = ("view", "pitch", "directions", "start_angle")
 _REPEATABLE = frozenset({"--clip", "--once", "--config"})
@@ -198,6 +198,8 @@ class Options:
     # D-13, D-31).
     frames: int | str = layered.DEFAULTS["frames"]
     clip_frames: MappingProxyType = MappingProxyType({})
+    # Whether the normal map is written (lighting sheet design D-9, D-18).
+    normals: bool = layered.DEFAULTS["normals"]
 
 
 class UsageError(SystemExit):
@@ -224,6 +226,8 @@ def parse_args(argv: Sequence[str]) -> Options:
         parser.error("--materials and --no-materials cannot be given together")
     if args.preview and args.no_preview:
         parser.error("--preview and --no-preview cannot be given together")
+    if args.normals and args.no_normals:
+        parser.error("--normals and --no-normals cannot be given together")
 
     once = tuple(args.once or ())
     clip = None if args.clip is None else tuple(args.clip)
@@ -235,6 +239,8 @@ def parse_args(argv: Sequence[str]) -> Options:
     explicit = set(args.explicit_)
     if explicit & {"preview", "no_preview"}:
         explicit = (explicit - {"preview", "no_preview"}) | {"previews"}
+    if "no_normals" in explicit:
+        explicit = (explicit - {"no_normals"}) | {"normals"}
     explicit = frozenset(explicit)
     preset = PRESETS[args.view]
     overrides = {"pitch", "directions", "start_angle"} & explicit
@@ -280,6 +286,11 @@ def parse_args(argv: Sequence[str]) -> Options:
         configs=tuple(args.configs or ()),
         no_user_config=args.no_user_config,
         frames=args.frames,
+        normals=(
+            not args.no_normals
+            if "normals" in explicit
+            else layered.DEFAULTS["normals"]
+        ),
     )
 
 
@@ -306,6 +317,7 @@ class ReusedSettings:
     ground_px: tuple[int, int]
     root_motion: str
     previews: bool
+    normals: bool
     clip: tuple[str, ...]
     once: tuple[str, ...]
     frames: int | str
@@ -545,12 +557,12 @@ def read_settings(path) -> ReusedSettings:
 
     Raises `UsageError`, reported as `parse_args` reports one, naming the
     file and the problem: the file cannot be read, is not UTF-8 JSON, repeats
-    a key, is not a `moskophoros.sheet/4` document with a `settings` object
+    a key, is not a `SHEET_SCHEMA` document with a `settings` object
     (another sheet schema is named), or its `settings` has a missing, unknown
     or unacceptable field. Every field is checked as its option checks it,
     including fields an explicit option will replace: the style, with a
     recorded material library checked against the recorded palette, the
-    previews flag, and the clip selection, a nonempty list of distinct clips
+    previews and normals flags, and the clip selection, a nonempty list of distinct clips
     each with exactly a name and a loop flag. Nothing beyond `schema` and
     `settings` is read.
     """
@@ -614,6 +626,7 @@ def read_settings(path) -> ReusedSettings:
         ground_px=(ground_px["x"], ground_px["y"]),
         root_motion=checked["root_motion"],
         previews=checked["previews"],
+        normals=checked["normals"],
         frames=checked["frames"],
         clip_frames=MappingProxyType(
             {entry["name"]: entry["frames"] for entry in checked["clips"]}
@@ -825,7 +838,8 @@ def _command(options):
     for warning in _frame_warnings(options, selected):
         _report("warning", warning)
     preview_paths = export.preview_paths(outfile, selected) if options.previews else ()
-    _check_targets([outfile, json_path, *preview_paths])
+    normal_paths = [export.normal_path(outfile)] if options.normals else []
+    _check_targets([outfile, json_path, *normal_paths, *preview_paths])
     view = views.View(
         options.pitch, options.directions, options.start_angle, options.model_yaw
     )
@@ -910,6 +924,7 @@ def _command(options):
                     sheet_style,
                     shade_range=options.shade_range,
                     previews=options.previews,
+                    normals=options.normals,
                 ),
                 source.sha256,
             )
@@ -949,10 +964,12 @@ def _command(options):
         style=sheet_style,
         shade_range=options.shade_range,
         previews=options.previews,
+        normals=options.normals,
         selected_clips=selected,
         image_path=outfile,
     )
     outputs = [(outfile, sheet.png), (json_path, sheet.json)]
+    outputs += [(path, sheet.normal) for path in normal_paths]
     if options.previews:
         previews = export.previews(
             frames, subject=subject.name, settings=settings, selected_clips=selected
@@ -1690,7 +1707,8 @@ def _build_parser():
         type=_path,
         action=_Files,
         help="read settings from a YAML file; repeatable, later files winning. "
-        "A settings file may set cell, fps, palette, materials and previews; "
+        "A settings file may set cell, fps, palette, materials, previews and "
+        "normals; "
         "its values act as the options would. The user file and the shipped "
         "defaults give the defaults below any loaded sheet (default: none)",
     )
@@ -1710,6 +1728,17 @@ def _build_parser():
         "--no-preview",
         action=_Flag,
         help="skip the animated previews (default: off)",
+    )
+    parser.add_argument(
+        "--normals",
+        action=_Flag,
+        help="write the normal map, <stem>.normal.png, also over a sheet or "
+        "settings file without it (default: on)",
+    )
+    parser.add_argument(
+        "--no-normals",
+        action=_Flag,
+        help="skip the normal map; an earlier one is left as it is (default: off)",
     )
     single(
         "--work-dir",
@@ -1735,6 +1764,8 @@ def _build_parser():
         *_HELP,
         "--preview",
         "--no-preview",
+        "--normals",
+        "--no-normals",
         "--no-user-config",
         "--any-blender",
         "--no-palette",
@@ -2041,6 +2072,7 @@ _SETTINGS = {
     "ground_px": {axis: _reused(_whole_number) for axis in "xy"},
     "root_motion": _one_of(*ROOT_MOTION_MODES),
     "previews": _previews,
+    "normals": _previews,
     "shade": {
         "ao_distance_m": _reused(_positive),
         "ao_samples": _reused(_ao_samples),

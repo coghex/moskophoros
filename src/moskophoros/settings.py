@@ -288,6 +288,9 @@ SCHEMA = MappingProxyType(
         "previews": Setting(
             "whether the animated previews are written", None, True, _check_previews
         ),
+        "normals": Setting(
+            "whether the normal map is written", None, True, _check_previews
+        ),
         "shade.ao_distance_m": Setting(
             "how far ambient occlusion looks for other surfaces, greater than 0",
             "meters",

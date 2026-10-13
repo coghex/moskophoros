@@ -41,6 +41,7 @@ def test_the_schema_holds_this_slices_settings():
         "palette",
         "materials",
         "previews",
+        "normals",
         "shade.ao_distance_m",
         "shade.ao_samples",
         "shade.occlusion_weight",
@@ -64,6 +65,7 @@ def test_the_defaults_file_and_the_schema_table_agree():
         "palette": None,
         "materials": None,
         "previews": True,
+        "normals": True,
         # Today's shading values stay the defaults (settings design D-12).
         "shade.ao_distance_m": 0.3,
         "shade.ao_samples": 64,
@@ -182,6 +184,9 @@ def test_each_settings_values(text, expected):
         ("previews: yes", "previews: expected true or false, got 'yes'"),
         ("previews: 1", "previews: expected true or false, got 1"),
         ("previews: null", "previews: expected true or false, got null"),
+        ("normals: yes", "normals: expected true or false, got 'yes'"),
+        ("normals: 1", "normals: expected true or false, got 1"),
+        ("normals: null", "normals: expected true or false, got null"),
     ],
 )
 def test_a_wrong_type_or_out_of_range_value_names_key_and_line(text, problem):

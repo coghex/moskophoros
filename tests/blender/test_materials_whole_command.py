@@ -252,7 +252,7 @@ def test_a_library_gives_byte_identical_outputs_on_repeat_and_on_reuse(
     status, _, _ = run(capsys, found, model, out / "a.png", *options)
     assert status == 0
     first = listing(out)
-    assert sorted(first) == ["a.json", "a.png", "a.static.gif"]
+    assert sorted(first) == ["a.json", "a.normal.png", "a.png", "a.static.gif"]
     assert run(capsys, found, model, out / "a.png", *options)[0] == 0
     assert listing(out) == first
     description = json.loads(first["a.json"])
@@ -284,7 +284,8 @@ def test_without_a_library_the_sheet_and_previews_are_the_colour_only_output(
 ):
     palette, _ = inputs
     model = subject_a(tmp_path)
-    options = ["--reduce", look]
+    # The colour alone: the normal map reads the buffers.
+    options = ["--reduce", look, "--no-normals"]
     if paletted:
         options += ["--palette", str(palette)]
     out = tmp_path / "out"
