@@ -17,8 +17,9 @@ Design state: `exploring`
 
 *Reset 2026-10-13 from `ready for issue processing` by [Review 1](#review-1):
 two findings needed the owner's decisions, now D-21 and D-22 (with D-23), and
-the numerical contracts were completed. It is marked ready again only when
-the owner signs off the revisions.*
+the numerical contracts were completed. [Review 2](#review-2) then raised
+one more owner question (Q-14) and two fixes. It is marked ready again only
+when the owner signs off the revisions.*
 
 Status legend: `[ ]` unprocessed · `[#N]` linked to issue N · `[no-issue]`
 reviewed and deliberately not tracked separately · `[deferred]` blocked on a
@@ -359,8 +360,13 @@ NumPy `float64`, elementwise:
    column and row within its cell, counted from the cell's top-left, and
    `(gx, gy)` is the ground pixel corner (design §Scale and ground point).
 5. *Light direction:* `V = light − P`. If `V` is exactly `(0, 0, 0)`, the
-   light sits at the pixel and the diffuse term is 0 (ambient only);
-   otherwise `L = V / |V|`.
+   light sits at the pixel and the diffuse term is 0 (ambient only).
+   Otherwise `V` is first scaled by its largest absolute component,
+   `W = V / max(|Vx|, |Vy|, |Vz|)`, and then `L = W / |W|`. *Added by
+   Review 2 (S-3):* a plain `|V|` overflows for a light at `1e200` and
+   underflows to 0 for one at `1e-200` from the pixel; after scaling, the
+   largest component of `W` is exactly ±1, so `|W|` lies between 1 and √3
+   and the direction is exact for every finite light.
 6. *Factor:* `f = min(1, A + (1 − A) · I · max(0, N · L))` (D-14).
 7. *Colour:* each of R, G and B is decoded with the fixed sRGB table
    (`imageops`, the palette mapping's), multiplied by `f`, encoded with
@@ -370,7 +376,12 @@ NumPy `float64`, elementwise:
 8. The lit frames then become GIFs exactly as the flat previews do.
 
 No step produces a NaN or infinity: `m` is never zero for a covered pixel
-(its encoded z is at least 1 byte from 127.5), and `V = 0` is handled.
+(its encoded z is at least 1 byte from 127.5), `V = 0` is handled, and the
+scaled normalisation in step 5 holds for every finite light. `P` is at most
+a few thousand pixels from the ground point, so `light − P` cannot overflow
+for any finite light. The light's three coordinates must be finite numbers
+wherever they come from: the command line, a settings file or a reused
+sheet (D-18).
 
 **Reference vectors** (`A = 0.3`, `I = 1`, cell ground pixel
 `(gx, gy) = (24, 46)` unless stated):
@@ -618,7 +629,7 @@ may set and every sheet records whether or not it is used, as `shade` is:
 |---|---|---|
 | `normals` | `--normals`, `--no-normals` | `true` (D-9) |
 | `depth` | `--depth`, `--no-depth` | `false` (D-10) |
-| `light.position` | `--light X,Y,Z`, `--no-light` | `null`: no light (D-13) |
+| `light.position` | `--light X,Y,Z`, `--no-light` | `null`: no light (D-13); otherwise three finite numbers |
 | `light.intensity` | `--light-intensity I` | `1.0`, finite, 0 or greater (D-14) |
 | `light.ambient` | `--light-ambient A` | `0.3`, 0 to 1 (D-14) |
 
@@ -631,7 +642,10 @@ light:                    # set any of them; the rest fall through
   ambient: 0.3
 ```
 
-`light` merges key by key across layers, as `shade` does. `--no-light`
+Each value is validated exactly as its option is, in a settings file and in
+a reused sheet as on the command line (design §Option validation; *made
+explicit by Review 2, S-3*). `light` merges key by key across layers, as
+`shade` does. `--no-light`
 drops a reused or configured light, as `--no-palette` does. Without
 previews (`--no-preview`, `previews: false`), no lit preview is written
 either, and a placed light is recorded but unused, with a warning saying
@@ -696,7 +710,7 @@ accepted and noted, not corrected, in this arc.
 
 ## Open questions
 
-None open. Q-11, Q-12 and Q-13, raised by [Review 1](#review-1), are resolved by D-21, D-22 and D-23. Resolved: Q-6 by D-17, Q-7 by D-18, Q-10 by D-19; Q-1 by D-9, Q-2 by D-10, Q-3 by D-13
+Open: Q-14, raised by [Review 2](#review-2). Q-11, Q-12 and Q-13, raised by [Review 1](#review-1), are resolved by D-21, D-22 and D-23. Resolved: Q-6 by D-17, Q-7 by D-18, Q-10 by D-19; Q-1 by D-9, Q-2 by D-10, Q-3 by D-13
 (its remainder by D-14), Q-4 by D-15, Q-5 by D-16, Q-8 by D-11, Q-9 by
 D-14.
 
@@ -735,7 +749,8 @@ alternatives.
   the same units as the pixel's x and y, or metres. **Recommendation: sheet
   pixels.**
 - **Encoding.** A 16-bit greyscale PNG (`value = 32768 + round(16 · depth)`,
-  1/16 pixel steps, ±2048 pixels, covering any cell up to the 4096 limit);
+  1/16 pixel steps, ±2048 pixels, covering any cell up to the 4096 limit
+  — *not so: D-10's correction and D-21 govern, Review 1 R-1 and Review 2*);
   or an 8-bit RGBA PNG with the 16-bit value split across red and green, for
   games that load only 8-bit textures. Transparent pixels need a reserved
   value or a separate alpha. **Recommendation: 16-bit greyscale, 0 reserved
@@ -978,6 +993,26 @@ preview over it applies directional light twice.
 **Recommendation: A**, recorded as a scope note; B only if the owner wants
 library-less sheets to be lit live as well.
 
+### Q-14. Does a light that draws nothing still trigger the depth check?
+
+Raised by Review 2 (S-1). D-18 says that with previews off a placed light
+is "recorded but unused, with a warning". D-21 checks the depth range
+whenever "a light is placed". They disagree for one run: previews off, depth
+map off, a light configured (or reused from a sheet), and a depth outside
+±2047.9375 pixels. D-21 as written fails it with exit 4 although nothing
+would use the depth; D-18 says the light is simply unused.
+
+- **A. Check only what is produced:** the range is checked when the depth
+  map is written, or when previews are on and a light is placed. With
+  previews off, a placed light imposes nothing, as D-18 says.
+- **B. A placed light always imposes the limit,** even with previews off,
+  stated beside D-18's "unused".
+
+**Recommendation: A.** The check exists to keep a written file or preview
+from being wrong; a run that writes neither should not fail on it. Tests in
+LIT-5: a configured and a reused light with `--no-preview --no-depth`, and
+depth-on and previews-on controls.
+
 ## Verification strategy
 
 - **Pure tests:** block reduction of normals and depth (renormalising,
@@ -989,9 +1024,14 @@ library-less sheets to be lit live as well.
   depth codes, including a depth of exactly 1/32 pixel (code 32769);
   the reference vectors; a cancelling block, `(1, 0, 0)` with `(−1, 0, 0)`,
   facing the viewer; a light at a pixel's centre giving ambient only; no
-  NaN anywhere; and a reconstruction check, the lit preview recomputed from
-  the **exported** map files (decoded as a game would) matching the written
-  preview's frames.
+  NaN anywhere, including lights very far (`1e200`) and very near
+  (`1e-200`) giving the same result as a moderate light in the same
+  direction (Review 2, S-3); and a reconstruction check, the lit preview
+  recomputed from the **exported** colour, normal and depth PNGs (decoded as
+  a game would, with a nonzero signed depth) matching the written preview's
+  frames after the GIF handling. That check needs the depth map's exporter,
+  so it belongs to whichever of LIT-4 and LIT-5 lands second (Review 2,
+  S-2).
 - **Blender tests** on generated fixtures: a plane at a known angle reads
   its exact camera-space normal at several pitches and directions; a
   sphere's normals match the analytic normal within a stated angle; a
@@ -1028,6 +1068,21 @@ the code and the document, and each holds.
 
 The review's closing note, that the ordinary look is still studio-lit, is
 settled by D-23: it keeps its studio light, as a noted scope limit.
+
+## Review 2
+
+Codex (mosk-solver-27, in a fresh context) re-reviewed this design at
+`c0f81fa` on 2026-10-13:
+`~/.local/share/moskophoros-acceptance/lighting-design/review-codex-2.md`,
+with its probes in `review-2/` beside it. It found R-1 to R-6 resolved, and
+three new should-fix findings, each checked and each holding.
+
+| Finding | Severity | Disposition |
+|---|---|---|
+| S-1. D-18's unused light and D-21's depth check disagree when previews and depth are off | should fix, owner | The owner's, [Q-14](#q-14-does-a-light-that-draws-nothing-still-trigger-the-depth-check); tests in LIT-5 |
+| S-2. LIT-5 may land before LIT-4 but its test needed the exported depth map | should fix | Fixed: LIT-5 checks reconstruction in memory; the production check from the exported PNGs goes to whichever of LIT-4 and LIT-5 lands second, before LIT-6; the owner's either-order choice kept |
+| S-3. A plain float64 norm overflows or underflows for very far or very near lights | should fix | Fixed: scaled normalisation in [Numerical reference](#numerical-reference) step 5; tests with lights at `1e200` and `1e-200`; the finite-numbers rule stated for `light.position` in settings files and reuse |
+| Q-2 still repeated the old "any cell" claim | note | Annotated: D-10's correction and D-21 govern |
 
 ## Delivery plan
 
@@ -1122,7 +1177,8 @@ delivers, in its own pull request, since tests read the design.
 - **Phase:** 4
 - **Depends on:** LIT-3
 - **Ordering:** `not on the critical path`; before or after LIT-5, the
-  later of the two taking the next schema number
+  later of the two taking the next schema number and the production
+  reconstruction check below
 - **Relevant decisions:** D-3, D-10, D-17, D-18, D-19, D-21
 - **Open questions:** `None`
 - **Acceptance signals:** a plane at a known position reads its depth in
@@ -1133,7 +1189,11 @@ delivers, in its own pull request, since tests read the design.
   of the range and one step beyond, the latter an overflow (exit 4) naming
   the frame and nothing published (D-21), including a
   small cell whose subject is far deeper than it is wide; a run with
-  `--no-depth` and no light unaffected by the range (R-1).
+  `--no-depth` and no light unaffected by the range (R-1). From Review 2
+  (S-2): **if LIT-5 has already landed**, the production reconstruction
+  check: the lit preview recomputed from the exported colour, normal and
+  depth PNGs, with a nonzero signed depth, matches the written preview's
+  frames after the GIF handling.
 - **Out of scope:** the light.
 
 ### LIT-5. Light the previews with an optional point light
@@ -1150,7 +1210,9 @@ delivers, in its own pull request, since tests read the design.
   documented in the design so a game can match it.
 - **Phase:** 4
 - **Depends on:** LIT-3
-- **Ordering:** `not on the critical path`; before or after LIT-4
+- **Ordering:** `not on the critical path`; before or after LIT-4, the
+  later of the two taking the next schema number and the production
+  reconstruction check below
 - **Relevant decisions:** D-4, D-5, D-13, D-14, D-18, D-19, D-21, D-22, D-23
 - **Open questions:** `None`
 - **Acceptance signals:** pure tests of the formula (a light behind the
@@ -1159,8 +1221,13 @@ delivers, in its own pull request, since tests read the design.
   lit previews byte for byte; the colour sheet, flat previews and maps
   identical with and without a light. From Review 1: the
   [Numerical reference](#numerical-reference)'s vectors, a light at a
-  pixel's centre giving ambient only, and the reconstruction check from the
-  exported maps (R-3, R-4); the lit preview's depth-range behaviour as
+  pixel's centre giving ambient only, and a reconstruction check from the
+  encoded maps in memory, which LIT-5 can run alone (R-3, R-4, S-2); very
+  far and very near lights giving the same result as a moderate one, and a
+  non-finite light coordinate refused from the command line, a settings
+  file and a reused sheet (S-3); **if LIT-4 has already landed**, the
+  production reconstruction check from the exported colour, normal and
+  depth PNGs (S-2); the lit preview's depth-range behaviour as
   D-21 sets, including with `--no-depth` (R-1); lit and flat names never
   colliding, tested with clips `walk` and `walk.lit`, case variants
   (`Walk`, `walk`) and names already carrying `-2` suffixes, alongside
@@ -1182,7 +1249,8 @@ delivers, in its own pull request, since tests read the design.
   as a documentation-only acceptance step with no pull request, as
   material styling MAT-7 was; renders stay outside the repository.
 - **Phase:** 5
-- **Depends on:** LIT-3, LIT-4, LIT-5
+- **Depends on:** LIT-3, LIT-4, LIT-5, including the production
+  reconstruction check that the later of LIT-4 and LIT-5 carries
 - **Ordering:** `critical path`
 - **Relevant decisions:** D-8
 - **Acceptance signals:** the owner's recorded verdict.
