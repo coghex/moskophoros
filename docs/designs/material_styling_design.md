@@ -993,10 +993,52 @@ cutouts in the colour (Q-26's option C) is a separate, deferred follow-up that
 needs its own explicit owner request; until then nothing here changes the
 colour output or implies alpha support.
 
+### D-27. The lighting sheet is a normal map with an optional depth map; light is previewed, not baked
+
+Decided 2026-10-13 by the owner in the manager terminal, after reviewing the
+settings arc's R1 and R2 renders (resolves Q-11, option A, and adds a depth
+map). The owner's direction, in their words: "moskophoros is going to create a
+sprite that is flatly shaded, only R1 and R2, basic ambient light", output
+alongside a map "containing information on the geometry of the object" that
+goes to the game's shader, "and we will then be able to handle any sort of
+lighting in our 2D world". Their summary of what follows: "for the cli
+interface, just output flat, but give the optional flag to place the light."
+
+- **Colour sheet:** flat ambient shading only (occlusion and curvature, D-22,
+  D-25). This confirms D-2: no point or directional light is baked by default.
+  The tool must keep this capability whatever else it gains.
+- **Lighting sheet:** a standard normal map, aligned pixel for pixel with the
+  colour sheet. It holds each pixel's surface direction relative to that
+  frame's own camera, encoded in RGB. The game converts it to whatever its
+  shader needs, including face weights (V-1).
+- **Depth map:** an optional, equally aligned depth or height map, so a game
+  can light a pixel from a light at a position in its world, not only from a
+  distant light.
+- **Lit preview:** an optional light is a preview, not a bake. The tool
+  lights the flat sprite with its own normal map, the same calculation a
+  game shader makes, so the owner sees the sprite as the game will light it.
+  The exported colour sheet stays flat.
+- **Command line:** the default output stays flat. An optional flag places
+  the light for the lit preview.
+- **The owner's planned interface** (outside this tool's command line):
+  previews are lit by default, the viewer can turn the light off or move it
+  freely around the object, and export writes the flat render by default,
+  with no light.
+- **Out of scope for now:** shadows that one part casts on another. Baked
+  ambient occlusion (the R1 behaviour) stands in for them. The owner expects
+  cast shadows as a possible later project.
+- **Risk:** keeping the normal and depth maps aligned with the colour sheet at
+  small cell sizes is hard. Normals must be averaged, not palette-mapped.
+  Expect to need the owner's visual check.
+
+Open for the lighting-sheet design: the light flag's form and units; the
+depth encoding; how units facing 8 directions combine with the engine's 4
+camera rotations; whether materials perturb normals; and how the sheet's JSON
+describes the new maps.
+
 ## Open questions
 
-Open: Q-24, deferred to MAT-8's start; and Q-11, which belongs to the later
-lighting-sheet arc and blocks no slice here. Q-21, Q-22 and Q-23, raised by an
+Open: Q-24, deferred to MAT-8's start. Q-11 is resolved by D-27. Q-21, Q-22 and Q-23, raised by an
 outside review on 2026-10-07, are resolved by D-22, D-23 and D-24; Q-25,
 raised by D-22, by D-25; Q-26, raised by the D-10 spike, by D-26.
 
@@ -1062,6 +1104,9 @@ for the "flatness" and baked/live controls. Snapping can produce repeated
 colours, which B must handle. Affects MAT-4 and MAT-5.
 
 ### Q-11. What does the lighting sheet encode?
+
+**Resolved by D-27** on 2026-10-13: option A, a standard normal map, plus
+an optional depth map.
 
 For the later arc; recorded now so this arc does not rule anything out. The
 owner's engine reads three face weights (R right, G top, B left); Dead Cells
@@ -1459,10 +1504,13 @@ the same day without changing the slices.*
 
 Not part of this epic; recorded so this arc rules nothing out. A second sheet,
 aligned frame for frame with the colour sheet, lets the owner's engine light
-sprites live (D-1, D-2). Open: its encoding (Q-11), the direction space
-(camera-relative, consistent with V-7), how Blender produces normals, whether
-materials perturb it (rough surfaces adding noise), and how the sheet's JSON
-describes it. Becomes its own design when the owner takes it up.
+sprites live (D-1, D-2). D-27 settles what it holds: a normal map, an
+optional depth map, and a lit preview whose light is never baked into the
+exported colour sheet. Open: the direction space (camera-relative,
+consistent with V-7), how Blender produces normals and depth, whether
+materials perturb them (rough surfaces adding noise), the preview light's
+flag, and how the sheet's JSON describes the maps. Becomes its own design
+when the owner takes it up.
 
 ## Source notes
 
