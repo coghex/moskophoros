@@ -13,7 +13,12 @@ trigger for the depth and normal rows of design §Deferred ("Auxiliary capture
 buffers"). It benefits the owner producing game art, and any game that lights
 2D sprites from normal maps (V-1).
 
-Design state: `ready for issue processing`
+Design state: `exploring`
+
+*Reset 2026-10-13 from `ready for issue processing` by [Review 1](#review-1):
+two findings need the owner's decisions (Q-11, Q-12), and the numerical
+contracts were completed. It is marked ready again only when the owner signs
+off the revisions.*
 
 Status legend: `[ ]` unprocessed · `[#N]` linked to issue N · `[no-issue]`
 reviewed and deliberately not tracked separately · `[deferred]` blocked on a
@@ -21,8 +26,8 @@ concrete precondition
 
 ## Processing status
 
-The owner approved this slice list and marked the design ready on
-2026-10-13 (D-20).
+The owner approved this slice list on 2026-10-13 (D-20); Review 1 adds
+obligations to its slices but no slice.
 
 - [ ] EPIC. Light sprites live: a normal map, an optional depth map and lit previews
 - [ ] LIT-1. Capture normal and depth buffers on every render
@@ -292,9 +297,13 @@ directions, pitch 0°, 30° and 90°, supersample 1 and 8):
 supersample 8): normal x and y span −1 to 1; z spans −0.31 to 1, below 0 on
 0.02 % of pixels (interpolated normals at silhouettes). The camera's
 distance from the ground point **changes per frame** (it follows the
-subject's reach), so raw camera depth is meaningless across frames; depth
-relative to the ground point spans 4.45 m, −30 to +10 sheet pixels at
-9.06 px/m, or a 178-pixel span at 40 px/m.
+subject's reach), so raw camera depth is meaningless across frames. Depth
+relative to the ground point, in D-10's sign (positive toward the viewer),
+spans −1.13 to +3.32 m: −10 to +30 sheet pixels at 9.06 px/m, −45 to +133
+at 40 px/m. *Sign note (Review 1, R-5):* the spike's report and its
+`analyze_robot.py` measure the opposite way, positive farther from the
+camera, and quote −3.32 to +1.13 m; the figures here are negated to D-10's
+convention.
 
 *Findings:* a surface seen from behind reads its normal flipped toward the
 viewer, since Cycles flips the shading normal; the multilayer EXR always
@@ -315,6 +324,66 @@ For each `s×s` block whose colour pixel is covered:
 - **Depth** (D-19): the mean depth of the same samples, rounded to the
   1/16-pixel step; a covered pixel with no sample takes its covered
   neighbours' mean, else 0.
+- Capture and reduction hold depth at any value; only the encoding has a
+  range (Q-11). A run that writes no depth map and places no light is never
+  limited by it.
+
+### Numerical reference
+
+Added by Review 1 (R-3, R-4). It is the exact calculation, so the preview
+matches what a game reading the exported maps computes, and an
+implementation can be tested against fixed vectors.
+
+**Encoding** (half up throughout; never ties-to-even):
+
+- normal byte, per component of the unit normal `n`:
+  `floor(255 · (n + 1) / 2 + ½)`;
+- depth code: `32768 + floor(16 · depth + ½)`, depth in sheet pixels,
+  positive toward the viewer (D-10); 0 where the colour pixel is
+  transparent.
+
+**The lit preview** (D-13, D-14), for each covered pixel of each cell, in
+NumPy `float64`, elementwise:
+
+1. *Inputs:* the reduced colour pixel after cleanup, and the pixel's
+   normal and depth **as encoded** above. The preview decodes the exported
+   representation, even when the map files are not written, because that is
+   what a game has.
+2. *Normal:* `m = 2 · byte / 255 − 1` per component, `N = m / |m|` (the
+   encoded viewer-facing `(128, 128, 255)` decodes to a vector of length
+   1.0000154, so it is renormalised).
+3. *Depth:* `d = (code − 32768) / 16`.
+4. *Position,* at the pixel's centre, in the light's frame (D-13):
+   `P = (c + ½ − gx, gy − r − ½, d)`, where `c` and `r` are the pixel's
+   column and row within its cell, counted from the cell's top-left, and
+   `(gx, gy)` is the ground pixel corner (design §Scale and ground point).
+5. *Light direction:* `V = light − P`. If `V` is exactly `(0, 0, 0)`, the
+   light sits at the pixel and the diffuse term is 0 (ambient only);
+   otherwise `L = V / |V|`.
+6. *Factor:* `f = min(1, A + (1 − A) · I · max(0, N · L))` (D-14).
+7. *Colour:* each of R, G and B is decoded with the fixed sRGB table
+   (`imageops`, the palette mapping's), multiplied by `f`, encoded with
+   `s = 12.92 · x` for `x ≤ 0.0031308`, else `1.055 · x^(1/2.4) − 0.055`,
+   and written as `min(255, floor(255 · s + ½))`. Alpha is unchanged; a
+   transparent pixel stays `(0, 0, 0, 0)`.
+8. The lit frames then become GIFs exactly as the flat previews do.
+
+No step produces a NaN or infinity: `m` is never zero for a covered pixel
+(its encoded z is at least 1 byte from 127.5), and `V = 0` is handled.
+
+**Reference vectors** (`A = 0.3`, `I = 1`, cell ground pixel
+`(gx, gy) = (24, 46)` unless stated):
+
+| Colour | Normal bytes | Depth code | Pixel `(c, r)` | Light | `f` | Lit colour |
+|---|---|---|---|---|---|---|
+| `(200, 100, 50)` | `(128, 128, 255)` | 32768 | `(24, 45)` | `(0.5, 0.5, 100)` | 0.9999892352 | `(200, 100, 50)` |
+| `(200, 100, 50)` | `(128, 128, 255)` | 32768 | `(24, 45)` | `(0.5, 0.5, −100)` | 0.3 | `(116, 55, 25)` |
+| `(200, 100, 50)` | `(218, 128, 218)` | 32848 | `(24, 45)` | `(100.5, 0.5, 5)` | 0.7949709697 | `(180, 90, 44)` |
+| `(200, 100, 50)` | `(128, 128, 255)` | 32768 | `(24, 45)` | `(0.5, 0.5, 0)`, at the pixel | 0.3 | `(116, 55, 25)` |
+| `(255, 255, 255)` | `(128, 218, 218)` | 32768 | `(30, 40)` | `(−20, 30, 40)` | 0.8912435296 | `(242, 242, 242)` |
+
+They were computed by a throwaway script with this exact calculation; the
+slices' tests recompute them.
 - A transparent colour pixel is transparent in every map.
 
 ### Outputs
@@ -411,8 +480,17 @@ recommended).
   same units as the pixel's x and y.
 - **Encoding:** a 16-bit greyscale PNG, `value = 32768 + round(16 · depth)`,
   in 1/16-pixel steps; 0 is reserved for "no surface", so depths from
-  −2047.9375 to +2047.9375 pixels are encodable, covering any cell up to the
-  4096 limit.
+  −2047.9375 to +2047.9375 pixels are encodable.
+
+*Corrected by Review 1 (R-1, R-3, R-5):* the first draft said this range
+covers "any cell up to the 4096 limit". It does not: fitting bounds only a
+subject's extent on screen, never its depth, so a valid fit can hold depths
+outside it. What happens then is [Q-11](#q-11-what-happens-to-depth-beyond-the-encodable-range).
+`round` is half up: `value = 32768 + floor(16 · depth + ½)`. Depth is
+`depth = (ground_view_z − surface_view_z) · pixels_per_meter`, where
+`view_z` is the distance along the camera's viewing axis from the camera
+(Cycles' *View Z Depth*) and `ground_view_z` is the ground point's, which
+changes per frame ([Numerical reference](#numerical-reference)).
 - **Default:** off; written only when asked (D-3).
 
 ### D-11. Normal and depth come from the existing auxiliary render
@@ -463,6 +541,11 @@ without the flag, "not that it doesnt exist".
   colours leave the palette, so a GIF frame may be reduced to 256 colours,
   with today's warning. No lit sheet PNG.
 
+*Review 1 (R-2):* the name `<stem>.<clip>.lit.gif` can be another clip's
+flat preview (clips `walk` and `walk.lit`); the rule is
+[Q-12](#q-12-how-are-lit-previews-named-so-they-never-replace-a-flat-one).
+The exact calculation is under [Numerical reference](#numerical-reference).
+
 ### D-14. Light strength: no falloff, an intensity and an ambient level
 
 Decided 2026-10-13 by the owner in this design's session ("recommended for
@@ -484,6 +567,10 @@ material edge it blends both surfaces. A covered pixel whose block has no
 surface sample faces the viewer, `(0, 0, 1)`, encoded `(128, 128, 255)`.
 The owner's check on small cells (D-8) decides whether anything finer is
 needed.
+
+*Completed by Review 1 (R-4):* a block whose normals sum to (nearly)
+nothing, `|Σn| < 10⁻⁶`, is treated as a block with no sample and faces the
+viewer, so no pixel's normal is undefined.
 
 ### D-16. Normal textures do not reach the normals, for now
 
@@ -557,6 +644,9 @@ pixel with no surface sample takes the mean depth of its covered 8
 neighbours that have samples, else 0, the ground point's plane. The lit
 preview uses the same reduced depth.
 
+*Completed by Review 1 (R-3):* the neighbours' mean is taken over their
+unrounded mean depths, then rounded as D-10 rounds.
+
 ### D-20. The arc is delivered as slices LIT-1 to LIT-6
 
 Decided 2026-10-13 by the owner in this design's session ("i approve this,
@@ -571,7 +661,7 @@ with `docs-push`. LIT-4 and LIT-5 may land in either order after LIT-3.
 
 ## Open questions
 
-None open. Resolved: Q-6 by D-17, Q-7 by D-18, Q-10 by D-19; Q-1 by D-9, Q-2 by D-10, Q-3 by D-13
+Open: Q-11, Q-12 and Q-13, raised by [Review 1](#review-1). Resolved: Q-6 by D-17, Q-7 by D-18, Q-10 by D-19; Q-1 by D-9, Q-2 by D-10, Q-3 by D-13
 (its remainder by D-14), Q-4 by D-15, Q-5 by D-16, Q-8 by D-11, Q-9 by
 D-14.
 
@@ -614,9 +704,9 @@ alternatives.
   or an 8-bit RGBA PNG with the 16-bit value split across red and green, for
   games that load only 8-bit textures. Transparent pixels need a reserved
   value or a separate alpha. **Recommendation: 16-bit greyscale, 0 reserved
-  for "no surface"**. The spike measured the robot's depth at −30 to +10
+  for "no surface"**. The spike measured the robot's depth at −10 to +30
   pixels at its 48 × 48 fit, and a 178-pixel span at 40 px/m, well inside
-  ±2048.
+  ±2048 (sign corrected by Review 1, R-5).
 - **Default:** off, written only when asked (D-3 calls it optional).
 
 ### Q-3. What is the light flag, and what does the lit preview write?
@@ -779,9 +869,73 @@ D-15 settles normals; depth needs the same. **Proposal:** a covered pixel's
 depth is the mean depth of the same surface samples its normal averages,
 rounded to the 1/16-pixel step (D-10). For a covered pixel with no surface
 sample, "facing the viewer" has no depth equivalent, and 0 (the ground
-point's plane) can be far from the surface around it (the top of a head at
-−30). So: the mean depth of its covered 8 neighbours that have samples,
+point's plane) can be far from the surface around it (a surface 30
+pixels in front of it). So: the mean depth of its covered 8 neighbours that have samples,
 else 0. The lit preview uses the same reduced depth.
+
+### Q-11. What happens to depth beyond the encodable range?
+
+Raised by Review 1 (R-1). Fitting bounds a subject's extent on screen, never
+its depth, so a valid fit can hold depths beyond D-10's ±2047.9375 pixels:
+the reviewer's example, a 1 m square 100 m in front of the ground point at
+64 px/m in a 128 × 128 cell, has depth 6400. Real subjects at the owner's
+cell sizes are tens of pixels deep (the robot: −10 to +30), so this is an
+edge case, but its behaviour must be defined. Only the encoding has a
+range: capture and reduction hold any depth, so a run that writes no depth
+map and places no light is never affected.
+
+- **A. Fail loudly.** When the depth map is written or a light is placed
+  (the preview uses the encoded depth), any covered pixel outside the range
+  is an overflow error (exit 4), before anything is published, naming the
+  clip, direction and sample time, the measured depth range in sheet pixels
+  and the supported one, and suggesting a smaller `--ppm`. Like today's cell
+  overflow: never a silently wrong map.
+- **B. Clamp** to the range, with a warning. Every run succeeds, but the
+  clamped pixels are mislit.
+- **C. A per-sheet scale:** the depth step is chosen per sheet so the
+  measured range fits, and recorded in the JSON (`maps.depth.scale`). Always
+  succeeds; a game must read the scale, and precision varies by sheet.
+
+**Recommendation: A**, as V-7 and V-11 treat every other misfit. Affects
+LIT-4 and LIT-5.
+
+### Q-12. How are lit previews named, so they never replace a flat one?
+
+Raised by Review 1 (R-2). A cleaned clip name may contain dots, so for clips
+`walk` and `walk.lit` the flat previews are `hero.walk.gif` and
+`hero.walk.lit.gif`, and D-13's lit preview of `walk` would also be
+`hero.walk.lit.gif`, replacing a flat one.
+
+- **A. `<stem>-lit.<clip>.gif`.** Every flat name starts `<stem>.`, every
+  lit name `<stem>-lit.`, so within a run they can never meet. Lit names
+  take the flat rule's cleaned names and `-2`, `-3` suffixes unchanged, so
+  each clip's lit name is its flat name with `<stem>` replaced by
+  `<stem>-lit`: `hero.walk.gif` and `hero-lit.walk.gif`. No exceptions to
+  remember.
+- **B. Keep `<stem>.<clip>.lit.gif` with a collision rule:** every flat name
+  is reserved first (comparing ASCII case-insensitively, as today); a lit
+  name that collides takes the smallest free suffix,
+  `<stem>.<clip>.lit-2.gif`, in sheet order. Usually the approved name; on a
+  collision, a name a game cannot guess without the rule.
+
+**Recommendation: A.** Affects LIT-5.
+
+### Q-13. The ordinary look is still studio-lit: does D-1 cover it?
+
+Raised by Review 1 (its closing note). D-1 says the colour sheet stays
+flat. That holds for materials drawn from a library's ramps, banded by the
+ambient shade. But the **ordinary look**, used without a library or for a
+material without a ramp, is still Workbench's camera-fixed studio light,
+which is directional (material styling D-22 left it unchanged). A lit
+preview over it applies directional light twice.
+
+- **A. Leave it:** the ordinary look keeps today's bytes; D-1 is read as
+  applying to the material look; the design notes the double lighting.
+- **B. Make the ordinary look flat too,** in a later arc: it would change
+  every existing ordinary sheet.
+
+**Recommendation: A**, recorded as a scope note; B only if the owner wants
+library-less sheets to be lit live as well.
 
 ## Verification strategy
 
@@ -790,20 +944,49 @@ else 0. The lit preview uses the same reduced depth.
   independence from reduction and library), encoding round trips at the
   ends of each range, the light formula (a light far away matches a
   distant one), JSON records, settings layers and reuse.
+- **Numerical reference** (Review 1): half-up rounding of normal bytes and
+  depth codes, including a depth of exactly 1/32 pixel (code 32769);
+  the reference vectors; a cancelling block, `(1, 0, 0)` with `(−1, 0, 0)`,
+  facing the viewer; a light at a pixel's centre giving ambient only; no
+  NaN anywhere; and a reconstruction check, the lit preview recomputed from
+  the **exported** map files (decoded as a game would) matching the written
+  preview's frames.
 - **Blender tests** on generated fixtures: a plane at a known angle reads
   its exact camera-space normal at several pitches and directions; a
   sphere's normals match the analytic normal within a stated angle; a
   plane at a known position reads its depth; the normal and depth coverage
   equal the material-ID coverage pixel for pixel; repeat renders are
   identical; the colour bytes are unchanged by the new passes.
-- **Old output preserved:** the colour sheet, JSON (except schema and the
-  new records) and flat previews of every existing look stay byte-identical.
+- **Old output preserved:** the colour sheet and flat previews of every
+  existing look stay byte-identical; the JSON too, except the schema, the
+  new records, and the fingerprint, which changes because it covers them
+  (Review 1, R-6) and is checked against the new complete `generator` and
+  `settings`. Same-version self-reproduction stays byte for byte.
 - **Reproduction:** the self-reproduction test (settings design D-16)
   extends to the normal map, depth map and lit previews.
 - **The owner's eye** (D-8, V-12): normal maps, depth maps and lit previews
   of the acceptance model at the owner's cell size and a smaller one, with
   the light in several places, judged for alignment and plausibility
   (LIT-6). No test claims a look is good.
+
+## Review 1
+
+Codex (mosk-solver-27) reviewed this design at `8d65f65` on 2026-10-13:
+`~/.local/share/moskophoros-acceptance/lighting-design/review-codex-1.md`,
+with its probes in `review/` beside it. Each finding was checked against
+the code and the document, and each holds.
+
+| Finding | Severity | Disposition |
+|---|---|---|
+| R-1. Depth beyond the fixed encoding: fitting never bounds depth, so D-10's "any cell" claim was false | blocking | Claim corrected in D-10; capture and reduction hold any depth; the policy is the owner's, [Q-11](#q-11-what-happens-to-depth-beyond-the-encodable-range); tests in LIT-1, LIT-2, LIT-4, LIT-5 |
+| R-2. `<stem>.<clip>.lit.gif` can replace another clip's flat preview | blocking | The owner's, [Q-12](#q-12-how-are-lit-previews-named-so-they-never-replace-a-flat-one); tests in LIT-5 |
+| R-3. No complete numerical contract for the lit preview | should fix | Fixed: [Numerical reference](#numerical-reference) (decode and renormalise, pixel centres, half-up rounding, the preview uses the encoded maps), D-19's fallback rounding; reference vectors and a reconstruction check in LIT-2 and LIT-5 |
+| R-4. A cancelling normal sum and a light at a pixel were undefined | should fix | Fixed: a sum under 10⁻⁶ faces the viewer (D-15 note); a light at a pixel gives ambient only; tests in LIT-2 and LIT-5 |
+| R-5. The spike's depth range had the opposite sign to D-10 | should fix | Fixed: the conversion stated in D-10, the spike's figures negated with a sign note, the Q-10 example corrected; signed tests in LIT-1 and LIT-4 |
+| R-6. Old JSON comparison omitted the recomputed fingerprint | minor | Fixed in [Verification strategy](#verification-strategy) and LIT-3 |
+
+The review's closing note, that the ordinary look is still studio-lit, is
+[Q-13](#q-13-the-ordinary-look-is-still-studio-lit-does-d-1-cover-it).
 
 ## Delivery plan
 
@@ -836,6 +1019,11 @@ delivers, in its own pull request, since tests read the design.
   mean error; a plane's depth; normal and depth coverage identical to the
   material ID's; repeat renders identical; colour, material-ID and shade
   buffers byte-identical to the base commit (local-validation report).
+  From Review 1: a **signed** depth test, one surface in front of the
+  ground point's plane and one behind it, reading positive and negative
+  respectively, repeated at two different camera distances (R-5); and
+  depths far beyond the encodable range carried without error, since
+  capture is never limited by it (R-1).
 - **Out of scope:** reducing or exporting the maps; any setting or option.
 - **Open questions:** `None`
 
@@ -855,6 +1043,10 @@ delivers, in its own pull request, since tests read the design.
 - **Acceptance signals:** pure tests of both reductions, renormalising,
   both fallbacks and transparent pixels; reduced map alpha equal to the
   colour's under every look; outputs of every existing look unchanged.
+  From Review 1: half-up encoding (R-3); the cancelling-block and
+  near-zero-sum fallback (R-4); the neighbour fallback's rounding over
+  unrounded means (R-3); depth beyond the encodable range reduced without
+  error (R-1).
 - **Out of scope:** writing any file; settings.
 - **Open questions:** `None`
 
@@ -874,7 +1066,9 @@ delivers, in its own pull request, since tests read the design.
 - **Acceptance signals:** the normal map's alpha identical to the colour
   sheet's; encoding round trips; `--no-normals` writes none and records
   `null`; self-reproduction byte-identical; the colour sheet and flat
-  previews of every existing look byte-identical to before the arc.
+  previews of every existing look byte-identical to before the arc, and
+  their JSON identical except the schema, new records and the recomputed
+  fingerprint (R-6).
 - **Out of scope:** depth; light.
 - **Open questions:** `None`
 
@@ -889,11 +1083,16 @@ delivers, in its own pull request, since tests read the design.
 - **Ordering:** `not on the critical path`; before or after LIT-5, the
   later of the two taking the next schema number
 - **Relevant decisions:** D-3, D-10, D-17, D-18, D-19
+- **Open questions:** Q-11 must be decided first.
 - **Acceptance signals:** a plane at a known position reads its depth in
   sheet pixels within the 1/16 step; 0 exactly where the colour sheet is
   transparent; the range ends encode; self-reproduction byte-identical.
+  From Review 1: the signed end-to-end check, a surface in front of the
+  ground point reading a code above 32768 (R-5); depth exactly at each end
+  of the range and one step beyond, behaving as Q-11 decides, including a
+  small cell whose subject is far deeper than it is wide; a run with
+  `--no-depth` and no light unaffected by the range (R-1).
 - **Out of scope:** the light.
-- **Open questions:** `None`
 
 ### LIT-5. Light the previews with an optional point light
 
@@ -911,14 +1110,21 @@ delivers, in its own pull request, since tests read the design.
 - **Depends on:** LIT-3
 - **Ordering:** `not on the critical path`; before or after LIT-4
 - **Relevant decisions:** D-4, D-5, D-13, D-14, D-18, D-19
+- **Open questions:** Q-11 and Q-12 must be decided first.
 - **Acceptance signals:** pure tests of the formula (a light behind the
   surface gives the ambient level; a distant light matches a uniform
   direction); a light placed in a settings file and reused reproduces the
   lit previews byte for byte; the colour sheet, flat previews and maps
-  identical with and without a light.
+  identical with and without a light. From Review 1: the
+  [Numerical reference](#numerical-reference)'s vectors, a light at a
+  pixel's centre giving ambient only, and the reconstruction check from the
+  exported maps (R-3, R-4); the lit preview's depth-range behaviour as
+  Q-11 decides, including with `--no-depth` (R-1); lit and flat names never
+  colliding, tested with clips `walk` and `walk.lit`, case variants
+  (`Walk`, `walk`) and names already carrying `-2` suffixes, alongside
+  publication rollback, as Q-12 decides (R-2).
 - **Out of scope:** a directional option, light colour, falloff, a lit
   sheet PNG, the owner's interface.
-- **Open questions:** `None`
 
 ### LIT-6. Review normal maps and lit previews with the owner
 
@@ -928,7 +1134,9 @@ delivers, in its own pull request, since tests read the design.
   settings) at their cell size, 48 × 48, and a smaller one; each colour
   sheet beside its normal map, depth map and an overlay showing their
   alignment; lit previews with the light in several places, near and far,
-  each image labelled with what it shows and the exact command. Delivered
+  each image labelled with what it shows and the exact command. Review 1
+  asks that material boundaries and fallback pixels be shown clearly at
+  native cell size, since alignment tests cannot judge them (D-8). Delivered
   as a documentation-only acceptance step with no pull request, as
   material styling MAT-7 was; renders stay outside the repository.
 - **Phase:** 5
