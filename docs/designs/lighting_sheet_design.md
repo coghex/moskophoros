@@ -414,6 +414,12 @@ NumPy `float64`, elementwise:
    largest component of `W` is exactly ±1, so `|W|` lies between 1 and √3
    and the direction is exact for every finite light.
 6. *Factor:* `f = min(1, A + (1 − A) · I · max(0, N · L))` (D-14).
+   *Corrected by #100's issue review (2026-10-13):* the diffuse term is
+   bounded above too, `q = min(1, max(0, N · L))`, then
+   `f = min(1, A + (1 − A) · I · q)`. Float64 rounding can make `N · L`
+   exceed 1 (normal bytes `(38, 38, 139)` with `light − P` of
+   `(−179, −179, 23)` give 1.0000000000000002), which with an intensity at
+   the float64 limit would overflow. The reference vectors are unchanged.
 7. *Colour:* each of R, G and B is decoded with the fixed sRGB table
    (`imageops`, the palette mapping's), multiplied by `f`, encoded with
    `s = 12.92 · x` for `x ≤ 0.0031308`, else `1.055 · x^(1/2.4) − 0.055`,
@@ -482,6 +488,26 @@ depth PNGs (requirement 8 of #99, Review 2's S-2).
   encoded depth (D-24): its check should call the same range check
   (`export._check_depths`) when lit previews are written, so the two share
   one check and one message, as #99's requirement 4 asks.
+
+*LIT-5's record* (recorded by LIT-5, #100, 2026-10-13; `docs/design.md`
+§Export, *Lit previews*, holds the contract and the complete calculation).
+LIT-5 landed after LIT-4, so it took `moskophoros.sheet/10` and the
+production reconstruction check: its tests rebuild every lit preview from
+the exported colour, normal and depth PNGs with an independent decoder, with
+signed depths, and match the written GIFs byte for byte.
+
+- `settings.light` is `{"position": [x, y, z] | null, "intensity", "ambient"}`,
+  between `settings.depth` and `settings.shade`, inside the fingerprint,
+  recorded whether or not a light is placed or used.
+- `imageops.light_factors` and `imageops.light_pixels` hold the formula;
+  `export.lit_previews` lights each frame from its encoded maps and hands the
+  lit frames to `export.previews`; `export.lit_preview_paths` names them
+  (D-22).
+- The lit previews call LIT-4's `export._check_depths`, so the depth map
+  and the lit previews share one overflow check and message (D-21, D-24).
+- Settings files, reused sheets and options all refuse a non-finite or
+  malformed light, and `light.position` replaces whole while `light` merges
+  key by key, as `shade` does.
 
 ## Decisions
 
