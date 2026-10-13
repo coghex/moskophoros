@@ -4,7 +4,7 @@ Where the project stands, for an agent or the owner arriving cold. Read it
 after [AGENTS.md](AGENTS.md), then check `git log` and the tracker for
 anything newer than the date below.
 
-**Last reconciled: 2026-10-12.**
+**Last reconciled: 2026-10-13.**
 
 **Rules for this file:**
 - **Current state only.** When something changes, replace the old line; don't
@@ -94,7 +94,11 @@ anything newer than the date below.
    - #75, glTF MASK cutouts;
    - #43, mesh-weight animation and CUBICSPLINE tangents: approved, but held
      until a model needs it.
-4. **Guide:** review the work after `bb3c9b4`.
+4. **Lighting sheet:** the next arc. The owner settled its direction on
+   2026-10-13 in material styling D-27: a flat colour sheet, a normal map, an
+   optional depth map, and a lit preview that is never baked. Its own design
+   comes next, when the owner asks.
+5. **Guide:** review the work after `bb3c9b4`.
 
 ## Owner preferences
 
