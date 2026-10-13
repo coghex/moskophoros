@@ -357,6 +357,25 @@ For each `s×s` block whose colour pixel is covered:
   range (D-21). A run that writes no depth map and places no light is never
   limited by it.
 
+*LIT-2's representation* (recorded by LIT-2, #97, 2026-10-13; `docs/design.md`
+§Stylize, Normal and depth maps, holds the contract). `imageops.reduce_normal_depth`
+reduces a frame's decoded normal and depth by blocks at the reduced colour's
+coverage (alpha 255), and each reduced `ImageFrame` carries the result as its
+only buffers, through cleanup to export:
+
+- `sampling.NORMAL_MAP` (`"normal_map"`): `float64`, `(H, W, 3)`, each
+  covered pixel's unit normal in camera space, `(0, 0, 0)` off the colour;
+- `sampling.DEPTH_MAP` (`"depth_map"`): `float64`, `(H, W)`, each covered
+  pixel's depth in sheet pixels, already rounded to the 1/16 step, 0 off the
+  colour. LIT-1's meters are converted with the sheet's `pixels_per_meter`
+  only, never the supersample factor, so LIT-4's code is
+  `32768 + 16 · depth` exactly.
+
+Coverage travels in the colour's alpha, not in the maps. Neither array holds
+a NaN or infinity. `imageops.encode_normal` gives the normal's bytes for
+LIT-3 and LIT-5. A frame reaching stylize without normal and depth (only
+in tests) is reduced to one with no buffers.
+
 ### Numerical reference
 
 Added by Review 1 (R-3, R-4). It is the exact calculation, so the preview
