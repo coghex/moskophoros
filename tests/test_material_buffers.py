@@ -6,6 +6,7 @@ import json
 
 import numpy as np
 import pytest
+from capture_buffers import write_depth, write_normal
 from glb_writer import GlbWriter
 from PIL import Image
 from test_capture_backend import encode, render_document, render_job
@@ -53,6 +54,14 @@ def corner(value):
         return pixels
 
     return edit
+
+
+def uncover_corner(document, tmp_path):
+    """Make pixel (0, 0) of frame 0's normal and depth buffers background."""
+    covered = np.ones((6, 8), dtype=bool)
+    covered[0, 0] = False
+    write_normal(tmp_path / "normal/000000.png", covered)
+    write_depth(tmp_path / "depth/000000.png", covered, 0.5)
 
 
 def both(*changes):
@@ -112,6 +121,7 @@ def test_background_with_no_shade_is_valid(tmp_path):
         both(
             paint("matid", corner((0, 0, 0, 0))),
             paint("shade", corner((0, 0, 0, 0))),
+            uncover_corner,
         ),
     )
     assert result.materials == {1: 0, 65535: None}

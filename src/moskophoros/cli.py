@@ -1028,9 +1028,11 @@ def _explicit_shading(options):
 def _load_frame(address, paths, metadata, lookup):
     """The captured frame at `address` with every named buffer in `paths`:
     `color` as its pixels, `matid` and `shade` decoded through `lookup` into
-    its identity and shade arrays, and each other buffer under its own name."""
+    its identity and shade arrays, `normal` and `depth` into its normal and
+    depth arrays, and each other buffer under its own name."""
     pixels = imageops.load_png(paths["color"])
     identity, shade = backend.decode_frame(paths, lookup)
+    normal, depth = backend.decode_normal_depth(paths)
     buffers = {
         name: imageops.load_png(path)
         for name, path in paths.items()
@@ -1038,6 +1040,8 @@ def _load_frame(address, paths, metadata, lookup):
     }
     buffers[sampling.IDENTITY] = identity
     buffers[sampling.SHADE] = shade
+    buffers[sampling.NORMAL] = normal
+    buffers[sampling.DEPTH] = depth
     return sampling.ImageFrame(address, pixels, metadata, buffers)
 
 

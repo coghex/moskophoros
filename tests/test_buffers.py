@@ -13,7 +13,9 @@ from moskophoros import cleanup, imageops, stylize
 from moskophoros.capture import backend
 from moskophoros.sampling import (
     BACKGROUND,
+    DEPTH,
     IDENTITY,
+    NORMAL,
     SHADE,
     FrameAddress,
     Identities,
@@ -168,7 +170,7 @@ def test_an_extra_capture_buffer_reaches_stylize_intact(setup, capsys, monkeypat
     assert run(capsys, setup.argv("--work-dir", str(work))) == (0, "", "")
     assert len(seen) == (4 + 3) * 8
     for i, (pixels, named) in enumerate(seen):
-        assert set(named) == {"extra", IDENTITY, SHADE}
+        assert set(named) == {"extra", IDENTITY, SHADE, NORMAL, DEPTH}
         with Image.open(work / "render" / "extra" / f"{i:06d}.png") as image:
             np.testing.assert_array_equal(named["extra"], np.asarray(image))
         with Image.open(work / "render" / "color" / f"{i:06d}.png") as image:
@@ -222,6 +224,15 @@ def test_the_command_loads_frames_lazily_and_releases_each_before_the_next(
         held[frame] += [weakref.ref(identity), weakref.ref(shade)]
         return identity, shade
 
+    def decode_normal_depth(paths):
+        # So are the decoded normal and depth arrays.
+        normal, depth = real_decode_normal_depth(paths)
+        frame = int(Path(paths["normal"]).stem)
+        assert int(Path(paths["depth"]).stem) == frame
+        events.append(("decode", "normal", "depth"))
+        held[frame] += [weakref.ref(normal), weakref.ref(depth)]
+        return normal, depth
+
     def reduce_blocks(pixels, factor):
         events.append("reduce")
         return real_reduce(pixels, factor)
@@ -235,14 +246,20 @@ def test_the_command_loads_frames_lazily_and_releases_each_before_the_next(
 
     real_passthrough = cleanup.passthrough
     real_decode = backend.decode_frame
+    real_decode_normal_depth = backend.decode_normal_depth
     monkeypatch.setattr(imageops, "load_png", load)
     monkeypatch.setattr(backend, "decode_frame", decode_frame)
+    monkeypatch.setattr(backend, "decode_normal_depth", decode_normal_depth)
     monkeypatch.setattr(imageops, reductions[reduce], reduce_blocks)
     monkeypatch.setattr(cleanup, "passthrough", passthrough)
     setup.configure(extra=True)
     argv = speckled_argv(setup, *look_argv(setup, reduce, paletted))
     assert run(capsys, argv) == (0, "", "")
     frames = (4 + 3) * 8
-    loads = [("load", name) for name in ("color", "matid", "shade", "extra")]
+    loads = [
+        *(("load", name) for name in ("color", "matid", "shade")),
+        ("decode", "normal", "depth"),
+        ("load", "extra"),
+    ]
     assert events == [*loads, "reduce"] * frames
     assert len(held) == frames

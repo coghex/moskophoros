@@ -7,7 +7,9 @@ import zlib
 from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
 import pytest
+from capture_buffers import write_depth, write_normal
 from PIL import Image
 from shading import DEFAULT_SHADE
 
@@ -587,16 +589,16 @@ SHADE = {
 # Material 0's code, with red its high byte and green its low byte.
 MATID = (0, 1, 0, 255)
 SHADED = (137, 137, 137, 255)
+BUFFER_NAMES = ("color", "matid", "shade", "normal", "depth")
 
 
 def render_document(job, phase_dir):
     """A valid render result, writing its 8×6 buffers: a 4×3 cell at 2×.
-    Every pixel shows material 0, shaded 137."""
+    Every pixel shows material 0, shaded 137, facing the viewer at depth
+    0.5 m."""
     records = []
     for ordinal, frame in enumerate(job["frames"]):
-        paths = {
-            name: f"{name}/{ordinal:06d}.png" for name in ("color", "matid", "shade")
-        }
+        paths = {name: f"{name}/{ordinal:06d}.png" for name in BUFFER_NAMES}
         png(phase_dir / paths["color"])
         Image.new("RGBA", (8, 6), MATID).save(
             phase_dir / _parent(phase_dir, paths["matid"])
@@ -604,6 +606,9 @@ def render_document(job, phase_dir):
         Image.new("RGBA", (8, 6), SHADED).save(
             phase_dir / _parent(phase_dir, paths["shade"])
         )
+        covered = np.ones((6, 8), dtype=bool)
+        write_normal(phase_dir / paths["normal"], covered)
+        write_depth(phase_dir / paths["depth"], covered, 0.5)
         records.append({"address": dict(frame["address"]), "buffers": paths})
     return {
         "schema": "moskophoros.capture-result/1",
@@ -638,10 +643,7 @@ def test_a_valid_render_result(tmp_path):
     assert result.measurements is None and result.roots is None
     root = tmp_path.resolve()
     assert list(result.buffers.values()) == [
-        {
-            name: root / f"{name}/{ordinal:06d}.png"
-            for name in ("color", "matid", "shade")
-        }
+        {name: root / f"{name}/{ordinal:06d}.png" for name in BUFFER_NAMES}
         for ordinal in range(6)
     ]
     assert result.materials == {1: 0, 65535: None}
@@ -731,8 +733,8 @@ RENDER_REJECTIONS = {
         "does not decode",
     ),
     "an invalid extra buffer": (
-        lambda d, p: d["frames"][0]["buffers"].update(depth="depth/000000.png"),
-        "depth buffer 'depth/000000.png' does not exist",
+        lambda d, p: d["frames"][0]["buffers"].update(extra="extra/000000.png"),
+        "extra buffer 'extra/000000.png' does not exist",
     ),
 }
 
@@ -767,11 +769,11 @@ def test_a_symlink_inside_the_phase_directory_is_accepted(tmp_path):
 def test_a_valid_extra_buffer_is_accepted(tmp_path):
     job = render_job(str(tmp_path))
     document = render_document(job, tmp_path)
-    png(tmp_path / "depth/000000.png")
-    document["frames"][0]["buffers"]["depth"] = "depth/000000.png"
+    png(tmp_path / "extra/000000.png")
+    document["frames"][0]["buffers"]["extra"] = "extra/000000.png"
     result = validate_result(job, tmp_path, encode(document))
     first = next(iter(result.buffers.values()))
-    assert set(first) == {"color", "matid", "shade", "depth"}
+    assert set(first) == {*BUFFER_NAMES, "extra"}
 
 
 def test_pillow_s_size_guard_does_not_refuse_an_expected_size(tmp_path, monkeypatch):

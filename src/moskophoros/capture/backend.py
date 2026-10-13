@@ -12,6 +12,8 @@ import json
 import math
 import os
 import re
+import struct
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -52,7 +54,23 @@ SHADE_FIELDS = {
 # The most samples Blender's Ambient Occlusion node takes; it silently clamps
 # more (settings design D-42).
 MAX_AO_SAMPLES = 128
-AUXILIARY_BUFFERS = ("matid", "shade")
+# Every render frame's buffers beside its colour, each at
+# <name>/NNNNNN.png with the colour's ordinal.
+AUXILIARY_BUFFERS = ("matid", "shade", "normal", "depth")
+# The normal and depth buffers (lighting sheet design D-2, D-10, D-11): 16-bit
+# RGBA PNGs, every row unfiltered, with no chunk but IHDR, IDAT and IEND.
+# Alpha is SURFACE where the render hit a surface, and every sample is 0
+# where it hit none. A normal's components n are stored as
+# floor((n + 1) / 2 · 65535 + ½) in red, green and blue, in camera space (+X
+# screen right, +Y screen up, +Z toward the viewer). A depth, in meters
+# toward the viewer from the ground point's camera depth, is a 32-bit float
+# whose big-endian bits are red (the high half) and green (the low half),
+# with blue 0.
+WIDE_BUFFERS = ("normal", "depth")
+SURFACE = 0xFFFF
+# How far a surface's normal may be from unit length: the 16-bit encoding
+# moves it by at most 2.7·10⁻⁵.
+NORMAL_TOLERANCE = 1e-3
 
 
 class MalformedJob(Exception):
@@ -590,7 +608,13 @@ def _result(job, phase_dir, document):
             if not isinstance(named, dict) or name not in named:
                 raise _Invalid(f"{where} has no {name} buffer")
         buffers[address] = {
-            name: _buffer(phase_dir, path, size, f"{where} {name} buffer")
+            name: _buffer(
+                phase_dir,
+                path,
+                size,
+                f"{where} {name} buffer",
+                bits=16 if name in WIDE_BUFFERS else 8,
+            )
             for name, path in named.items()
         }
         for name in ("color", *AUXILIARY_BUFFERS):
@@ -667,6 +691,136 @@ def _auxiliary(paths, materials, where):
     unknown = [int(code) for code in used if int(code) not in materials]
     if unknown:
         raise _Invalid(f"{where}: material-ID code {unknown[0]} is not in the table")
+    covered = ids[..., 3] == 255
+    for name in WIDE_BUFFERS:
+        _surfaces(name, paths[name], covered, ids, where)
+
+
+def _surfaces(name, path, covered, ids, where):
+    """Check a frame's normal or depth buffer: its encoding, its coverage
+    against the material ID's, and its values."""
+    try:
+        samples = read_wide_png(path)
+    except ValueError as error:
+        raise _Invalid(f"{where} {name} buffer {error}") from None
+    alpha = samples[..., 3]
+    surface = alpha == SURFACE
+    if name == "normal":
+        values = decode_normal(samples)
+        bad = surface & ~unit_normals(values)
+        problem = "not a unit normal"
+    else:
+        values = decode_depth(samples)
+        bad = surface & ((samples[..., 2] != 0) | ~np.isfinite(values))
+        problem = "not a finite depth"
+    problems = (
+        (
+            ~np.isin(alpha, (0, SURFACE)) | (~surface & samples.any(axis=-1)),
+            "is {}, not an encoded value",
+        ),
+        (
+            surface & ~covered,
+            "is {}, a surface, but the material-ID pixel there is {}",
+        ),
+        (
+            ~surface & covered,
+            "is {}, no surface, but the material-ID pixel there is {}",
+        ),
+        (bad, "is {}, " + problem),
+    )
+    for wrong, message in problems:
+        if wrong.any():
+            y, x = (int(i) for i in np.argwhere(wrong)[0])
+            raise _Invalid(
+                f"{where}: {name} pixel {(x, y)} "
+                + message.format(
+                    tuple(int(v) for v in samples[y, x]),
+                    tuple(int(v) for v in ids[y, x]),
+                )
+            )
+
+
+def read_wide_png(path):
+    """The samples of a normal or depth buffer as a `uint16` array of shape
+    `(height, width, 4)`: a 16-bit RGBA PNG, non-interlaced, with every row
+    unfiltered and no chunk but IHDR, IDAT and IEND, as the capture writes
+    it. Raises `ValueError` for any other file, and lets `OSError` from
+    reading it propagate."""
+    data = Path(path).read_bytes()
+    if data[:8] != _PNG_SIGNATURE:
+        raise ValueError("is not a PNG")
+    at, chunks = 8, []
+    while at < len(data):
+        if at + 12 > len(data):
+            raise ValueError("is truncated")
+        (length,) = struct.unpack_from(">I", data, at)
+        kind = data[at + 4 : at + 8]
+        body = data[at + 8 : at + 8 + length]
+        if len(body) != length or at + 12 + length > len(data):
+            raise ValueError("is truncated")
+        (crc,) = struct.unpack_from(">I", data, at + 8 + length)
+        if zlib.crc32(kind + body) != crc:
+            raise ValueError(f"has a corrupt {kind!r} chunk")
+        chunks.append((kind, body))
+        at += 12 + length
+    kinds = [kind for kind, _ in chunks]
+    if (
+        len(kinds) < 3
+        or kinds[0] != b"IHDR"
+        or kinds[-1] != b"IEND"
+        or set(kinds[1:-1]) != {b"IDAT"}
+    ):
+        raise ValueError(f"has the chunks {kinds}, not IHDR, IDAT and IEND only")
+    header = chunks[0][1]
+    if len(header) != 13:
+        raise ValueError("has a malformed IHDR")
+    width, height, bits, color, compression, filtering, interlace = struct.unpack(
+        ">IIBBBBB", header
+    )
+    if (bits, color, compression, filtering, interlace) != (16, _PNG_RGBA, 0, 0, 0):
+        raise ValueError(
+            f"is not a non-interlaced 16-bit RGBA PNG (bit depth {bits}, "
+            f"color type {color}, interlace {interlace})"
+        )
+    try:
+        raw = zlib.decompress(b"".join(body for _, body in chunks[1:-1]))
+    except zlib.error as error:
+        raise ValueError(f"does not decompress: {error}") from None
+    stride = 1 + width * 8
+    if len(raw) != height * stride:
+        raise ValueError(f"holds {len(raw)} bytes, not {height * stride}")
+    rows = np.frombuffer(raw, dtype=np.uint8).reshape(height, stride)
+    if rows[:, 0].any():
+        row = int(np.argmax(rows[:, 0] != 0))
+        raise ValueError(f"filters row {row}; every row must be unfiltered")
+    return rows[:, 1:].view(">u2").reshape(height, width, 4).astype(np.uint16)
+
+
+def decode_normal(samples):
+    """A normal buffer's samples as a `float32` array of shape `(height,
+    width, 3)`: each surface pixel's camera-space normal, and (0, 0, 0)
+    where there is no surface."""
+    normal = samples[..., :3].astype(np.float64) * (2 / 0xFFFF) - 1
+    normal[samples[..., 3] != SURFACE] = 0.0
+    return normal.astype(np.float32)
+
+
+def decode_depth(samples):
+    """A depth buffer's samples as a `float32` array of shape `(height,
+    width)`: each surface pixel's depth in meters, positive toward the viewer
+    from the ground point, and NaN where there is no surface."""
+    bits = samples[..., 0].astype(np.uint32) << 16 | samples[..., 1]
+    depth = bits.view(np.float32).copy()
+    depth[samples[..., 3] != SURFACE] = np.nan
+    return depth
+
+
+def unit_normals(normals):
+    """Where `normals`, an array of shape `(..., 3)`, holds finite vectors of
+    unit length within `NORMAL_TOLERANCE`."""
+    length = np.linalg.norm(np.asarray(normals, dtype=np.float64), axis=-1)
+    with np.errstate(invalid="ignore"):
+        return np.isfinite(length) & (np.abs(length - 1) <= NORMAL_TOLERANCE)
 
 
 def _pixels(path):
@@ -747,6 +901,20 @@ def decode_frame(paths, lookup):
         )
     shade = imageops.load_png(paths["shade"])[..., 0].copy()
     return identity, shade
+
+
+def decode_normal_depth(paths):
+    """A frame's normal and depth arrays (design §Frames into stylize) from
+    its validated `normal` and `depth` buffers in `paths`."""
+    decoded = []
+    for name, decode in (("normal", decode_normal), ("depth", decode_depth)):
+        try:
+            decoded.append(decode(read_wide_png(paths[name])))
+        except ValueError as error:
+            raise BackendError(
+                f"the render result is invalid: {paths[name]} {error}"
+            ) from None
+    return tuple(decoded)
 
 
 def _backend(value, mode):
@@ -867,8 +1035,10 @@ def _roots(entries, job):
     return tuple(roots)
 
 
-def _buffer(phase_dir, path, size, where):
-    """The absolute path of a valid buffer: a contained 8-bit RGBA PNG."""
+def _buffer(phase_dir, path, size, where, bits=8):
+    """The absolute path of a valid buffer: a contained RGBA PNG of `bits` per
+    sample. An 8-bit buffer is decoded here; a 16-bit one, a normal or depth
+    buffer, by `_surfaces`."""
     if not isinstance(path, str) or not path:
         raise _Invalid(f"{where} path is not a path: {path!r}")
     relative = Path(path)
@@ -893,9 +1063,9 @@ def _buffer(phase_dir, path, size, where):
         raise _Invalid(f"{where} {path!r} cannot be read: {error}") from None
     if len(header) < 26 or header[:8] != _PNG_SIGNATURE or header[12:16] != b"IHDR":
         raise _Invalid(f"{where} {path!r} is not a PNG")
-    if header[24] != 8 or header[25] != _PNG_RGBA:
+    if header[24] != bits or header[25] != _PNG_RGBA:
         raise _Invalid(
-            f"{where} {path!r} is not 8-bit RGBA (bit depth {header[24]}, "
+            f"{where} {path!r} is not {bits}-bit RGBA (bit depth {header[24]}, "
             f"color type {header[25]})"
         )
     actual = (int.from_bytes(header[16:20]), int.from_bytes(header[20:24]))
@@ -903,6 +1073,8 @@ def _buffer(phase_dir, path, size, where):
         raise _Invalid(
             f"{where} {path!r} is {actual[0]}x{actual[1]}, not {size[0]}x{size[1]}"
         )
+    if bits == 16:
+        return resolved
     # The header already gave the exact expected size, so Pillow's guard
     # against unexpectedly large images would only refuse a large legitimate
     # cell, such as 2048 pixels supersampled 8 times.

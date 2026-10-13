@@ -115,6 +115,24 @@ else:
         Image.new("RGBA", size, shade).save(f"shade/{{i:06d}}.png")
         named["matid"] = f"matid/{{i:06d}}.png"
         named["shade"] = f"shade/{{i:06d}}.png"
+    # Normal and depth buffers covering every pixel, as the material-ID
+    # does: facing the viewer at depth 0, or with "surfaces" "varied", a
+    # different normal and depth per pixel and frame.
+    sys.path.insert(0, {tests!r})
+    import numpy
+    from capture_buffers import write_depth, write_normal
+    covered = numpy.ones((size[1], size[0]), dtype=bool)
+    for i, named in enumerate(buffers):
+        normal, depth = (0.0, 0.0, 1.0), 0.0
+        if config.get("surfaces") == "varied":
+            rng = numpy.random.default_rng(2000 + i)
+            normal = rng.normal(size=(size[1], size[0], 3))
+            normal /= numpy.linalg.norm(normal, axis=-1, keepdims=True)
+            depth = rng.uniform(-5000.0, 5000.0, size=(size[1], size[0]))
+        write_normal(pathlib.Path(f"normal/{{i:06d}}.png"), covered, normal)
+        write_depth(pathlib.Path(f"depth/{{i:06d}}.png"), covered, depth)
+        named["normal"] = f"normal/{{i:06d}}.png"
+        named["depth"] = f"depth/{{i:06d}}.png"
     result["materials"] = config.get(
         "materials", [{{"id": 65535, "material": None}}]
     )
@@ -175,7 +193,9 @@ class Setup:
         self.model = _model(tmp_path / "model")
         self.fake = tmp_path / "bin" / "blender"
         self.fake.parent.mkdir()
-        self.fake.write_text(FAKE.format(python=sys.executable))
+        self.fake.write_text(
+            FAKE.format(python=sys.executable, tests=str(Path(__file__).parent))
+        )
         self.fake.chmod(0o755)
         self.out = tmp_path / "out"
         self.out.mkdir()

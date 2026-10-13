@@ -7,9 +7,9 @@ contract, §Clips and sampling, §Root motion, §Scale and ground point and
 §Camera and directions.
 
 Measure mode reports bounds, heights and root travel; render mode renders
-each frame with the accepted Workbench settings, then its material-ID and
-shade buffers in one auxiliary Cycles render. Both share the import, subject
-selection, identity mapping and clip isolation below.
+each frame with the accepted Workbench settings, then its material-ID,
+shade, normal and depth buffers in one auxiliary Cycles render. Both share
+the import, subject selection, identity mapping and clip isolation below.
 
 Identity mapping: the script imports a private copy of the source in which
 every node is renamed `moskophoros.node.<index>` and every animation
@@ -1058,6 +1058,19 @@ _AUXILIARY_SETTINGS = (
     ("image", "color_mode", "RGBA"),
 )
 NO_MATERIAL = "moskophoros.no-material"
+# Every render frame's buffers, each at <name>/NNNNNN.png.
+BUFFERS = ("color", "matid", "shade", "normal", "depth")
+# The view-layer AOVs the auxiliary render adds (lighting sheet design D-11):
+# the camera-space shading normal, a colour, and the camera depth, a value.
+AOVS = (("normal", "COLOR"), ("depth", "VALUE"))
+# Where the render result is saved for its AOVs: a multilayer OpenEXR of
+# 32-bit floats, uncompressed, since decompressing in pure Python is slow.
+_EXR_SETTINGS = (
+    ("media_type", "MULTI_LAYER_IMAGE"),
+    ("file_format", "OPEN_EXR_MULTILAYER"),
+    ("color_depth", "32"),
+    ("exr_codec", "NONE"),
+)
 
 
 def material_codes(document):
@@ -1096,6 +1109,7 @@ class Auxiliary:
         self.trees = []
         self.slots = []
         self.appended = []
+        self.aovs = []
         self.stand_in = None
 
     def _set(self, owner, name, value):
@@ -1132,6 +1146,12 @@ class Auxiliary:
                     "which is no glTF material of the model"
                 )
         self._set(scene.render, "filepath", filepath)
+        layer = bpy.context.view_layer
+        for name, kind in AOVS:
+            aov = layer.aovs.add()
+            aov.name = name
+            aov.type = kind
+            self.aovs.append(aov)
         self.stand_in = bpy.data.materials.new(NO_MATERIAL)
         codes.append((self.stand_in, NO_MATERIAL_ID))
         for material, code in codes:
@@ -1201,6 +1221,22 @@ class Auxiliary:
         emission.inputs["Strength"].default_value = 1.0
         tree.links.new(color.outputs[0], emission.inputs["Color"])
         tree.links.new(emission.outputs[0], output.inputs["Surface"])
+        # The shading normal, the model's interpolated vertex normal, in the
+        # camera's space; no material property reaches it (D-2, D-16).
+        geometry = node("ShaderNodeNewGeometry")
+        transform = node("ShaderNodeVectorTransform")
+        transform.vector_type = "NORMAL"
+        transform.convert_from = "WORLD"
+        transform.convert_to = "CAMERA"
+        tree.links.new(geometry.outputs["Normal"], transform.inputs["Vector"])
+        normal = node("ShaderNodeOutputAOV")
+        normal.aov_name = "normal"
+        tree.links.new(transform.outputs["Vector"], normal.inputs["Color"])
+        # The distance along the camera's viewing axis (D-10).
+        camera = node("ShaderNodeCameraData")
+        depth = node("ShaderNodeOutputAOV")
+        depth.aov_name = "depth"
+        tree.links.new(camera.outputs["View Z Depth"], depth.inputs["Value"])
         self.trees.append((tree, added, links))
 
     def restore(self):
@@ -1215,10 +1251,131 @@ class Auxiliary:
             data.materials.pop()
         if self.stand_in is not None:
             bpy.data.materials.remove(self.stand_in)
+        layer = bpy.context.view_layer
+        for aov in reversed(self.aovs):
+            layer.aovs.remove(aov)
         for owner, name, value in reversed(self.saved):
             setattr(owner, name, value)
         self.saved, self.trees, self.slots, self.appended = [], [], [], []
+        self.aovs = []
         self.stand_in = None
+
+
+def save_exr(scene, path):
+    """Save the render result, every pass and AOV, as `_EXR_SETTINGS` say,
+    and restore the image settings exactly, in the reverse order."""
+    image = scene.render.image_settings
+    names = [name for name, _ in _EXR_SETTINGS] + ["color_mode"]
+    saved = [(name, getattr(image, name)) for name in names]
+    try:
+        for name, value in _EXR_SETTINGS:
+            setattr(image, name, value)
+        bpy.data.images["Render Result"].save_render(path, scene=scene)
+    finally:
+        # The media type first: it decides which formats are allowed.
+        for name, value in saved:
+            setattr(image, name, value)
+    restored = [(name, getattr(image, name)) for name in names]
+    if restored != saved:
+        raise ScriptError(f"the image settings were not restored: {restored}")
+
+
+_EXR_MAGIC = b"\x76\x2f\x31\x01"
+_EXR_FLOAT = 2
+
+
+def _exr_header(data, at):
+    """One header's {attribute: bytes}, and the offset after it."""
+    attributes = {}
+    while data[at] != 0:
+        end = data.index(b"\0", at)
+        name = data[at:end].decode("ascii")
+        end_type = data.index(b"\0", end + 1)
+        (size,) = struct.unpack_from("<i", data, end_type + 1)
+        start = end_type + 5
+        attributes[name] = data[start : start + size]
+        at = start + size
+    return attributes, at + 1
+
+
+def read_exr(path, width, height, wanted):
+    """{channel: array('f') of width·height values, top row first} for each
+    name in `wanted`, from an uncompressed scanline OpenEXR of 32-bit float
+    channels, single- or multi-part, as `save_exr` writes it."""
+    with open(path, "rb") as handle:
+        data = handle.read()
+    if data[:4] != _EXR_MAGIC:
+        raise ScriptError(f"the auxiliary render {path} is not an OpenEXR file")
+    flags = struct.unpack_from("<I", data, 4)[0]
+    if flags & 0x200:
+        raise ScriptError(f"the auxiliary render {path} is tiled")
+    multipart = bool(flags & 0x1000)
+    at, headers = 8, []
+    while True:
+        attributes, at = _exr_header(data, at)
+        headers.append(attributes)
+        if not multipart or data[at] == 0:
+            break
+    if multipart:
+        at += 1
+    parts = []
+    for attributes in headers:
+        if attributes["compression"][0] != 0:
+            raise ScriptError(f"the auxiliary render {path} is compressed")
+        xmin, ymin, xmax, ymax = struct.unpack("<iiii", attributes["dataWindow"])
+        if (xmax - xmin + 1, ymax - ymin + 1) != (width, height):
+            raise ScriptError(
+                f"the auxiliary render is {(xmax - xmin + 1, ymax - ymin + 1)}, "
+                f"not {(width, height)}"
+            )
+        offsets = struct.unpack_from(f"<{height}Q", data, at)
+        at += 8 * height
+        channels, raw = [], attributes["channels"]
+        position = 0
+        while raw[position] != 0:
+            end = raw.index(b"\0", position)
+            (kind,) = struct.unpack_from("<i", raw, end + 1)
+            channels.append((raw[position:end].decode("ascii"), kind))
+            position = end + 17
+        parts.append((ymin, offsets, channels))
+    found = {}
+    every = [name for _, _, channels in parts for name, _ in channels]
+    for ymin, offsets, channels in parts:
+        names = [name for name, _ in channels]
+        for name, kind in channels:
+            if name in wanted and kind != _EXR_FLOAT:
+                raise ScriptError(f"the auxiliary render's {name} is not 32-bit")
+        if not any(name in wanted for name in names):
+            continue
+        # Every channel here is 32-bit or skipped by its size, in name order.
+        sizes = [4 if kind in (0, _EXR_FLOAT) else 2 for _, kind in channels]
+        rows = {name: [None] * height for name in names if name in wanted}
+        skip = 4 if multipart else 0
+        for offset in offsets:
+            (y,) = struct.unpack_from("<i", data, offset + skip)
+            start = offset + skip + 8
+            for (name, _), size in zip(channels, sizes, strict=True):
+                if name in rows:
+                    values = array("f")
+                    values.frombytes(data[start : start + 4 * width])
+                    rows[name][y - ymin] = values
+                start += size * width
+        for name, lines in rows.items():
+            if any(line is None for line in lines):
+                raise ScriptError(f"the auxiliary render's {name} is truncated")
+            merged = array("f")
+            for line in lines:
+                merged.extend(line)
+            found[name] = merged
+    missing = [name for name in wanted if name not in found]
+    if missing:
+        raise ScriptError(
+            f"the auxiliary render has no channel {missing[0]}; it has {every}"
+        )
+    if sys.byteorder != "little":
+        for values in found.values():
+            values.byteswap()
+    return found
 
 
 def read_targa(path, width, height):
@@ -1242,14 +1399,15 @@ def read_targa(path, width, height):
     return rows
 
 
-def write_png(path, width, rows):
-    """An 8-bit RGBA PNG of `rows`, with nothing but its pixels."""
+def write_png(path, width, rows, bits=8):
+    """An RGBA PNG of `rows` at `bits` per sample, every row unfiltered, with
+    nothing but its pixels."""
 
     def chunk(kind, body):
         crc = zlib.crc32(kind + body)
         return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", crc)
 
-    header = struct.pack(">IIBBBBB", width, len(rows), 8, 6, 0, 0, 0)
+    header = struct.pack(">IIBBBBB", width, len(rows), bits, 6, 0, 0, 0)
     raw = b"".join(b"\0" + bytes(row) for row in rows)
     with open(path, "wb") as handle:
         handle.write(b"\x89PNG\r\n\x1a\n")
@@ -1280,6 +1438,80 @@ def split_auxiliary(rows, width, matid_path, shade_path):
     write_png(shade_path, width, shades)
 
 
+# The normal and depth buffers (lighting sheet design D-2, D-10, D-11): each
+# a 16-bit RGBA PNG whose alpha is 65535 where the AOV holds a surface and
+# whose every sample is 0 where it holds none.
+COVERED = 0xFFFF
+
+
+def _samples(values):
+    """`values` as big-endian 16-bit PNG samples."""
+    samples = array("H", values)
+    if sys.byteorder == "little":
+        samples.byteswap()
+    return samples.tobytes()
+
+
+def _rows(pixels, width, height):
+    stride = width * 8
+    return [pixels[y * stride : (y + 1) * stride] for y in range(height)]
+
+
+def write_normal(path, width, height, x, y, z, where):
+    """The normal buffer from the AOV's camera-space components. Cycles'
+    camera looks along −Z, so the design's normal (+Z toward the viewer) is
+    `(x, y, −z)`; each component n is stored as floor((n + 1) / 2 · 65535 +
+    ½). A pixel the AOV left at (0, 0, 0) holds no surface."""
+    covered = [bool(a or b or c) for a, b, c in zip(x, y, z, strict=True)]
+    try:
+        channels = [
+            _samples(
+                int((1 + value) * 32767.5 + 0.5) if hit else 0
+                for value, hit in zip(values, covered, strict=True)
+            )
+            for values in (x, y, array("f", (-value for value in z)))
+        ]
+    except (ValueError, OverflowError):
+        for index, (a, b, c) in enumerate(zip(x, y, z, strict=True)):
+            if not all(math.isfinite(v) and abs(v) <= 1.00001 for v in (a, b, c)):
+                raise ScriptError(
+                    f"{where}: the normal at pixel {(index % width, index // width)} "
+                    f"is {(a, b, -c)}, not a unit vector"
+                ) from None
+        raise
+    alpha = _samples(COVERED if hit else 0 for hit in covered)
+    pixels = bytearray(width * height * 8)
+    for channel, samples in enumerate((*channels, alpha)):
+        pixels[2 * channel :: 8] = samples[0::2]
+        pixels[2 * channel + 1 :: 8] = samples[1::2]
+    write_png(path, width, _rows(pixels, width, height), bits=16)
+
+
+def write_depth(path, width, height, view_z, ground_view_z, where):
+    """The depth buffer from the AOV's view depth: each covered pixel's depth
+    toward the viewer from the ground point, `ground_view_z − view_z`, in
+    meters, stored as the big-endian bits of a 32-bit float in red (high
+    half) and green (low half), blue 0. A pixel the AOV left at 0 holds no
+    surface; the camera's near plane is in front of every surface."""
+    depths = array("f", (ground_view_z - value if value else 0.0 for value in view_z))
+    if not all(map(math.isfinite, depths)):
+        index = next(i for i, value in enumerate(depths) if not math.isfinite(value))
+        raise ScriptError(
+            f"{where}: the depth at pixel {(index % width, index // width)} "
+            f"is {depths[index]}"
+        )
+    if sys.byteorder == "little":
+        depths.byteswap()
+    bits = depths.tobytes()
+    alpha = _samples(COVERED if value else 0 for value in view_z)
+    pixels = bytearray(width * height * 8)
+    for byte in range(4):
+        pixels[byte::8] = bits[byte::4]
+    pixels[6::8] = alpha[0::2]
+    pixels[7::8] = alpha[1::2]
+    write_png(path, width, _rows(pixels, width, height), bits=16)
+
+
 def _sin_cos(degrees):
     """Sine and cosine, exact at quarter turns so axes stay exact."""
     turned = _wrap(degrees)
@@ -1304,7 +1536,8 @@ def _blender(vector):
 
 def place_camera(camera, settings, rotation_deg, reach):
     """Put the orthographic camera where the ground point lands on pixel
-    corner (gx·s, gy·s), as if the subject were turned by `rotation_deg`.
+    corner (gx·s, gy·s), as if the subject were turned by `rotation_deg`, and
+    return the ground point's camera depth.
 
     Turning the subject by a about the vertical axis through the ground
     point is the same image as turning the camera by −a around it; the
@@ -1348,6 +1581,9 @@ def place_camera(camera, settings, rotation_deg, reach):
     data.clip_start = CLEARANCE / 2
     data.clip_end = distance + reach + CLEARANCE
     data.dof.use_dof = False
+    # The ground point's distance along the viewing axis, the camera depth
+    # the depth buffer is relative to (lighting sheet design D-10).
+    return sum((center[i] - ground[i]) * toward[i] for i in range(3))
 
 
 def reach(objects, depsgraph, ground):
@@ -1371,8 +1607,9 @@ def reach(objects, depsgraph, ground):
 
 
 def render_frames(job, document, statics):
-    """Render every requested frame to color/NNNNNN.png, and its material-ID
-    and shade buffers to matid/ and shade/, in request order."""
+    """Render every requested frame to color/NNNNNN.png, and its material-ID,
+    shade, normal and depth buffers to matid/, shade/, normal/ and depth/,
+    in request order."""
     scene = bpy.context.scene
     fps = scene.render.fps / scene.render.fps_base
     settings = job["settings"]
@@ -1395,7 +1632,7 @@ def render_frames(job, document, statics):
     codes, table = material_codes(document)
     auxiliary = Auxiliary(scene, objects, codes, settings["shade"])
     width, height, _, _ = frame_size(settings)
-    for name in ("color", "matid", "shade"):
+    for name in BUFFERS:
         os.makedirs(os.path.join(job["output_dir"], name), exist_ok=False)
     scratch = tempfile.mkdtemp(prefix="moskophoros-auxiliary-")
 
@@ -1413,14 +1650,22 @@ def render_frames(job, document, statics):
         for ordinal, frame in requested:
             depsgraph = evaluate(scene, fps, frame["address"]["time_s"])
             rotation = (frame["angle_deg"] % 360 + yaw % 360) % 360
-            place_camera(camera, settings, rotation, reach(objects, depsgraph, ground))
-            relative = {
-                name: f"{name}/{ordinal:06d}.png"
-                for name in ("color", "matid", "shade")
-            }
+            ground_view_z = place_camera(
+                camera, settings, rotation, reach(objects, depsgraph, ground)
+            )
+            relative = {name: f"{name}/{ordinal:06d}.png" for name in BUFFERS}
             scene.render.filepath = os.path.join(job["output_dir"], relative["color"])
             bpy.ops.render.render(write_still=True)
-            render_auxiliary(scene, auxiliary, scratch, width, height, job, relative)
+            render_auxiliary(
+                scene,
+                auxiliary,
+                scratch,
+                (width, height),
+                job,
+                relative,
+                ground_view_z,
+                f"frame {ordinal}",
+            )
             paths[ordinal] = relative
     os.rmdir(scratch)
     return (
@@ -1438,21 +1683,45 @@ def render_frames(job, document, statics):
     )
 
 
-def render_auxiliary(scene, auxiliary, scratch, width, height, job, relative):
-    """The frame's material-ID and shade buffers, from one Cycles render."""
+def render_auxiliary(
+    scene, auxiliary, scratch, size, job, relative, ground_view_z, where
+):
+    """The frame's material-ID, shade, normal and depth buffers, from one
+    Cycles render: the TGA it writes, and its AOVs saved as an OpenEXR."""
+    width, height = size
     target = os.path.join(scratch, "auxiliary.tga")
+    exr = os.path.join(scratch, "auxiliary.exr")
     auxiliary.apply(target)
     try:
         bpy.ops.render.render(write_still=True)
+        save_exr(scene, exr)
     finally:
         auxiliary.restore()
     rows = read_targa(target, width, height)
     os.remove(target)
+    output = job["output_dir"]
     split_auxiliary(
         rows,
         width,
-        os.path.join(job["output_dir"], relative["matid"]),
-        os.path.join(job["output_dir"], relative["shade"]),
+        os.path.join(output, relative["matid"]),
+        os.path.join(output, relative["shade"]),
+    )
+    del rows
+    layer = bpy.context.view_layer.name
+    names = [f"{layer}.normal.{axis}" for axis in "RGB"] + [f"{layer}.depth.X"]
+    channels = read_exr(exr, width, height, names)
+    os.remove(exr)
+    x, y, z, view_z = (channels[name] for name in names)
+    write_normal(
+        os.path.join(output, relative["normal"]), width, height, x, y, z, where
+    )
+    write_depth(
+        os.path.join(output, relative["depth"]),
+        width,
+        height,
+        view_z,
+        ground_view_z,
+        where,
     )
 
 
