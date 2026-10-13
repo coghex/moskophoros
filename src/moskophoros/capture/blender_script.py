@@ -1399,9 +1399,9 @@ def read_targa(path, width, height):
     return rows
 
 
-def write_png(path, width, rows, bits=8):
-    """An RGBA PNG of `rows` at `bits` per sample, every row unfiltered, with
-    nothing but its pixels."""
+def write_png(path, width, rows, bits=8, level=9):
+    """An RGBA PNG of `rows` at `bits` per sample, every row unfiltered and
+    compressed at zlib `level`, with nothing but its pixels."""
 
     def chunk(kind, body):
         crc = zlib.crc32(kind + body)
@@ -1412,7 +1412,7 @@ def write_png(path, width, rows, bits=8):
     with open(path, "wb") as handle:
         handle.write(b"\x89PNG\r\n\x1a\n")
         handle.write(chunk(b"IHDR", header))
-        handle.write(chunk(b"IDAT", zlib.compress(raw, 9)))
+        handle.write(chunk(b"IDAT", zlib.compress(raw, level)))
         handle.write(chunk(b"IEND", b""))
 
 
@@ -1440,8 +1440,10 @@ def split_auxiliary(rows, width, matid_path, shade_path):
 
 # The normal and depth buffers (lighting sheet design D-2, D-10, D-11): each
 # a 16-bit RGBA PNG whose alpha is 65535 where the AOV holds a surface and
-# whose every sample is 0 where it holds none.
+# whose every sample is 0 where it holds none. Their samples vary too finely
+# to compress much, so they take zlib's fastest level.
 COVERED = 0xFFFF
+WIDE_LEVEL = 1
 
 
 def _samples(values):
@@ -1466,10 +1468,12 @@ def write_normal(path, width, height, x, y, z, where):
     try:
         channels = [
             _samples(
-                int((1 + value) * 32767.5 + 0.5) if hit else 0
-                for value, hit in zip(values, covered, strict=True)
+                [
+                    int((1 + sign * value) * 32767.5 + 0.5) if hit else 0
+                    for value, hit in zip(values, covered, strict=True)
+                ]
             )
-            for values in (x, y, array("f", (-value for value in z)))
+            for values, sign in ((x, 1.0), (y, 1.0), (z, -1.0))
         ]
     except (ValueError, OverflowError):
         for index, (a, b, c) in enumerate(zip(x, y, z, strict=True)):
@@ -1484,7 +1488,7 @@ def write_normal(path, width, height, x, y, z, where):
     for channel, samples in enumerate((*channels, alpha)):
         pixels[2 * channel :: 8] = samples[0::2]
         pixels[2 * channel + 1 :: 8] = samples[1::2]
-    write_png(path, width, _rows(pixels, width, height), bits=16)
+    write_png(path, width, _rows(pixels, width, height), bits=16, level=WIDE_LEVEL)
 
 
 def write_depth(path, width, height, view_z, ground_view_z, where):
@@ -1509,7 +1513,7 @@ def write_depth(path, width, height, view_z, ground_view_z, where):
         pixels[byte::8] = bits[byte::4]
     pixels[6::8] = alpha[0::2]
     pixels[7::8] = alpha[1::2]
-    write_png(path, width, _rows(pixels, width, height), bits=16)
+    write_png(path, width, _rows(pixels, width, height), bits=16, level=WIDE_LEVEL)
 
 
 def _sin_cos(degrees):
