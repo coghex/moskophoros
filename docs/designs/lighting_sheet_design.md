@@ -450,6 +450,22 @@ Beside the sheet: `<stem>.normal.png`, `<stem>.depth.png` and lit previews
 `<stem>-lit.<clip>.gif` (D-17, D-22); the JSON's `maps` record names them, and the
 new settings (D-18) are recorded and reused.
 
+*LIT-3's record* (recorded by LIT-3, #98, 2026-10-13; `docs/design.md`
+§Export holds the contract). The sheet schema is `moskophoros.sheet/8`.
+
+- `settings.normals` sits between `settings.previews` and `settings.shade`,
+  the two output switches together, inside the fingerprint. LIT-4's
+  `settings.depth` is expected beside them.
+- `maps` sits directly after `image` and, like `image`, outside the
+  fingerprint: it only names files, and `settings.normals` already covers
+  whether the normal map is written. `maps.depth` is `null` until LIT-4.
+- D-26: LIT-1's capture result reports no fixed parameter for the normal and
+  depth (their encodings are this design's, named by the schema), so
+  `generator.shade` keeps its five fields.
+- The normal map is `export.normal_path(png)`, `<stem>.normal.png`; a run
+  with another output name names its own map, and reuse regenerates the map
+  from the model, never reading an earlier file.
+
 ## Decisions
 
 All are the owner's. D-1 to D-8 come from material styling D-27
