@@ -35,7 +35,7 @@ slice.
 - [x] LIT-3. Write the normal map, record it and reuse it — [#98]
 - [x] LIT-4. Write the optional depth map — [#99]
 - [x] LIT-5. Light the previews with an optional point light — [#100]
-- [ ] LIT-6. Review normal maps and lit previews with the owner
+- [x] LIT-6. Review normal maps and lit previews with the owner — [#101]
 
 ## Epic contract
 
