@@ -152,6 +152,7 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
             *["--occlusion-weight", "0.5", "--convexity-weight", "0"],
             *["--shade-range", "120,188", "--frames", "8"],
             *["--settings-from", "old.json", "--no-preview", "--no-normals"],
+            "--depth",
             *["--config", "a.yaml", "--config", "b.yaml", "--no-user-config"],
             *["--work-dir", "work", "--blender", "/opt/blender", "--any-blender"],
             *POSITIONALS,
@@ -204,6 +205,7 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         shade_range=(120, 188),
         frames=8,
         normals=False,
+        depth=True,
     )
 
 

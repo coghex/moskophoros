@@ -1,9 +1,9 @@
-"""The sheet PNG, its normal map, its `moskophoros.sheet/8` JSON and the
-animated previews, following design §Export.
+"""The sheet PNG, its normal and depth maps, its `moskophoros.sheet/9` JSON
+and the animated previews, following design §Export.
 
-`encode` lays the reduced frames out on the sheet and its normal map,
-describes them and returns the files' bytes; `normal_path` names the normal
-map; `write` writes the sheet and JSON where the caller says. `previews`
+`encode` lays the reduced frames out on the sheet and its maps, describes
+them and returns the files' bytes; `normal_path` and `depth_path` name the
+maps; `write` writes the sheet and JSON where the caller says. `previews`
 returns each clip's GIF, `preview_paths` names them and `write_previews`
 writes them. Everything except the writers is pure, and the same inputs give
 byte-identical output (design §Reproducibility).
@@ -28,7 +28,14 @@ import moskophoros
 from moskophoros import imageops, sampling, views
 from moskophoros.capture.backend import settings_document
 
-SCHEMA = "moskophoros.sheet/8"
+SCHEMA = "moskophoros.sheet/9"
+OVERFLOW_ERROR = 4
+# The depth map's code for "no surface", for a depth of 0 (the ground point's
+# plane), and the depths it can hold, in sheet pixels (lighting sheet design
+# D-10, D-21).
+NO_SURFACE = 0
+DEPTH_ZERO = 32768
+DEPTH_LIMIT = 2047.9375
 USAGE_ERROR = 2
 PREVIEW_SCALE = 4
 PREVIEW_BACKGROUND = (128, 128, 128)
@@ -41,6 +48,22 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]")
 
 
+class DepthOverflow(Exception):
+    """Covered pixels whose depth the depth map cannot hold: exit
+    classification 4, as a subject overflowing a fixed cell is (lighting
+    sheet design D-21).
+
+    `frames` holds each overflowing frame's address with the lowest and
+    highest depth of its covered pixels, in sheet pixels, in request order.
+    """
+
+    exit_code = OVERFLOW_ERROR
+
+    def __init__(self, message, frames):
+        super().__init__(message)
+        self.frames = frames
+
+
 class UsageError(Exception):
     """Settings whose previews GIF cannot represent: exit classification 2."""
 
@@ -50,11 +73,13 @@ class UsageError(Exception):
 @dataclass(frozen=True)
 class Sheet:
     """The encoded sheet: `png` and `json` bytes, ready to write, and the
-    normal map's `normal` PNG bytes, or None when it is not written."""
+    normal and depth maps' `normal` and `depth` PNG bytes, each None when it
+    is not written."""
 
     png: bytes
     json: bytes
     normal: bytes | None = None
+    depth: bytes | None = None
 
 
 @dataclass(frozen=True)
@@ -117,11 +142,18 @@ def fingerprint(generator, settings, source_sha256):
 
 
 def sheet_settings(
-    settings, selected_clips, style, *, shade_range, previews=True, normals=True
+    settings,
+    selected_clips,
+    style,
+    *,
+    shade_range,
+    previews=True,
+    normals=True,
+    depth=False,
 ):
     """The sheet's `settings` object: the capture job's settings, fitted, then
-    `previews`, whether the animated previews are written, `normals`, whether
-    the normal map is written, `shade`, the
+    `previews`, whether the animated previews are written, `normals` and
+    `depth`, whether the normal and depth maps are written, `shade`, the
     capture's shade values with the shade range `[lo, hi]` stylize used, and
     `style` recorded as given, just before `clips`.
 
@@ -145,6 +177,7 @@ def sheet_settings(
     return document | {
         "previews": previews,
         "normals": normals,
+        "depth": depth,
         "shade": shade,
         "style": style,
         "clips": clips,
@@ -164,30 +197,35 @@ def encode(
     shade_range,
     previews=True,
     normals=True,
+    depth=False,
 ):
     """Lay out and describe the sheet, returning its PNG, JSON and, with
-    `normals`, normal map bytes.
+    `normals` and `depth`, its normal and depth maps' bytes.
 
     `frames` are the reduced `sampling.ImageFrame`s, exactly one for each
     frame the selected clips and resolved `settings` request, each the cell
-    size, in any order; with `normals`, each carries its normal map
-    (`sampling.NORMAL_MAP`). `generator` comes from `generator()`, `source`
+    size, in any order; with `normals` or `depth`, each carries its normal or
+    depth map (`sampling.NORMAL_MAP`, `sampling.DEPTH_MAP`). `generator` comes from `generator()`, `source`
     is the capture `Source`, `style` is the style record `sheet_settings`
     takes, `selected_clips` are `gltf.SelectedClip`s in selection order,
     `image_path` is where the PNG will be written; only its base name is
     recorded, as is the source's and the normal map's; `shade_range` is the
     shade range stylize used, recorded in `settings.shade`; `previews`
-    records whether the animated previews are written; and `normals` whether
-    the normal map is.
+    records whether the animated previews are written; and `normals` and
+    `depth` whether the normal and depth maps are.
 
     The normal map is laid out as the sheet is: each pixel the colour covers
     (alpha 255) holds its normal encoded by `imageops.encode_normal`, with
     alpha 255, and every other pixel is `(0, 0, 0, 0)` (lighting sheet design
-    D-17).
+    D-17). The depth map, a 16-bit greyscale PNG laid out the same way, holds
+    `32768 + floor(16 · depth + ½)` for each covered pixel's depth in sheet
+    pixels, and 0, "no surface", everywhere else (D-10).
 
-    Raises `ValueError` for frames that are missing, extra, duplicated or
-    the wrong size, or lack a normal map that is to be written, or for
-    unfitted settings: these are internal errors.
+    Raises `DepthOverflow` when the depth map is written and a covered
+    pixel's depth lies outside `±DEPTH_LIMIT` sheet pixels (D-21), and
+    `ValueError` for frames that are missing, extra, duplicated or the wrong
+    size, or lack a map that is to be written, or for unfitted settings:
+    these are internal errors.
     """
     if settings.ppm is None or settings.cell is None or settings.ground_px is None:
         raise ValueError("the settings are not fitted: scale, cell and ground pixel")
@@ -202,7 +240,16 @@ def encode(
     width, height = settings.cell
     frames = tuple(frames)
     pixels = _pixels_by_address(frames, requested, (height, width, 4))
-    normal_maps = _normals_by_address(frames, (height, width, 3)) if normals else None
+    normal_maps = (
+        _maps_by_address(frames, sampling.NORMAL_MAP, (height, width, 3))
+        if normals
+        else None
+    )
+    depth_maps = (
+        _maps_by_address(frames, sampling.DEPTH_MAP, (height, width)) if depth else None
+    )
+    if depth:
+        _check_depths(requested, pixels, depth_maps, settings.ppm)
 
     row_of_clip = {selected.clip.name: c for c, selected in enumerate(selected_clips)}
     samplings = [
@@ -213,6 +260,7 @@ def encode(
     rows = len(selected_clips) * len(directions)
     image = np.zeros((rows * height, columns * width, 4), dtype=np.uint8)
     normal_image = np.zeros_like(image) if normals else None
+    depth_image = np.zeros(image.shape[:2], dtype=np.uint16) if depth else None
     frame_documents = []
     for frame in requested:
         address = frame.address
@@ -225,6 +273,11 @@ def encode(
             cell[covered, :3] = imageops.encode_normal(normal_maps[address][covered])
             cell[covered, 3] = 255
             normal_image[y : y + height, x : x + width] = cell
+        if depth:
+            covered = pixels[address][..., 3] == 255
+            codes = np.full((height, width), NO_SURFACE, dtype=np.uint16)
+            codes[covered] = encode_depth(depth_maps[address][covered])
+            depth_image[y : y + height, x : x + width] = codes
         frame_documents.append(
             {
                 "clip": address.clip,
@@ -245,6 +298,7 @@ def encode(
         shade_range=shade_range,
         previews=previews,
         normals=normals,
+        depth=depth,
     )
     description = {
         "schema": SCHEMA,
@@ -259,10 +313,9 @@ def encode(
             "width": int(image.shape[1]),
             "height": int(image.shape[0]),
         },
-        # The depth map is not written yet (lighting sheet design D-17).
         "maps": {
             "normal": {"file": normal_path(image_path).name} if normals else None,
-            "depth": None,
+            "depth": {"file": depth_path(image_path).name} if depth else None,
         },
         "directions": [
             {"index": d.index, "angle_deg": float(d.angle), "label": d.label}
@@ -285,6 +338,7 @@ def encode(
         _png(image),
         _json(description),
         None if normal_image is None else _png(normal_image),
+        None if depth_image is None else _png(depth_image),
     )
 
 
@@ -292,6 +346,55 @@ def normal_path(png_path):
     """The normal map's path, `<stem>.normal.png` beside the sheet PNG."""
     png_path = Path(png_path)
     return png_path.with_name(png_path.name.removesuffix(".png") + ".normal.png")
+
+
+def depth_path(png_path):
+    """The depth map's path, `<stem>.depth.png` beside the sheet PNG."""
+    png_path = Path(png_path)
+    return png_path.with_name(png_path.name.removesuffix(".png") + ".depth.png")
+
+
+def encode_depth(depths):
+    """Encode depths in sheet pixels as the depth map's codes,
+    `32768 + floor(16 · depth + ½)`, half up (lighting sheet design
+    §Numerical reference): 1 to 65535 for −2047.9375 to +2047.9375.
+
+    Returns a new `uint16` array of the input's shape. Raises `ValueError`
+    for a depth that is not finite or encodes outside 1 to 65535.
+    """
+    depths = np.asarray(depths, dtype=np.float64)
+    if not np.isfinite(depths).all():
+        raise ValueError("depths must be finite")
+    codes = DEPTH_ZERO + np.floor(16 * depths + 0.5)
+    if ((codes < 1) | (codes > 0xFFFF)).any():
+        raise ValueError(f"depths must lie within ±{DEPTH_LIMIT} sheet pixels")
+    return codes.astype(np.uint16)
+
+
+def _check_depths(requested, pixels, depth_maps, ppm):
+    """Raise `DepthOverflow` for frames with a covered pixel whose depth the
+    depth map cannot hold (lighting sheet design D-21), in request order."""
+    overflowing = []
+    for frame in requested:
+        covered = pixels[frame.address][..., 3] == 255
+        depths = depth_maps[frame.address][covered]
+        if depths.size and (np.abs(depths) > DEPTH_LIMIT).any():
+            overflowing.append(
+                (frame.address, (float(depths.min()), float(depths.max())))
+            )
+    if not overflowing:
+        return
+    lines = [
+        f"the subject's depth overflows the depth map at {ppm!r} pixels per "
+        f"meter: it holds -{DEPTH_LIMIT} to +{DEPTH_LIMIT} sheet pixels, and "
+        "depth is never clamped or rescaled; give a smaller --ppm:"
+    ]
+    for address, (low, high) in overflowing:
+        lines.append(
+            f"  clip {address.clip!r}, direction {address.direction}, "
+            f"time {address.time_s!r} s: {low!r} to {high!r} px"
+        )
+    raise DepthOverflow("\n".join(lines), tuple(overflowing))
 
 
 def write(sheet, png_path, json_path):
@@ -333,15 +436,16 @@ def _pixels_by_address(frames, requested, shape):
     return pixels
 
 
-def _normals_by_address(frames, shape):
-    """Map each frame's address to its normal map, or raise."""
-    normals = {}
+def _maps_by_address(frames, name, shape):
+    """Map each frame's address to its map under `name`, or raise."""
+    maps = {}
     for frame in frames:
-        array = frame.buffers.get(sampling.NORMAL_MAP)
+        array = frame.buffers.get(name)
         if not isinstance(array, np.ndarray) or array.shape != shape:
-            raise ValueError(f"the frame at {frame.address} has no {shape} normal map")
-        normals[frame.address] = array
-    return normals
+            kind = "normal" if name == sampling.NORMAL_MAP else "depth"
+            raise ValueError(f"the frame at {frame.address} has no {shape} {kind} map")
+        maps[frame.address] = array
+    return maps
 
 
 def _png(image):

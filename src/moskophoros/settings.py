@@ -291,6 +291,9 @@ SCHEMA = MappingProxyType(
         "normals": Setting(
             "whether the normal map is written", None, True, _check_previews
         ),
+        "depth": Setting(
+            "whether the depth map is written", None, False, _check_previews
+        ),
         "shade.ao_distance_m": Setting(
             "how far ambient occlusion looks for other surfaces, greater than 0",
             "meters",

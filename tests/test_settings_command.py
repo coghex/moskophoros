@@ -742,10 +742,11 @@ def test_the_jobs_carry_the_capture_values_and_the_sheet_records_all_five(
         assert job["settings"]["shade"] == capture | {"materials": []}
     sheet = json.loads(setup.json.read_text())
     assert sheet["settings"]["shade"] == capture | {"range": [120, 188]}
-    assert list(sheet["settings"])[-6:] == [
+    assert list(sheet["settings"])[-7:] == [
         "root_motion",
         "previews",
         "normals",
+        "depth",
         "shade",
         "style",
         "clips",
@@ -902,7 +903,7 @@ def test_an_older_sheet_is_exit_2_naming_its_schema_and_the_supported_one(
     forbid_blender(monkeypatch)
     status, _, err = run(capsys, reload(setup, sheet))
     assert status == 2
-    assert "moskophoros.sheet/3" in err and "moskophoros.sheet/8" in err
+    assert "moskophoros.sheet/3" in err and "moskophoros.sheet/9" in err
 
 
 def test_a_reloaded_sheet_without_previews_writes_none(setup, capsys):

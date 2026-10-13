@@ -83,7 +83,7 @@ CANONICAL = (
     '"clips":[{"frames":null,"loop":true,"name":"läuft"},'
     '{"frames":null,"loop":false,"name":"攻撃"},'
     '{"frames":null,"loop":true,"name":"pose"}],'
-    '"fps":3.0,"frames":"auto","ground_m":{"x":0.0,"y":0.0,"z":0.0},"ground_px":{"x":1,"y":2},'
+    '"depth":false,"fps":3.0,"frames":"auto","ground_m":{"x":0.0,"y":0.0,"z":0.0},"ground_px":{"x":1,"y":2},'
     '"model_yaw_deg":0.0,"normals":true,"pixels_per_meter":24.5,"previews":true,'
     '"root_motion":"error",'
     '"shade":{"ao_distance_m":0.3,"ao_samples":64,"convexity_weight":1.0,'
@@ -169,7 +169,7 @@ EXPECTED_FRAMES = ",\n".join(
 
 EXPECTED_JSON = (
     """{
-  "schema": "moskophoros.sheet/8",
+  "schema": "moskophoros.sheet/9",
   "generator": {
     "tool": "moskophoros",
     "version": "0.1.0",
@@ -215,6 +215,7 @@ EXPECTED_JSON = (
     "root_motion": "error",
     "previews": true,
     "normals": true,
+    "depth": false,
     "shade": {
       "ao_distance_m": 0.3,
       "ao_samples": 64,
@@ -333,6 +334,7 @@ def test_the_fingerprint_hashes_the_canonical_mirrored_object():
         "root_motion": "error",
         "previews": True,
         "normals": True,
+        "depth": False,
         "shade": SHADE_RECORD,
         "style": PLAIN,
         "clips": [
@@ -402,10 +404,11 @@ def test_previews_normals_shade_and_the_style_record_sit_just_before_clips(
     settings = export.sheet_settings(
         SIDE, (RUN,), PLAIN, shade_range=RANGE, previews=previews, normals=normals
     )
-    assert list(settings)[-6:] == [
+    assert list(settings)[-7:] == [
         "root_motion",
         "previews",
         "normals",
+        "depth",
         "shade",
         "style",
         "clips",
@@ -422,7 +425,9 @@ def test_previews_normals_shade_and_the_style_record_sit_just_before_clips(
         "range",
     ]
     rest = {
-        k: v for k, v in settings.items() if k not in ("style", "previews", "normals")
+        k: v
+        for k, v in settings.items()
+        if k not in ("style", "previews", "normals", "depth")
     }
     job = settings_document(SIDE, (RUN,))
     capture = {key: value for key, value in job["shade"].items() if key != "materials"}

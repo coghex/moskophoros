@@ -42,6 +42,7 @@ def test_the_schema_holds_this_slices_settings():
         "materials",
         "previews",
         "normals",
+        "depth",
         "shade.ao_distance_m",
         "shade.ao_samples",
         "shade.occlusion_weight",
@@ -66,6 +67,7 @@ def test_the_defaults_file_and_the_schema_table_agree():
         "materials": None,
         "previews": True,
         "normals": True,
+        "depth": False,
         # Today's shading values stay the defaults (settings design D-12).
         "shade.ao_distance_m": 0.3,
         "shade.ao_samples": 64,

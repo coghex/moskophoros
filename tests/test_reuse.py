@@ -36,6 +36,7 @@ SETTINGS = {
     "root_motion": "keep",
     "previews": False,
     "normals": False,
+    "depth": True,
     "shade": {
         "ao_distance_m": 1.2,
         "ao_samples": 32,
@@ -69,6 +70,7 @@ REUSED = {
     "root_motion": "keep",
     "previews": False,
     "normals": False,
+    "depth": True,
     "clip": ("walk", "attack"),
     "once": ("attack",),
     "clip_frames": {"walk": 8, "attack": None},
@@ -83,7 +85,7 @@ REUSED = {
 
 def write_sheet(tmp_path, settings=None, name="old.json", **document):
     path = tmp_path / name
-    contents = {"schema": "moskophoros.sheet/8"} | document
+    contents = {"schema": "moskophoros.sheet/9"} | document
     contents["settings"] = copy.deepcopy(SETTINGS if settings is None else settings)
     path.write_text(json.dumps(contents, ensure_ascii=False), encoding="utf-8")
     return path
@@ -409,7 +411,7 @@ def test_previews_must_be_a_boolean(tmp_path, capsys, value):
 
 def test_a_document_with_only_schema_and_settings_is_enough(tmp_path):
     path = tmp_path / "minimal.json"
-    path.write_text(json.dumps({"schema": "moskophoros.sheet/8", "settings": SETTINGS}))
+    path.write_text(json.dumps({"schema": "moskophoros.sheet/9", "settings": SETTINGS}))
     assert values(reuse(path)) == REUSED
 
 
@@ -477,7 +479,7 @@ def test_a_deeply_nested_file_is_rejected(tmp_path, capsys):
     ("text", "key"),
     [
         (
-            '{"schema": "moskophoros.sheet/8", "schema": "moskophoros.sheet/8"}',
+            '{"schema": "moskophoros.sheet/9", "schema": "moskophoros.sheet/9"}',
             "schema",
         ),
         ('{"settings": {"fps": 12, "fps": 12}}', "fps"),
@@ -492,11 +494,11 @@ def test_a_repeated_key_anywhere_is_rejected(tmp_path, capsys, text, key):
     assert rejected(capsys, path) == f"repeats the key {key!r}"
 
 
-NOT_A_SHEET = "is not a moskophoros.sheet/8 document"
+NOT_A_SHEET = "is not a moskophoros.sheet/9 document"
 
 
 def older(schema):
-    return f"is a {schema} sheet; only moskophoros.sheet/8 sheets load, so generate it again"
+    return f"is a {schema} sheet; only moskophoros.sheet/9 sheets load, so generate it again"
 
 
 @pytest.mark.parametrize(
@@ -510,7 +512,8 @@ def older(schema):
         ({"schema": "moskophoros.sheet/6"}, older("moskophoros.sheet/6")),
         ({"schema": "moskophoros.sheet/5"}, older("moskophoros.sheet/5")),
         ({"schema": "moskophoros.sheet/4"}, older("moskophoros.sheet/4")),
-        ({"schema": "moskophoros.sheet/9"}, older("moskophoros.sheet/9")),
+        ({"schema": "moskophoros.sheet/10"}, older("moskophoros.sheet/10")),
+        ({"schema": "moskophoros.sheet/8"}, older("moskophoros.sheet/8")),
         ({"schema": "moskophoros.sheet/7"}, older("moskophoros.sheet/7")),
         (
             {"schema": " moskophoros.sheet/4"},
@@ -518,17 +521,17 @@ def older(schema):
         ),
         ({"schema": 1}, f"{NOT_A_SHEET}: schema is 1"),
         (
-            {"schema": ["moskophoros.sheet/8"]},
-            f'{NOT_A_SHEET}: schema is ["moskophoros.sheet/8"]',
+            {"schema": ["moskophoros.sheet/9"]},
+            f'{NOT_A_SHEET}: schema is ["moskophoros.sheet/9"]',
         ),
         ({"schema": None}, f"{NOT_A_SHEET}: schema is null"),
-        ({"schema": "moskophoros.sheet/8"}, "settings: missing"),
+        ({"schema": "moskophoros.sheet/9"}, "settings: missing"),
         (
-            {"schema": "moskophoros.sheet/8", "settings": None},
+            {"schema": "moskophoros.sheet/9", "settings": None},
             "settings: must be set, got null",
         ),
         (
-            {"schema": "moskophoros.sheet/8", "settings": []},
+            {"schema": "moskophoros.sheet/9", "settings": []},
             "settings: expected an object, got []",
         ),
     ],
@@ -565,6 +568,7 @@ REUSED_FIELDS = [
     "root_motion",
     "previews",
     "normals",
+    "depth",
     "shade",
     "shade.ao_distance_m",
     "shade.ao_samples",
@@ -792,6 +796,7 @@ def test_an_explicit_reduce_overrides_the_reused_one(tmp_path, sheet, explicit):
 @pytest.mark.parametrize(
     "schema",
     [
+        "moskophoros.sheet/8",
         "moskophoros.sheet/7",
         "moskophoros.sheet/6",
         "moskophoros.sheet/5",
@@ -932,19 +937,29 @@ def _encode(
     previews=True,
     shade_range=DEFAULT_RANGE,
     normals=True,
+    depth=False,
 ):
     selected = gltf.select_clips(SUBJECT, clip_names, once_names)
     view = views.View(
         settings.pitch, settings.directions, settings.start_angle, settings.model_yaw
     )
     width, height = settings.cell
+
+    def frame(address):
+        # The left half covered, facing the viewer at a depth for its
+        # direction, in front of and behind the ground point.
+        pixels = np.zeros((height, width, 4), dtype=np.uint8)
+        pixels[:, : width // 2] = (90, 60, 30, 255)
+        normals = np.zeros((height, width, 3))
+        normals[:, : width // 2, 2] = 1.0
+        depths = np.zeros((height, width))
+        depths[:, : width // 2] = address.direction * 1.5 - 3.25
+        maps = {sampling.NORMAL_MAP: normals, sampling.DEPTH_MAP: depths}
+        return sampling.ImageFrame(address, pixels, buffers=maps)
+
     frames = [
-        sampling.ImageFrame(
-            frame.address,
-            np.zeros((height, width, 4), dtype=np.uint8),
-            buffers={sampling.NORMAL_MAP: np.zeros((height, width, 3))},
-        )
-        for frame in sampling.frames("hero", selected, view, settings.fps)
+        frame(requested.address)
+        for requested in sampling.frames("hero", selected, view, settings.fps)
     ]
     return export.encode(
         frames,
@@ -955,6 +970,7 @@ def _encode(
         style=style,
         previews=previews,
         normals=normals,
+        depth=depth,
         shade_range=shade_range,
         selected_clips=selected,
         image_path=Path("hero.png"),
@@ -972,6 +988,7 @@ def _rerun(path, *options):
         resolved.previews,
         resolved.shade_range,
         resolved.normals,
+        resolved.depth,
     )
 
 
@@ -1001,6 +1018,7 @@ def test_reusing_a_sheet_with_the_same_clips_gives_the_same_settings(
     assert again.json == original.json
 
 
+@pytest.mark.parametrize("depth", [False, True])
 @pytest.mark.parametrize("normals", [True, False])
 @pytest.mark.parametrize("previews", [True, False])
 @pytest.mark.parametrize(
@@ -1013,11 +1031,11 @@ def test_reusing_a_sheet_with_the_same_clips_gives_the_same_settings(
     ],
 )
 def test_loading_a_sheet_with_no_options_reproduces_it(
-    tmp_path, selection, previews, normals
+    tmp_path, selection, previews, normals, depth
 ):
     """Settings design D-16: the loaded sheet supplies every setting, the
-    clip selection, its one-shot marks and the previews and normals flags
-    included; the normal map is reproduced byte for byte, or not written."""
+    clip selection, its one-shot marks and the previews, normals and depth
+    flags included; each map is reproduced byte for byte, or not written."""
     parsed = cli.parse_args([*selection, "in.glb", "out.png"])
     original = _encode(
         ORIGINALS["iso-true"],
@@ -1026,6 +1044,7 @@ def test_loading_a_sheet_with_no_options_reproduces_it(
         previews=previews,
         shade_range=(120, 255),
         normals=normals,
+        depth=depth,
     )
     path = tmp_path / "hero.json"
     path.write_bytes(original.json)
@@ -1034,11 +1053,16 @@ def test_loading_a_sheet_with_no_options_reproduces_it(
     assert again.json == original.json
     assert again.normal == original.normal
     assert (again.normal is None) is (not normals)
+    assert again.depth == original.depth
+    assert (again.depth is None) is (not depth)
     document = json.loads(original.json)
     assert document["settings"]["previews"] is previews
     assert document["settings"]["normals"] is normals
-    expected = {"file": "hero.normal.png"} if normals else None
-    assert document["maps"] == {"normal": expected, "depth": None}
+    assert document["settings"]["depth"] is depth
+    assert document["maps"] == {
+        "normal": {"file": "hero.normal.png"} if normals else None,
+        "depth": {"file": "hero.depth.png"} if depth else None,
+    }
 
 
 @pytest.mark.parametrize(
