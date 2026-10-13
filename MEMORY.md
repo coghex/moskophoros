@@ -30,20 +30,15 @@ anything newer than the date below.
   - slice 1, the plain pipeline: 2026-10-03;
   - style pass 1, palettes and reduction: 2026-10-05;
   - material styling, a qualified acceptance of the proof of concept:
-    2026-10-08. Its limits are the warm ramp (#78) and Grey and Black
-    clipping (#79).
-- **Settings arc** ([design](docs/designs/settings_design.md), epic #83):
-  all five slices are merged (SET-0 to SET-3 and SET-5). They add layered YAML
-  settings (user file, reused sheet, `--config`, options), the shading values
-  as settings and options, per-material shading, and clip frame counts.
-  Libraries are YAML (`moskophoros.materials/2`). On 2026-10-12 the
-  2026-10-09 R1 and R2 looks reproduced byte for byte from `--config` files
-  alone. **Waiting on the owner's visual verdict** before #83 closes.
-- **Open epics:**
-  - #3 (CI) and #24 (slice 1): all children closed; the owner decides
-    closure.
-  - #63 (material styling): open for MAT-8 and its follow-ups.
-  - #83 (settings): see above.
+    2026-10-08;
+  - settings: 2026-10-13.
+- **Settings arc** ([design](docs/designs/settings_design.md)): accepted
+  by the owner on 2026-10-13 ([record](docs/acceptance/settings.md)); epic
+  #83 closed. Layered YAML settings (user file, reused sheet, `--config`,
+  options), the shading values, per-material shading and clip frame counts.
+  Libraries are YAML (`moskophoros.materials/2`).
+- **Open epics:** #63 (material styling), open for MAT-8 and #75. #3, #24
+  and #83 are closed, and so are #78 and #79, settled by settings.
 
 ## Environment
 
@@ -86,23 +81,20 @@ anything newer than the date below.
 
 ## Next steps
 
-1. **Owner:** judge the settings renders of 2026-10-12. On acceptance, record
-   it in `docs/acceptance/` and close #83.
-2. **#79 and #78:** both are reviewed `changes` and `blocked`, waiting on the
-   owner's choices. Per-material shade ranges and library edits can now try
-   those choices without code. Revise each body to the chosen option, then
-   re-review.
-3. **Deferred, each waiting on a stated trigger:**
+1. **Owner's look:** the Vince 144 renders of 2026-10-13 are with the
+   owner. Their chosen shading goes in their user settings file, not the
+   shipped defaults.
+2. **Lighting sheet:** the next arc. The owner settled its direction on
+   2026-10-13 in material styling D-27: a flat colour sheet, a normal map, an
+   optional depth map, and a lit preview that is never baked. Its own design
+   comes next, when the owner asks.
+3. **Guide:** review the work after `bb3c9b4`.
+4. **Deferred, each waiting on a stated trigger:**
    - recolouring without a re-render (settings D-18);
    - MAT-8, generated ramps (material styling Q-24);
    - #75, glTF MASK cutouts;
    - #43, mesh-weight animation and CUBICSPLINE tangents: approved, but held
      until a model needs it.
-4. **Lighting sheet:** the next arc. The owner settled its direction on
-   2026-10-13 in material styling D-27: a flat colour sheet, a normal map, an
-   optional depth map, and a lit preview that is never baked. Its own design
-   comes next, when the owner asks.
-5. **Guide:** review the work after `bb3c9b4`.
 
 ## Owner preferences
 
@@ -119,6 +111,5 @@ anything newer than the date below.
 
 ## Open questions
 
-Owner choices only: the settings verdict, #78 and #79 above, and whether to
-close #3 and #24. Deferred design decisions and their triggers are listed in
-design §Deferred.
+Owner choices only: their default look (above). Deferred design decisions
+and their triggers are listed in design §Deferred.
