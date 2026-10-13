@@ -21,12 +21,17 @@ concrete precondition
 
 ## Processing status
 
-*Not yet proposed.* The slices are drafted once the open questions below are
-settled; a candidate shape is under [Delivery plan](#delivery-plan).
+- [ ] EPIC. Light sprites live: a normal map, an optional depth map and lit previews
+- [ ] LIT-1. Capture normal and depth buffers on every render
+- [ ] LIT-2. Reduce normals and depth to the sheet's pixels
+- [ ] LIT-3. Write the normal map, record it and reuse it
+- [ ] LIT-4. Write the optional depth map
+- [ ] LIT-5. Light the previews with an optional point light
+- [ ] LIT-6. Review normal maps and lit previews with the owner
 
 ## Epic contract
 
-*Proposal, not yet signed off.*
+*Proposal, awaiting the owner's signoff with the slices.*
 
 - **Goal:** beside every colour sheet, the owner gets a normal map (and, when
   asked, a depth map) with the same layout, cells and frames, which a game
@@ -34,9 +39,10 @@ settled; a candidate shape is under [Delivery plan](#delivery-plan).
   place, while the exported colour sheet stays exactly as flat as without
   the arc.
 - **Done when:** the automated checks prove the maps' alignment and
-  encoding; every existing look writes the same colour sheet pixels as
-  before the arc; and the owner reviews normal maps and lit previews of the
-  acceptance model by eye and approves them (V-12).
+  encoding; every existing look writes the same colour sheet pixels and flat
+  previews as before the arc; `--settings-from` reproduces every new output
+  byte for byte; and the owner reviews normal maps, depth maps and lit
+  previews of the acceptance model by eye and approves them (LIT-6, V-12).
 - **Users and operators:** the owner producing game art; games that read the
   maps; agents maintaining the tool.
 - **Arc label:** None proposed.
@@ -164,6 +170,11 @@ both maps, so it shows the exact case.
 - Any game's private layout, such as face weights (V-1, D-2).
 - Changing the colour capture, the shade buffer, the ramps or any existing
   look.
+- A directional-light option, light colour, distance falloff, and a lit
+  sheet PNG (D-13, D-14).
+- Normal textures (D-16), and `MASK` cutouts in any map: the maps follow
+  the colour's opaque `MASK` surfaces, as the ID and shade do (material
+  styling D-26).
 
 ## Design
 
@@ -296,15 +307,16 @@ For each `s×s` block whose colour pixel is covered:
   block, renormalised, whatever the material, reduction or library. Never
   palette-mapped or voted (D-8). A covered pixel whose block has no surface
   sample (a thin edge the centre samples missed) faces the viewer.
-- **Depth:** [Q-10](#q-10-how-does-a-pixels-depth-reduce-and-with-no-sample).
+- **Depth** (D-19): the mean depth of the same samples, rounded to the
+  1/16-pixel step; a covered pixel with no sample takes its covered
+  neighbours' mean, else 0.
 - A transparent colour pixel is transparent in every map.
 
 ### Outputs
 
-Candidate names, beside the sheet: `<stem>.normal.png`, `<stem>.depth.png`,
-and lit previews `<stem>.<clip>.lit.gif`. The JSON gains a description of
-each map and the light, under a schema bump to `moskophoros.sheet/8`
-([Q-6](#q-6-what-files-does-a-run-write-and-how-does-the-json-describe-them)).
+Beside the sheet: `<stem>.normal.png`, `<stem>.depth.png` and lit previews
+`<stem>.<clip>.lit.gif` (D-17); the JSON's `maps` record names them, and the
+new settings (D-18) are recorded and reused.
 
 ## Decisions
 
@@ -476,9 +488,72 @@ material property is for the ID and shade. Fine painted detail mostly
 averages away within one sprite pixel, and the review model has none.
 Deferred until a model needs it.
 
+### D-17. The files and the JSON record
+
+Decided 2026-10-13 by the owner in this design's session ("i like all of
+your recommendations, these are approved"; resolves Q-6, as proposed).
+
+- `<stem>.normal.png`, on every run (D-9): an 8-bit RGBA PNG the size of
+  the sheet, in its layout. A covered pixel holds `round((n + 1) / 2 · 255)`
+  per component with alpha 255; every pixel transparent in the colour sheet
+  is `(0, 0, 0, 0)`, so the two alphas are identical.
+- `<stem>.depth.png`, when asked (D-10): a 16-bit greyscale PNG the size of
+  the sheet, 0 wherever the colour sheet is transparent.
+- `<stem>.<clip>.lit.gif`, when a light is placed (D-13).
+- All are published all-or-nothing with the sheet. As today, a run replaces
+  only the files it writes: turning a map off leaves an earlier run's file.
+- The JSON gains a top-level `maps` record after `image`, each map's base
+  file name or `null`:
+  `{"normal": {"file": "hero.normal.png"}, "depth": null}`. The encodings
+  are fixed by the design and named by the schema, not repeated per sheet.
+  The new settings (D-18) sit inside `settings`, in the fingerprint, and
+  reload with `--settings-from`. Any fixed parameter the normal and depth
+  capture adds joins `generator.shade`'s technique record.
+- Each slice that changes the record bumps the sheet schema, from
+  `moskophoros.sheet/7`, as the settings arc did; each bump stops the
+  previous schema loading (settings design D-24).
+
+### D-18. Every new control is a setting
+
+Decided 2026-10-13 by the owner in this design's session (resolves Q-7, as
+proposed). Under settings design D-2's layers, each is a setting that files
+may set and every sheet records whether or not it is used, as `shade` is:
+
+| Setting | Options | Shipped default |
+|---|---|---|
+| `normals` | `--normals`, `--no-normals` | `true` (D-9) |
+| `depth` | `--depth`, `--no-depth` | `false` (D-10) |
+| `light.position` | `--light X,Y,Z`, `--no-light` | `null`: no light (D-13) |
+| `light.intensity` | `--light-intensity I` | `1.0`, finite, 0 or greater (D-14) |
+| `light.ambient` | `--light-ambient A` | `0.3`, 0 to 1 (D-14) |
+
+```yaml
+normals: true
+depth: false
+light:                    # set any of them; the rest fall through
+  position: [-20, 30, 40] # sheet pixels from the ground point; null: no light
+  intensity: 1.0
+  ambient: 0.3
+```
+
+`light` merges key by key across layers, as `shade` does. `--no-light`
+drops a reused or configured light, as `--no-palette` does. Without
+previews (`--no-preview`, `previews: false`), no lit preview is written
+either, and a placed light is recorded but unused, with a warning saying
+so.
+
+### D-19. A pixel's depth averages the same samples; a gap takes its neighbours
+
+Decided 2026-10-13 by the owner in this design's session (resolves Q-10, as
+proposed). A covered pixel's depth is the mean depth of the surface samples
+its normal averages (D-15), rounded to D-10's 1/16-pixel step. A covered
+pixel with no surface sample takes the mean depth of its covered 8
+neighbours that have samples, else 0, the ground point's plane. The lit
+preview uses the same reduced depth.
+
 ## Open questions
 
-Open: Q-6, Q-7 and Q-10. Resolved: Q-1 by D-9, Q-2 by D-10, Q-3 by D-13
+None open. Resolved: Q-6 by D-17, Q-7 by D-18, Q-10 by D-19; Q-1 by D-9, Q-2 by D-10, Q-3 by D-13
 (its remainder by D-14), Q-4 by D-15, Q-5 by D-16, Q-8 by D-11, Q-9 by
 D-14.
 
@@ -579,6 +654,8 @@ pixel, and the review model has none. Deferred until a model needs it.
 
 ### Q-6. What files does a run write, and how does the JSON describe them?
 
+**Resolved by D-17.**
+
 **Proposal:**
 
 - **Files,** beside the sheet, published all-or-nothing with it as every
@@ -606,6 +683,8 @@ pixel, and the review model has none. Deferred until a model needs it.
   previous schema loading.
 
 ### Q-7. Which of these are settings, and what are the options?
+
+**Resolved by D-18.**
 
 **Proposal:** all of them are settings, under settings design D-2's layers,
 so the owner's user file can, for example, turn depth on or place a default
@@ -635,6 +714,8 @@ previews (`--no-preview`), no lit preview is written either, and a placed
 light is recorded but unused, with a warning saying so.
 
 ### Q-10. How does a pixel's depth reduce, and with no sample?
+
+**Resolved by D-19.**
 
 D-15 settles normals; depth needs the same. **Proposal:** a covered pixel's
 depth is the mean depth of the same surface samples its normal averages,
@@ -686,11 +767,11 @@ owner described: near, a local light; far, the sun.
 
 ## Verification strategy
 
-*Proposal.*
-
 - **Pure tests:** block reduction of normals and depth (renormalising,
-  coverage from the colour, the no-sample fallback, transparent pixels),
-  encoding round trips, the light formula, JSON records and reuse.
+  coverage from the colour, both no-sample fallbacks, transparent pixels,
+  independence from reduction and library), encoding round trips at the
+  ends of each range, the light formula (a light far away matches a
+  distant one), JSON records, settings layers and reuse.
 - **Blender tests** on generated fixtures: a plane at a known angle reads
   its exact camera-space normal at several pitches and directions; a
   sphere's normals match the analytic normal within a stated angle; a
@@ -699,22 +780,146 @@ owner described: near, a local light; far, the sun.
   identical; the colour bytes are unchanged by the new passes.
 - **Old output preserved:** the colour sheet, JSON (except schema and the
   new records) and flat previews of every existing look stay byte-identical.
-- **The owner's eye** (D-8, V-12): normal maps and lit previews of the
-  acceptance model at the owner's cell size, with the light in several
-  places, judged for alignment and plausibility.
+- **Reproduction:** the self-reproduction test (settings design D-16)
+  extends to the normal map, depth map and lit previews.
+- **The owner's eye** (D-8, V-12): normal maps, depth maps and lit previews
+  of the acceptance model at the owner's cell size and a smaller one, with
+  the light in several places, judged for alignment and plausibility
+  (LIT-6). No test claims a look is good.
 
 ## Delivery plan
 
-*A candidate shape only, for discussion; not proposed for signoff until the
-open questions are settled.*
+*Proposal, awaiting the owner's signoff.* Each slice is one issue and one
+pull request, except LIT-6. Every slice amends `docs/design.md` for what it
+delivers, in its own pull request, since tests read the design.
 
-1. Capture the normal and depth buffers (after the spike).
-2. Reduce them to the output grid with the colour's coverage.
-3. Write the normal map, record it in the JSON, bump the schema, reuse it.
-4. Write the optional depth map.
-5. Lit previews and the light flag.
-6. The owner's visual review (documentation only, like material styling
-   MAT-7).
+### LIT-1. Capture normal and depth buffers on every render
+
+- **Outcome:** every render writes, per frame, a camera-space normal buffer
+  and a depth buffer from the existing auxiliary Cycles render, validated by
+  the launcher and decoded by the command into the frame's named buffers.
+- **Scope:** the AOVs, EXR save and standard-library readback of
+  [Spike 1](#spike-1) in `blender_script.py`, with every setting restored;
+  `normal/` and `depth/` buffers at the supersampled size, their exact
+  encoding chosen here and recorded in the design (enough precision that
+  averaging is not limited by it: at least 16 bits per normal component,
+  and depth relative to the ground point's camera depth); the result
+  contract making them mandatory; the launcher's validation (encoding,
+  unit length, coverage identical to the material ID's); decoding into
+  `ImageFrame.buffers` as arrays stylize can take; design §Capture,
+  §result format, §Frames into stylize and §Deferred amended.
+- **Phase:** 1
+- **Depends on:** `none`
+- **Ordering:** `critical path`
+- **Relevant decisions:** D-2, D-11, D-12, D-16
+- **Acceptance signals:** Blender tests on generated fixtures: plane
+  normals within a stated tolerance of exact at pitches 0°, 30° and 90° and
+  two directions; a smooth sphere's interpolated normals within a stated
+  mean error; a plane's depth; normal and depth coverage identical to the
+  material ID's; repeat renders identical; colour, material-ID and shade
+  buffers byte-identical to the base commit (local-validation report).
+- **Out of scope:** reducing or exporting the maps; any setting or option.
+- **Open questions:** `None`
+
+### LIT-2. Reduce normals and depth to the sheet's pixels
+
+- **Outcome:** each frame's normals and depth are reduced to the output
+  grid with the colour sheet's coverage, and travel with the reduced colour
+  frame through cleanup to export.
+- **Scope:** pure reductions in `imageops` (D-15, D-19); stylize returning
+  the reduced maps beside the colour, still releasing every supersampled
+  buffer before the next frame; cleanup passing them through; design
+  §Frames into stylize, §Pipeline amended.
+- **Phase:** 2
+- **Depends on:** LIT-1
+- **Ordering:** `critical path`
+- **Relevant decisions:** D-8, D-15, D-19
+- **Acceptance signals:** pure tests of both reductions, renormalising,
+  both fallbacks and transparent pixels; reduced map alpha equal to the
+  colour's under every look; outputs of every existing look unchanged.
+- **Out of scope:** writing any file; settings.
+- **Open questions:** `None`
+
+### LIT-3. Write the normal map, record it and reuse it
+
+- **Outcome:** every run writes `<stem>.normal.png` beside the sheet unless
+  turned off, named in the JSON's `maps` record and reproduced by
+  `--settings-from`.
+- **Scope:** the map's encoding and layout (D-17); the `normals` setting,
+  `--normals` and `--no-normals` (D-18); `maps` and `settings.normals` in
+  the JSON and fingerprint; the schema bump; all-or-nothing publishing;
+  design §CLI, §Settings files, §Export and §Reuse amended.
+- **Phase:** 3
+- **Depends on:** LIT-2
+- **Ordering:** `critical path`
+- **Relevant decisions:** D-2, D-9, D-17, D-18
+- **Acceptance signals:** the normal map's alpha identical to the colour
+  sheet's; encoding round trips; `--no-normals` writes none and records
+  `null`; self-reproduction byte-identical; the colour sheet and flat
+  previews of every existing look byte-identical to before the arc.
+- **Out of scope:** depth; light.
+- **Open questions:** `None`
+
+### LIT-4. Write the optional depth map
+
+- **Outcome:** `--depth` (or `depth: true`) writes `<stem>.depth.png`
+  beside the sheet, named in `maps`, reproduced by `--settings-from`.
+- **Scope:** the 16-bit encoding (D-10, D-17); the `depth` setting,
+  `--depth` and `--no-depth`; recording; the schema bump; design amended.
+- **Phase:** 4
+- **Depends on:** LIT-3
+- **Ordering:** `not on the critical path`; before or after LIT-5, the
+  later of the two taking the next schema number
+- **Relevant decisions:** D-3, D-10, D-17, D-18, D-19
+- **Acceptance signals:** a plane at a known position reads its depth in
+  sheet pixels within the 1/16 step; 0 exactly where the colour sheet is
+  transparent; the range ends encode; self-reproduction byte-identical.
+- **Out of scope:** the light.
+- **Open questions:** `None`
+
+### LIT-5. Light the previews with an optional point light
+
+- **Outcome:** `--light X,Y,Z` writes lit previews,
+  `<stem>.<clip>.lit.gif`, beside the unchanged flat ones; without it,
+  nothing changes.
+- **Scope:** the light settings and options (`light.position`,
+  `light.intensity`, `light.ambient`, `--light`, `--no-light`,
+  `--light-intensity`, `--light-ambient`; D-18); the formula (D-14) in
+  linear light, each pixel's position from its cell position and reduced
+  depth (D-13, D-19); the GIF's 256-colour reduction and warning; the
+  `--no-preview` warning; recording and the schema bump; the formula
+  documented in the design so a game can match it.
+- **Phase:** 4
+- **Depends on:** LIT-3
+- **Ordering:** `not on the critical path`; before or after LIT-4
+- **Relevant decisions:** D-4, D-5, D-13, D-14, D-18, D-19
+- **Acceptance signals:** pure tests of the formula (a light behind the
+  surface gives the ambient level; a distant light matches a uniform
+  direction); a light placed in a settings file and reused reproduces the
+  lit previews byte for byte; the colour sheet, flat previews and maps
+  identical with and without a light.
+- **Out of scope:** a directional option, light colour, falloff, a lit
+  sheet PNG, the owner's interface.
+- **Open questions:** `None`
+
+### LIT-6. Review normal maps and lit previews with the owner
+
+- **Outcome:** the owner's verdict on the arc's output, recorded in
+  `docs/acceptance/lighting-sheet.md`.
+- **Scope:** renders of RobotExpressive under the owner's look (their user
+  settings) at their cell size, 48 × 48, and a smaller one; each colour
+  sheet beside its normal map, depth map and an overlay showing their
+  alignment; lit previews with the light in several places, near and far,
+  each image labelled with what it shows and the exact command. Delivered
+  as a documentation-only acceptance step with no pull request, as
+  material styling MAT-7 was; renders stay outside the repository.
+- **Phase:** 5
+- **Depends on:** LIT-3, LIT-4, LIT-5
+- **Ordering:** `critical path`
+- **Relevant decisions:** D-8
+- **Acceptance signals:** the owner's recorded verdict.
+- **Out of scope:** changing defaults or the owner's settings.
+- **Open questions:** `None`
 
 ## Source notes
 
