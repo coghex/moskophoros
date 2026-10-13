@@ -13,13 +13,11 @@ trigger for the depth and normal rows of design §Deferred ("Auxiliary capture
 buffers"). It benefits the owner producing game art, and any game that lights
 2D sprites from normal maps (V-1).
 
-Design state: `exploring`
+Design state: `ready for issue processing`
 
-*Reset 2026-10-13 from `ready for issue processing` by [Review 1](#review-1):
-two findings needed the owner's decisions, now D-21 and D-22 (with D-23), and
-the numerical contracts were completed. [Review 2](#review-2) then raised
-one more owner question (Q-14) and two fixes. It is marked ready again only
-when the owner signs off the revisions.*
+*Re-approved by the owner on 2026-10-13 after [Review 1](#review-1) and
+[Review 2](#review-2) (D-25). It had been reset to `exploring` for those
+reviews' revisions.*
 
 Status legend: `[ ]` unprocessed · `[#N]` linked to issue N · `[no-issue]`
 reviewed and deliberately not tracked separately · `[deferred]` blocked on a
@@ -27,8 +25,9 @@ concrete precondition
 
 ## Processing status
 
-The owner approved this slice list on 2026-10-13 (D-20); Review 1 adds
-obligations to its slices but no slice.
+The owner approved this slice list on 2026-10-13 (D-20) and re-approved it
+after Reviews 1 and 2 (D-25), which added obligations to its slices but no
+slice.
 
 - [ ] EPIC. Light sprites live: a normal map, an optional depth map and lit previews
 - [ ] LIT-1. Capture normal and depth buffers on every render
@@ -409,7 +408,8 @@ new settings (D-18) are recorded and reused.
 All are the owner's. D-1 to D-8 come from material styling D-27
 (2026-10-13, typed in the moskophoros manager's terminal), recorded here as
 this arc's starting point and not reopened. D-9 to D-23 were decided by the
-owner in this design's session on 2026-10-13, D-21 to D-23 after Review 1.
+owner in this design's session on 2026-10-13, D-21 to D-23 after Review 1;
+D-24 and D-25 after Review 2.
 
 ### D-1. The colour sheet stays flat
 
@@ -686,7 +686,8 @@ is raised before anything is published, and names the clip, direction and
 sample time, the measured depth range in sheet pixels and the supported
 range, and suggests a smaller `--ppm`. Depth is never clamped or rescaled.
 Capture and reduction hold any depth, so a run that writes no depth map and
-places no light is never checked.
+places no light is never checked. *Amended by D-24:* "a light is placed"
+means lit previews are written, so previews must also be on.
 
 ### D-22. Lit previews are named `<stem>-lit.<clip>.gif`
 
@@ -708,9 +709,26 @@ camera-fixed studio light and its bytes, as material styling D-22 left it.
 A lit preview over it applies directional light a second time; that is
 accepted and noted, not corrected, in this arc.
 
+### D-24. The depth range is checked only for what a run produces
+
+Decided 2026-10-13 by the owner in this design's session (resolves Q-14,
+option A; amends D-21). The depth range is checked when the depth map is
+written, or when previews are on and a light is placed, since only then is
+encoded depth used. With previews off, a placed light imposes nothing: it is
+recorded but unused, with D-18's warning, and a depth beyond the range does
+not fail the run.
+
+### D-25. The revised design is ready for issue processing
+
+Decided 2026-10-13 by the owner in this design's session ("yes i approve it,
+anything else i will work out during the solve process"). The owner
+re-approved the design after Reviews 1 and 2, with D-20's six slices and
+their added obligations, as ready for issue processing, and asked for no
+further Codex review. Anything else is settled while solving the slices.
+
 ## Open questions
 
-Open: Q-14, raised by [Review 2](#review-2). Q-11, Q-12 and Q-13, raised by [Review 1](#review-1), are resolved by D-21, D-22 and D-23. Resolved: Q-6 by D-17, Q-7 by D-18, Q-10 by D-19; Q-1 by D-9, Q-2 by D-10, Q-3 by D-13
+None open. Q-14, raised by [Review 2](#review-2), is resolved by D-24. Q-11, Q-12 and Q-13, raised by [Review 1](#review-1), are resolved by D-21, D-22 and D-23. Resolved: Q-6 by D-17, Q-7 by D-18, Q-10 by D-19; Q-1 by D-9, Q-2 by D-10, Q-3 by D-13
 (its remainder by D-14), Q-4 by D-15, Q-5 by D-16, Q-8 by D-11, Q-9 by
 D-14.
 
@@ -995,6 +1013,8 @@ library-less sheets to be lit live as well.
 
 ### Q-14. Does a light that draws nothing still trigger the depth check?
 
+**Resolved by D-24** (option A). Kept for the alternative.
+
 Raised by Review 2 (S-1). D-18 says that with previews off a placed light
 is "recorded but unused, with a warning". D-21 checks the depth range
 whenever "a light is placed". They disagree for one run: previews off, depth
@@ -1079,7 +1099,7 @@ three new should-fix findings, each checked and each holding.
 
 | Finding | Severity | Disposition |
 |---|---|---|
-| S-1. D-18's unused light and D-21's depth check disagree when previews and depth are off | should fix, owner | The owner's, [Q-14](#q-14-does-a-light-that-draws-nothing-still-trigger-the-depth-check); tests in LIT-5 |
+| S-1. D-18's unused light and D-21's depth check disagree when previews and depth are off | should fix, owner | Decision D-24: the range is checked only for a depth map or lit previews actually produced; tests in LIT-5 |
 | S-2. LIT-5 may land before LIT-4 but its test needed the exported depth map | should fix | Fixed: LIT-5 checks reconstruction in memory; the production check from the exported PNGs goes to whichever of LIT-4 and LIT-5 lands second, before LIT-6; the owner's either-order choice kept |
 | S-3. A plain float64 norm overflows or underflows for very far or very near lights | should fix | Fixed: scaled normalisation in [Numerical reference](#numerical-reference) step 5; tests with lights at `1e200` and `1e-200`; the finite-numbers rule stated for `light.position` in settings files and reuse |
 | Q-2 still repeated the old "any cell" claim | note | Annotated: D-10's correction and D-21 govern |
@@ -1213,7 +1233,7 @@ delivers, in its own pull request, since tests read the design.
 - **Ordering:** `not on the critical path`; before or after LIT-4, the
   later of the two taking the next schema number and the production
   reconstruction check below
-- **Relevant decisions:** D-4, D-5, D-13, D-14, D-18, D-19, D-21, D-22, D-23
+- **Relevant decisions:** D-4, D-5, D-13, D-14, D-18, D-19, D-21, D-22, D-23, D-24
 - **Open questions:** `None`
 - **Acceptance signals:** pure tests of the formula (a light behind the
   surface gives the ambient level; a distant light matches a uniform
@@ -1228,7 +1248,10 @@ delivers, in its own pull request, since tests read the design.
   file and a reused sheet (S-3); **if LIT-4 has already landed**, the
   production reconstruction check from the exported colour, normal and
   depth PNGs (S-2); the lit preview's depth-range behaviour as
-  D-21 sets, including with `--no-depth` (R-1); lit and flat names never
+  D-21 and D-24 set, including with `--no-depth` (R-1), and a configured
+  and a reused light with `--no-preview --no-depth` passing beyond the range
+  with D-18's warning, against depth-on and previews-on controls that fail
+  (S-1); lit and flat names never
   colliding, tested with clips `walk` and `walk.lit`, case variants
   (`Walk`, `walk`) and names already carrying `-2` suffixes, alongside
   publication rollback, under D-22's naming (R-2).
