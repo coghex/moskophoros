@@ -466,6 +466,23 @@ new settings (D-18) are recorded and reused.
   with another output name names its own map, and reuse regenerates the map
   from the model, never reading an earlier file.
 
+*LIT-4's record* (recorded by LIT-4, #99, 2026-10-13; `docs/design.md`
+§Export and §Scale and ground point, *Overflow*, hold the contract). LIT-4
+landed before LIT-5, so it took `moskophoros.sheet/9`; LIT-5 takes `/10` and
+the production reconstruction check from the exported colour, normal and
+depth PNGs (requirement 8 of #99, Review 2's S-2).
+
+- `settings.depth` sits between `settings.normals` and `settings.shade`,
+  inside the fingerprint; `maps.depth` is `{"file": "<stem>.depth.png"}` or
+  `null`, outside it.
+- The map is `export.depth_path(png)`; `export.encode_depth` gives the codes
+  and `export.DEPTH_LIMIT` (2047.9375) the range.
+- The overflow is `export.DepthOverflow` (exit 4), raised by `export.encode`
+  only when the depth map is written. LIT-5's lit previews also use the
+  encoded depth (D-24): its check should call the same range check
+  (`export._check_depths`) when lit previews are written, so the two share
+  one check and one message, as #99's requirement 4 asks.
+
 ## Decisions
 
 All are the owner's. D-1 to D-8 come from material styling D-27
