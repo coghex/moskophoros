@@ -292,12 +292,12 @@ frame's capture.
 
 For each `s×s` block whose colour pixel is covered:
 
-- **Normal:** the sum of the block's sampled unit normals, renormalised
-  ([Q-4](#q-4-which-samples-does-a-pixels-normal-average)). Never
-  palette-mapped or voted (D-8).
+- **Normal** (D-15): the sum of every surface sample's unit normal in the
+  block, renormalised, whatever the material, reduction or library. Never
+  palette-mapped or voted (D-8). A covered pixel whose block has no surface
+  sample (a thin edge the centre samples missed) faces the viewer.
+- **Depth:** [Q-10](#q-10-how-does-a-pixels-depth-reduce-and-with-no-sample).
 - A transparent colour pixel is transparent in every map.
-- A covered colour pixel whose block has no normal sample (a thin edge the
-  centre samples missed) needs a fallback (Q-4).
 
 ### Outputs
 
@@ -445,10 +445,42 @@ without the flag, "not that it doesnt exist".
   colours leave the palette, so a GIF frame may be reduced to 256 colours,
   with today's warning. No lit sheet PNG.
 
+### D-14. Light strength: no falloff, an intensity and an ambient level
+
+Decided 2026-10-13 by the owner in this design's session ("recommended for
+all"; resolves Q-9, option A). The light does not fade with distance:
+brightness depends only on the angle between the surface and the direction
+to the light, so far away it acts as the sun and up close as a local light.
+`--light-intensity I` (default 1, multiplying the diffuse term) and
+`--light-ambient A` (default 0.3, how bright a surface facing away from the
+light is) set its strength. In linear light, per channel:
+`lit = colour · min(1, A + (1 − A) · I · max(0, N · L))`.
+
+### D-15. A pixel's normal averages every surface sample in its block
+
+Decided 2026-10-13 by the owner in this design's session (resolves Q-4,
+option A, as recommended). A covered pixel's normal is the sum of every
+surface sample's unit normal in its `s×s` block, renormalised, whatever
+material each sample shows and whatever the reduction or library: at a
+material edge it blends both surfaces. A covered pixel whose block has no
+surface sample faces the viewer, `(0, 0, 1)`, encoded `(128, 128, 255)`.
+The owner's check on small cells (D-8) decides whether anything finer is
+needed.
+
+### D-16. Normal textures do not reach the normals, for now
+
+Decided 2026-10-13 by the owner in this design's session (resolves Q-5, as
+recommended). The normals are the model's geometry only, its interpolated
+vertex normals; a glTF material's normal texture is ignored, as every
+material property is for the ID and shade. Fine painted detail mostly
+averages away within one sprite pixel, and the review model has none.
+Deferred until a model needs it.
+
 ## Open questions
 
-Open: Q-4, Q-5, Q-6, Q-7 and Q-9. Resolved: Q-1 by D-9, Q-2 by D-10,
-Q-3 by D-13 (its remainder is Q-9), Q-8 by D-11.
+Open: Q-6, Q-7 and Q-10. Resolved: Q-1 by D-9, Q-2 by D-10, Q-3 by D-13
+(its remainder by D-14), Q-4 by D-15, Q-5 by D-16, Q-8 by D-11, Q-9 by
+D-14.
 
 ### Q-1. Is the normal map written on every run, or only when asked?
 
@@ -523,6 +555,8 @@ for the alternatives.
 
 ### Q-4. Which samples does a pixel's normal average?
 
+**Resolved by D-15** (option A). Kept for the alternative.
+
 - **A. Every surface sample in the block**, renormalised. Geometrically
   true; at a material edge the normal blends both surfaces.
 - **B. Only the samples of the identity the colour pixel was drawn from**,
@@ -536,6 +570,8 @@ geometry; the owner's check on small cells decides whether B is needed.
 
 ### Q-5. Do material properties perturb the normals?
 
+**Resolved by D-16.**
+
 glTF materials can carry a normal texture. Today no material property reaches
 the ID and shade. **Recommendation: no**, the model's geometry only, for
 now; textured normal detail is mostly lost when averaged into one sprite
@@ -543,19 +579,70 @@ pixel, and the review model has none. Deferred until a model needs it.
 
 ### Q-6. What files does a run write, and how does the JSON describe them?
 
-Candidate names under [Outputs](#outputs). The JSON would gain a `maps`
-record (each map's file and encoding: axes and byte formula for normals;
-quantity, unit, zero and scale for depth), settings for which maps are
-written and the preview light, a schema bump to `moskophoros.sheet/8`
-(settings design D-24: `/7` sheets then stop loading), and reuse of all of
-it through `--settings-from`. Depends on Q-1 to Q-3.
+**Proposal:**
 
-### Q-7. Which of these are settings?
+- **Files,** beside the sheet, published all-or-nothing with it as every
+  output is today:
+  - `<stem>.normal.png`: an 8-bit RGBA PNG the size of the sheet, in its
+    layout. A covered pixel holds `round((n + 1) / 2 · 255)` per component
+    (D-2, §Direction space) with alpha 255; every pixel transparent in the
+    colour sheet is `(0, 0, 0, 0)`, so the two alphas are identical.
+  - `<stem>.depth.png`, when asked: a 16-bit greyscale PNG the size of the
+    sheet (D-10), 0 wherever the colour sheet is transparent.
+  - `<stem>.<clip>.lit.gif`, when a light is placed (D-13).
+  - As today, a run replaces only the files it writes: turning a map off
+    leaves an earlier run's map file where it was.
+- **JSON,** schema `moskophoros.sheet/8`:
+  - a top-level `maps` record after `image`:
+    `{"normal": {"file": "hero.normal.png"}, "depth": null}`, each map's base
+    file name or `null` when it was not written. The encodings are fixed by
+    the design and named by the schema, not repeated in each sheet.
+  - the new settings (Q-7) inside `settings`, so they are in the fingerprint
+    and reload with `--settings-from`.
+  - `generator.shade`'s technique record gains whatever fixed parameters the
+    normal and depth capture has, as the shade's did.
+- **Schema bumps:** each slice that changes the record bumps the schema, as
+  the settings arc did; under settings design D-24, a bump stops the
+  previous schema loading.
 
-Under settings design D-2's layers: whether each map is written, and the
-preview light, as settings that files may set and sheets record; or command
-options only. **Recommendation: settings**, like `previews`, so the owner's
-user file can turn depth on or place a default light. Depends on Q-1 to Q-3.
+### Q-7. Which of these are settings, and what are the options?
+
+**Proposal:** all of them are settings, under settings design D-2's layers,
+so the owner's user file can, for example, turn depth on or place a default
+light; every setting is recorded in the sheet whether or not it is used,
+like `shade`.
+
+| Setting | Options | Shipped default |
+|---|---|---|
+| `normals` | `--normals`, `--no-normals` | `true` (D-9) |
+| `depth` | `--depth`, `--no-depth` | `false` (D-10) |
+| `light.position` | `--light X,Y,Z`, `--no-light` | `null`: no light (D-13) |
+| `light.intensity` | `--light-intensity I` | `1.0`, finite, 0 or greater (D-14) |
+| `light.ambient` | `--light-ambient A` | `0.3`, 0 to 1 (D-14) |
+
+```yaml
+normals: true
+depth: false
+light:                    # set any of them; the rest fall through
+  position: [-20, 30, 40] # sheet pixels from the ground point; null: no light
+  intensity: 1.0
+  ambient: 0.3
+```
+
+`light` merges key by key across layers, as `shade` does. `--no-light`
+drops a reused or configured light, as `--no-palette` does. Without
+previews (`--no-preview`), no lit preview is written either, and a placed
+light is recorded but unused, with a warning saying so.
+
+### Q-10. How does a pixel's depth reduce, and with no sample?
+
+D-15 settles normals; depth needs the same. **Proposal:** a covered pixel's
+depth is the mean depth of the same surface samples its normal averages,
+rounded to the 1/16-pixel step (D-10). For a covered pixel with no surface
+sample, "facing the viewer" has no depth equivalent, and 0 (the ground
+point's plane) can be far from the surface around it (the top of a head at
+−30). So: the mean depth of its covered 8 neighbours that have samples,
+else 0. The lit preview uses the same reduced depth.
 
 ### Q-8. How does Blender produce the normal and depth?
 
@@ -564,6 +651,8 @@ image), or a second render per frame. **Resolved by D-11**: the first,
 proved by [Spike 1](#spike-1).
 
 ### Q-9. How strong is the light, and does it fall off with distance?
+
+**Resolved by D-14** (option A, ambient 0.3). Kept for the alternatives.
 
 D-13 places a point light; the owner asked for its strength to be
 controllable: "we should scale the light intensity by the distance, so that
