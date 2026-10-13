@@ -249,6 +249,33 @@ detail; the launcher's validator, which accepts only 8-bit RGBA today, gains
 it. Depth is stored relative to the ground point, because the camera's
 distance changes per frame (below).
 
+*LIT-1's encoding* (recorded by LIT-1, #96, 2026-10-13; `docs/design.md`
+§Capture, §Capture job and result contract and §Frames into stylize hold
+the contract). Both buffers are 16-bit RGBA PNGs at the supersampled size,
+every row unfiltered, no chunk but IHDR, IDAT and IEND; alpha is 65535 on a
+surface and every sample is 0 off one, so "no surface" is `(0, 0, 0, 0)`.
+
+- *Normal:* each camera-space component `n` (+Z toward the viewer, the AOV's
+  `(x, y, −z)`) as `floor((n + 1) / 2 · 65535 + ½)` in red, green and blue:
+  16 bits per component, at most 1.5 · 10⁻⁵ from the AOV's value. The
+  launcher accepts a surface's normal within 10⁻³ of unit length (the
+  encoding moves it by at most 2.7 · 10⁻⁵), any z sign included.
+- *Depth:* `ground_view_z − view_z` in **meters**, as the 32-bit float whose
+  big-endian bits are red (high half) and green (low half), blue 0. Any
+  finite depth is held, so D-21's range never limits capture; a covered 0 is
+  `(0, 0, 0, 65535)`. D-10's sheet-pixel depth is this times
+  `pixels_per_meter`, which LIT-2 applies.
+- *Decoded* by the command into `ImageFrame.buffers`: `sampling.NORMAL`, a
+  `float32` `(height, width, 3)` array, `(0, 0, 0)` off a surface;
+  `sampling.DEPTH`, a `float32` `(height, width)` array in meters, NaN off a
+  surface.
+- *Cost:* the spike's "about 10 % more auxiliary render time" covered the
+  render and the OpenEXR. Converting the AOVs to these buffers in Blender's
+  Python, with the standard library alone, adds about 0.07 s per 384 × 384
+  frame on an Apple M3 Max, as the spike used. A 144-frame `--cell 48x48 --supersample 8`
+  run of the test hero went from 11.9 s to 21.9 s; the buffers are written
+  at zlib's fastest level, since their samples barely compress.
+
 #### Spike 1
 
 Recorded 2026-10-13, before any capture change; its code is not delivered.
