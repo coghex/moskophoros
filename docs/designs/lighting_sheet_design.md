@@ -76,8 +76,10 @@ spike recorded under [Capture](#capture) is separate.
   16-bit buffer needs a validator change.
 - The shade pass lets **no material property reach it, normal maps
   included** (design §Capture, *Surfaces*).
-- Capture cost today: about 1 s per frame for the auxiliary render at
-  128 × 112, 4 s at 2048 × 1792 (material styling §Spike record).
+- Capture cost: the material spike measured about 1 s per frame for the
+  auxiliary render at 128 × 112 and 4 s at 2048 × 1792 (material styling
+  §Spike record); [spike 1](#spike-1) measured 0.02 s and 2 s on a faster
+  machine.
 
 **Between capture and export**
 
@@ -195,10 +197,9 @@ the lighting to be exact, as it must already for the sprite to look right.)
 
 ### Capture
 
-How Blender produces the normal and depth is a spike's question
-([Q-8](#q-8-how-does-blender-produce-the-normal-and-depth)); it runs
-alongside this design and is recorded here. The contract the spike must
-meet:
+How Blender produces the normal and depth is
+[Q-8](#q-8-how-does-blender-produce-the-normal-and-depth), answered by
+spike 1 below. The contract it had to meet:
 
 - the **same camera sample** as the material-ID and shade, so a normal pixel
   is always the surface its ID names;
@@ -206,6 +207,77 @@ meet:
   flat face normal;
 - full precision kept at the supersampled size, since the reduction averages;
 - deterministic, and the colour bytes unchanged.
+
+**Proposed capture**, from the spike: the existing auxiliary Cycles render
+gains two shader outputs (AOVs) in every replacement material, so no second
+render is needed. Blender's script reads them back with the standard library
+and writes them as buffers of its own, `normal/NNNNNN.png` and
+`depth/NNNNNN.png`, beside `matid` and `shade`. Their exact file encoding at
+the supersampled size (for example 16-bit PNGs) is the capture slice's
+detail; the launcher's validator, which accepts only 8-bit RGBA today, gains
+it. Depth is stored relative to the ground point, because the camera's
+distance changes per frame (below).
+
+#### Spike 1
+
+Recorded 2026-10-13, before any capture change; its code is not delivered.
+Blender 5.2.2 LTS on macOS (Apple M3 Max, 16 cores), Cycles on the CPU,
+`master` `44e5891`. The production capture script ran unchanged; the spike
+extended only its `Auxiliary` class and `render_auxiliary`. Scripts, logs and
+the full report are in
+`~/.local/share/moskophoros-acceptance/lighting-design/spike-1/`
+(`REPORT.md`).
+
+**Technique.** In each replacement material, beside the ID and shade
+emission:
+
+- *normal:* Geometry *Normal* → Vector Transform (normal, world to camera) →
+  AOV Output `normal` (a colour AOV on the view layer);
+- *depth:* Camera Data *View Z Depth* → AOV Output `depth` (a value AOV).
+
+One render writes the TGA exactly as today; the render result is then also
+saved as an uncompressed 32-bit multilayer OpenEXR (`media_type` must be set
+to `MULTI_LAYER_IMAGE` before the format), and every setting and AOV is
+restored. Cycles' camera space is +X right, +Y up, +Z into the scene, so the
+design's normal (D-2, §Direction space) is the AOV's `(x, y, −z)`. Blender
+cannot load the EXR's pixels in background mode, but a reader using only the
+standard library reads a 2048 × 1792 frame in 0.05 s; ZIP compression would
+cost 7.7 s per frame in pure Python, so the file is uncompressed. Blender's
+built-in Normal and Z passes are also filled with emission shaders, in the
+same sample, but the Normal pass is in world space and background depth is
+10¹⁰, so the AOVs are simpler.
+
+**Measurements** (fixture: floor, wall at a 90° crease, smooth UV sphere of
+radius 0.35 m, a plane with a known tilt; 40 px/m, cell 176 × 176, 8
+directions, pitch 0°, 30° and 90°, supersample 1 and 8):
+
+| Check | Result |
+|---|---|
+| Plane normals | within 0.0022° of exact; the floor reads `(0, cos p, sin p)` |
+| Sphere normals | mean error about 0.05° (a flat face normal would be 1.2–1.4°); at most 0.19° where the surface faces the camera by 0.3 or more; up to 3.4° at the tessellated rim |
+| Camera-relative | the tilted plane's x component changes sign between directions 0 and 45 |
+| Plane depth | within 2.3 × 10⁻⁵ m |
+| Alignment | 0 pixels where normal or depth coverage differs from the material-ID's, over 48 fixture and 16 RobotExpressive frames |
+| Determinism | normal and depth data bit-identical on repeat and with 1 or all threads (the EXR headers carry a render time, so data is compared, not files) |
+| Colour unchanged | colour, material-ID and shade PNGs byte-identical to the production command over 64 frames |
+| Cost per frame | 0.022 → 0.025 s at 128 × 112; 0.108 → 0.120 s at 384 × 384 (cell 48 × 48, supersample 8); 2.04 → 2.43 s at 2048 × 1792 |
+| EXR size per frame | 0.5 MB, 5.3 MB and 132 MB at those sizes |
+
+*Ranges on RobotExpressive* (cell 48 × 48 auto-fitted to 9.06 px/m, `iso`,
+supersample 8): normal x and y span −1 to 1; z spans −0.31 to 1, below 0 on
+0.02 % of pixels (interpolated normals at silhouettes). The camera's
+distance from the ground point **changes per frame** (it follows the
+subject's reach), so raw camera depth is meaningless across frames; depth
+relative to the ground point spans 4.45 m, −30 to +10 sheet pixels at
+9.06 px/m, or a 178-pixel span at 40 px/m.
+
+*Findings:* a surface seen from behind reads its normal flipped toward the
+viewer, since Cycles flips the shading normal; the multilayer EXR always
+carries the combined colour too.
+
+**Outcome:** the AOV technique meets the contract above on these fixtures,
+for about 10 % more auxiliary render time, which stays a small part of a
+frame's capture.
 
 ### Reducing a block
 
@@ -305,7 +377,9 @@ slice's outputs, settings and cost.
 ### Q-2. What does the depth map store, and how?
 
 - **Quantity.** *Camera depth*: each pixel's distance toward the viewer
-  from the plane through the ground point facing the camera. With the
+  from the plane through the ground point facing the camera, positive toward
+  the viewer like the normal's z. It must be relative to the ground point:
+  the camera's own distance changes per frame ([Spike 1](#spike-1)). With the
   pixel's position and the recorded `pixels_per_meter` and `ground_px`, a
   game recovers the pixel's full position in camera space, at every pitch.
   *Height above the ground point*: easier to read, but at pitch 0 it is just
@@ -319,7 +393,9 @@ slice's outputs, settings and cost.
   or an 8-bit RGBA PNG with the 16-bit value split across red and green, for
   games that load only 8-bit textures. Transparent pixels need a reserved
   value or a separate alpha. **Recommendation: 16-bit greyscale, 0 reserved
-  for "no surface"**; the spike measures the real range.
+  for "no surface"**. The spike measured the robot's depth at −30 to +10
+  pixels at its 48 × 48 fit, and a 178-pixel span at 40 px/m, well inside
+  ±2048.
 - **Default:** off, written only when asked (D-3 calls it optional).
 
 ### Q-3. What is the light flag, and what does the lit preview write?
@@ -383,9 +459,10 @@ user file can turn depth on or place a default light. Depends on Q-1 to Q-3.
 ### Q-8. How does Blender produce the normal and depth?
 
 In the same Cycles render as the ID and shade (shader outputs into a float
-image), or a second render per frame. Settled by the capture spike
-(spike 1, below), recorded here before any capture slice. Cost per frame is
-part of its answer.
+image), or a second render per frame. [Spike 1](#spike-1) shows the first
+works: same sample, exact alignment, deterministic, colour unchanged, about
+10 % more auxiliary render time. **Recommendation: adopt it** as the capture
+technique. Awaiting the owner's signoff.
 
 ## Verification strategy
 
