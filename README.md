@@ -24,8 +24,11 @@ moskophoros --clip walk --clip attack --once attack --cell 64x64 hero.glb out/he
 A run writes, beside each other:
 
 - `hero.png`, the sheet: one row per clip and direction, one column per frame;
-- `hero.json`, the `moskophoros.sheet/3` description of every frame, the
-  settings and style used and a fingerprint of them;
+- `hero.normal.png`, the normal map: the sheet's layout and alpha, each
+  pixel's surface direction relative to the camera encoded in RGB, so a game
+  shader can light the sprite live; `--no-normals` skips it;
+- `hero.json`, the `moskophoros.sheet/8` description of every frame, the
+  settings and style used and a fingerprint of them, naming the normal map;
 - `hero.<clip>.gif`, an animated preview of each clip in every direction,
   unless `--no-preview` is given.
 
@@ -41,8 +44,8 @@ moskophoros --clip walk --cell 48x48 hero.glb out/hero-small.png
 
 Outputs are published only when the whole run succeeds, so a failed run leaves
 earlier outputs as they were. `--settings-from hero.json` loads every setting
-of an earlier sheet: its view, scale, cell, ground point, style, previews and
-clip selection. Rerun with the same model and nothing else, it reproduces the
+of an earlier sheet: its view, scale, cell, ground point, style, previews,
+normal map and clip selection. Rerun with the same model and nothing else, it reproduces the
 sheet byte for byte. Give `--clip` to choose other clips that line up with it:
 the scale, cell and ground pixel are fixed rather than fitted again, and a
 new frame that does not fit the cell is an overflow error (exit 4). Only
@@ -92,8 +95,8 @@ clips:
   Idle: {frames: auto}   # by duration; null: take frames
 ```
 
-The cell, fps, frame count, palette, library, previews and shading values can
-also come from YAML settings files. `~/.config/moskophoros/config.yaml` (or
+The cell, fps, frame count, palette, library, previews, normal map and shading
+values can also come from YAML settings files. `~/.config/moskophoros/config.yaml` (or
 `$XDG_CONFIG_HOME/moskophoros/config.yaml`) holds your own defaults, and
 `--config look.yaml`, repeatable, applies a file as if its values were given
 as options; command-line options still win. Paths in a file are relative to
@@ -105,6 +108,7 @@ fps: 12
 palette: ~/palettes/vince-144.gpl
 materials: robot-library.yaml
 previews: false
+normals: true      # false: write no normal map
 shade:             # set any of them; the rest keep their defaults
   ao_distance_m: 1.2
   occlusion_weight: 0.5

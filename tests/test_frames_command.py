@@ -83,7 +83,7 @@ def test_counts_are_recorded_as_given_in_their_places(setup, capsys):
     path = config(setup, "clips:\n  attack: {frames: 2}\n  pose: {frames: auto}\n")
     ok(capsys, setup.argv("--frames", "3", "--config", str(path), "--no-preview"))
     document = sheet(setup)
-    assert document["schema"] == "moskophoros.sheet/7"
+    assert document["schema"] == "moskophoros.sheet/8"
     settings = document["settings"]
     keys = list(settings)
     assert keys[keys.index("fps") + 1] == "frames"

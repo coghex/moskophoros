@@ -12,6 +12,7 @@ frames: auto     # each clip's frame count, 1 or more; auto: by duration.
 palette: null    # a .hex, .gpl or .png palette, relative to the file; null: none
 materials: null  # a .yaml or .yml material library; null: none; needs a palette
 previews: true   # false: write no animated previews
+normals: true    # false: write no normal map (<stem>.normal.png)
 shade:           # the material ramps' shade (design §Capture, Shade)
   ao_distance_m: 0.3     # how far occlusion looks, meters, greater than 0
   ao_samples: 64         # samples per pixel, 1 to 128

@@ -457,9 +457,12 @@ def outputs(setup, capsys, argv, surfaces):
 
 @pytest.mark.parametrize(("reduce", "paletted"), OPTIONS)
 def test_the_normal_and_depth_change_no_output(setup, capsys, reduce, paletted):
+    # Only the normal map, which they make, depends on them.
     argv = speckled_argv(setup, *look_argv(setup, reduce, paletted))
     flat = outputs(setup, capsys, argv, "flat")
-    assert outputs(setup, capsys, argv, "varied") == flat
+    varied = outputs(setup, capsys, argv, "varied")
+    assert flat.pop("hero.normal.png") != varied.pop("hero.normal.png")
+    assert varied == flat
     assert sorted(flat) == ["hero.attack.gif", "hero.json", "hero.png", "hero.walk.gif"]
 
 
@@ -480,5 +483,6 @@ def test_the_normal_and_depth_change_no_output_with_a_library(setup, capsys, red
         assert status == 0, err
         return setup.listing()
 
-    flat = run_with("flat")
-    assert run_with("varied") == flat
+    flat, varied = run_with("flat"), run_with("varied")
+    assert flat.pop("hero.normal.png") != varied.pop("hero.normal.png")
+    assert varied == flat

@@ -278,11 +278,16 @@ def test_a_run_writes_the_sheet_its_json_and_a_preview_per_clip(setup, capsys):
     assert sorted(setup.listing()) == [
         "hero.attack.gif",
         "hero.json",
+        "hero.normal.png",
         "hero.png",
         "hero.walk.gif",
     ]
     description = json.loads(setup.json.read_text())
-    assert description["schema"] == "moskophoros.sheet/7"
+    assert description["schema"] == "moskophoros.sheet/8"
+    assert description["maps"] == {
+        "normal": {"file": "hero.normal.png"},
+        "depth": None,
+    }
     assert description["settings"]["style"] == PLAIN_STYLE
     assert description["image"]["file"] == "hero.png"
     assert [(c["name"], c["loop"]) for c in description["clips"]] == [
@@ -303,7 +308,7 @@ def test_a_run_writes_the_sheet_its_json_and_a_preview_per_clip(setup, capsys):
 
 def test_no_preview_writes_only_the_sheet_and_its_json(setup, capsys):
     assert run(capsys, setup.argv("--no-preview"))[0] == 0
-    assert sorted(setup.listing()) == ["hero.json", "hero.png"]
+    assert sorted(setup.listing()) == ["hero.json", "hero.normal.png", "hero.png"]
 
 
 def test_the_main_entry_point_exits_with_the_status(setup, capsys):
@@ -355,6 +360,7 @@ def test_the_fingerprint_reaches_the_frames_before_stylize(setup, capsys, monkey
         "ground_px": {"x": 8, "y": 15},
         "root_motion": "error",
         "previews": True,
+        "normals": True,
         "shade": {
             "ao_distance_m": 0.3,
             "ao_samples": 64,
@@ -542,7 +548,7 @@ def test_a_reused_mode_sheet_selects_mode_unless_overridden(setup, capsys):
     assert reused.read_bytes() == setup.png.read_bytes()
     assert (setup.out / "reused.json").read_text().replace(
         "reused.png", "hero.png"
-    ) == setup.json.read_text()
+    ).replace("reused.normal.png", "hero.normal.png") == setup.json.read_text()
 
     assert run(capsys, ["--reduce", "plain", *argv, str(reused)])[0] == 0
     assert sheet_colours(reused) == {SPECKLE_MEAN, UNUSED}
@@ -718,7 +724,7 @@ def _failing_replace(monkeypatch, out, fail_at, error):
 # The earlier PNG, JSON and attack preview exist; the walk preview is new.
 # Each existing target takes two renames (aside, then into place), a new one
 # one: 2 + 2 + 1 + 2.
-RENAMES = 7
+RENAMES = 8
 
 
 # The output each rename moves: aside then into place for an existing
@@ -728,6 +734,7 @@ RENAMED = [
     "hero.png",
     "hero.json",
     "hero.json",
+    "hero.normal.png",
     "hero.walk.gif",
     "hero.attack.gif",
     "hero.attack.gif",
@@ -793,7 +800,9 @@ def _failing_stage(monkeypatch, name, failure):
     monkeypatch.setattr(cli, "open", staged_open, raising=False)
 
 
-@pytest.mark.parametrize("name", ["hero.png", "hero.walk.gif", "hero.attack.gif"])
+@pytest.mark.parametrize(
+    "name", ["hero.png", "hero.normal.png", "hero.walk.gif", "hero.attack.gif"]
+)
 @pytest.mark.parametrize(
     ("failure", "reason"),
     [("full", "No space left on device"), ("denied", "Permission denied")],
@@ -888,6 +897,7 @@ def test_ctrl_c_after_every_output_is_in_place_lets_the_run_finish(
     assert sorted(after) == [
         "hero.attack.gif",
         "hero.json",
+        "hero.normal.png",
         "hero.png",
         "hero.walk.gif",
         "notes.txt",
@@ -910,7 +920,9 @@ def test_earlier_previews_stay_under_no_preview(setup, capsys):
     after = setup.listing()
     for name in ("hero.walk.gif", "hero.attack.gif", "notes.txt"):
         assert after[name] == earlier[name]
-    assert sorted(after) == sorted([*earlier, "hero.png", "hero.json"])
+    assert sorted(after) == sorted(
+        [*earlier, "hero.png", "hero.json", "hero.normal.png"]
+    )
 
 
 def test_a_dropped_clip_keeps_its_earlier_preview(setup, capsys):
@@ -1018,7 +1030,7 @@ def test_a_bad_settings_file_is_a_usage_error(setup, capsys):
     bad.write_text("{}")
     status, _, err = run(capsys, setup.argv("--settings-from", str(bad)))
     assert status == 2
-    assert "is not a moskophoros.sheet/7 document" in err
+    assert "is not a moskophoros.sheet/8 document" in err
     assert setup.listing() == earlier
 
 

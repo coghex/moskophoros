@@ -1,8 +1,9 @@
-"""The sheet PNG, its `moskophoros.sheet/7` JSON and the animated previews,
-following design §Export.
+"""The sheet PNG, its normal map, its `moskophoros.sheet/8` JSON and the
+animated previews, following design §Export.
 
-`encode` lays the plain frames out on the sheet, describes them and returns
-both files' bytes; `write` writes them where the caller says. `previews`
+`encode` lays the reduced frames out on the sheet and its normal map,
+describes them and returns the files' bytes; `normal_path` names the normal
+map; `write` writes the sheet and JSON where the caller says. `previews`
 returns each clip's GIF, `preview_paths` names them and `write_previews`
 writes them. Everything except the writers is pure, and the same inputs give
 byte-identical output (design §Reproducibility).
@@ -24,10 +25,10 @@ import PIL
 from PIL import Image
 
 import moskophoros
-from moskophoros import sampling, views
+from moskophoros import imageops, sampling, views
 from moskophoros.capture.backend import settings_document
 
-SCHEMA = "moskophoros.sheet/7"
+SCHEMA = "moskophoros.sheet/8"
 USAGE_ERROR = 2
 PREVIEW_SCALE = 4
 PREVIEW_BACKGROUND = (128, 128, 128)
@@ -48,10 +49,12 @@ class UsageError(Exception):
 
 @dataclass(frozen=True)
 class Sheet:
-    """The encoded sheet: `png` and `json` bytes, ready to write."""
+    """The encoded sheet: `png` and `json` bytes, ready to write, and the
+    normal map's `normal` PNG bytes, or None when it is not written."""
 
     png: bytes
     json: bytes
+    normal: bytes | None = None
 
 
 @dataclass(frozen=True)
@@ -113,9 +116,12 @@ def fingerprint(generator, settings, source_sha256):
     return "sha256:" + hashlib.sha256(canonical).hexdigest()
 
 
-def sheet_settings(settings, selected_clips, style, *, shade_range, previews=True):
+def sheet_settings(
+    settings, selected_clips, style, *, shade_range, previews=True, normals=True
+):
     """The sheet's `settings` object: the capture job's settings, fitted, then
-    `previews`, whether the animated previews are written, `shade`, the
+    `previews`, whether the animated previews are written, `normals`, whether
+    the normal map is written, `shade`, the
     capture's shade values with the shade range `[lo, hi]` stylize used, and
     `style` recorded as given, just before `clips`.
 
@@ -138,6 +144,7 @@ def sheet_settings(settings, selected_clips, style, *, shade_range, previews=Tru
     } | {"range": [int(bound) for bound in shade_range]}
     return document | {
         "previews": previews,
+        "normals": normals,
         "shade": shade,
         "style": style,
         "clips": clips,
@@ -156,21 +163,31 @@ def encode(
     image_path,
     shade_range,
     previews=True,
+    normals=True,
 ):
-    """Lay out and describe the sheet, returning its PNG and JSON bytes.
+    """Lay out and describe the sheet, returning its PNG, JSON and, with
+    `normals`, normal map bytes.
 
     `frames` are the reduced `sampling.ImageFrame`s, exactly one for each
     frame the selected clips and resolved `settings` request, each the cell
-    size, in any order; the normal and depth maps they carry are not read. `generator` comes from `generator()`, `source` is the
-    capture `Source`, `style` is the style record `sheet_settings` takes,
-    `selected_clips` are `gltf.SelectedClip`s in selection order,
+    size, in any order; with `normals`, each carries its normal map
+    (`sampling.NORMAL_MAP`). `generator` comes from `generator()`, `source`
+    is the capture `Source`, `style` is the style record `sheet_settings`
+    takes, `selected_clips` are `gltf.SelectedClip`s in selection order,
     `image_path` is where the PNG will be written; only its base name is
-    recorded, as is the source's; `shade_range` is the shade range stylize
-    used, recorded in `settings.shade`; and `previews` records whether the
-    animated previews are written.
+    recorded, as is the source's and the normal map's; `shade_range` is the
+    shade range stylize used, recorded in `settings.shade`; `previews`
+    records whether the animated previews are written; and `normals` whether
+    the normal map is.
+
+    The normal map is laid out as the sheet is: each pixel the colour covers
+    (alpha 255) holds its normal encoded by `imageops.encode_normal`, with
+    alpha 255, and every other pixel is `(0, 0, 0, 0)` (lighting sheet design
+    D-17).
 
     Raises `ValueError` for frames that are missing, extra, duplicated or
-    the wrong size, or for unfitted settings: these are internal errors.
+    the wrong size, or lack a normal map that is to be written, or for
+    unfitted settings: these are internal errors.
     """
     if settings.ppm is None or settings.cell is None or settings.ground_px is None:
         raise ValueError("the settings are not fitted: scale, cell and ground pixel")
@@ -183,7 +200,9 @@ def encode(
         subject, selected_clips, view, settings.fps, settings.frames
     )
     width, height = settings.cell
+    frames = tuple(frames)
     pixels = _pixels_by_address(frames, requested, (height, width, 4))
+    normal_maps = _normals_by_address(frames, (height, width, 3)) if normals else None
 
     row_of_clip = {selected.clip.name: c for c, selected in enumerate(selected_clips)}
     samplings = [
@@ -193,12 +212,19 @@ def encode(
     columns = max(s.frame_count for s in samplings)
     rows = len(selected_clips) * len(directions)
     image = np.zeros((rows * height, columns * width, 4), dtype=np.uint8)
+    normal_image = np.zeros_like(image) if normals else None
     frame_documents = []
     for frame in requested:
         address = frame.address
         row = row_of_clip[address.clip] * len(directions) + address.direction
         x, y = frame.index * width, row * height
         image[y : y + height, x : x + width] = pixels[address]
+        if normals:
+            covered = pixels[address][..., 3] == 255
+            cell = np.zeros((height, width, 4), dtype=np.uint8)
+            cell[covered, :3] = imageops.encode_normal(normal_maps[address][covered])
+            cell[covered, 3] = 255
+            normal_image[y : y + height, x : x + width] = cell
         frame_documents.append(
             {
                 "clip": address.clip,
@@ -213,7 +239,12 @@ def encode(
         )
 
     settings_doc = sheet_settings(
-        settings, selected_clips, style, shade_range=shade_range, previews=previews
+        settings,
+        selected_clips,
+        style,
+        shade_range=shade_range,
+        previews=previews,
+        normals=normals,
     )
     description = {
         "schema": SCHEMA,
@@ -227,6 +258,11 @@ def encode(
             "file": Path(image_path).name,
             "width": int(image.shape[1]),
             "height": int(image.shape[0]),
+        },
+        # The depth map is not written yet (lighting sheet design D-17).
+        "maps": {
+            "normal": {"file": normal_path(image_path).name} if normals else None,
+            "depth": None,
         },
         "directions": [
             {"index": d.index, "angle_deg": float(d.angle), "label": d.label}
@@ -245,7 +281,17 @@ def encode(
         ],
         "frames": frame_documents,
     }
-    return Sheet(_png(image), _json(description))
+    return Sheet(
+        _png(image),
+        _json(description),
+        None if normal_image is None else _png(normal_image),
+    )
+
+
+def normal_path(png_path):
+    """The normal map's path, `<stem>.normal.png` beside the sheet PNG."""
+    png_path = Path(png_path)
+    return png_path.with_name(png_path.name.removesuffix(".png") + ".normal.png")
 
 
 def write(sheet, png_path, json_path):
@@ -285,6 +331,17 @@ def _pixels_by_address(frames, requested, shape):
             f"{len(missing)} requested frame(s) are missing, the first {missing[0]}"
         )
     return pixels
+
+
+def _normals_by_address(frames, shape):
+    """Map each frame's address to its normal map, or raise."""
+    normals = {}
+    for frame in frames:
+        array = frame.buffers.get(sampling.NORMAL_MAP)
+        if not isinstance(array, np.ndarray) or array.shape != shape:
+            raise ValueError(f"the frame at {frame.address} has no {shape} normal map")
+        normals[frame.address] = array
+    return normals
 
 
 def _png(image):

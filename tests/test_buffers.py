@@ -194,6 +194,7 @@ def test_an_extra_capture_buffer_changes_no_output(setup, capsys, reduce, palett
     assert sorted(without) == [
         "hero.attack.gif",
         "hero.json",
+        "hero.normal.png",
         "hero.png",
         "hero.walk.gif",
     ]

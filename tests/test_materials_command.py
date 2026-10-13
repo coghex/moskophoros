@@ -310,7 +310,7 @@ def test_a_run_records_the_library_inline_and_the_shade_range(setup, capsys):
     named_hero(setup, HERO_MATERIALS)
     run_with_library(setup, capsys, "--no-preview")
     description = json.loads(setup.json.read_text())
-    assert description["schema"] == "moskophoros.sheet/7"
+    assert description["schema"] == "moskophoros.sheet/8"
     style = description["settings"]["style"]
     assert list(style) == ["reduce", "palette", "materials"]
     assert description["settings"]["shade"]["range"] == DEFAULT_RANGE
@@ -642,7 +642,12 @@ def test_a_reused_shade_range_is_kept_when_an_explicit_library_replaces_the_libr
 
 @pytest.mark.parametrize(
     "schema",
-    ["moskophoros.sheet/6", "moskophoros.sheet/5", "moskophoros.sheet/4"],
+    [
+        "moskophoros.sheet/7",
+        "moskophoros.sheet/6",
+        "moskophoros.sheet/5",
+        "moskophoros.sheet/4",
+    ],
 )
 def test_a_sheet_from_before_the_shade_was_recorded_no_longer_loads(
     tmp_path, capsys, schema
@@ -651,7 +656,7 @@ def test_a_sheet_from_before_the_shade_was_recorded_no_longer_loads(
     with pytest.raises(cli.UsageError):
         cli.read_settings(path)
     assert (
-        f"is a {schema} sheet; only moskophoros.sheet/7 sheets load"
+        f"is a {schema} sheet; only moskophoros.sheet/8 sheets load"
         in capsys.readouterr().err
     )
 
@@ -977,7 +982,8 @@ def test_the_buffers_change_no_sheet_or_preview_without_a_library(
     setup, capsys, monkeypatch, look, paletted
 ):
     setup.configure(pixels="noise")
-    options = ["--reduce", look]
+    # The colour alone: the normal map is LIT-3's and reads the buffers.
+    options = ["--reduce", look, "--no-normals"]
     if paletted:
         options += ["--palette", str(palette_file(setup.tmp_path))]
     assert run(capsys, setup.argv(*options))[0] == 0

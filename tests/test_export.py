@@ -17,7 +17,7 @@ import moskophoros
 from moskophoros import export, stylize
 from moskophoros.capture.backend import Settings, Shade, Source, settings_document
 from moskophoros.gltf import Clip, SelectedClip
-from moskophoros.sampling import FrameAddress, ImageFrame
+from moskophoros.sampling import NORMAL_MAP, FrameAddress, ImageFrame
 
 SHA = "ab" * 32
 GENERATOR = {
@@ -84,7 +84,7 @@ CANONICAL = (
     '{"frames":null,"loop":false,"name":"攻撃"},'
     '{"frames":null,"loop":true,"name":"pose"}],'
     '"fps":3.0,"frames":"auto","ground_m":{"x":0.0,"y":0.0,"z":0.0},"ground_px":{"x":1,"y":2},'
-    '"model_yaw_deg":0.0,"pixels_per_meter":24.5,"previews":true,'
+    '"model_yaw_deg":0.0,"normals":true,"pixels_per_meter":24.5,"previews":true,'
     '"root_motion":"error",'
     '"shade":{"ao_distance_m":0.3,"ao_samples":64,"convexity_weight":1.0,'
     '"occlusion_weight":0.25,"range":[84,191]},'
@@ -95,9 +95,17 @@ CANONICAL = (
 FINGERPRINT = "sha256:" + hashlib.sha256(CANONICAL.encode("utf-8")).hexdigest()
 
 
+def _facing(height, width):
+    """A reduced normal map facing the viewer everywhere."""
+    normals = np.zeros((height, width, 3))
+    normals[..., 2] = 1.0
+    return {NORMAL_MAP: normals}
+
+
 def _frame(clip, direction, time_s, shape, value=0):
     address = FrameAddress("héros", "default", clip, direction, time_s)
-    return ImageFrame(address, np.full(shape, value, dtype=np.uint8))
+    pixels = np.full(shape, value, dtype=np.uint8)
+    return ImageFrame(address, pixels, buffers=_facing(*shape[:2]))
 
 
 def _side_frames():
@@ -161,7 +169,7 @@ EXPECTED_FRAMES = ",\n".join(
 
 EXPECTED_JSON = (
     """{
-  "schema": "moskophoros.sheet/7",
+  "schema": "moskophoros.sheet/8",
   "generator": {
     "tool": "moskophoros",
     "version": "0.1.0",
@@ -206,6 +214,7 @@ EXPECTED_JSON = (
     },
     "root_motion": "error",
     "previews": true,
+    "normals": true,
     "shade": {
       "ao_distance_m": 0.3,
       "ao_samples": 64,
@@ -244,6 +253,12 @@ EXPECTED_JSON = (
     "file": "héros.png",
     "width": 8,
     "height": 18
+  },
+  "maps": {
+    "normal": {
+      "file": "héros.normal.png"
+    },
+    "depth": null
   },
   "directions": [
     {
@@ -317,6 +332,7 @@ def test_the_fingerprint_hashes_the_canonical_mirrored_object():
         "ground_px": {"x": 1, "y": 2},
         "root_motion": "error",
         "previews": True,
+        "normals": True,
         "shade": SHADE_RECORD,
         "style": PLAIN,
         "clips": [
@@ -378,14 +394,25 @@ def test_the_fingerprint_covers_the_style_record():
     assert export.fingerprint(GENERATOR, unstyled, SHA) != FINGERPRINT
 
 
+@pytest.mark.parametrize("normals", [True, False])
 @pytest.mark.parametrize("previews", [True, False])
-def test_previews_shade_and_the_style_record_sit_just_before_clips(previews):
+def test_previews_normals_shade_and_the_style_record_sit_just_before_clips(
+    previews, normals
+):
     settings = export.sheet_settings(
-        SIDE, (RUN,), PLAIN, shade_range=RANGE, previews=previews
+        SIDE, (RUN,), PLAIN, shade_range=RANGE, previews=previews, normals=normals
     )
-    assert list(settings)[-5:] == ["root_motion", "previews", "shade", "style", "clips"]
+    assert list(settings)[-6:] == [
+        "root_motion",
+        "previews",
+        "normals",
+        "shade",
+        "style",
+        "clips",
+    ]
     assert settings["style"] == PLAIN
     assert settings["previews"] is previews
+    assert settings["normals"] is normals
     assert settings["shade"] == SHADE_RECORD
     assert list(settings["shade"]) == [
         "ao_distance_m",
@@ -394,7 +421,9 @@ def test_previews_shade_and_the_style_record_sit_just_before_clips(previews):
         "convexity_weight",
         "range",
     ]
-    rest = {k: v for k, v in settings.items() if k not in ("style", "previews")}
+    rest = {
+        k: v for k, v in settings.items() if k not in ("style", "previews", "normals")
+    }
     job = settings_document(SIDE, (RUN,))
     capture = {key: value for key, value in job["shade"].items() if key != "materials"}
     assert rest == job | {"shade": capture | {"range": [84, 191]}}
@@ -496,7 +525,7 @@ def _grid_frames():
                 pixels = np.empty((2, 3, 4), dtype=np.uint8)
                 pixels[:] = (c + 1, d + 1, k + 1, 255)
                 address = FrameAddress("grid", "default", clip, d, time_s)
-                frames.append(ImageFrame(address, pixels))
+                frames.append(ImageFrame(address, pixels, buffers=_facing(2, 3)))
     return frames
 
 
@@ -561,6 +590,7 @@ def test_the_static_clip_is_one_frame_at_zero():
     frame = ImageFrame(
         FrameAddress("box", "default", "static", 0, 0.0),
         np.zeros((3, 2, 4), dtype=np.uint8),
+        buffers=_facing(3, 2),
     )
     sheet = export.encode(
         [frame],
@@ -734,5 +764,5 @@ def test_stylized_frames_export_directly():
         for frame in _side_frames()
     ]
     plain = stylize.plain(supersampled, 2)
-    image = np.array(Image.open(io.BytesIO(_encode_side(plain).png)))
+    image = np.array(Image.open(io.BytesIO(_encode_side(plain, normals=False).png)))
     assert (image == (200, 200, 200, 255)).all(axis=2)[:, :2].all()
