@@ -867,7 +867,11 @@ the standard library and removes.
   the camera's viewing axis (*View Z Depth*) and `ground_view_z` the ground
   point's, taken per frame, since the camera's distance changes per frame
   (it stands clear of the subject's reach). Positive is nearer the viewer
-  than the ground point, like the normal's z (D-10). Any depth is held: the
+  than the ground point, like the normal's z (D-10). `ground_view_z` comes
+  from the camera transform Blender stores, in single precision, the camera
+  Cycles measures from. Cycles works in single precision, so a depth is as
+  precise as the float32 spacing of the surface's coordinates: about
+  10⁻⁶ m near the origin, about 1 mm 10 km from it. Any depth is held: the
   depth map's range (D-21) limits only that map, and capture is never
   limited by it.
 - *Coverage:* each buffer marks a pixel as a surface where its AOV holds a

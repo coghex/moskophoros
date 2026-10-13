@@ -1586,8 +1586,17 @@ def place_camera(camera, settings, rotation_deg, reach):
     data.clip_end = distance + reach + CLEARANCE
     data.dof.use_dof = False
     # The ground point's distance along the viewing axis, the camera depth
-    # the depth buffer is relative to (lighting sheet design D-10).
-    return sum((center[i] - ground[i]) * toward[i] for i in range(3))
+    # the depth buffer is relative to (lighting sheet design D-10). It is
+    # taken from the transform Blender stores, in single precision, which is
+    # the camera Cycles measures View Z Depth from, not from `center`.
+    stored = camera.matrix_world
+    axis = [stored[row][2] for row in range(3)]
+    length = math.sqrt(sum(value * value for value in axis))
+    position = [stored[row][3] for row in range(3)]
+    return sum(
+        (position[i] - target) * axis[i] / length
+        for i, target in enumerate(_blender(ground))
+    )
 
 
 def reach(objects, depsgraph, ground):

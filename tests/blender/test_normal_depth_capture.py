@@ -30,6 +30,7 @@ pytestmark = pytest.mark.blender
 # normal, and the largest error of a plane's captured depth.
 PLANE_TOLERANCE_DEG = 0.01
 DEPTH_TOLERANCE_M = 5e-5
+TRANSLATED_TOLERANCE_M = 2e-6
 # A smooth sphere's interpolated normals against the exact sphere's, over the
 # pixels facing the viewer by 0.3 or more: their mean and largest error. A
 # flat face normal of this tessellation is about 1.3° off on average.
@@ -495,3 +496,42 @@ def test_the_auxiliary_render_restores_every_aov_and_setting(found, tmp_path):
     assert probed["before"]["aovs"] == []
     assert probed["before"]["image"][:2] == ["IMAGE", "PNG"]
     assert probed["lengths"] == [48]
+
+
+@pytest.mark.parametrize("pitch", [0.0, 30.0])
+@pytest.mark.parametrize(
+    "ground",
+    [(0.0, 0.0, 0.0), (0.0, 0.0, 10000.0), (-3.3, 1.7, 2.9), (250.25, -40.5, -1300.75)],
+    ids=["origin", "far along z", "off origin", "far off origin"],
+)
+def test_depth_is_relative_to_a_translated_ground_point(found, tmp_path, ground, pitch):
+    # A square facing +Z 0.5 m in front of the ground point's plane, wherever
+    # the ground point is. The depth is measured from the camera Blender
+    # stores, in single precision; measured from the camera as placed in
+    # double precision, it was 4·10⁻⁵ m off 10 km from the origin, head-on.
+    # Viewed obliquely, Cycles' single-precision ray arithmetic limits any
+    # depth to about the float32 spacing of the surface's coordinates.
+    gx, gy, gz = ground
+    square = plane((gx, gy + 0.3, gz + 0.5), (0.0, 0.0, 1.0), 0.25)
+    path = surfaces_model(tmp_path, "translated", [square])
+    result, _ = render(
+        found,
+        path,
+        tmp_path,
+        pitch=pitch,
+        ground=ground,
+        ppm=40.0,
+        cell=(40, 40),
+        ground_px=(20, 36),
+        supersample=2,
+    )
+    codes, _, depth = frame(result)
+    hit = codes == 1
+    assert hit.sum() > 1000
+    expected = expected_depth(0.5, pitch, 0.0, codes.shape, (20, 36), 40.0, 2)
+    if pitch == 0:
+        tolerance = TRANSLATED_TOLERANCE_M
+    else:
+        spacing = float(np.spacing(np.float32(max(map(abs, ground)) + 2.0)))
+        tolerance = 1e-5 + 2 * spacing
+    assert np.abs(depth[hit] - expected[hit]).max() <= tolerance
