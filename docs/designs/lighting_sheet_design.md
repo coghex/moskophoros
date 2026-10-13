@@ -34,7 +34,7 @@ slice.
 - [x] LIT-2. Reduce normals and depth to the sheet's pixels — [#97]
 - [x] LIT-3. Write the normal map, record it and reuse it — [#98]
 - [x] LIT-4. Write the optional depth map — [#99]
-- [ ] LIT-5. Light the previews with an optional point light
+- [x] LIT-5. Light the previews with an optional point light — [#100]
 - [ ] LIT-6. Review normal maps and lit previews with the owner
 
 ## Epic contract
