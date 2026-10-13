@@ -13,13 +13,16 @@ trigger for the depth and normal rows of design §Deferred ("Auxiliary capture
 buffers"). It benefits the owner producing game art, and any game that lights
 2D sprites from normal maps (V-1).
 
-Design state: `exploring`
+Design state: `ready for issue processing`
 
 Status legend: `[ ]` unprocessed · `[#N]` linked to issue N · `[no-issue]`
 reviewed and deliberately not tracked separately · `[deferred]` blocked on a
 concrete precondition
 
 ## Processing status
+
+The owner approved this slice list and marked the design ready on
+2026-10-13 (D-20).
 
 - [ ] EPIC. Light sprites live: a normal map, an optional depth map and lit previews
 - [ ] LIT-1. Capture normal and depth buffers on every render
@@ -31,7 +34,7 @@ concrete precondition
 
 ## Epic contract
 
-*Proposal, awaiting the owner's signoff with the slices.*
+*Signed off by the owner on 2026-10-13 (D-20).*
 
 - **Goal:** beside every colour sheet, the owner gets a normal map (and, when
   asked, a depth map) with the same layout, cells and frames, which a game
@@ -49,7 +52,8 @@ concrete precondition
 
 ## Current state and evidence
 
-Checked on 2026-10-13 at `master` `44e5891`, by reading only. The capture
+Checked on 2026-10-13 at `master` `44e5891`, by reading only, and the
+tracker re-checked at readiness the same day. The capture
 spike recorded under [Capture](#capture) is separate.
 
 **Camera and space** (design §Camera and directions)
@@ -229,7 +233,7 @@ spike 1 below. The contract it had to meet:
 - full precision kept at the supersampled size, since the reduction averages;
 - deterministic, and the colour bytes unchanged.
 
-**Proposed capture**, from the spike: the existing auxiliary Cycles render
+**The capture** (D-11, D-12), from the spike: the existing auxiliary Cycles render
 gains two shader outputs (AOVs) in every replacement material, so no second
 render is needed. Blender's script reads them back with the standard library
 and writes them as buffers of its own, `normal/NNNNNN.png` and
@@ -321,9 +325,10 @@ new settings (D-18) are recorded and reused.
 
 ## Decisions
 
-These are the owner's, from material styling D-27 (2026-10-13, typed in the
-moskophoros manager's terminal), recorded here as this arc's starting
-point. They are not reopened.
+All are the owner's. D-1 to D-8 come from material styling D-27
+(2026-10-13, typed in the moskophoros manager's terminal), recorded here as
+this arc's starting point and not reopened. D-9 to D-20 were decided by the
+owner in this design's session on 2026-10-13.
 
 ### D-1. The colour sheet stays flat
 
@@ -552,6 +557,18 @@ pixel with no surface sample takes the mean depth of its covered 8
 neighbours that have samples, else 0, the ground point's plane. The lit
 preview uses the same reduced depth.
 
+### D-20. The arc is delivered as slices LIT-1 to LIT-6
+
+Decided 2026-10-13 by the owner in this design's session ("i approve this,
+get the doc in order, marked ready"). The owner approved the
+[Delivery plan](#delivery-plan)'s six slices, the [Epic
+contract](#epic-contract)'s goal and done condition, and the design as ready
+for issue processing. Each slice is one issue and one pull request, except
+LIT-6, a documentation-only acceptance step with no pull request, as
+material styling MAT-7 was: its renders stay outside the repository, and its
+only repository artifact is `docs/acceptance/lighting-sheet.md`, published
+with `docs-push`. LIT-4 and LIT-5 may land in either order after LIT-3.
+
 ## Open questions
 
 None open. Resolved: Q-6 by D-17, Q-7 by D-18, Q-10 by D-19; Q-1 by D-9, Q-2 by D-10, Q-3 by D-13
@@ -714,18 +731,6 @@ drops a reused or configured light, as `--no-palette` does. Without
 previews (`--no-preview`), no lit preview is written either, and a placed
 light is recorded but unused, with a warning saying so.
 
-### Q-10. How does a pixel's depth reduce, and with no sample?
-
-**Resolved by D-19.**
-
-D-15 settles normals; depth needs the same. **Proposal:** a covered pixel's
-depth is the mean depth of the same surface samples its normal averages,
-rounded to the 1/16-pixel step (D-10). For a covered pixel with no surface
-sample, "facing the viewer" has no depth equivalent, and 0 (the ground
-point's plane) can be far from the surface around it (the top of a head at
-−30). So: the mean depth of its covered 8 neighbours that have samples,
-else 0. The lit preview uses the same reduced depth.
-
 ### Q-8. How does Blender produce the normal and depth?
 
 In the same Cycles render as the ID and shade (shader outputs into a float
@@ -766,6 +771,18 @@ an option to set it, such as `--light-ambient`.
 **Recommendation: A**, the most predictable to tune, and it does what the
 owner described: near, a local light; far, the sun.
 
+### Q-10. How does a pixel's depth reduce, and with no sample?
+
+**Resolved by D-19.**
+
+D-15 settles normals; depth needs the same. **Proposal:** a covered pixel's
+depth is the mean depth of the same surface samples its normal averages,
+rounded to the 1/16-pixel step (D-10). For a covered pixel with no surface
+sample, "facing the viewer" has no depth equivalent, and 0 (the ground
+point's plane) can be far from the surface around it (the top of a head at
+−30). So: the mean depth of its covered 8 neighbours that have samples,
+else 0. The lit preview uses the same reduced depth.
+
 ## Verification strategy
 
 - **Pure tests:** block reduction of normals and depth (renormalising,
@@ -790,7 +807,7 @@ owner described: near, a local light; far, the sun.
 
 ## Delivery plan
 
-*Proposal, awaiting the owner's signoff.* Each slice is one issue and one
+*Approved by the owner on 2026-10-13 (D-20).* Each slice is one issue and one
 pull request, except LIT-6. Every slice amends `docs/design.md` for what it
 delivers, in its own pull request, since tests read the design.
 
