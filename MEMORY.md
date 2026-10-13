@@ -37,7 +37,8 @@ anything newer than the date below.
   #83 closed. Layered YAML settings (user file, reused sheet, `--config`,
   options), the shading values, per-material shading and clip frame counts.
   Libraries are YAML (`moskophoros.materials/2`).
-- **Open epics:** #63 (material styling), open for MAT-8 and #75. #3, #24
+- **Open epics:** #63 (material styling), open for MAT-8 and #75; #95
+  (lighting sheet), open for LIT-6. #3, #24
   and #83 are closed, and so are #78 and #79, settled by settings.
 
 ## Environment
@@ -82,10 +83,10 @@ anything newer than the date below.
 
 ## Next steps
 
-1. **Lighting sheet:** the next arc. The owner settled its direction on
-   2026-10-13 in material styling D-27: a flat colour sheet, a normal map, an
-   optional depth map, and a lit preview that is never baked. Its own design
-   comes next, when the owner asks.
+1. **Lighting sheet** (epic #95, [design](docs/designs/lighting_sheet_design.md)):
+   LIT-1 to LIT-5 merged 2026-10-13. Every run writes `<stem>.normal.png`;
+   `--depth` adds a depth map and `--light X,Y,Z` lit previews. Next is
+   LIT-6 (#101), the owner's visual review, on the owner's word.
 2. **Guide:** review the work after `bb3c9b4`.
 3. **Deferred, each waiting on a stated trigger:**
    - recolouring without a re-render (settings D-18);
