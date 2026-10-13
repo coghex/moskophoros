@@ -198,6 +198,112 @@ def reduce_blocks_mode(pixels, factor):
     return result.reshape(rows, columns, 4)
 
 
+# A block's normals cancel when their sum is shorter than this (lighting
+# sheet design D-15, D-27).
+CANCELLING = 1e-6
+# The 8 neighbours of a pixel, in a fixed order so their sum is deterministic.
+_NEIGHBOURS = tuple(
+    (dy, dx) for dy in (-1, 0, 1) for dx in (-1, 0, 1) if (dy, dx) != (0, 0)
+)
+
+
+def reduce_normal_depth(normal, depth, covered, factor, pixels_per_meter):
+    """Reduce a frame's captured normals and depths by `s×s` blocks to its
+    reduced colour's pixels (lighting sheet design D-8, D-15, D-19, D-27).
+
+    `normal` is a `(H·s, W·s, 3)` array of camera-space unit normals and
+    `depth` an `(H·s, W·s)` array of depths in meters toward the viewer from
+    the ground point, NaN where no surface was sampled, as the command
+    decodes them (`sampling.NORMAL`, `sampling.DEPTH`). `covered` is the
+    reduced colour's coverage, an `(H, W)` boolean array: its alpha 255.
+
+    Returns `(normals, depths)`, new `float64` arrays of shapes `(H, W, 3)`
+    and `(H, W)`. For a covered pixel:
+
+    - its normal is the sum of the unit normals of every surface sample in
+      its block, renormalised; it faces the viewer, `(0, 0, 1)`, when the
+      block has no sample or the sum is shorter than `CANCELLING`;
+    - its depth, in sheet pixels (meters times `pixels_per_meter`), is the
+      mean of the same samples' depths, a cancelling block's included; with
+      no sample, the mean of the unrounded means of its covered 8
+      neighbours (within the frame) that have samples, else 0. Either is
+      rounded half up to the 1/16-pixel step, `floor(16·d + ½) / 16`.
+
+    An uncovered pixel has normal `(0, 0, 0)` and depth 0, whatever samples
+    its block holds. Any finite depth is held, without clamping. The inputs
+    are not changed, and nothing returned refers to them.
+
+    Raises `TypeError` or `ValueError` for malformed arguments.
+    """
+    normal = np.asarray(normal)
+    depth = np.asarray(depth)
+    covered = np.asarray(covered)
+    if covered.dtype != np.bool_ or covered.ndim != 2:
+        raise ValueError("covered must be a 2-D boolean array")
+    if isinstance(factor, bool) or not isinstance(factor, (int, np.integer)):
+        raise TypeError("factor must be an integer")
+    if factor < 1:
+        raise ValueError("factor must be at least 1")
+    height, width = covered.shape
+    size = (height * factor, width * factor)
+    if normal.shape != (*size, 3) or depth.shape != size:
+        raise ValueError(
+            f"normal {normal.shape} and depth {depth.shape} do not reduce by "
+            f"{factor} to {covered.shape}"
+        )
+    if not (np.isfinite(pixels_per_meter) and pixels_per_meter > 0):
+        raise ValueError(
+            f"pixels_per_meter must be finite and positive: {pixels_per_meter!r}"
+        )
+    blocks = (height, factor, width, factor)
+    samples = depth.astype(np.float64).reshape(blocks)
+    surface = ~np.isnan(samples)
+    count = surface.sum(axis=(1, 3))
+    vectors = np.where(
+        surface[..., np.newaxis], normal.astype(np.float64).reshape(*blocks, 3), 0.0
+    )
+    summed = vectors.sum(axis=(1, 3))
+    length = np.sqrt(np.sum(summed * summed, axis=-1))
+    sampled = covered & (count > 0)
+    turned = sampled & (length >= CANCELLING)
+    normals = np.zeros((height, width, 3))
+    normals[turned] = summed[turned] / length[turned][:, np.newaxis]
+    normals[covered & ~turned] = (0.0, 0.0, 1.0)
+    in_pixels = np.where(surface, samples, 0.0) * float(pixels_per_meter)
+    means = in_pixels.sum(axis=(1, 3)) / np.maximum(count, 1)
+    # A covered pixel without samples takes its sampled neighbours' mean.
+    padded = np.pad(np.where(sampled, means, 0.0), 1)
+    present = np.pad(sampled, 1)
+    total = np.zeros((height, width))
+    neighbours = np.zeros((height, width), dtype=np.int64)
+    for dy, dx in _NEIGHBOURS:
+        window = (slice(1 + dy, 1 + dy + height), slice(1 + dx, 1 + dx + width))
+        total += padded[window]
+        neighbours += present[window]
+    fallback = np.where(neighbours > 0, total / np.maximum(neighbours, 1), 0.0)
+    unrounded = np.where(sampled, means, fallback)
+    depths = np.where(covered, np.floor(16 * unrounded + 0.5) / 16, 0.0)
+    return normals, depths
+
+
+def encode_normal(normals):
+    """Encode unit normals as bytes, `floor(255 · (n + 1) / 2 + ½)` per
+    component, half up (lighting sheet design §Numerical reference): a
+    normal facing the viewer, `(0, 0, 1)`, is `(128, 128, 255)`.
+
+    Returns a new `uint8` array of the input's shape, whose last axis holds
+    the three components. Raises `ValueError` for a non-finite component or
+    one outside −1 to 1 by more than rounding.
+    """
+    normals = np.asarray(normals, dtype=np.float64)
+    if normals.ndim < 1 or normals.shape[-1] != 3:
+        raise ValueError("normals must have 3 components on their last axis")
+    if not np.isfinite(normals).all() or (np.abs(normals) > 1 + 1e-9).any():
+        raise ValueError("normals must be finite components from -1 to 1")
+    encoded = np.floor(255 * (normals + 1) / 2 + 0.5)
+    return np.clip(encoded, 0, 255).astype(np.uint8)
+
+
 def map_ramps(
     pixels,
     identity,

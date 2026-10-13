@@ -675,7 +675,9 @@ error naming it. The rest of the sheet is not checked beyond its `schema`
 Four stages, each depending only on the previous stage's output. Frames pass
 between stages keyed by frame address. Capture writes files because it runs in
 Blender's process; in slice 1 the later stages pass arrays in memory. Per-stage
-caching is deferred.
+caching is deferred. From stylize on, each reduced colour frame carries its
+reduced normal and depth maps (see [Normal and depth maps](#normal-and-depth-maps)),
+which cleanup passes through and export receives; nothing writes them yet.
 
 #### Frames into stylize
 
@@ -726,11 +728,12 @@ depth, with this interface:
   error (exit 5), like any invalid capture result. The normal and depth
   arrays are the command's to decode too.
 
-Frames are loaded one at a time, as stylize reduces them. Stylize returns an
-ordinary reduced colour frame with no buffers, and releases a frame's
-supersampled colour and every other buffer once it is reduced, before the
-next frame is loaded, so at most one frame's supersampled buffers are held.
-Cleanup and export receive only the reduced colour frames.
+Frames are loaded one at a time, as stylize reduces them. Stylize returns a
+reduced colour frame carrying only its reduced normal and depth maps, and
+releases a frame's supersampled colour and every other buffer once it is
+reduced, before the next frame is loaded, so at most one frame's
+supersampled buffers are held; the maps are new arrays, never views of them.
+Cleanup and export receive the reduced colour frames and their maps.
 
 ### Capture
 
@@ -1132,6 +1135,54 @@ so the vote can fall to the tie-break; that is accepted, and the owner judges
 the look (vision V-12). Future style passes replace or extend these (vision,
 Long-term direction).
 
+#### Normal and depth maps
+
+Every frame's normals and depths are reduced to its reduced colour's pixels,
+with exactly the colour's coverage, so the maps line up with the sheet pixel
+for pixel (lighting sheet design D-8, D-15, D-19, D-21, D-27 and its
+Numerical reference). They read the frame's normal and depth arrays
+([Frames into stylize](#frames-into-stylize)): a **surface sample** is a
+supersampled pixel where capture hit a surface. The colour is Workbench's
+antialiased render and the samples come from one ray per supersampled pixel,
+so a kept colour pixel can have no sample in its block, and a transparent
+one can have some.
+
+- *Coverage:* a map pixel exists exactly where the reduced colour's alpha is
+  255, under either reduction, with or without a palette or a library. A
+  transparent colour pixel has no surface in the maps, whatever its block
+  holds.
+- *Normal:* a covered pixel's normal is the sum of the unit normals of every
+  surface sample in its `s×s` block, renormalised to unit length, whatever
+  material each sample shows, and whatever the reduction, palette or library.
+  It is never palette-mapped or voted. It faces the viewer, `(0, 0, 1)`, when
+  the block has no surface sample, or when the samples' normals cancel,
+  `|Σn| < 10⁻⁶`.
+- *Depth:* a covered pixel's depth is the mean depth of the same samples, a
+  cancelling block's included, in **sheet pixels**: the captured meters times
+  the sheet's `pixels_per_meter`, never scaled by the supersample factor.
+  A covered pixel whose block has no sample takes the mean of the
+  **unrounded** depths of its covered 8 neighbours within the frame that have
+  samples; with none, 0, the ground point's plane. Either is then rounded
+  half up to the 1/16-pixel step, `floor(16 · d + ½) / 16`, never
+  ties-to-even. Any depth is held, without clamping or rescaling: only the
+  depth map's later encoding has a range (D-21).
+- *Carried:* the reduced frame (`sampling.ImageFrame`) carries the maps as
+  its only buffers. Under `normal_map` (`sampling.NORMAL_MAP`), a `float64`
+  array of shape `(H, W, 3)`: each covered pixel's unit normal in the
+  frame's camera space (+X screen right, +Y screen up, +Z toward the
+  viewer), and `(0, 0, 0)` elsewhere. Under `depth_map`
+  (`sampling.DEPTH_MAP`), a `float64` array of shape `(H, W)`: each covered
+  pixel's depth in sheet pixels toward the viewer from the ground point, a
+  multiple of 1/16, and 0 elsewhere. Neither holds a NaN or infinity. A
+  frame given to stylize without normal and depth is reduced to one carrying
+  no buffers.
+- *Encoding:* a normal's bytes are `floor(255 · (n + 1) / 2 + ½)` per
+  component, half up, so a normal facing the viewer is `(128, 128, 255)`
+  (`imageops.encode_normal`).
+
+Both are pure functions in `imageops`, `reduce_normal_depth` and
+`encode_normal`, and the maps change no colour, sheet, JSON or preview.
+
 #### Palette inputs
 
 `--palette FILE` selects an ordered palette. The standalone
@@ -1462,7 +1513,7 @@ fingerprint.
 ### Cleanup (slice 1: none)
 
 A stage that receives addressed frames and returns them. Slice 1 passes them
-through unchanged.
+through unchanged, their normal and depth maps included.
 
 ### Export
 

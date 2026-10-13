@@ -25,7 +25,15 @@ from test_materials_command import HERO_MATERIALS, materialed, named_hero
 from moskophoros import stylize
 from moskophoros.capture import backend
 from moskophoros.capture.backend import BackendError, validate_result
-from moskophoros.sampling import DEPTH, IDENTITY, NORMAL, SHADE, ImageFrame
+from moskophoros.sampling import (
+    DEPTH,
+    DEPTH_MAP,
+    IDENTITY,
+    NORMAL,
+    NORMAL_MAP,
+    SHADE,
+    ImageFrame,
+)
 
 SIZE = (6, 8)  # (height, width) of render_document's buffers
 COVERED = np.ones(SIZE, dtype=bool)
@@ -379,7 +387,7 @@ def surfaces(i):
     ],
     ids=["plain", "plain-palette", "mode", "mode-palette"],
 )
-def test_stylize_ignores_the_normal_and_depth_and_returns_no_buffers(reduce, palette):
+def test_the_normal_and_depth_never_change_the_reduced_colour(reduce, palette):
     def frames(with_surfaces):
         for i in range(3):
             rng = np.random.default_rng(i)
@@ -391,12 +399,15 @@ def test_stylize_ignores_the_normal_and_depth_and_returns_no_buffers(reduce, pal
                 named[NORMAL], named[DEPTH] = surfaces(i)
             yield ImageFrame(address(i), colour(i), buffers=named)
 
-    options = {"identities": IDENTITIES}
+    options = {"identities": IDENTITIES, "pixels_per_meter": 40.0}
     if palette is not None:
         options["palette"] = palette
     plain = list(reduce(frames(False), 2, **options))
     lit = list(reduce(frames(True), 2, **options))
-    assert all(frame.buffers == {} for frame in lit)
+    # Without normal and depth, a reduced frame carries no maps; with them,
+    # only its maps (see test_normal_depth_maps).
+    assert all(frame.buffers == {} for frame in plain)
+    assert all(set(frame.buffers) == {NORMAL_MAP, DEPTH_MAP} for frame in lit)
     for a, b in zip(plain, lit, strict=True):
         np.testing.assert_array_equal(a.pixels, b.pixels)
 

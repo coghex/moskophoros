@@ -6,6 +6,6 @@ given, and touches no file or process.
 
 
 def passthrough(frames):
-    """Return the frames unchanged: the same addresses, order, pixels and
-    metadata."""
+    """Return the frames unchanged: the same addresses, order, pixels,
+    metadata and maps."""
     return tuple(frames)

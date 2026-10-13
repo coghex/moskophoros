@@ -7,26 +7,47 @@ Frames arrive one at a time and may carry named buffers beside their colour;
 `identities`, a `sampling.Identities`, is the asset's identity list that a
 frame's identity buffer indexes. Without a material `library` the reductions
 read only the colour. With one, each block also takes its winning material's
-ramp entry. No reduction reads the normal or depth buffers yet. Each returns
-ordinary reduced colour frames carrying no buffers, and lets go of a frame,
-with all its buffers, before asking for the next.
+ramp entry. Each returns reduced colour frames, and lets go of a frame, with
+all its buffers, before asking for the next.
+
+A frame carrying normal and depth buffers (`NORMAL`, `DEPTH`) has them
+reduced to its reduced colour's pixels, with exactly the colour's coverage,
+whatever the reduction, palette or library (lighting sheet design D-8, D-15,
+D-19, D-27; `imageops.reduce_normal_depth`). The reduced frame carries them
+as its only buffers, under `NORMAL_MAP` and `DEPTH_MAP`; a frame without
+them is reduced to one carrying no buffers.
 """
 
 import numpy as np
 
 from moskophoros import imageops
-from moskophoros.sampling import IDENTITY, SHADE, ImageFrame
+from moskophoros.sampling import (
+    DEPTH,
+    DEPTH_MAP,
+    IDENTITY,
+    NORMAL,
+    NORMAL_MAP,
+    SHADE,
+    ImageFrame,
+)
 
 
 def plain(
-    frames, factor, palette=None, identities=None, library=None, shade_range=None
+    frames,
+    factor,
+    palette=None,
+    identities=None,
+    library=None,
+    shade_range=None,
+    pixels_per_meter=None,
 ):
     """Reduce every supersampled frame by `factor`×`factor` blocks.
 
     Returns new `ImageFrame`s with the same addresses, in the same order, each
-    carrying its input frame's metadata. With a palette, map the reduced
-    pixels after averaging. With a material `library`, blocks whose winning
-    material has a ramp take its entry instead (see `materials`).
+    carrying its input frame's metadata and its reduced normal and depth
+    maps (see `maps`). With a palette, map the reduced pixels after
+    averaging. With a material `library`, blocks whose winning material has a
+    ramp take its entry instead (see `materials`).
     """
     materials = _materials(
         factor, palette, identities, library, shade_range, by_mode=False
@@ -38,21 +59,31 @@ def plain(
             pixels = imageops.map_palette(pixels, palette)
         if materials is not None:
             pixels = materials(frame, pixels)
-        result.append(ImageFrame(frame.address, pixels, frame.metadata))
+        named = maps(frame, pixels, factor, pixels_per_meter)
+        result.append(ImageFrame(frame.address, pixels, frame.metadata, named))
         # Release the capture before asking its iterator for the next array.
         del frame
     return tuple(result)
 
 
-def mode(frames, factor, palette=None, identities=None, library=None, shade_range=None):
+def mode(
+    frames,
+    factor,
+    palette=None,
+    identities=None,
+    library=None,
+    shade_range=None,
+    pixels_per_meter=None,
+):
     """Reduce every supersampled frame by `factor`×`factor` blocks, keeping
     each block's most common colour.
 
     Returns new `ImageFrame`s with the same addresses, in the same order, each
-    carrying its input frame's metadata. With a palette, map the supersampled
-    pixels before voting, so shades mapped to one entry pool their votes. With
-    a material `library`, blocks whose winning material has a ramp take its
-    most voted entry instead (see `materials`).
+    carrying its input frame's metadata and its reduced normal and depth
+    maps (see `maps`). With a palette, map the supersampled pixels before
+    voting, so shades mapped to one entry pool their votes. With a material
+    `library`, blocks whose winning material has a ramp take its most voted
+    entry instead (see `materials`).
     """
     materials = _materials(
         factor, palette, identities, library, shade_range, by_mode=True
@@ -65,9 +96,34 @@ def mode(frames, factor, palette=None, identities=None, library=None, shade_rang
         pixels = imageops.reduce_blocks_mode(pixels, factor)
         if materials is not None:
             pixels = materials(frame, pixels)
-        result.append(ImageFrame(frame.address, pixels, frame.metadata))
+        named = maps(frame, pixels, factor, pixels_per_meter)
+        result.append(ImageFrame(frame.address, pixels, frame.metadata, named))
         del frame
     return tuple(result)
+
+
+def maps(frame, pixels, factor, pixels_per_meter):
+    """The reduced maps of `frame`, whose reduced colour is `pixels`:
+    `{NORMAL_MAP: normals, DEPTH_MAP: depths}` from its `NORMAL` and `DEPTH`
+    buffers, at the colour's coverage (alpha 255), with depth converted to
+    sheet pixels by the sheet's `pixels_per_meter`; `{}` for a frame
+    carrying neither. The arrays are new, so the frame's are free once it is
+    released."""
+    given = [name for name in (NORMAL, DEPTH) if name in frame.buffers]
+    if not given:
+        return {}
+    if len(given) != 2:
+        raise ValueError(f"{frame.address}: a frame needs both normal and depth")
+    if pixels_per_meter is None:
+        raise ValueError("reducing depth needs the sheet's pixels_per_meter")
+    normals, depths = imageops.reduce_normal_depth(
+        frame.buffers[NORMAL],
+        frame.buffers[DEPTH],
+        pixels[..., 3] == 255,
+        factor,
+        pixels_per_meter,
+    )
+    return {NORMAL_MAP: normals, DEPTH_MAP: depths}
 
 
 def resolve(library, name):

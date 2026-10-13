@@ -129,6 +129,9 @@ else:
             normal = rng.normal(size=(size[1], size[0], 3))
             normal /= numpy.linalg.norm(normal, axis=-1, keepdims=True)
             depth = rng.uniform(-5000.0, 5000.0, size=(size[1], size[0]))
+        if "depths" in config:
+            # One depth in meters for each frame, in turn.
+            depth = config["depths"][i % len(config["depths"])]
         write_normal(pathlib.Path(f"normal/{{i:06d}}.png"), covered, normal)
         write_depth(pathlib.Path(f"depth/{{i:06d}}.png"), covered, depth)
         named["normal"] = f"normal/{{i:06d}}.png"

@@ -535,3 +535,56 @@ def test_depth_is_relative_to_a_translated_ground_point(found, tmp_path, ground,
         spacing = float(np.spacing(np.float32(max(map(abs, ground)) + 2.0)))
         tolerance = 1e-5 + 2 * spacing
     assert np.abs(depth[hit] - expected[hit]).max() <= tolerance
+
+
+# Reduced to the sheet's pixels (LIT-2)
+
+
+@pytest.mark.parametrize("supersample", [1, 3])
+def test_the_command_reduces_captured_normals_and_depth_to_the_sheet(
+    found, tmp_path, capsys, monkeypatch, supersample
+):
+    # Squares facing the viewer 0.3 m in front of the ground point and 0.5 m
+    # behind it, head-on at 40 px/m: 12 and −20 sheet pixels, whatever the
+    # supersample factor.
+    from moskophoros import cli, export
+    from moskophoros.sampling import DEPTH_MAP, NORMAL_MAP
+
+    path = surfaces_model(tmp_path, "squares", facing_quads([0.3, -0.5]))
+    seen = {}
+    real = export.encode
+
+    def recording(frames, **kwargs):
+        seen["frames"] = tuple(frames)
+        return real(frames, **kwargs)
+
+    monkeypatch.setattr(export, "encode", recording)
+    status = cli.run(
+        [
+            "--no-user-config",
+            "--pitch",
+            "0",
+            "--directions",
+            "1",
+            "--ppm",
+            "40",
+            "--cell",
+            "72x40",
+            "--supersample",
+            str(supersample),
+            "--no-preview",
+            "--blender",
+            str(found.path),
+            str(path),
+            str(tmp_path / "squares.png"),
+        ]
+    )
+    _, err = capsys.readouterr()
+    assert status == 0, err
+    (frame,) = seen["frames"]
+    covered = frame.pixels[..., 3] == 255
+    normals, depths = frame.buffers[NORMAL_MAP], frame.buffers[DEPTH_MAP]
+    assert covered.sum() > 100
+    assert set(np.unique(depths[covered])) == {-20.0, 12.0}
+    assert angle_deg(normals[covered], np.array((0.0, 0.0, 1.0))).max() <= 0.01
+    assert (normals[~covered] == 0).all() and (depths[~covered] == 0).all()

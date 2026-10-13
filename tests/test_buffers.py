@@ -14,8 +14,10 @@ from moskophoros.capture import backend
 from moskophoros.sampling import (
     BACKGROUND,
     DEPTH,
+    DEPTH_MAP,
     IDENTITY,
     NORMAL,
+    NORMAL_MAP,
     SHADE,
     FrameAddress,
     Identities,
@@ -238,10 +240,13 @@ def test_the_command_loads_frames_lazily_and_releases_each_before_the_next(
         return real_reduce(pixels, factor)
 
     def passthrough(frames):
-        # The reduced frames are all held here, and keep no supersampled array.
+        # The reduced frames are all held here, and keep no supersampled array:
+        # they carry only their reduced maps.
         frames = tuple(frames)
         assert all(ref() is None for refs in held.values() for ref in refs)
-        assert all(frame.buffers == {} for frame in frames)
+        for frame in frames:
+            assert set(frame.buffers) == {NORMAL_MAP, DEPTH_MAP}
+            assert frame.buffers[DEPTH_MAP].shape == frame.pixels.shape[:2]
         return real_passthrough(frames)
 
     real_passthrough = cleanup.passthrough
