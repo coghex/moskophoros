@@ -250,8 +250,14 @@ def test_settings_reuse_with_an_explicit_override(capsys, found, model, earlier,
 
 @pytest.mark.parametrize(
     "previews",
-    [(), ("--no-preview",), ("--no-normals",), ("--depth",)],
-    ids=["on", "off", "no normals", "depth"],
+    [
+        (),
+        ("--no-preview",),
+        ("--no-normals",),
+        ("--depth",),
+        ("--light", "-20,30,40", "--light-ambient", "0.2"),
+    ],
+    ids=["on", "off", "no normals", "depth", "light"],
 )
 def test_a_sheet_regenerated_from_itself_is_byte_identical(
     capsys, found, model, tmp_path, previews
@@ -292,6 +298,9 @@ def test_a_sheet_regenerated_from_itself_is_byte_identical(
         ("--no-preview",): ["hero.json", "hero.normal.png", "hero.png"],
         ("--no-normals",): [name for name in OUTPUTS if name != "hero.normal.png"],
         ("--depth",): sorted([*OUTPUTS, "hero.depth.png"]),
+        ("--light", "-20,30,40", "--light-ambient", "0.2"): sorted(
+            [*OUTPUTS, "hero-lit.attack.gif", "hero-lit.walk.gif"]
+        ),
     }[previews]
     assert sorted(listing(again)) == expected
 

@@ -6,6 +6,7 @@ import json
 import sys
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -37,6 +38,7 @@ SETTINGS = {
     "previews": False,
     "normals": False,
     "depth": True,
+    "light": {"position": [-20.0, 30.0, 40.5], "intensity": 1.5, "ambient": 0.25},
     "shade": {
         "ao_distance_m": 1.2,
         "ao_samples": 32,
@@ -71,6 +73,9 @@ REUSED = {
     "previews": False,
     "normals": False,
     "depth": True,
+    "light": (-20.0, 30.0, 40.5),
+    "light_intensity": 1.5,
+    "light_ambient": 0.25,
     "clip": ("walk", "attack"),
     "once": ("attack",),
     "clip_frames": {"walk": 8, "attack": None},
@@ -85,7 +90,7 @@ REUSED = {
 
 def write_sheet(tmp_path, settings=None, name="old.json", **document):
     path = tmp_path / name
-    contents = {"schema": "moskophoros.sheet/9"} | document
+    contents = {"schema": "moskophoros.sheet/10"} | document
     contents["settings"] = copy.deepcopy(SETTINGS if settings is None else settings)
     path.write_text(json.dumps(contents, ensure_ascii=False), encoding="utf-8")
     return path
@@ -411,7 +416,9 @@ def test_previews_must_be_a_boolean(tmp_path, capsys, value):
 
 def test_a_document_with_only_schema_and_settings_is_enough(tmp_path):
     path = tmp_path / "minimal.json"
-    path.write_text(json.dumps({"schema": "moskophoros.sheet/9", "settings": SETTINGS}))
+    path.write_text(
+        json.dumps({"schema": "moskophoros.sheet/10", "settings": SETTINGS})
+    )
     assert values(reuse(path)) == REUSED
 
 
@@ -479,7 +486,7 @@ def test_a_deeply_nested_file_is_rejected(tmp_path, capsys):
     ("text", "key"),
     [
         (
-            '{"schema": "moskophoros.sheet/9", "schema": "moskophoros.sheet/9"}',
+            '{"schema": "moskophoros.sheet/10", "schema": "moskophoros.sheet/10"}',
             "schema",
         ),
         ('{"settings": {"fps": 12, "fps": 12}}', "fps"),
@@ -494,11 +501,11 @@ def test_a_repeated_key_anywhere_is_rejected(tmp_path, capsys, text, key):
     assert rejected(capsys, path) == f"repeats the key {key!r}"
 
 
-NOT_A_SHEET = "is not a moskophoros.sheet/9 document"
+NOT_A_SHEET = "is not a moskophoros.sheet/10 document"
 
 
 def older(schema):
-    return f"is a {schema} sheet; only moskophoros.sheet/9 sheets load, so generate it again"
+    return f"is a {schema} sheet; only moskophoros.sheet/10 sheets load, so generate it again"
 
 
 @pytest.mark.parametrize(
@@ -512,7 +519,8 @@ def older(schema):
         ({"schema": "moskophoros.sheet/6"}, older("moskophoros.sheet/6")),
         ({"schema": "moskophoros.sheet/5"}, older("moskophoros.sheet/5")),
         ({"schema": "moskophoros.sheet/4"}, older("moskophoros.sheet/4")),
-        ({"schema": "moskophoros.sheet/10"}, older("moskophoros.sheet/10")),
+        ({"schema": "moskophoros.sheet/11"}, older("moskophoros.sheet/11")),
+        ({"schema": "moskophoros.sheet/9"}, older("moskophoros.sheet/9")),
         ({"schema": "moskophoros.sheet/8"}, older("moskophoros.sheet/8")),
         ({"schema": "moskophoros.sheet/7"}, older("moskophoros.sheet/7")),
         (
@@ -521,17 +529,17 @@ def older(schema):
         ),
         ({"schema": 1}, f"{NOT_A_SHEET}: schema is 1"),
         (
-            {"schema": ["moskophoros.sheet/9"]},
-            f'{NOT_A_SHEET}: schema is ["moskophoros.sheet/9"]',
+            {"schema": ["moskophoros.sheet/10"]},
+            f'{NOT_A_SHEET}: schema is ["moskophoros.sheet/10"]',
         ),
         ({"schema": None}, f"{NOT_A_SHEET}: schema is null"),
-        ({"schema": "moskophoros.sheet/9"}, "settings: missing"),
+        ({"schema": "moskophoros.sheet/10"}, "settings: missing"),
         (
-            {"schema": "moskophoros.sheet/9", "settings": None},
+            {"schema": "moskophoros.sheet/10", "settings": None},
             "settings: must be set, got null",
         ),
         (
-            {"schema": "moskophoros.sheet/9", "settings": []},
+            {"schema": "moskophoros.sheet/10", "settings": []},
             "settings: expected an object, got []",
         ),
     ],
@@ -569,6 +577,10 @@ REUSED_FIELDS = [
     "previews",
     "normals",
     "depth",
+    "light",
+    "light.position",
+    "light.intensity",
+    "light.ambient",
     "shade",
     "shade.ao_distance_m",
     "shade.ao_samples",
@@ -796,6 +808,7 @@ def test_an_explicit_reduce_overrides_the_reused_one(tmp_path, sheet, explicit):
 @pytest.mark.parametrize(
     "schema",
     [
+        "moskophoros.sheet/9",
         "moskophoros.sheet/8",
         "moskophoros.sheet/7",
         "moskophoros.sheet/6",
@@ -938,7 +951,10 @@ def _encode(
     shade_range=DEFAULT_RANGE,
     normals=True,
     depth=False,
+    light=export.NO_LIGHT,
 ):
+    """The encoded sheet, with `lit`, its lit previews' GIFs when a light is
+    placed and previews are on."""
     selected = gltf.select_clips(SUBJECT, clip_names, once_names)
     view = views.View(
         settings.pitch, settings.directions, settings.start_angle, settings.model_yaw
@@ -961,7 +977,7 @@ def _encode(
         frame(requested.address)
         for requested in sampling.frames("hero", selected, view, settings.fps)
     ]
-    return export.encode(
+    sheet = export.encode(
         frames,
         generator=GENERATOR,
         source=SOURCE,
@@ -971,10 +987,24 @@ def _encode(
         previews=previews,
         normals=normals,
         depth=depth,
+        light=light,
         shade_range=shade_range,
         selected_clips=selected,
         image_path=Path("hero.png"),
     )
+    lit = ()
+    if previews and light.position is not None:
+        lit = tuple(
+            preview.gif
+            for preview in export.lit_previews(
+                frames,
+                subject="hero",
+                settings=settings,
+                selected_clips=selected,
+                light=light,
+            )
+        )
+    return SimpleNamespace(**vars(sheet), lit=lit)
 
 
 def _rerun(path, *options):
@@ -989,6 +1019,7 @@ def _rerun(path, *options):
         resolved.shade_range,
         resolved.normals,
         resolved.depth,
+        export.Light(resolved.light, resolved.light_intensity, resolved.light_ambient),
     )
 
 
@@ -1018,6 +1049,9 @@ def test_reusing_a_sheet_with_the_same_clips_gives_the_same_settings(
     assert again.json == original.json
 
 
+@pytest.mark.parametrize(
+    "light", [export.NO_LIGHT, export.Light((-20.0, 30.0, 40.0), 1.5, 0.2)]
+)
 @pytest.mark.parametrize("depth", [False, True])
 @pytest.mark.parametrize("normals", [True, False])
 @pytest.mark.parametrize("previews", [True, False])
@@ -1031,7 +1065,7 @@ def test_reusing_a_sheet_with_the_same_clips_gives_the_same_settings(
     ],
 )
 def test_loading_a_sheet_with_no_options_reproduces_it(
-    tmp_path, selection, previews, normals, depth
+    tmp_path, selection, previews, normals, depth, light
 ):
     """Settings design D-16: the loaded sheet supplies every setting, the
     clip selection, its one-shot marks and the previews, normals and depth
@@ -1045,6 +1079,7 @@ def test_loading_a_sheet_with_no_options_reproduces_it(
         shade_range=(120, 255),
         normals=normals,
         depth=depth,
+        light=light,
     )
     path = tmp_path / "hero.json"
     path.write_bytes(original.json)
@@ -1055,6 +1090,8 @@ def test_loading_a_sheet_with_no_options_reproduces_it(
     assert (again.normal is None) is (not normals)
     assert again.depth == original.depth
     assert (again.depth is None) is (not depth)
+    assert again.lit == original.lit
+    assert bool(original.lit) is (previews and light.position is not None)
     document = json.loads(original.json)
     assert document["settings"]["previews"] is previews
     assert document["settings"]["normals"] is normals

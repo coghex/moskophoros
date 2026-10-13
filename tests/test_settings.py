@@ -43,13 +43,16 @@ def test_the_schema_holds_this_slices_settings():
         "previews",
         "normals",
         "depth",
+        "light.position",
+        "light.intensity",
+        "light.ambient",
         "shade.ao_distance_m",
         "shade.ao_samples",
         "shade.occlusion_weight",
         "shade.convexity_weight",
         "shade.range",
     ]
-    assert settings.GROUPS == {"shade"}
+    assert settings.GROUPS == {"shade", "light"}
     for name, setting in settings.SCHEMA.items():
         assert setting.kind, name
         assert callable(setting.check), name
@@ -68,6 +71,9 @@ def test_the_defaults_file_and_the_schema_table_agree():
         "previews": True,
         "normals": True,
         "depth": False,
+        "light.position": None,
+        "light.intensity": 1.0,
+        "light.ambient": 0.3,
         # Today's shading values stay the defaults (settings design D-12).
         "shade.ao_distance_m": 0.3,
         "shade.ao_samples": 64,

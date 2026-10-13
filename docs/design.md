@@ -61,7 +61,7 @@ moskophoros [options] <infile.glb> <outfile.png>
 | `--convexity-weight W` | `1.0` | How much a surface's own convexity lightens the shade, finite and 0 or greater. A [settings file](#settings-files) may set it. |
 | `--shade-range LO,HI` | `84,191` | The 8-bit shade values a material's ramp spans, two integers with `0 ≤ LO < HI ≤ 255`. See [Material ramps](#material-ramps). A [settings file](#settings-files) may set it. |
 | `--frames N` | `auto` | How many frames each clip is sampled to, a whole number 1 or more, retimed so every frame lasts `1/fps`; `auto` samples by duration. A clip's own count, set in a [settings file](#settings-files), beats it. See [Clips and sampling](#clips-and-sampling). |
-| `--settings-from FILE` | none | Load every recorded setting of an earlier `moskophoros.sheet/9` sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
+| `--settings-from FILE` | none | Load every recorded setting of an earlier `moskophoros.sheet/10` sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
 | `--config FILE` | none | Repeatable. Read settings from a YAML file; later files win, and its values act as the options would. See [Settings files](#settings-files). |
 | `--no-user-config` | off | Skip the user settings file. |
 | `--preview` | on | Write the animated previews, also over a sheet or settings file without them; cannot accompany `--no-preview`. |
@@ -70,6 +70,10 @@ moskophoros [options] <infile.glb> <outfile.png>
 | `--no-normals` | off | Skip the normal map; an earlier one is left as it was. A [settings file](#settings-files) may set `normals: false` instead. |
 | `--depth` | off | Write the depth map, `<stem>.depth.png`, also over a sheet or settings file without it; cannot accompany `--no-depth`. A depth it cannot hold is an [overflow](#scale-and-ground-point). See [Export](#export). |
 | `--no-depth` | off | Skip the depth map, also over a sheet or settings file that writes it; an earlier one is left as it was. |
+| `--light X,Y,Z` | none | Place a point light and write a lit preview per clip, `<stem>-lit.<clip>.gif`, beside the flat ones: `X` screen right, `Y` screen up, `Z` toward the viewer, in sheet pixels from the ground point, three finite numbers. See [Export](#export), *Lit previews*. |
+| `--no-light` | off | Place no light, dropping a reused or configured one, as `--no-palette` does; cannot accompany `--light`. |
+| `--light-intensity I` | `1.0` | How strongly the light lights a surface facing it, finite and 0 or greater. |
+| `--light-ambient A` | `0.3` | How bright a surface facing away from the light is, finite and from 0 to 1. |
 | `--work-dir DIR` | temporary | Keep capture output in `DIR` instead of a deleted temporary directory. |
 | `--blender PATH` | discovered | Blender executable. See [Capture](#capture). |
 | `--any-blender` | off | Allow a Blender version other than the supported one. |
@@ -81,7 +85,9 @@ ascending animation index (owner decision 2026-10-01).
 path with `.json` replacing `.png`, the normal map, unless turned off, at
 the same path with `.normal.png` replacing `.png`, and the depth map, when
 asked, with `.depth.png` (lighting sheet design D-9, D-10, D-17). Previews are written as
-`<stem>.<clip>.gif` beside it; a clip name is made filename-safe by replacing
+`<stem>.<clip>.gif` beside it, and with a light each clip's lit preview as
+`<stem>-lit.<clip>.gif`, the flat name with `<stem>` replaced by
+`<stem>-lit` (lighting sheet design D-22); a clip name is made filename-safe by replacing
 every character outside `A–Z a–z 0–9 . _ -` with `_`. If two clip names become
 the same after that, the second and later previews gain the suffix `-2`, `-3`,
 and so on, in sheet order. Each clip takes the smallest suffix whose name is
@@ -102,8 +108,9 @@ full disk, without permission or because a rename fails, is an output error
 (owner decision 2026-10-03). A run replaces only the files it writes
 and never deletes others, so previews from an earlier run that this run does
 not write, such as a dropped clip's or under `--no-preview`, stay as they
-were, and so does an earlier normal map under `--no-normals` and depth map
-without `--depth` (owner decisions 2026-10-01; lighting sheet design D-17). Errors go to stderr as
+were, and so does an earlier normal map under `--no-normals`, depth map
+without `--depth` and lit previews without a light (owner decisions
+2026-10-01; lighting sheet design D-17). Errors go to stderr as
 `moskophoros: error: <message>`.
 
 With `--work-dir DIR`, `DIR` must be nonexistent or an existing empty
@@ -118,8 +125,9 @@ requires choosing a new or empty directory (owner decision 2026-09-30).
 
 ### Settings files
 
-The cell, `fps`, the palette, the material library and whether previews and
-the normal and depth maps are written are also settings, which YAML settings files may
+The cell, `fps`, the palette, the material library, whether previews and
+the normal and depth maps are written, and the preview light are also
+settings, which YAML settings files may
 set (owner decisions 2026-10-11, settings design D-2, D-5, D-8, D-14, D-17,
 D-22, D-28, D-30 and D-32; lighting sheet design D-18). Each is validated exactly as its option is. One schema table
 in `settings.py` gives each setting's type, unit, default and validation
@@ -137,6 +145,9 @@ default; a test keeps the two in agreement.
 | `previews` | `--preview`, `--no-preview` | `true` | `true` or `false` |
 | `normals` | `--normals`, `--no-normals` | `true` | `true` or `false` |
 | `depth` | `--depth`, `--no-depth` | `false` | `true` or `false` |
+| `light.position` | `--light X,Y,Z`, `--no-light` | `null`: no light | `[x, y, z]`, three finite numbers in sheet pixels, or `null` |
+| `light.intensity` | `--light-intensity I` | `1.0` | a finite number 0 or greater |
+| `light.ambient` | `--light-ambient A` | `0.3` | a finite number from 0 to 1 |
 | `shade.ao_distance_m` | `--ao-distance M` | `0.3` | a finite number greater than 0, meters |
 | `shade.ao_samples` | `--ao-samples N` | `64` | a whole number from 1 to 128 |
 | `shade.occlusion_weight` | `--occlusion-weight W` | `0.25` | a finite number 0 or greater |
@@ -225,6 +236,10 @@ materials: robot-library.yaml   # relative to this file
 previews: true          # false: write no animated previews
 normals: true           # false: write no normal map
 depth: false            # true: write the depth map
+light:                  # a preview light; set any of them, the rest fall through
+  position: [-20, 30, 40]  # sheet pixels from the ground point; null: no light
+  intensity: 1.0
+  ambient: 0.3
 frames: 8               # or auto
 clips:
   Jump: {frames: 6}     # its own count; auto: by duration; null: take frames
@@ -257,6 +272,12 @@ decision 2026-10-01):
   file or a reused sheet, a `normals` that is not `true` or `false`.
 - `--depth` together with `--no-depth`, or either option repeated; in a file
   or a reused sheet, a `depth` that is not `true` or `false`.
+- `--light` together with `--no-light`, or either option repeated; `--light`
+  not three finite numbers `X,Y,Z`; `--light-intensity` not a finite number
+  0 or greater; `--light-ambient` not a finite number from 0 to 1. In a
+  settings file or a reused sheet the same values are refused, `light.position`
+  being `null` or a list of three finite numbers, never booleans (lighting
+  sheet design D-18, Review 2's S-3).
 - `--frames` not a decimal whole number 1 or more, nor `auto`; in a file, a
   count that is not a YAML integer 1 or more (never `8.0`, `"8"` or a
   boolean), nor `auto`, nor (for a clip) `null`. There is no upper bound;
@@ -574,13 +595,16 @@ required when checking.
 
 Fitting bounds only a subject's extent on screen, never its depth, so a valid
 fit can hold depths the depth map cannot encode (lighting sheet design R-1).
-When the depth map is written, a covered pixel whose reduced depth lies
-outside −2047.9375 to +2047.9375 sheet pixels is also an overflow (exit 4),
-raised before anything is published (D-21, D-24). The message gives the
+When the depth map is written, or previews are on and a light is placed
+(the lit previews use the encoded depth), a covered pixel whose reduced depth
+lies outside −2047.9375 to +2047.9375 sheet pixels is also an overflow
+(exit 4), raised before anything is published (D-21, D-24). The two share
+one check and one message. The message gives the
 scale and the supported range and suggests a smaller `--ppm`, then lists
 each offending clip, direction and sample time with the lowest and highest
 depth of its covered pixels in sheet pixels. Depth is never clamped or
-rescaled. A run that writes no depth map is not checked.
+rescaled. A run that writes no depth map and no lit preview is not checked:
+with previews off, a placed light imposes nothing.
 
 **Reuse.** `--settings-from FILE` loads the `settings` object of an earlier
 sheet's JSON as one in-memory layer of [settings](#settings-files), applying
@@ -593,6 +617,7 @@ settings design D-15, D-16, D-19 and D-28):
 - root-motion mode
 - whether previews are written, `settings.previews`, and whether the normal
   and depth maps are, `settings.normals` and `settings.depth`
+- the preview light, `settings.light`
 - the shading values, `settings.shade`: the ambient occlusion distance and
   samples, the occlusion and convexity weights, and the shade range
 - the style: its reduction and inline palette, `settings.style.reduce` and
@@ -608,7 +633,8 @@ retaining the palette. `--palette FILE` replaces the reused palette;
 opening the original palette file and keeps its record unchanged. `--preview`
 writes previews over a sheet made without them, and `--no-preview` skips them
 over one made with them; `--normals` and `--no-normals`, and `--depth` and
-`--no-depth`, do the same for the normal and depth maps. Reuse reads only the sheet's `schema` and `settings`: the normal
+`--no-depth`, do the same for the normal and depth maps, and `--no-light`
+drops a reused light. Reuse reads only the sheet's `schema` and `settings`: the normal
 map is made again from the model, never read from an earlier file, and a
 document holding only those two keys is enough.
 
@@ -632,8 +658,8 @@ D-27):
   the model no longer has is an input error (exit 3) naming the clip. A clip
   that `--clip` replaced need not exist.
 
-Only the current sheet schema, `moskophoros.sheet/9`, loads (owner decision
-2026-10-11, settings design D-24). A sheet of any other schema, `/1` to `/8`
+Only the current sheet schema, `moskophoros.sheet/10`, loads (owner decision
+2026-10-11, settings design D-24). A sheet of any other schema, `/1` to `/9`
 included, is a usage error naming its schema and the supported one. A file
 that is unreadable, or not a sheet document, is a usage error.
 
@@ -670,7 +696,9 @@ The reused `settings` are checked strictly. Every reused field must be
 present with a value its option would accept, `projection` must be
 `orthographic`, and `pixels_per_meter`, `cell` and `ground_px` must be set.
 `cell` is the fitted `{width, height}` record, never `auto`. `previews`,
-`normals` and `depth` must be `true` or `false`. `clips` must be a nonempty list of distinct clips, each
+`normals` and `depth` must be `true` or `false`. `light` must be an object
+with exactly `position`, `null` or a list of three numbers, never booleans,
+`intensity` and `ambient`, each a value its option would accept. `clips` must be a nonempty list of distinct clips, each
 an object with exactly `name`, a nonempty string, and `loop`, `true` or
 `false`; it is checked even when `--clip` replaces it. `shade` must be an
 object with exactly `ao_distance_m`, `ao_samples`, `occlusion_weight`,
@@ -691,7 +719,8 @@ floating-point numbers, with `0 ≤ lo < hi ≤ 255`; it is validated even when
 `materials` is `null`. All reused fields are validated before any
 override, including `--reduce`, `--palette`, `--no-palette`, `--materials`,
 `--no-materials`, `--clip`, `--once`, `--preview`, `--no-preview`,
-`--normals`, `--no-normals`, `--depth`, `--no-depth` and the shading
+`--normals`, `--no-normals`, `--depth`, `--no-depth`, `--light`,
+`--no-light`, `--light-intensity`, `--light-ambient` and the shading
 options, and `--config` values (owner decisions 2026-10-04,
 2026-10-07, 2026-10-11, 2026-10-12).
 A missing or invalid field, or an unknown field inside `settings`, is a usage
@@ -1586,11 +1615,11 @@ game recovers `depth = (code − 32768) / 16` and, with the pixel's position,
 published with the other outputs, rolled back with them, and named in an
 output error (exit 6) when it cannot be written.
 
-**JSON (`moskophoros.sheet/9`).**
+**JSON (`moskophoros.sheet/10`).**
 
 ```json
 {
-  "schema": "moskophoros.sheet/9",
+  "schema": "moskophoros.sheet/10",
   "generator": {
     "tool": "moskophoros", "version": "0.1.0",
     "python": "3.x.y", "numpy": "x.y.z", "pillow": "x.y.z",
@@ -1616,6 +1645,7 @@ output error (exit 6) when it cannot be written.
     "previews": true,
     "normals": true,
     "depth": false,
+    "light": { "position": null, "intensity": 1.0, "ambient": 0.3 },
     "shade": { "ao_distance_m": 0.3, "ao_samples": 64,
                "occlusion_weight": 0.25, "convexity_weight": 1.0,
                "range": [84, 191] },
@@ -1672,8 +1702,12 @@ output error (exit 6) when it cannot be written.
   between `previews` and `depth`, inside the fingerprint (lighting sheet
   design D-17, D-18).
 - `settings.depth` records whether the run wrote the depth map, a boolean
-  between `normals` and `shade`, inside the fingerprint (lighting sheet
+  between `normals` and `light`, inside the fingerprint (lighting sheet
   design D-17, D-18).
+- `settings.light` records the preview light, in this order: `position`
+  (`[x, y, z]` or `null`), `intensity` and `ambient`, whether or not a light
+  is placed or used, between `depth` and `shade`, inside the fingerprint
+  (lighting sheet design D-13, D-18).
 - `maps`, directly after `image`, names each map's base file name, or `null`
   for a map not written: `normal` is `{"file": "<stem>.normal.png"}`, or
   `null` with `normals` false, and `depth` is `{"file": "<stem>.depth.png"}`
@@ -1683,7 +1717,7 @@ output error (exit 6) when it cannot be written.
 - `settings.shade` records the shading values used, in this order:
   `ao_distance_m`, `ao_samples`, `occlusion_weight`, `convexity_weight` and
   `range` (`[lo, hi]`), recorded whether or not a library is used, between
-  `depth` and `style`, inside the fingerprint (owner decisions 2026-10-11
+  `light` and `style`, inside the fingerprint (owner decisions 2026-10-11
   and 2026-10-12, settings design D-24 and D-35). `generator.shade` keeps only
   the fixed technique: `technique`, `samples_per_pixel`, `seed`,
   `pixel_filter` and `filter_width_px`. `moskophoros.sheet/5` is the same
@@ -1693,7 +1727,8 @@ output error (exit 6) when it cannot be written.
   `settings.style.shade_range`; `moskophoros.sheet/6` had no frame counts or
   `time_scale`; `moskophoros.sheet/7` had no normal map, `maps` or
   `settings.normals`; `moskophoros.sheet/8` had no depth map or
-  `settings.depth`; [reuse](#scale-and-ground-point) loads only `/9`
+  `settings.depth`; `moskophoros.sheet/9` had no `settings.light`;
+  [reuse](#scale-and-ground-point) loads only `/10`
   (settings design D-24). The normal and depth capture adds no fixed
   parameter to `generator.shade` (lighting sheet design D-26).
 - `fingerprint` is the SHA-256 of the canonical JSON (sorted keys, no
@@ -1753,6 +1788,54 @@ A paletted frame uses at most 255 colours plus the grey background, so its
 preview keeps exact colours without a quantization warning. Preview handling
 is otherwise unchanged.
 
+**Lit previews** (lighting sheet design D-4, D-5, D-13, D-14, D-22, D-23,
+D-24). With a light placed (`light.position` set) and previews on, each
+clip's lit preview, `<stem>-lit.<clip>.gif`, is written beside its flat one
+and handled exactly as it is: the same layout, scale, background, timing and
+limits, and the same 256-colour reduction, whose warning names the clip's
+lit preview. Without a light every preview is flat and no lit preview is
+written. With previews off a placed light is recorded but unused, with one
+warning saying so. Light is previewed, never baked: the colour sheet, flat
+previews and maps are the same with and without a light. The ordinary look
+keeps its studio light, so a lit preview over it applies directional light a
+second time; that is accepted, not corrected (D-23).
+
+The light sits in the camera's frame, fixed to the camera, so every
+direction of the subject sees it from the same place: `x` screen right, `y`
+screen up and `z` toward the viewer, in sheet pixels from the ground point,
+the depth map's units. It does not fade with distance, so placed far away it
+acts as a distant light. For each pixel the colour covers, in each cell, in
+NumPy `float64`, elementwise (lighting sheet design §Numerical reference),
+which is what a game reading the exported maps computes:
+
+1. *Inputs:* the reduced colour pixel after cleanup, and the pixel's normal
+   and depth **as encoded**: the normal map's bytes and the depth map's
+   code, even when neither file is written.
+2. *Normal:* `m = 2 · byte / 255 − 1` per component, `N = m / |m|`.
+3. *Depth:* `d = (code − 32768) / 16`.
+4. *Position,* at the pixel's centre: `P = (c + ½ − gx, gy − r − ½, d)`,
+   where `c` and `r` are the pixel's column and row within its cell from the
+   cell's top-left and `(gx, gy)` is the ground pixel corner.
+5. *Light direction:* `V = light − P`. If `V` is exactly `(0, 0, 0)`, the
+   light sits at the pixel and the diffuse term is 0. Otherwise
+   `W = V / max(|Vx|, |Vy|, |Vz|)` and `L = W / |W|`, so a light at `1e200`
+   or `1e-200` from the pixel still gives an exact direction.
+6. *Factor:* `q = min(1, max(0, N · L))` and
+   `f = min(1, A + (1 − A) · I · q)`, with `I` the intensity and `A` the
+   ambient level. `q` is bounded above as well as below because rounding
+   can make `N · L` exceed 1, which with an intensity near the float64 limit
+   would overflow (a correction from #100's issue review to the lighting
+   design's Numerical reference).
+7. *Colour:* each of R, G and B is decoded with the fixed sRGB table (the
+   palette mapping's), multiplied by `f`, and encoded with `s = 12.92 · x`
+   for `x ≤ 0.0031308`, else `1.055 · x^(1/2.4) − 0.055`, and written as
+   `min(255, floor(255 · s + ½))`. Alpha is unchanged; a transparent pixel
+   stays `(0, 0, 0, 0)`.
+
+No step produces a NaN or infinity for any finite light. The lit preview
+uses encoded depth, so a covered depth beyond the depth map's range is an
+[overflow](#scale-and-ground-point) whenever lit previews are written.
+
 Previews exist for review in motion (V-12) and are not part of the sheet
 contract.
 
@@ -1777,8 +1860,8 @@ generator and fingerprint make such a difference visible.
 A sheet reproduces itself (owner decision 2026-10-11, settings design D-16):
 rerunning with `--settings-from` that sheet, the same model, the same output
 file name and no other options gives a byte-identical PNG, JSON and
-previews, and the same normal and depth maps, with the same generator. A sheet
-made with `--no-preview` reloads writing no previews, one made with
+previews, flat and lit, and the same normal and depth maps, with the same
+generator. A sheet made with `--no-preview` reloads writing no previews, one made with
 `--no-normals` writing no normal map and recording `null` for it, and one
 made without `--depth` writing no depth map. The whole-command Blender
 tests check this.

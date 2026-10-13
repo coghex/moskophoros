@@ -304,6 +304,77 @@ def encode_normal(normals):
     return np.clip(encoded, 0, 255).astype(np.uint8)
 
 
+def light_factors(normal_bytes, depth_codes, ground_px, position, intensity, ambient):
+    """Each pixel's light factor `f` for a point light, from the encoded maps
+    (lighting sheet design D-13, D-14 and its Numerical reference).
+
+    `normal_bytes` is an `(H, W, 3)` array of encoded normals, `depth_codes`
+    an `(H, W)` array of depth codes (`32768 + 16 · depth`), `ground_px` the
+    cell's ground pixel corner `(gx, gy)`, `position` the light's `(x, y, z)`
+    in sheet pixels from the ground point in camera space (x screen right,
+    y screen up, z toward the viewer), `intensity` `I` and `ambient` `A`.
+    In `float64`, elementwise, for the pixel in column `c` and row `r`:
+
+    - `m = 2 · byte / 255 − 1`, `N = m / |m|`; `d = (code − 32768) / 16`;
+    - `P = (c + ½ − gx, gy − r − ½, d)`, `V = light − P`;
+    - `V = 0` gives no diffuse term; otherwise `W = V / max |V_i|`,
+      `L = W / |W|`, so every finite light gives a finite direction;
+    - `q = min(1, max(0, N · L))`, bounded so rounding never lifts it over
+      1 (issue review's correction);
+    - `f = min(1, A + (1 − A) · I · q)`.
+
+    Returns a new `float64` array of shape `(H, W)`. Pixels are taken as
+    given: the caller passes only covered pixels' meaning.
+    """
+    normal_bytes = np.asarray(normal_bytes)
+    depth_codes = np.asarray(depth_codes)
+    height, width = depth_codes.shape
+    m = 2 * normal_bytes.astype(np.float64) / 255 - 1
+    length = np.sqrt(np.sum(m * m, axis=-1, keepdims=True))
+    normals = m / np.where(length == 0, 1.0, length)
+    depths = (depth_codes.astype(np.float64) - 32768) / 16
+    gx, gy = (float(value) for value in ground_px)
+    columns, rows = np.meshgrid(np.arange(width), np.arange(height))
+    points = np.stack((columns + 0.5 - gx, gy - rows - 0.5, depths), axis=-1)
+    v = np.asarray(position, dtype=np.float64) - points
+    largest = np.max(np.abs(v), axis=-1, keepdims=True)
+    at_light = largest[..., 0] == 0
+    w = v / np.where(largest == 0, 1.0, largest)
+    # |W| lies between 1 and √3, except at the light, where W is 0.
+    size = np.sqrt(np.sum(w * w, axis=-1, keepdims=True))
+    lights = w / np.where(size == 0, 1.0, size)
+    diffuse = np.minimum(1.0, np.maximum(0.0, np.sum(normals * lights, axis=-1)))
+    diffuse[at_light] = 0.0
+    return np.minimum(1.0, ambient + (1 - ambient) * float(intensity) * diffuse)
+
+
+def light_pixels(
+    pixels, normal_bytes, depth_codes, ground_px, position, intensity, ambient
+):
+    """A cell lit by a point light: each covered pixel's (alpha 255) R, G and
+    B decoded with the fixed sRGB table, multiplied by its `light_factors`,
+    and encoded again as `min(255, floor(255 · s + ½))` with
+    `s = 12.92 · x` for `x ≤ 0.0031308`, else `1.055 · x^(1/2.4) − 0.055`.
+    Alpha is unchanged and every other pixel is `(0, 0, 0, 0)`. Returns a
+    new `uint8` RGBA array; the inputs are not changed."""
+    pixels = np.asarray(pixels)
+    covered = pixels[..., 3] == 255
+    factors = light_factors(
+        normal_bytes, depth_codes, ground_px, position, intensity, ambient
+    )
+    linear = _SRGB_LINEAR[pixels[..., :3]] * factors[..., np.newaxis]
+    encoded = np.where(
+        linear <= 0.0031308,
+        12.92 * linear,
+        1.055 * np.power(linear, 1 / 2.4) - 0.055,
+    )
+    rgb = np.minimum(255, np.floor(255 * encoded + 0.5)).astype(np.uint8)
+    lit = np.zeros(pixels.shape, dtype=np.uint8)
+    lit[covered, :3] = rgb[covered]
+    lit[covered, 3] = 255
+    return lit
+
+
 def map_ramps(
     pixels,
     identity,

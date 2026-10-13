@@ -1,11 +1,12 @@
-"""The sheet PNG, its normal and depth maps, its `moskophoros.sheet/9` JSON
-and the animated previews, following design §Export.
+"""The sheet PNG, its normal and depth maps, its `moskophoros.sheet/10` JSON
+and the animated previews, flat and lit, following design §Export.
 
 `encode` lays the reduced frames out on the sheet and its maps, describes
 them and returns the files' bytes; `normal_path` and `depth_path` name the
 maps; `write` writes the sheet and JSON where the caller says. `previews`
 returns each clip's GIF, `preview_paths` names them and `write_previews`
-writes them. Everything except the writers is pure, and the same inputs give
+writes them; `lit_previews` and `lit_preview_paths` do the same for the
+previews lit by a `Light`. Everything except the writers is pure, and the same inputs give
 byte-identical output (design §Reproducibility).
 """
 
@@ -28,7 +29,7 @@ import moskophoros
 from moskophoros import imageops, sampling, views
 from moskophoros.capture.backend import settings_document
 
-SCHEMA = "moskophoros.sheet/9"
+SCHEMA = "moskophoros.sheet/10"
 OVERFLOW_ERROR = 4
 # The depth map's code for "no surface", for a depth of 0 (the ground point's
 # plane), and the depths it can hold, in sheet pixels (lighting sheet design
@@ -68,6 +69,32 @@ class UsageError(Exception):
     """Settings whose previews GIF cannot represent: exit classification 2."""
 
     exit_code = USAGE_ERROR
+
+
+@dataclass(frozen=True)
+class Light:
+    """The preview light (lighting sheet design D-13, D-14): `position`, its
+    `(x, y, z)` in sheet pixels from the ground point in the camera's frame,
+    or None for no light; `intensity`, `I`; and `ambient`, `A`."""
+
+    position: tuple[float, float, float] | None = None
+    intensity: float = 1.0
+    ambient: float = 0.3
+
+    def record(self):
+        """The sheet's `settings.light`."""
+        return {
+            "position": (
+                None
+                if self.position is None
+                else [float(value) for value in self.position]
+            ),
+            "intensity": float(self.intensity),
+            "ambient": float(self.ambient),
+        }
+
+
+NO_LIGHT = Light()
 
 
 @dataclass(frozen=True)
@@ -150,10 +177,12 @@ def sheet_settings(
     previews=True,
     normals=True,
     depth=False,
+    light=NO_LIGHT,
 ):
     """The sheet's `settings` object: the capture job's settings, fitted, then
     `previews`, whether the animated previews are written, `normals` and
-    `depth`, whether the normal and depth maps are written, `shade`, the
+    `depth`, whether the normal and depth maps are written, `light`, the
+    preview light's record whether or not one is placed, `shade`, the
     capture's shade values with the shade range `[lo, hi]` stylize used, and
     `style` recorded as given, just before `clips`.
 
@@ -178,6 +207,7 @@ def sheet_settings(
         "previews": previews,
         "normals": normals,
         "depth": depth,
+        "light": light.record(),
         "shade": shade,
         "style": style,
         "clips": clips,
@@ -198,6 +228,7 @@ def encode(
     previews=True,
     normals=True,
     depth=False,
+    light=NO_LIGHT,
 ):
     """Lay out and describe the sheet, returning its PNG, JSON and, with
     `normals` and `depth`, its normal and depth maps' bytes.
@@ -211,8 +242,9 @@ def encode(
     `image_path` is where the PNG will be written; only its base name is
     recorded, as is the source's and the normal map's; `shade_range` is the
     shade range stylize used, recorded in `settings.shade`; `previews`
-    records whether the animated previews are written; and `normals` and
-    `depth` whether the normal and depth maps are.
+    records whether the animated previews are written; `normals` and
+    `depth` whether the normal and depth maps are; and `light` is the preview
+    light, recorded in `settings.light`.
 
     The normal map is laid out as the sheet is: each pixel the colour covers
     (alpha 255) holds its normal encoded by `imageops.encode_normal`, with
@@ -299,6 +331,7 @@ def encode(
         previews=previews,
         normals=normals,
         depth=depth,
+        light=light,
     )
     description = {
         "schema": SCHEMA,
@@ -460,7 +493,7 @@ def _json(description):
     return (text + "\n").encode("utf-8")
 
 
-def previews(frames, *, subject, settings, selected_clips):
+def previews(frames, *, subject, settings, selected_clips, lit=False):
     """Each selected clip's animated GIF preview, in sheet order.
 
     `frames` are the plain frames `encode` takes, with alpha 0 or 255. GIF
@@ -470,7 +503,8 @@ def previews(frames, *, subject, settings, selected_clips):
     256 of them; otherwise it is reduced to 256 without dithering and the
     preview warns. Each frame lasts the clip's frame duration in whole
     centiseconds, rounded half up and at least 20 ms; a one-shot clip holds
-    its last frame 500 ms longer. The GIF loops forever.
+    its last frame 500 ms longer. The GIF loops forever. With `lit`, the
+    frames are lit ones (`lit_previews`) and the warning says so.
 
     Raises `UsageError` when a preview would be wider than
     `MAX_PREVIEW_WIDTH` or a frame delay longer than `MAX_PREVIEW_DELAY_MS`,
@@ -540,12 +574,90 @@ def previews(frames, *, subject, settings, selected_clips):
             images.append((indices, palette))
         warnings = ()
         if reduced:
+            kind = "lit preview" if lit else "preview"
             warnings = (
-                f"clip {name!r}'s preview has frames with more than 256 colors, "
+                f"clip {name!r}'s {kind} has frames with more than 256 colors, "
                 "reduced to 256 without dithering",
             )
         result.append(Preview(name, _gif(images, delays), warnings))
     return tuple(result)
+
+
+def lit_previews(frames, *, subject, settings, selected_clips, light):
+    """Each selected clip's preview lit by `light`, a `Light` with a
+    position, in sheet order, as `previews` makes the flat ones (lighting
+    sheet design D-4, D-13, D-14, D-22).
+
+    Each covered pixel is lit from the frame's normal and depth **as
+    encoded**, `imageops.encode_normal` and `encode_depth`, whether or not
+    the map files are written, by `imageops.light_pixels` at the cell's
+    ground pixel; the lit frames then become GIFs exactly as the flat
+    previews do, a 256-colour reduction warning naming the clip's lit
+    preview. Raises `DepthOverflow` when a covered pixel's depth lies outside
+    `±DEPTH_LIMIT` (D-21, D-24), `UsageError` as `previews` does, and
+    `ValueError` for wrong frames or a light with no position.
+    """
+    if light.position is None:
+        raise ValueError("lit previews need a light with a position")
+    if settings.cell is None or settings.ground_px is None:
+        raise ValueError("the settings are not fitted: no cell or ground pixel")
+    selected_clips = tuple(selected_clips)
+    view = views.View(
+        settings.pitch, settings.directions, settings.start_angle, settings.model_yaw
+    )
+    requested = sampling.frames(
+        subject, selected_clips, view, settings.fps, settings.frames
+    )
+    width, height = settings.cell
+    frames = tuple(frames)
+    pixels = _pixels_by_address(frames, requested, (height, width, 4))
+    normals = _maps_by_address(frames, sampling.NORMAL_MAP, (height, width, 3))
+    depths = _maps_by_address(frames, sampling.DEPTH_MAP, (height, width))
+    _check_depths(requested, pixels, depths, settings.ppm)
+    lit = []
+    for frame in frames:
+        address = frame.address
+        covered = pixels[address][..., 3] == 255
+        normal_bytes = np.zeros((height, width, 3), dtype=np.uint8)
+        normal_bytes[covered] = imageops.encode_normal(normals[address][covered])
+        codes = np.zeros((height, width), dtype=np.uint16)
+        codes[covered] = encode_depth(depths[address][covered])
+        lit.append(
+            sampling.ImageFrame(
+                address,
+                imageops.light_pixels(
+                    pixels[address],
+                    normal_bytes,
+                    codes,
+                    settings.ground_px,
+                    light.position,
+                    light.intensity,
+                    light.ambient,
+                ),
+                frame.metadata,
+            )
+        )
+    return previews(
+        lit,
+        subject=subject,
+        settings=settings,
+        selected_clips=selected_clips,
+        lit=True,
+    )
+
+
+def lit_preview_paths(png_path, selected_clips):
+    """Each selected clip's lit preview path: its flat preview's name with
+    `<stem>` replaced by `<stem>-lit` (lighting sheet design D-22), so
+    `hero.walk.gif` gives `hero-lit.walk.gif`, with the same cleaned name and
+    suffix. Every flat name begins `<stem>.` and every lit one `<stem>-lit.`,
+    so the two never collide."""
+    png_path = Path(png_path)
+    stem = png_path.stem
+    return tuple(
+        path.with_name(f"{stem}-lit{path.name[len(stem) :]}")
+        for path in preview_paths(png_path, selected_clips)
+    )
 
 
 def preview_delays_ms(frame_duration_s, frame_count, one_shot):
