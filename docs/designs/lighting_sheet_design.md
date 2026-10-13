@@ -121,7 +121,7 @@ are #63 (material styling, for MAT-8), #75 (deferred `MASK` cutouts) and #43
 
 ## Desired experience
 
-*Proposal, pending the open questions.*
+*As decided in D-9 to D-19.*
 
 ```sh
 moskophoros --palette vince-144.gpl --materials robot.yaml knight.glb knight.png
@@ -178,7 +178,8 @@ both maps, so it shows the exact case.
 
 ## Design
 
-**Proposal throughout this section**, except where a decision is cited.
+Each part cites the decision it follows; anything without one is the
+slice's engineering detail.
 
 ### Data flow
 
