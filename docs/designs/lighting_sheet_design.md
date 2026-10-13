@@ -29,7 +29,7 @@ The owner approved this slice list on 2026-10-13 (D-20) and re-approved it
 after Reviews 1 and 2 (D-25), which added obligations to its slices but no
 slice.
 
-- [ ] EPIC. Light sprites live: a normal map, an optional depth map and lit previews
+- [x] EPIC. Light sprites live: a normal map, an optional depth map and lit previews — [#95]
 - [ ] LIT-1. Capture normal and depth buffers on every render
 - [ ] LIT-2. Reduce normals and depth to the sheet's pixels
 - [ ] LIT-3. Write the normal map, record it and reuse it
