@@ -97,7 +97,7 @@ ROOT_MOTION_MODES = ("error", "keep")
 # The values --reduce accepts; the first is the default.
 REDUCTIONS = ("plain", "mode")
 # The only sheet schema `--settings-from` loads (settings design D-24).
-SHEET_SCHEMA = "moskophoros.sheet/8"
+SHEET_SCHEMA = "moskophoros.sheet/9"
 _MAX_DIGITS = 4300
 _VIEW_FIELDS = ("view", "pitch", "directions", "start_angle")
 _REPEATABLE = frozenset({"--clip", "--once", "--config"})
@@ -200,6 +200,8 @@ class Options:
     clip_frames: MappingProxyType = MappingProxyType({})
     # Whether the normal map is written (lighting sheet design D-9, D-18).
     normals: bool = layered.DEFAULTS["normals"]
+    # Whether the depth map is written (lighting sheet design D-3, D-18).
+    depth: bool = layered.DEFAULTS["depth"]
 
 
 class UsageError(SystemExit):
@@ -228,6 +230,8 @@ def parse_args(argv: Sequence[str]) -> Options:
         parser.error("--preview and --no-preview cannot be given together")
     if args.normals and args.no_normals:
         parser.error("--normals and --no-normals cannot be given together")
+    if args.depth and args.no_depth:
+        parser.error("--depth and --no-depth cannot be given together")
 
     once = tuple(args.once or ())
     clip = None if args.clip is None else tuple(args.clip)
@@ -241,6 +245,8 @@ def parse_args(argv: Sequence[str]) -> Options:
         explicit = (explicit - {"preview", "no_preview"}) | {"previews"}
     if "no_normals" in explicit:
         explicit = (explicit - {"no_normals"}) | {"normals"}
+    if "no_depth" in explicit:
+        explicit = (explicit - {"no_depth"}) | {"depth"}
     explicit = frozenset(explicit)
     preset = PRESETS[args.view]
     overrides = {"pitch", "directions", "start_angle"} & explicit
@@ -291,6 +297,7 @@ def parse_args(argv: Sequence[str]) -> Options:
             if "normals" in explicit
             else layered.DEFAULTS["normals"]
         ),
+        depth=(not args.no_depth if "depth" in explicit else layered.DEFAULTS["depth"]),
     )
 
 
@@ -318,6 +325,7 @@ class ReusedSettings:
     root_motion: str
     previews: bool
     normals: bool
+    depth: bool
     clip: tuple[str, ...]
     once: tuple[str, ...]
     frames: int | str
@@ -627,6 +635,7 @@ def read_settings(path) -> ReusedSettings:
         root_motion=checked["root_motion"],
         previews=checked["previews"],
         normals=checked["normals"],
+        depth=checked["depth"],
         frames=checked["frames"],
         clip_frames=MappingProxyType(
             {entry["name"]: entry["frames"] for entry in checked["clips"]}
@@ -793,6 +802,7 @@ def run(argv: Sequence[str]) -> int:
     except (
         gltf.InputError,
         fit.CellOverflow,
+        export.DepthOverflow,
         backend.BackendError,
         _OutputError,
     ) as error:
@@ -839,7 +849,8 @@ def _command(options):
         _report("warning", warning)
     preview_paths = export.preview_paths(outfile, selected) if options.previews else ()
     normal_paths = [export.normal_path(outfile)] if options.normals else []
-    _check_targets([outfile, json_path, *normal_paths, *preview_paths])
+    depth_paths = [export.depth_path(outfile)] if options.depth else []
+    _check_targets([outfile, json_path, *normal_paths, *depth_paths, *preview_paths])
     view = views.View(
         options.pitch, options.directions, options.start_angle, options.model_yaw
     )
@@ -925,6 +936,7 @@ def _command(options):
                     shade_range=options.shade_range,
                     previews=options.previews,
                     normals=options.normals,
+                    depth=options.depth,
                 ),
                 source.sha256,
             )
@@ -965,11 +977,13 @@ def _command(options):
         shade_range=options.shade_range,
         previews=options.previews,
         normals=options.normals,
+        depth=options.depth,
         selected_clips=selected,
         image_path=outfile,
     )
     outputs = [(outfile, sheet.png), (json_path, sheet.json)]
     outputs += [(path, sheet.normal) for path in normal_paths]
+    outputs += [(path, sheet.depth) for path in depth_paths]
     if options.previews:
         previews = export.previews(
             frames, subject=subject.name, settings=settings, selected_clips=selected
@@ -1707,8 +1721,8 @@ def _build_parser():
         type=_path,
         action=_Files,
         help="read settings from a YAML file; repeatable, later files winning. "
-        "A settings file may set cell, fps, palette, materials, previews and "
-        "normals; "
+        "A settings file may set cell, fps, palette, materials, previews, "
+        "normals and depth; "
         "its values act as the options would. The user file and the shipped "
         "defaults give the defaults below any loaded sheet (default: none)",
     )
@@ -1740,6 +1754,19 @@ def _build_parser():
         action=_Flag,
         help="skip the normal map; an earlier one is left as it is (default: off)",
     )
+    parser.add_argument(
+        "--depth",
+        action=_Flag,
+        help="write the depth map, <stem>.depth.png: each pixel's depth toward "
+        "the viewer from the ground point, 16-bit; a depth beyond 2047.9375 "
+        "sheet pixels either way is an overflow (default: off)",
+    )
+    parser.add_argument(
+        "--no-depth",
+        action=_Flag,
+        help="skip the depth map, also over a sheet or settings file that "
+        "writes it; an earlier one is left as it is (default: off)",
+    )
     single(
         "--work-dir",
         "DIR",
@@ -1766,6 +1793,8 @@ def _build_parser():
         "--no-preview",
         "--normals",
         "--no-normals",
+        "--depth",
+        "--no-depth",
         "--no-user-config",
         "--any-blender",
         "--no-palette",
@@ -2073,6 +2102,7 @@ _SETTINGS = {
     "root_motion": _one_of(*ROOT_MOTION_MODES),
     "previews": _previews,
     "normals": _previews,
+    "depth": _previews,
     "shade": {
         "ao_distance_m": _reused(_positive),
         "ao_samples": _reused(_ao_samples),

@@ -588,3 +588,54 @@ def test_the_command_reduces_captured_normals_and_depth_to_the_sheet(
     assert set(np.unique(depths[covered])) == {-20.0, 12.0}
     assert angle_deg(normals[covered], np.array((0.0, 0.0, 1.0))).max() <= 0.01
     assert (normals[~covered] == 0).all() and (depths[~covered] == 0).all()
+
+
+# The depth map (LIT-4)
+
+
+def test_the_depth_map_reads_a_plane_s_depth_in_sheet_pixels(found, tmp_path, capsys):
+    # Squares facing the viewer 0.3 m in front of the ground point and 0.5 m
+    # behind it, head-on at 40 px/m: 12 and −20 sheet pixels, codes 32960
+    # and 32448, in front above 32768 and behind below it (R-5).
+    import io
+
+    from PIL import Image
+
+    from moskophoros import cli
+
+    path = surfaces_model(tmp_path, "squares", facing_quads([0.3, -0.5]))
+    out = tmp_path / "squares.png"
+    status = cli.run(
+        [
+            "--no-user-config",
+            "--pitch",
+            "0",
+            "--directions",
+            "1",
+            "--ppm",
+            "40",
+            "--cell",
+            "72x40",
+            "--supersample",
+            "2",
+            "--no-preview",
+            "--depth",
+            "--blender",
+            str(found.path),
+            str(path),
+            str(out),
+        ]
+    )
+    _, err = capsys.readouterr()
+    assert status == 0, err
+    with Image.open(out) as image:
+        alpha = np.asarray(image)[..., 3]
+    codes = np.asarray(
+        Image.open(io.BytesIO((tmp_path / "squares.depth.png").read_bytes()))
+    )
+    assert codes.dtype == np.uint16 and codes.shape == alpha.shape
+    covered = alpha == 255
+    assert covered.sum() > 100
+    assert set(np.unique(codes[covered])) == {32768 + 12 * 16, 32768 - 20 * 16}
+    assert (codes[~covered] == 0).all()
+    assert codes[covered].max() > 32768 > codes[covered].min()

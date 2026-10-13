@@ -61,13 +61,15 @@ moskophoros [options] <infile.glb> <outfile.png>
 | `--convexity-weight W` | `1.0` | How much a surface's own convexity lightens the shade, finite and 0 or greater. A [settings file](#settings-files) may set it. |
 | `--shade-range LO,HI` | `84,191` | The 8-bit shade values a material's ramp spans, two integers with `0 ≤ LO < HI ≤ 255`. See [Material ramps](#material-ramps). A [settings file](#settings-files) may set it. |
 | `--frames N` | `auto` | How many frames each clip is sampled to, a whole number 1 or more, retimed so every frame lasts `1/fps`; `auto` samples by duration. A clip's own count, set in a [settings file](#settings-files), beats it. See [Clips and sampling](#clips-and-sampling). |
-| `--settings-from FILE` | none | Load every recorded setting of an earlier `moskophoros.sheet/8` sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
+| `--settings-from FILE` | none | Load every recorded setting of an earlier `moskophoros.sheet/9` sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
 | `--config FILE` | none | Repeatable. Read settings from a YAML file; later files win, and its values act as the options would. See [Settings files](#settings-files). |
 | `--no-user-config` | off | Skip the user settings file. |
 | `--preview` | on | Write the animated previews, also over a sheet or settings file without them; cannot accompany `--no-preview`. |
 | `--no-preview` | off | Skip the animated previews. A [settings file](#settings-files) may set `previews: false` instead. |
 | `--normals` | on | Write the normal map, `<stem>.normal.png`, also over a sheet or settings file without it; cannot accompany `--no-normals`. See [Export](#export). |
 | `--no-normals` | off | Skip the normal map; an earlier one is left as it was. A [settings file](#settings-files) may set `normals: false` instead. |
+| `--depth` | off | Write the depth map, `<stem>.depth.png`, also over a sheet or settings file without it; cannot accompany `--no-depth`. A depth it cannot hold is an [overflow](#scale-and-ground-point). See [Export](#export). |
+| `--no-depth` | off | Skip the depth map, also over a sheet or settings file that writes it; an earlier one is left as it was. |
 | `--work-dir DIR` | temporary | Keep capture output in `DIR` instead of a deleted temporary directory. |
 | `--blender PATH` | discovered | Blender executable. See [Capture](#capture). |
 | `--any-blender` | off | Allow a Blender version other than the supported one. |
@@ -76,9 +78,9 @@ Without `--clip`, every clip is selected in the file's animation order:
 ascending animation index (owner decision 2026-10-01).
 
 `<outfile.png>` must end in `.png`. The JSON is written beside it, at the same
-path with `.json` replacing `.png`, and the normal map, unless turned off, at
-the same path with `.normal.png` replacing `.png` (lighting sheet design D-9,
-D-17). Previews are written as
+path with `.json` replacing `.png`, the normal map, unless turned off, at
+the same path with `.normal.png` replacing `.png`, and the depth map, when
+asked, with `.depth.png` (lighting sheet design D-9, D-10, D-17). Previews are written as
 `<stem>.<clip>.gif` beside it; a clip name is made filename-safe by replacing
 every character outside `A–Z a–z 0–9 . _ -` with `_`. If two clip names become
 the same after that, the second and later previews gain the suffix `-2`, `-3`,
@@ -100,8 +102,8 @@ full disk, without permission or because a rename fails, is an output error
 (owner decision 2026-10-03). A run replaces only the files it writes
 and never deletes others, so previews from an earlier run that this run does
 not write, such as a dropped clip's or under `--no-preview`, stay as they
-were, and so does an earlier normal map under `--no-normals` (owner
-decisions 2026-10-01; lighting sheet design D-17). Errors go to stderr as
+were, and so does an earlier normal map under `--no-normals` and depth map
+without `--depth` (owner decisions 2026-10-01; lighting sheet design D-17). Errors go to stderr as
 `moskophoros: error: <message>`.
 
 With `--work-dir DIR`, `DIR` must be nonexistent or an existing empty
@@ -117,7 +119,7 @@ requires choosing a new or empty directory (owner decision 2026-09-30).
 ### Settings files
 
 The cell, `fps`, the palette, the material library and whether previews and
-the normal map are written are also settings, which YAML settings files may
+the normal and depth maps are written are also settings, which YAML settings files may
 set (owner decisions 2026-10-11, settings design D-2, D-5, D-8, D-14, D-17,
 D-22, D-28, D-30 and D-32; lighting sheet design D-18). Each is validated exactly as its option is. One schema table
 in `settings.py` gives each setting's type, unit, default and validation
@@ -134,6 +136,7 @@ default; a test keeps the two in agreement.
 | `materials` | `--materials FILE`, `--no-materials` | `null` | a material library path, or `null` for none |
 | `previews` | `--preview`, `--no-preview` | `true` | `true` or `false` |
 | `normals` | `--normals`, `--no-normals` | `true` | `true` or `false` |
+| `depth` | `--depth`, `--no-depth` | `false` | `true` or `false` |
 | `shade.ao_distance_m` | `--ao-distance M` | `0.3` | a finite number greater than 0, meters |
 | `shade.ao_samples` | `--ao-samples N` | `64` | a whole number from 1 to 128 |
 | `shade.occlusion_weight` | `--occlusion-weight W` | `0.25` | a finite number 0 or greater |
@@ -221,6 +224,7 @@ palette: ~/palettes/vince-144.gpl
 materials: robot-library.yaml   # relative to this file
 previews: true          # false: write no animated previews
 normals: true           # false: write no normal map
+depth: false            # true: write the depth map
 frames: 8               # or auto
 clips:
   Jump: {frames: 6}     # its own count; auto: by duration; null: take frames
@@ -251,6 +255,8 @@ decision 2026-10-01):
 - `--preview` together with `--no-preview`, or either option repeated.
 - `--normals` together with `--no-normals`, or either option repeated; in a
   file or a reused sheet, a `normals` that is not `true` or `false`.
+- `--depth` together with `--no-depth`, or either option repeated; in a file
+  or a reused sheet, a `depth` that is not `true` or `false`.
 - `--frames` not a decimal whole number 1 or more, nor `auto`; in a file, a
   count that is not a YAML integer 1 or more (never `8.0`, `"8"` or a
   boolean), nor `auto`, nor (for a clip) `null`. There is no upper bound;
@@ -296,7 +302,7 @@ A usage error prints the usage synopsis to stderr, followed by the
 | 1 | Internal error (a bug); a traceback is printed. |
 | 2 | Usage error: bad option, value or combination. |
 | 3 | Input error: see [Input contract](#input-contract) and [Root motion](#root-motion). |
-| 4 | Overflow: the subject does not fit a fixed cell and scale. |
+| 4 | Overflow: the subject does not fit a fixed cell and scale, or, with the depth map written, its depth does not fit the map's range. |
 | 5 | Backend error: Blender missing, wrong version, or failed. |
 | 6 | Output error: an output could not be written (a full disk, no permission, a failed rename). The message names the output and the reason; the earlier outputs are kept, and no usage synopsis or traceback is printed (owner decision 2026-10-03). |
 | 130 | Interrupted (Ctrl-C): `moskophoros: error: interrupted`, no traceback, nothing published (owner decision 2026-10-01). |
@@ -566,6 +572,16 @@ sample time, with the overshoot on each side in whole pixels, rounded up
 (owner decision 2026-10-01). The margin is not
 required when checking.
 
+Fitting bounds only a subject's extent on screen, never its depth, so a valid
+fit can hold depths the depth map cannot encode (lighting sheet design R-1).
+When the depth map is written, a covered pixel whose reduced depth lies
+outside −2047.9375 to +2047.9375 sheet pixels is also an overflow (exit 4),
+raised before anything is published (D-21, D-24). The message gives the
+scale and the supported range and suggests a smaller `--ppm`, then lists
+each offending clip, direction and sample time with the lowest and highest
+depth of its covered pixels in sheet pixels. Depth is never clamped or
+rescaled. A run that writes no depth map is not checked.
+
 **Reuse.** `--settings-from FILE` loads the `settings` object of an earlier
 sheet's JSON as one in-memory layer of [settings](#settings-files), applying
 every recorded setting that affects the output (owner decisions 2026-10-11,
@@ -576,7 +592,7 @@ settings design D-15, D-16, D-19 and D-28):
 - ppm, cell, ground point and ground pixel
 - root-motion mode
 - whether previews are written, `settings.previews`, and whether the normal
-  map is, `settings.normals`
+  and depth maps are, `settings.normals` and `settings.depth`
 - the shading values, `settings.shade`: the ambient occlusion distance and
   samples, the occlusion and convexity weights, and the shade range
 - the style: its reduction and inline palette, `settings.style.reduce` and
@@ -591,8 +607,8 @@ retaining the palette. `--palette FILE` replaces the reused palette;
 `--no-palette` drops it. Reuse applies the recorded ordered colours without
 opening the original palette file and keeps its record unchanged. `--preview`
 writes previews over a sheet made without them, and `--no-preview` skips them
-over one made with them; `--normals` and `--no-normals` do the same for the
-normal map. Reuse reads only the sheet's `schema` and `settings`: the normal
+over one made with them; `--normals` and `--no-normals`, and `--depth` and
+`--no-depth`, do the same for the normal and depth maps. Reuse reads only the sheet's `schema` and `settings`: the normal
 map is made again from the model, never read from an earlier file, and a
 document holding only those two keys is enough.
 
@@ -616,8 +632,8 @@ D-27):
   the model no longer has is an input error (exit 3) naming the clip. A clip
   that `--clip` replaced need not exist.
 
-Only the current sheet schema, `moskophoros.sheet/8`, loads (owner decision
-2026-10-11, settings design D-24). A sheet of any other schema, `/1` to `/7`
+Only the current sheet schema, `moskophoros.sheet/9`, loads (owner decision
+2026-10-11, settings design D-24). A sheet of any other schema, `/1` to `/8`
 included, is a usage error naming its schema and the supported one. A file
 that is unreadable, or not a sheet document, is a usage error.
 
@@ -653,8 +669,8 @@ makes the preset `custom`.
 The reused `settings` are checked strictly. Every reused field must be
 present with a value its option would accept, `projection` must be
 `orthographic`, and `pixels_per_meter`, `cell` and `ground_px` must be set.
-`cell` is the fitted `{width, height}` record, never `auto`. `previews` and
-`normals` must be `true` or `false`. `clips` must be a nonempty list of distinct clips, each
+`cell` is the fitted `{width, height}` record, never `auto`. `previews`,
+`normals` and `depth` must be `true` or `false`. `clips` must be a nonempty list of distinct clips, each
 an object with exactly `name`, a nonempty string, and `loop`, `true` or
 `false`; it is checked even when `--clip` replaces it. `shade` must be an
 object with exactly `ao_distance_m`, `ao_samples`, `occlusion_weight`,
@@ -675,7 +691,8 @@ floating-point numbers, with `0 ≤ lo < hi ≤ 255`; it is validated even when
 `materials` is `null`. All reused fields are validated before any
 override, including `--reduce`, `--palette`, `--no-palette`, `--materials`,
 `--no-materials`, `--clip`, `--once`, `--preview`, `--no-preview`,
-`--normals`, `--no-normals` and the shading options, and `--config` values (owner decisions 2026-10-04,
+`--normals`, `--no-normals`, `--depth`, `--no-depth` and the shading
+options, and `--config` values (owner decisions 2026-10-04,
 2026-10-07, 2026-10-11, 2026-10-12).
 A missing or invalid field, or an unknown field inside `settings`, is a usage
 error naming it. The rest of the sheet is not checked beyond its `schema`
@@ -691,7 +708,7 @@ Blender's process; in slice 1 the later stages pass arrays in memory. Per-stage
 caching is deferred. From stylize on, each reduced colour frame carries its
 reduced normal and depth maps (see [Normal and depth maps](#normal-and-depth-maps)),
 which cleanup passes through and export receives; export writes the normal
-map from them.
+map and, when asked, the depth map from them.
 
 #### Frames into stylize
 
@@ -1553,11 +1570,27 @@ all-or-nothing with the sheet, JSON and previews, rolled back with them, and
 named in an output error (exit 6) when it cannot be written. A game decodes
 a normal as `2 · byte / 255 − 1` per component and renormalises it.
 
-**JSON (`moskophoros.sheet/8`).**
+**Depth map** (lighting sheet design D-3, D-10, D-17, D-21), `<stem>.depth.png`
+beside the sheet when `depth` is true (off by default): a 16-bit greyscale
+PNG written by Pillow with no text or time chunks, exactly the sheet's size
+and in its layout. Each pixel the colour sheet covers (alpha 255) holds
+`32768 + floor(16 · depth + ½)`, where `depth` is the pixel's reduced depth
+([Normal and depth maps](#normal-and-depth-maps)) in sheet pixels, toward
+the viewer from the plane through the ground point that faces the camera:
+a surface in front of that plane reads above 32768 and one behind it below.
+Depths from −2047.9375 to +2047.9375 encode, as codes 1 to 65535; one beyond
+is an [overflow](#scale-and-ground-point). Every other pixel, transparent in
+the colour sheet or in an unused cell, is 0, which means "no surface". A
+game recovers `depth = (code − 32768) / 16` and, with the pixel's position,
+`pixels_per_meter` and `ground_px`, its position in camera space. It is
+published with the other outputs, rolled back with them, and named in an
+output error (exit 6) when it cannot be written.
+
+**JSON (`moskophoros.sheet/9`).**
 
 ```json
 {
-  "schema": "moskophoros.sheet/8",
+  "schema": "moskophoros.sheet/9",
   "generator": {
     "tool": "moskophoros", "version": "0.1.0",
     "python": "3.x.y", "numpy": "x.y.z", "pillow": "x.y.z",
@@ -1582,6 +1615,7 @@ a normal as `2 · byte / 255 − 1` per component and renormalises it.
     "root_motion": "error",
     "previews": true,
     "normals": true,
+    "depth": false,
     "shade": { "ao_distance_m": 0.3, "ao_samples": 64,
                "occlusion_weight": 0.25, "convexity_weight": 1.0,
                "range": [84, 191] },
@@ -1635,18 +1669,21 @@ a normal as `2 · byte / 255 − 1` per component and renormalises it.
   boolean between `root_motion` and `normals`, inside the fingerprint (owner
   decision 2026-10-11, settings design D-28).
 - `settings.normals` records whether the run wrote the normal map, a boolean
-  between `previews` and `shade`, inside the fingerprint (lighting sheet
+  between `previews` and `depth`, inside the fingerprint (lighting sheet
+  design D-17, D-18).
+- `settings.depth` records whether the run wrote the depth map, a boolean
+  between `normals` and `shade`, inside the fingerprint (lighting sheet
   design D-17, D-18).
 - `maps`, directly after `image`, names each map's base file name, or `null`
   for a map not written: `normal` is `{"file": "<stem>.normal.png"}`, or
-  `null` with `normals` false, and `depth` is `null` (no depth map is
-  written yet). The encodings are fixed by this design and named by the
+  `null` with `normals` false, and `depth` is `{"file": "<stem>.depth.png"}`
+  with `depth` true, else `null`. The encodings are fixed by this design and named by the
   schema, not repeated per sheet. `maps` is outside the fingerprint, as
   `image` is; `settings.normals` covers it.
 - `settings.shade` records the shading values used, in this order:
   `ao_distance_m`, `ao_samples`, `occlusion_weight`, `convexity_weight` and
   `range` (`[lo, hi]`), recorded whether or not a library is used, between
-  `normals` and `style`, inside the fingerprint (owner decisions 2026-10-11
+  `depth` and `style`, inside the fingerprint (owner decisions 2026-10-11
   and 2026-10-12, settings design D-24 and D-35). `generator.shade` keeps only
   the fixed technique: `technique`, `samples_per_pixel`, `seed`,
   `pixel_filter` and `filter_width_px`. `moskophoros.sheet/5` is the same
@@ -1655,7 +1692,8 @@ a normal as `2 · byte / 255 − 1` per component and renormalises it.
   capture values in `generator.shade` and the range as
   `settings.style.shade_range`; `moskophoros.sheet/6` had no frame counts or
   `time_scale`; `moskophoros.sheet/7` had no normal map, `maps` or
-  `settings.normals`; [reuse](#scale-and-ground-point) loads only `/8`
+  `settings.normals`; `moskophoros.sheet/8` had no depth map or
+  `settings.depth`; [reuse](#scale-and-ground-point) loads only `/9`
   (settings design D-24). The normal and depth capture adds no fixed
   parameter to `generator.shade` (lighting sheet design D-26).
 - `fingerprint` is the SHA-256 of the canonical JSON (sorted keys, no
@@ -1667,7 +1705,7 @@ a normal as `2 · byte / 255 − 1` per component and renormalises it.
 - The file keeps the key order shown above, with 2-space indentation, UTF-8
   with non-ASCII characters kept as is, and a trailing newline (owner decision
   2026-10-01).
-- `source.file`, `image.file` and `maps.normal.file` are base names, never
+- `source.file`, `image.file` and the `maps` files are base names, never
   paths, so the JSON is the same wherever the command runs (owner decision
   2026-10-01).
 
@@ -1724,7 +1762,7 @@ contract.
 
 Given the same input bytes, settings and generator (tool, Python, numpy,
 Pillow and Blender versions, renderer, shade technique), the sheet PNG, its
-normal map and JSON are byte-identical. To make that true:
+normal and depth maps and JSON are byte-identical. To make that true:
 
 - sample times are exact
 - no timestamps are written anywhere
@@ -1739,9 +1777,10 @@ generator and fingerprint make such a difference visible.
 A sheet reproduces itself (owner decision 2026-10-11, settings design D-16):
 rerunning with `--settings-from` that sheet, the same model, the same output
 file name and no other options gives a byte-identical PNG, JSON and
-previews, and the same normal map, with the same generator. A sheet made with
-`--no-preview` reloads writing no previews, and one made with `--no-normals`
-writing no normal map and recording `null` for it. The whole-command Blender
+previews, and the same normal and depth maps, with the same generator. A sheet
+made with `--no-preview` reloads writing no previews, one made with
+`--no-normals` writing no normal map and recording `null` for it, and one
+made without `--depth` writing no depth map. The whole-command Blender
 tests check this.
 
 ## Project layout
