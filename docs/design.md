@@ -211,7 +211,7 @@ line, such as
 version: 1
 cell: 48x48             # or auto
 fps: 12
-palette: ~/palettes/vince-128.gpl
+palette: ~/palettes/vince-144.gpl
 materials: robot-library.yaml   # relative to this file
 previews: true          # false: write no animated previews
 frames: 8               # or auto
