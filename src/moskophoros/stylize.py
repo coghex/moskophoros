@@ -5,17 +5,20 @@ given, never on capture internals, and touches no file or process.
 
 Frames arrive one at a time and may carry named buffers beside their colour;
 `identities`, a `sampling.Identities`, is the asset's identity list that a
-frame's identity buffer indexes. Without a material `library` the reductions
-read only the colour. With one, each block also takes its winning material's
-ramp entry. Each returns reduced colour frames, and lets go of a frame, with
-all its buffers, before asking for the next.
+frame's identity buffer indexes. Without a material `library` the colour
+reduction reads only the colour; with one, it also reads the identity and
+shade buffers, and each block takes its winning material's ramp entry. Each
+reduction returns reduced colour frames, and lets go of a frame, with all its
+buffers, before asking for the next.
 
-A frame carrying normal and depth buffers (`NORMAL`, `DEPTH`) has them
-reduced to its reduced colour's pixels, with exactly the colour's coverage,
-whatever the reduction, palette or library (lighting sheet design D-8, D-15,
+Independently of the colour reduction, a frame carrying both normal and
+depth buffers (`NORMAL`, `DEPTH`) has them reduced to its reduced colour's
+pixels, with exactly the colour's coverage, whatever the reduction, palette
+or library (design §Normal and depth maps; lighting sheet design D-8, D-15,
 D-19, D-27; `imageops.reduce_normal_depth`). The reduced frame carries them
-as its only buffers, under `NORMAL_MAP` and `DEPTH_MAP`; a frame without
-them is reduced to one carrying no buffers.
+as its only buffers, under `NORMAL_MAP` and `DEPTH_MAP`. A frame carrying
+neither is reduced to one carrying no buffers, and one carrying only one of
+them is a `ValueError` naming the frame.
 """
 
 import numpy as np

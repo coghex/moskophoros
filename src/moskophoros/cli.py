@@ -624,8 +624,9 @@ def read_settings(path) -> ReusedSettings:
     including fields an explicit option will replace: the style, with a
     recorded material library checked against the recorded palette, the
     previews and normals flags, and the clip selection, a nonempty list of distinct clips
-    each with exactly a name and a loop flag. Nothing beyond `schema` and
-    `settings` is read.
+    each with exactly a name, a loop flag and its own frame count as given:
+    a count of 1 or more (never a boolean), `"auto"`, or null to take the
+    global count. Nothing beyond `schema` and `settings` is read.
     """
     path = Path(path)
     try:
@@ -1886,9 +1887,10 @@ def _build_parser():
         "FILE",
         _path,
         None,
-        "draw materials from the ramps of a YAML moskophoros.materials/2 "
-        "library, whose entries may give their own shading values; needs a "
-        "palette (default: none)",
+        "draw materials from the ramps of a YAML moskophoros.materials/3 "
+        "library (moskophoros.materials/2 still loads): ramps listed as "
+        "palette indices or generated from a base colour, and entries that "
+        "may give their own shading values; needs a palette (default: none)",
     )
     parser.add_argument(
         "--no-materials",
@@ -1912,8 +1914,8 @@ def _build_parser():
         type=_path,
         action=_Files,
         help="read settings from a YAML file; repeatable, later files winning. "
-        "A settings file may set cell, fps, palette, materials, previews, "
-        "normals, depth and light; "
+        "A settings file may set cell, fps, frames, clips, palette, "
+        "materials, previews, normals, depth, light, shade and ramp; "
         "its values act as the options would. The user file and the shipped "
         "defaults give the defaults below any loaded sheet (default: none)",
     )
