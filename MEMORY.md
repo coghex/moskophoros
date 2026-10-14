@@ -31,14 +31,14 @@ anything newer than the date below.
   - style pass 1, palettes and reduction: 2026-10-05;
   - material styling, a qualified acceptance of the proof of concept:
     2026-10-08;
-  - settings: 2026-10-13.
+  - settings: 2026-10-13;
+  - lighting sheet: 2026-10-14.
 - **Settings arc** ([design](docs/designs/settings_design.md)): accepted
   by the owner on 2026-10-13 ([record](docs/acceptance/settings.md)); epic
   #83 closed. Layered YAML settings (user file, reused sheet, `--config`,
   options), the shading values, per-material shading and clip frame counts.
   Libraries are YAML (`moskophoros.materials/2`).
-- **Open epics:** #63 (material styling), open for MAT-8 and #75; #95
-  (lighting sheet), open for LIT-6. #3, #24
+- **Open epics:** #63 (material styling), open for MAT-8 and #75. #3, #24
   and #83 are closed, and so are #78 and #79, settled by settings.
 
 ## Environment
@@ -83,10 +83,11 @@ anything newer than the date below.
 
 ## Next steps
 
-1. **Lighting sheet** (epic #95, [design](docs/designs/lighting_sheet_design.md)):
-   LIT-1 to LIT-5 merged 2026-10-13. Every run writes `<stem>.normal.png`;
-   `--depth` adds a depth map and `--light X,Y,Z` lit previews. Next is
-   LIT-6 (#101), the owner's visual review, on the owner's word.
+1. **Lighting sheet:** accepted by the owner on 2026-10-14
+   ([record](docs/acceptance/lighting-sheet.md)); epic #95 closed. Every run
+   writes `<stem>.normal.png`; `--depth` adds a depth map and `--light X,Y,Z`
+   lit previews. Known cost: normal and depth encoding roughly doubles a
+   test render's time.
 2. **Guide:** review the work after `bb3c9b4`.
 3. **Deferred, each waiting on a stated trigger:**
    - recolouring without a re-render (settings D-18);
