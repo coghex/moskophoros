@@ -1,40 +1,40 @@
 # Guide cursor
 
-Resume after: `bb3c9b418b148deae59cbc889464fd1279a79679` · [2026-10-06T175903Z-bb3c9b4](2026-10-06T175903Z-bb3c9b4.md) · 2026-10-06T18:04Z
+Resume after: `fc9de5d63da34359049e0655c27f5f7778a20d21` · [2026-10-14T130147Z-fc9de5d](2026-10-14T130147Z-fc9de5d.md) · 2026-10-14T13:12:59Z
 Covered beyond the boundary: none
 
 ## Next
 
-No open guide finding. GUIDE-1 is processed through #61 → PR #62, merged at
-`a7ba0d5`. Work after `bb3c9b4` awaits a future guide review; this bookkeeping
-does not advance coverage or change the historical alignment readings.
+Walk GUIDE-1's saved issue proposal with the owner, then GUIDE-2. The audit is
+complete; findings are not yet dispositioned.
 
 ## Open findings
 
-- none
+- 2026-10-14T130147Z-fc9de5d/GUIDE-1 — auxiliary scratch survives failure — proposal pending (see finding).
+- 2026-10-14T130147Z-fc9de5d/GUIDE-2 — obsolete intermediate interface descriptions — unprocessed.
 
 ## Pending handoff
 
-- No fresh project tests, probes or renders: dispatch required recorded evidence.
-- #43 remains owner-deferred until a model needs those animation features.
-- Epics #3 and #24 remain open with their implementation children closed.
-- Prior stale-merge-commit/base-edit CI behavior remains unverified.
+- Recheck found no movement after fc9de5d; documentation-only landings excluded.
+- Settings D-36's accepted capture-shading exception is not reflected in V-4's literal no-re-render wording; owner vision reconciliation pending, no new design decision inferred.
+- #43 waits for a model needing its animation features; #75 waits for explicit owner authorization of alpha support.
+- Epics #3, #24, #63, #83 and #95 are closed on recorded owner decisions.
+- Full Blender suite, Linux and stale-merge/base-edit CI behavior not rechecked.
 - History before `0eb2491` (bootstrap and PRs #1–#2) remains unreviewed.
-- End recheck found no movement; reviewed boundary is bb3c9b4.
 
 ## Alignment
 
 | Principle | Reading | Since | Note |
 |---|---|---|---|
-| V-1 | aligned | 2026-10-04T175222Z-c93605c | Generic subjects, clips and layouts; no game integration. |
-| V-2 | drifting | 2026-10-06T175903Z-bb3c9b4 | GUIDE-1: malformed palette returns internal exit 1 instead of usage 2. |
-| V-3 | aligned | 2026-10-04T175222Z-c93605c | Binary GLB structure and original scene/animation identities. |
-| V-4 | aligned | 2026-10-04T175222Z-c93605c | Addressed frames and preserved metadata; style remains downstream of capture. |
-| V-5 | aligned | 2026-10-04T175222Z-c93605c | One bpy script behind validated JSON and subprocess boundary. |
-| V-6 | aligned | 2026-10-04T175222Z-c93605c | Parameterized views and settings override precedence. |
-| V-7 | aligned | 2026-10-04T175222Z-c93605c | Global fit, fixed placement and reuse, root endpoints and camera-relative lighting. |
-| V-8 | aligned | 2026-10-04T175222Z-c93605c | Owner-selected reductions/palettes; accepted foundational style-record change. |
-| V-9 | aligned | 2026-10-04T175222Z-c93605c | Time-based full addresses and attached settings fingerprint. |
-| V-10 | aligned | 2026-10-04T175222Z-c93605c | Composable shared image operations. |
-| V-11 | drifting | 2026-10-06T175903Z-bb3c9b4 | GUIDE-1: malformed PNG exception escapes file-naming palette validation. |
-| V-12 | aligned | 2026-09-30T043336Z-fe94bd6 | Independent mechanical assertions and recorded owner visual acceptance; no fresh tests. |
+| V-1 | aligned | 2026-10-04T175222Z-c93605c | Generic materials, settings and maps; no private game layout. |
+| V-2 | drifting | 2026-10-06T175903Z-bb3c9b4 | GUIDE-1 scratch lifecycle and GUIDE-2 stale interface descriptions; prior palette defect repaired. |
+| V-3 | aligned | 2026-10-04T175222Z-c93605c | Original glTF material identity and scene traversal preserved. |
+| V-4 | aligned | 2026-10-04T175222Z-c93605c | Addressed buffers and downstream maps; accepted settings D-36 capture-shading exception noted in handoff. |
+| V-5 | aligned | 2026-10-04T175222Z-c93605c | One bpy script behind validated jobs/results. |
+| V-6 | aligned | 2026-10-04T175222Z-c93605c | Views remain parameterized through layered settings. |
+| V-7 | aligned | 2026-10-04T175222Z-c93605c | Fixed fit, camera-relative light and ground-relative map depth verified. |
+| V-8 | aligned | 2026-10-04T175222Z-c93605c | Owner-chosen ramps, shading and lighting; accepted per-material capture override. |
+| V-9 | aligned | 2026-10-04T175222Z-c93605c | Source-time addresses, count retiming and complete settings fingerprints. |
+| V-10 | aligned | 2026-10-04T175222Z-c93605c | Shared pure ramp, reduction, map and lighting operations. |
+| V-11 | aligned | 2026-10-14T130147Z-fc9de5d | Prior malformed-PNG error repaired; strict YAML/settings/material/buffer validation exercised. |
+| V-12 | aligned | 2026-09-30T043336Z-fe94bd6 | Independent mechanical assertions and recorded owner acceptance; no new visual judgment. |

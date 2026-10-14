@@ -4,7 +4,7 @@ Where the project stands, for an agent or the owner arriving cold. Read it
 after [AGENTS.md](AGENTS.md), then check `git log` and the tracker for
 anything newer than the date below.
 
-**Last reconciled: 2026-10-13.**
+**Last reconciled: 2026-10-14.**
 
 **Rules for this file:**
 - **Current state only.** When something changes, replace the old line; don't
@@ -20,8 +20,7 @@ anything newer than the date below.
 ## Where things stand
 
 - **Review heading:** [docs/vision.md](docs/vision.md); `/guide` resumes from
-  [docs/guide/CURSOR.md](docs/guide/CURSOR.md). The last guide review stopped
-  at `bb3c9b4` (2026-10-06); later work is unreviewed.
+  [docs/guide/CURSOR.md](docs/guide/CURSOR.md), which holds coverage and follow-ups.
 - **The command works.** It renders an animated `.glb` through headless
   Blender into a sheet, a JSON description and animated previews, and the
   owner judges the looks by eye (vision V-12). Its contract is
@@ -37,10 +36,9 @@ anything newer than the date below.
   by the owner on 2026-10-13 ([record](docs/acceptance/settings.md)); epic
   #83 closed. Layered YAML settings (user file, reused sheet, `--config`,
   options), the shading values, per-material shading and clip frame counts.
-  Libraries are YAML (`moskophoros.materials/2`).
-- **Open epics:** #63 (material styling): every child is closed, including
-  MAT-8 (generated ramps, merged 2026-10-14); closure awaits the owner. #3, #24
-  and #83 are closed, and so are #78 and #79, settled by settings.
+  Libraries are YAML (`moskophoros.materials/3`, with `/2` still supported).
+- **Open epics:** none. Material styling, settings and lighting sheets are
+  complete; #63, #83 and #95 are closed on the owner’s word.
 
 ## Environment
 
@@ -91,8 +89,7 @@ anything newer than the date below.
    writes `<stem>.normal.png`; `--depth` adds a depth map and `--light X,Y,Z`
    lit previews. Known cost: normal and depth encoding roughly doubles a
    test render's time.
-2. **Guide:** review the work after `bb3c9b4`.
-3. **Deferred, each waiting on a stated trigger:**
+2. **Deferred, each waiting on a stated trigger:**
    - recolouring without a re-render (settings D-18);
    - #75, glTF MASK cutouts;
    - #43, mesh-weight animation and CUBICSPLINE tangents: approved, but held
