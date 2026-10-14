@@ -1036,9 +1036,86 @@ depth encoding; how units facing 8 directions combine with the engine's 4
 camera rotations; whether materials perturb normals; and how the sheet's JSON
 describes the new maps.
 
+### D-28. A generated ramp's base colour is its lightest shade
+
+Decided 2026-10-14 by the owner in the manager terminal, after reviewing
+sample ramps (part of Q-24). The owner chose "Lightest shade": a generated
+ramp's last band, band N−1, is the base colour itself, and every other band
+is darker. A generated ramp has no shift toward light, so D-21's "hue shift
+toward light" is dropped.
+
+Evidence (outside the repository): the manager's prototype
+`~/.local/share/moskophoros-acceptance/ramp-gen/gen.py`, and ten sample
+materials under three settings in `ramp-gen/samples.json`.
+
+Affects MAT-8.
+
+### D-29. The base colour is written in the library
+
+Decided 2026-10-14 by the owner in the manager terminal (part of Q-24). The
+owner chose "Written in the library": each generated ramp states its base
+colour in the library, so a material looks the same on every model (D-3). The
+model's own glTF colour is not used.
+
+Affects MAT-8.
+
+### D-30. Setting B is the default formula, and the formula's values are settings
+
+Decided 2026-10-14 by the owner in the manager terminal (part of Q-24). In
+the owner's words: "B should be the default, but im definitely using C for my
+actual synarchy project, i like the high contrast from the large hue shift,
+but just a little would be more versitile for a variety of uses, and i will
+be using to make other things."
+
+- **B, the shipped default:** each shade darker lowers OKLab lightness by
+  0.12 and turns the hue by −12°. Chroma fades linearly to 70% of the base
+  colour's at the darkest shade (a fade of 0.3).
+- **C, the owner's setting for their own project:** a step of 0.09, −35° per
+  shade and a fade of 0.6.
+- **Consequence:** the formula's three values are settings (the user file,
+  `--config` files and options; settings design D-2), as well as values a
+  library may give, so the owner's user settings can choose C while the
+  shipped default stays B.
+
+Affects MAT-8.
+
+### D-31. Per-material formula overrides are wanted
+
+Decided 2026-10-14 by the owner in the manager terminal (part of Q-24). In
+the owner's words: "i know we need the capability but im not sure we need to
+implement now, having metals and other reflective surfaces have a larger
+shift would be an obvious improvement, but im not sure any other examples."
+
+The capability is wanted. Whether MAT-8 implements it, or only leaves room
+for it in the library format, is
+[Q-28](#q-28-how-does-a-library-give-a-generated-ramp).
+
+Affects MAT-8.
+
+### D-32. The shade range 190–225 is carried by the material files
+
+Decided 2026-10-14 by the owner in the manager terminal, after the range
+review. In the owner's words: "ok yes 190-225 looks best, maximizing detail
+while maintining abstraction, these ranges should be in the material files
+for color ramps, we can set them to this value or let them fallback to it as
+a default, whichever sounds best to you."
+
+- The owner judged 190–225 by eye (V-12). At the owner's earlier 120–220,
+  about 96% of the robot's body took the base shade; at 190–225 the body is
+  about 63% darkest, 17% middle and 20% base (renders in
+  `~/.local/share/moskophoros-acceptance/ramp-gen/check/`, `ramp-gen/narrow/`
+  and `robotexpressive/ramp-gen-check/`).
+- A material library carries its range. The owner left the form open; the
+  manager proposed a library-level default, which is
+  [Q-29](#q-29-does-a-library-give-a-default-shade).
+- The shipped default range stays [84, 191] (settings design D-12).
+
+Affects MAT-8.
+
 ## Open questions
 
-Open: Q-24, deferred to MAT-8's start. Q-11 is resolved by D-27. Q-21, Q-22 and Q-23, raised by an
+Open: Q-24, in progress for MAT-8 (D-28 to D-32 decided on 2026-10-14), with
+its remainder in Q-27, Q-28 and Q-29. Q-11 is resolved by D-27. Q-21, Q-22 and Q-23, raised by an
 outside review on 2026-10-07, are resolved by D-22, D-23 and D-24; Q-25,
 raised by D-22, by D-25; Q-26, raised by the D-10 spike, by D-26.
 
@@ -1271,6 +1348,110 @@ sits in the ramp; how hue shifts interpolate across bands; how achromatic
 contrast; and how a shade equally near two palette entries snaps.
 **Specified when MAT-8 starts**, with a short owner review of sample ramps;
 MAT-8 is not ready until then. Affects MAT-8.
+
+*Progress, 2026-10-14:* the owner reviewed sample ramps and decided D-28 to
+D-32. What remains is split into Q-27 (the exact formula and its settings),
+Q-28 (the library format) and Q-29 (the library's default shade).
+
+### Q-27. What exactly is the formula, and how is it set?
+
+**Proposal: the formula as reviewed, made exact.** It is the manager's
+prototype, with one change: shades snap from the unrounded colour, not from an
+8-bit copy. Snapping from the unrounded colour gives the same palette indices
+on all 30 reviewed sample ramps (ten materials, settings A, B and C, Vince
+144).
+
+Given a base colour (sRGB `#rrggbb`), its OKLCh lightness, chroma and hue
+`L0, C0, h0` (with `h0 = atan2(b0, a0)`, the same OKLab conversion as palette
+mapping), a band count N, and the values `step`, `hue` and `fade`, band
+`i` (0 darkest) is `k = N − 1 − i` shades below the base:
+
+- `L = max(0, L0 − step·k)`;
+- `h = h0 + hue·k`, or `h0` when `C0 < 0.02` (a near-grey keeps its hue);
+- `C = C0·(1 − fade·k/(N − 1))`, or `C0` when N = 1;
+- if `(L, C, h)` is outside the sRGB gamut (a linear channel below −10⁻⁶ or
+  above 1 + 10⁻⁶), `C` is reduced by 40 halvings between 0 and `C`, keeping
+  the largest value found in gamut; lightness and hue never change;
+- the shade snaps to the palette entry nearest in OKLab, Euclidean distance,
+  equal distances to the lower index (as palette mapping does), and repeats
+  are kept (D-21).
+
+**Proposal: the settings.** A new `ramp` mapping, global values with options:
+
+| Setting | Option | Default (B) | Limits |
+|---|---|---|---|
+| `ramp.lightness_step` | `--ramp-step L` | 0.12 | finite, 0 to 1 |
+| `ramp.hue_shift_deg` | `--ramp-hue-shift DEG` | −12 | finite, −180 to 180 |
+| `ramp.chroma_fade` | `--ramp-fade F` | 0.3 | finite, 0 to 1 |
+
+- A generated ramp's own value beats the global one from any layer, with a
+  warning when an explicit global loses, as for shade values (settings
+  design D-23).
+- The sheet records the global values (a sheet schema bump, settings design
+  D-30) and, for each generated ramp, its properties as given and its
+  resulting indices (D-21).
+- A loaded sheet reuses the recorded indices without regenerating them. An
+  explicit value or `--config` that changes a ramp's inputs regenerates it
+  from its recorded properties.
+
+Affects MAT-8.
+
+### Q-28. How does a library give a generated ramp?
+
+**Proposal:** anywhere a library gives a ramp as a list of indices, a named
+ramp under `ramps` or a material's own `ramp`, it may give a mapping instead:
+
+```yaml
+ramps:
+  stone: [133, 135, 137, 138, 139]
+  gold: {base: "#ca9337", bands: 4}
+  chrome: {base: "#8c939c", bands: 5, hue_shift_deg: -35, chroma_fade: 0.6}
+materials:
+  Main: {uses: gold}
+  Cloth: {ramp: {base: "#7a3b2e", bands: 3}}
+```
+
+- `base` and `bands` are required; `bands` is 1 to 256, as a listed ramp's
+  length is.
+- **Recommendation:** ship the per-ramp overrides of D-31 in MAT-8.
+  - They are three optional keys with the global settings' validation.
+  - Adding them later needs another library schema bump, and under settings
+    design D-29 a bump stops every older library loading until its `schema`
+    line is edited.
+- The library schema becomes `moskophoros.materials/3`. **Recommendation:**
+  a `/2` library still loads. Every `/2` library is valid `/3`, so the owner's
+  existing libraries need no edit. The alternative is D-29's precedent, where
+  the older schema stops loading.
+
+Affects MAT-8.
+
+### Q-29. Does a library give a default shade?
+
+**Proposal (the manager's form):** a top-level `shade` mapping in the
+library, with the same keys a material's `shade` may give (`ao_distance_m`,
+`occlusion_weight`, `convexity_weight`, `range`; settings design D-20).
+
+```yaml
+schema: moskophoros.materials/3
+shade: {range: [190, 225]}
+```
+
+- Each value resolves in order: the material's own `shade`, the library's
+  `shade`, the settings layers, the shipped default.
+- Materials with no entry that take the library's default ramp use the
+  library's `shade` too. The ordinary look uses no shade, as now.
+- **Consequence:** where a library sets a value, `--shade-range` and the user
+  file's range no longer reach that library's materials. An explicit global
+  that loses gives one warning naming the library's value, as settings
+  design D-23 warns for a material's own value.
+- The sheet records the library's `shade` inline with the library. Its
+  capture values reach Blender per material, as settings design D-36 sets
+  out.
+
+The alternative is that each material sets its own range, as the owner's
+library does today. This works now but repeats the range in every entry.
+
+Affects MAT-8.
 
 ### Q-25. What does "ambient light" include?
 
