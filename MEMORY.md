@@ -38,7 +38,8 @@ anything newer than the date below.
   #83 closed. Layered YAML settings (user file, reused sheet, `--config`,
   options), the shading values, per-material shading and clip frame counts.
   Libraries are YAML (`moskophoros.materials/2`).
-- **Open epics:** #63 (material styling), open for MAT-8 and #75. #3, #24
+- **Open epics:** #63 (material styling): every child is closed, including
+  MAT-8 (generated ramps, merged 2026-10-14); closure awaits the owner. #3, #24
   and #83 are closed, and so are #78 and #79, settled by settings.
 
 ## Environment
@@ -62,6 +63,8 @@ anything newer than the date below.
   their working palette, Vince 144 (Vince 128 plus a 16-step grey ramp),
   and their shading (render N3), both chosen 2026-10-13, for every run.
   The robot's library is `~/.config/moskophoros/libraries/robotexpressive.yaml`.
+  The shade range is 190–225. Generated ramps default to setting B; the owner
+  uses setting C for Synarchy.
   Pass `--no-user-config` for any render that must match shipped defaults.
 
 ## Kanban pull-request flow
@@ -91,7 +94,6 @@ anything newer than the date below.
 2. **Guide:** review the work after `bb3c9b4`.
 3. **Deferred, each waiting on a stated trigger:**
    - recolouring without a re-render (settings D-18);
-   - MAT-8, generated ramps (material styling Q-24);
    - #75, glTF MASK cutouts;
    - #43, mesh-weight animation and CUBICSPLINE tangents: approved, but held
      until a model needs it.
