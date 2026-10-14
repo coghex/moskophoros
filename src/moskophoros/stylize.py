@@ -20,7 +20,7 @@ them is reduced to one carrying no buffers.
 
 import numpy as np
 
-from moskophoros import imageops
+from moskophoros import imageops, materials
 from moskophoros.sampling import (
     DEPTH,
     DEPTH_MAP,
@@ -131,25 +131,33 @@ def resolve(library, name):
     `None` for the ordinary look.
 
     A name resolves in order: its own entry (a ramp, a named ramp it uses, or
-    `"ordinary"`), then the library's default ramp, then the ordinary look.
+    `"ordinary"`), then the library's default ramp, then the ordinary look. A
+    generated ramp resolves to its generated indices (material styling design
+    D-33), exactly as a hand-listed ramp of those indices would.
     """
     entry = library.materials.get(name)
     if entry is not None:
         if entry.ramp is not None:
-            return entry.ramp
+            return materials.indices(entry.ramp)
         if entry.uses is not None:
-            return library.ramps[entry.uses]
+            return materials.indices(library.ramps[entry.uses])
         return None
     if library.default is not None:
-        return library.ramps[library.default]
+        return materials.indices(library.ramps[library.default])
     return None
 
 
 def _own_range(library, name):
+    """The shade range of a material called `name` before the global one: its
+    entry's own, else the library's (material styling design D-35, D-36),
+    which a material taking the default ramp also takes; None for the
+    global."""
     entry = library.materials.get(name)
-    if entry is None or entry.shade is None:
-        return None
-    return entry.shade.range
+    if entry is not None and entry.shade is not None and entry.shade.range is not None:
+        return entry.shade.range
+    if library.shade is not None:
+        return library.shade.range
+    return None
 
 
 def _materials(factor, palette, identities, library, shade_range, *, by_mode):

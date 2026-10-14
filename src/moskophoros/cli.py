@@ -97,7 +97,7 @@ ROOT_MOTION_MODES = ("error", "keep")
 # The values --reduce accepts; the first is the default.
 REDUCTIONS = ("plain", "mode")
 # The only sheet schema `--settings-from` loads (settings design D-24).
-SHEET_SCHEMA = "moskophoros.sheet/10"
+SHEET_SCHEMA = "moskophoros.sheet/11"
 _MAX_DIGITS = 4300
 _VIEW_FIELDS = ("view", "pitch", "directions", "start_angle")
 _REPEATABLE = frozenset({"--clip", "--once", "--config"})
@@ -113,6 +113,9 @@ _SETTING_FIELDS = MappingProxyType(
         "light.position": "light",
         "light.intensity": "light_intensity",
         "light.ambient": "light_ambient",
+        "ramp.lightness_step": "ramp_step",
+        "ramp.hue_shift_deg": "ramp_hue_shift",
+        "ramp.chroma_fade": "ramp_fade",
     }
 )
 # The file settings that are paths, with the `Options` fields a path and a
@@ -138,11 +141,15 @@ class PaletteRecord:
 
 @dataclass(frozen=True)
 class MaterialsRecord:
-    """A material library snapshot; reuse never needs its original file."""
+    """A material library snapshot; reuse never needs its original file.
+    `formula`, for a reused one, maps each global formula value to the one
+    its recorded generated ramps were made with (material styling design
+    D-33); None for a library read from its file."""
 
     source: str
     sha256: str
     library: materials.Library
+    formula: MappingProxyType | None = None
 
 
 @dataclass(frozen=True)
@@ -211,6 +218,11 @@ class Options:
     light: tuple[float, float, float] | None = layered.DEFAULTS["light.position"]
     light_intensity: float = layered.DEFAULTS["light.intensity"]
     light_ambient: float = layered.DEFAULTS["light.ambient"]
+    # The global formula of generated ramps (material styling design D-30,
+    # D-33): the lightness step, hue shift in degrees and chroma fade.
+    ramp_step: float = layered.DEFAULTS["ramp.lightness_step"]
+    ramp_hue_shift: float = layered.DEFAULTS["ramp.hue_shift_deg"]
+    ramp_fade: float = layered.DEFAULTS["ramp.chroma_fade"]
 
 
 class UsageError(SystemExit):
@@ -314,6 +326,9 @@ def parse_args(argv: Sequence[str]) -> Options:
         light=args.light,
         light_intensity=args.light_intensity,
         light_ambient=args.light_ambient,
+        ramp_step=args.ramp_step,
+        ramp_hue_shift=args.ramp_hue_shift,
+        ramp_fade=args.ramp_fade,
     )
 
 
@@ -345,6 +360,9 @@ class ReusedSettings:
     light: tuple[float, float, float] | None
     light_intensity: float
     light_ambient: float
+    ramp_step: float
+    ramp_hue_shift: float
+    ramp_fade: float
     clip: tuple[str, ...]
     once: tuple[str, ...]
     frames: int | str
@@ -553,6 +571,7 @@ def _resolve_materials(options: Options, reused_colors) -> Options:
             library = materials.read_library_bytes(data, colors, source=path)
         except materials.LibraryError as error:
             parser.error(f"{name} {error}")
+        library = materials.generate(library, colors, _formula(options))
         return replace(
             options,
             materials=MaterialsRecord(
@@ -575,7 +594,22 @@ def _resolve_materials(options: Options, reused_colors) -> Options:
             "the reused palette the reused material library was written for; "
             "also give --materials FILE, or --no-materials to drop the library"
         )
-    return options
+    # A reused generated ramp keeps its recorded indices unless an explicit
+    # value changes its effective formula (material styling design D-33).
+    record = options.materials
+    library = materials.generate(
+        record.library, colors, _formula(options), recorded=record.formula
+    )
+    return replace(options, materials=replace(record, library=library))
+
+
+def _formula(options):
+    """The global formula values of generated ramps in force, by name."""
+    return {
+        "lightness_step": options.ramp_step,
+        "hue_shift_deg": options.ramp_hue_shift,
+        "chroma_fade": options.ramp_fade,
+    }
 
 
 def read_settings(path) -> ReusedSettings:
@@ -658,6 +692,9 @@ def read_settings(path) -> ReusedSettings:
         light=checked["light"]["position"],
         light_intensity=checked["light"]["intensity"],
         light_ambient=checked["light"]["ambient"],
+        ramp_step=checked["ramp"]["lightness_step"],
+        ramp_hue_shift=checked["ramp"]["hue_shift_deg"],
+        ramp_fade=checked["ramp"]["chroma_fade"],
         frames=checked["frames"],
         clip_frames=MappingProxyType(
             {entry["name"]: entry["frames"] for entry in checked["clips"]}
@@ -671,7 +708,16 @@ def read_settings(path) -> ReusedSettings:
         occlusion_weight=shade["occlusion_weight"],
         convexity_weight=shade["convexity_weight"],
         palette=style["palette"],
-        materials=style["materials"],
+        materials=(
+            None
+            if style["materials"] is None
+            else replace(
+                style["materials"],
+                formula=MappingProxyType(
+                    {name: checked["ramp"][name] for name in materials.FORMULA}
+                ),
+            )
+        ),
     )
 
 
@@ -771,7 +817,7 @@ def _materials_document(record: MaterialsRecord) -> dict:
     entries = {}
     for name, entry in library.materials.items():
         if entry.ramp is not None:
-            entries[name] = {"ramp": list(entry.ramp)}
+            entries[name] = {"ramp": _ramp_document(entry.ramp)}
         elif entry.uses is not None:
             entries[name] = {"uses": entry.uses}
         else:
@@ -782,13 +828,34 @@ def _materials_document(record: MaterialsRecord) -> dict:
                 key: list(value) if key == "range" else value
                 for key, value in entry.shade.given()
             }
-    return {
+    document = {
         "source": record.source,
         "sha256": record.sha256,
-        "ramps": {name: list(ramp) for name, ramp in library.ramps.items()},
+        "ramps": {name: _ramp_document(ramp) for name, ramp in library.ramps.items()},
         "default": library.default,
-        "materials": entries,
     }
+    # The library's own shade, only when it gives one (D-35).
+    if library.shade is not None:
+        document["shade"] = {
+            key: list(value) if key == "range" else value
+            for key, value in library.shade.given()
+        }
+    document["materials"] = entries
+    return document
+
+
+def _ramp_document(ramp):
+    """A ramp as the sheet records it: a hand-listed one as its list, a
+    generated one as its properties as given, `base`, `bands`, its own
+    formula values in a fixed order, then `indices`, its result (material
+    styling design D-34)."""
+    if not isinstance(ramp, materials.Generated):
+        return list(ramp)
+    return (
+        {"base": ramp.base, "bands": ramp.bands}
+        | dict(ramp.given())
+        | {"indices": list(materials.indices(ramp))}
+    )
 
 
 def main(argv: Sequence[str] | None = None):
@@ -900,6 +967,14 @@ def _command(options):
             subject.primitive_materials, library, _explicit_shading(options)
         ):
             _report("warning", warning)
+        for warning in materials.library_shade_warnings(
+            subject.primitive_materials, library, _explicit_shading(options)
+        ):
+            _report("warning", warning)
+        for warning in materials.ramp_warnings(
+            subject.primitive_materials, library, _explicit_formula(options)
+        ):
+            _report("warning", warning)
         settings = replace(
             settings,
             shade=replace(
@@ -971,6 +1046,7 @@ def _command(options):
                     normals=options.normals,
                     depth=options.depth,
                     light=light,
+                    ramp=_formula(options),
                 ),
                 source.sha256,
             )
@@ -1013,6 +1089,7 @@ def _command(options):
         normals=options.normals,
         depth=options.depth,
         light=light,
+        ramp=_formula(options),
         selected_clips=selected,
         image_path=outfile,
     )
@@ -1099,6 +1176,22 @@ _OVERRIDABLE = MappingProxyType(
         "range": "shade_range",
     }
 )
+
+
+def _explicit_formula(options):
+    """The global formula values an option or a `--config` file set, by name:
+    the ones a generated ramp's own value warns about (material styling
+    design D-33)."""
+    fields = {
+        "lightness_step": "ramp_step",
+        "hue_shift_deg": "ramp_hue_shift",
+        "chroma_fade": "ramp_fade",
+    }
+    return {
+        name: getattr(options, field)
+        for name, field in fields.items()
+        if field in options.explicit
+    }
 
 
 def _explicit_shading(options):
@@ -1498,6 +1591,8 @@ def _cell(text):
 
 
 _ambient = _from_to(_number, 0, 1)
+_unit = _from_to(_number, 0, 1)
+_half_turn = _from_to(_number, -180, 180)
 
 
 def _light(text):
@@ -1749,6 +1844,30 @@ def _build_parser():
         defaults["shade.range"],
         "the 8-bit shade values a material's ramp spans, 0 <= LO < HI <= 255 "
         "(default: 84,191)",
+    )
+    single(
+        "--ramp-step",
+        "L",
+        _unit,
+        defaults["ramp.lightness_step"],
+        "how much OKLab lightness each shade of a library's generated ramps "
+        "drops, 0 to 1 (default: 0.12)",
+    )
+    single(
+        "--ramp-hue-shift",
+        "DEG",
+        _half_turn,
+        defaults["ramp.hue_shift_deg"],
+        "how far each shade of a generated ramp turns the hue, degrees, -180 "
+        "to 180 (default: -12)",
+    )
+    single(
+        "--ramp-fade",
+        "F",
+        _unit,
+        defaults["ramp.chroma_fade"],
+        "how much chroma a generated ramp loses by its darkest shade, 0 to 1 "
+        "(default: 0.3)",
     )
     single(
         "--palette",
@@ -2231,6 +2350,11 @@ _SETTINGS = {
         "convexity_weight": _reused(_weight),
         "range": _shade_range,
     },
+    "ramp": {
+        "lightness_step": _reused(_unit),
+        "hue_shift_deg": _reused(_half_turn),
+        "chroma_fade": _reused(_unit),
+    },
     "style": {
         "reduce": _one_of(*REDUCTIONS),
         "palette": _PALETTE,
@@ -2252,6 +2376,12 @@ def _check_shape(shape, value, name, problems):
     if shape is _MATERIALS:
         if value is None:
             return None
+        # A library's own shade is recorded only when it gives one (material
+        # styling design D-35); the library module checks it with the rest.
+        if isinstance(value, dict) and "shade" in value:
+            rest = {key: item for key, item in value.items() if key != "shade"}
+            checked = _check_shape(_MATERIALS_FIELDS, rest, name, problems)
+            return checked | {"shade": value["shade"]}
         return _check_shape(_MATERIALS_FIELDS, value, name, problems)
     if isinstance(shape, _Nullable):
         if value is None:
@@ -2304,9 +2434,11 @@ def _style(style, problems):
     }
     if record["default"] is not None:
         document["default"] = record["default"]
+    if "shade" in record:
+        document["shade"] = record["shade"]
     try:
         library = materials.validate_library(
-            document, style["palette"].colors, source=where
+            document, style["palette"].colors, source=where, recorded=True
         )
     except materials.LibraryError as error:
         problems.append(f"{where}: {error.problem}")

@@ -60,8 +60,11 @@ moskophoros [options] <infile.glb> <outfile.png>
 | `--occlusion-weight W` | `0.25` | How much occlusion by other surfaces lightens the shade, finite and 0 or greater. A [settings file](#settings-files) may set it. |
 | `--convexity-weight W` | `1.0` | How much a surface's own convexity lightens the shade, finite and 0 or greater. A [settings file](#settings-files) may set it. |
 | `--shade-range LO,HI` | `84,191` | The 8-bit shade values a material's ramp spans, two integers with `0 ≤ LO < HI ≤ 255`. See [Material ramps](#material-ramps). A [settings file](#settings-files) may set it. |
+| `--ramp-step L` | `0.12` | How much OKLab lightness each shade of a library's [generated ramps](#generated-ramps) drops, finite, 0 to 1. A ramp's own value beats it. |
+| `--ramp-hue-shift DEG` | `-12` | How far each shade of a generated ramp turns the hue, in degrees, finite, −180 to 180. |
+| `--ramp-fade F` | `0.3` | How much chroma a generated ramp loses by its darkest shade, finite, 0 to 1. |
 | `--frames N` | `auto` | How many frames each clip is sampled to, a whole number 1 or more, retimed so every frame lasts `1/fps`; `auto` samples by duration. A clip's own count, set in a [settings file](#settings-files), beats it. See [Clips and sampling](#clips-and-sampling). |
-| `--settings-from FILE` | none | Load every recorded setting of an earlier `moskophoros.sheet/10` sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
+| `--settings-from FILE` | none | Load every recorded setting of an earlier `moskophoros.sheet/11` sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
 | `--config FILE` | none | Repeatable. Read settings from a YAML file; later files win, and its values act as the options would. See [Settings files](#settings-files). |
 | `--no-user-config` | off | Skip the user settings file. |
 | `--preview` | on | Write the animated previews, also over a sheet or settings file without them; cannot accompany `--no-preview`. |
@@ -153,6 +156,9 @@ default; a test keeps the two in agreement.
 | `shade.occlusion_weight` | `--occlusion-weight W` | `0.25` | a finite number 0 or greater |
 | `shade.convexity_weight` | `--convexity-weight W` | `1.0` | a finite number 0 or greater |
 | `shade.range` | `--shade-range LO,HI` | `[84, 191]` | `[lo, hi]`, two integers with `0 ≤ lo < hi ≤ 255` |
+| `ramp.lightness_step` | `--ramp-step L` | `0.12` | a finite number from 0 to 1 |
+| `ramp.hue_shift_deg` | `--ramp-hue-shift DEG` | `-12` | a finite number from −180 to 180, degrees |
+| `ramp.chroma_fade` | `--ramp-fade F` | `0.3` | a finite number from 0 to 1 |
 
 The `shade` settings are a nested mapping in a file, and each is a setting of
 its own: they merge key by key across the layers, so a file may set one and
@@ -248,6 +254,10 @@ shade:                  # set any of them; the rest fall through
   occlusion_weight: 0.5
   convexity_weight: 0.0
   range: [120, 188]
+ramp:                   # generated ramps' formula (setting B is shipped)
+  lightness_step: 0.09
+  hue_shift_deg: -35
+  chroma_fade: 0.6
 ```
 
 ### Option validation
@@ -287,6 +297,10 @@ decision 2026-10-01):
   `--occlusion-weight` or `--convexity-weight` not finite and 0 or greater; a
   `--shade-range` not two integers with `0 ≤ LO < HI ≤ 255`. The same limits
   apply to the `shade` settings in a [settings file](#settings-files).
+- `--ramp-step` or `--ramp-fade` not a finite number from 0 to 1, or
+  `--ramp-hue-shift` not one from −180 to 180; the same limits apply to the
+  `ramp` settings in a settings file and a reused sheet (material styling
+  design D-33).
 - A bad [settings file](#settings-files), or a missing or unreadable
   `--config` file. These errors name the file, the key and the line.
 - Over a loaded sheet without `--clip`, a `--once` naming a clip outside the
@@ -658,8 +672,15 @@ D-27):
   the model no longer has is an input error (exit 3) naming the clip. A clip
   that `--clip` replaced need not exist.
 
-Only the current sheet schema, `moskophoros.sheet/10`, loads (owner decision
-2026-10-11, settings design D-24). A sheet of any other schema, `/1` to `/9`
+Each recorded generated ramp keeps its recorded `indices` without being
+generated again. Only when an explicit value, from `--config` or an option,
+changes a reused ramp's effective formula values is that ramp generated again
+from its recorded properties; the user file sits below the loaded sheet, so it
+never changes a loaded sheet's ramps (material styling design D-33). The
+global formula reloads from `settings.ramp`.
+
+Only the current sheet schema, `moskophoros.sheet/11`, loads (owner decision
+2026-10-11, settings design D-24). A sheet of any other schema, `/1` to `/10`
 included, is a usage error naming its schema and the supported one. A file
 that is unreadable, or not a sheet document, is a usage error.
 
@@ -707,13 +728,19 @@ numbers, never booleans, and `ao_samples` an integer from 1 to 128.
 `style` must be an object with exactly `reduce`, a value
 `--reduce` accepts, `palette`, either `null` or an object with exactly
 `source`, `sha256` and `colors`, `materials`, either `null` or an object with
-exactly `source`, `sha256`, `ramps`, `default` and `materials`. The source is a nonempty base filename, never a path; the
+exactly `source`, `sha256`, `ramps`, `default` and `materials`, and the
+library's own `shade` after `default` when it gave one. The source is a nonempty base filename, never a path; the
 digest is exactly 64 lowercase hexadecimal digits; colours are 1 to 255 unique
 canonical lowercase `#rrggbb` strings in their recorded order. The palette
 module applies its shared count, RGB and uniqueness checks. A library record's
 `ramps`, `default` (a ramp name, or `null` for none) and `materials` are
 validated by the library module exactly as a library file is, against the
-recorded palette, and a record beside a `null` palette is an error.
+recorded palette, and a record beside a `null` palette is an error. A
+recorded generated ramp must also carry `indices`, exactly `bands` valid
+palette indices, checked without generating; the recorded library is
+validated even when `--materials FILE` replaces it or `--no-materials` drops
+it. `ramp` must hold exactly `lightness_step`, `hue_shift_deg` and
+`chroma_fade`, each a value its option would accept.
 `shade.range` is an array of exactly two JSON integers, never booleans or
 floating-point numbers, with `0 ≤ lo < hi ≤ 255`; it is validated even when
 `materials` is `null`. All reused fields are validated before any
@@ -886,7 +913,11 @@ renders ran before it. The colour itself is unchanged.
   them, and the global values for the others; AO samples are global only
   (settings design D-9, D-36). An importer's copy of a glTF material takes
   that material's values, and a surface without a material, a translucent
-  one and one taking the ordinary look take the global values. No light,
+  one and one taking the ordinary look take the global values; so does a
+  material taking the default ramp. A library's own `shade` gives a range
+  only, which acts in stylize, so it never reaches capture, and the capture
+  job is the same whatever the default ramp, the ranges and the generated
+  ramps (material styling design D-36). No light,
   direction or material property enters the shade. The buffer has `R = G = B` =
   the sRGB-encoded shade (`Standard`, as the colour), alpha 255 where a
   surface was sampled and `(0, 0, 0, 0)` elsewhere.
@@ -986,7 +1017,7 @@ keys, missing required fields and invalid numeric values are rejected.
 | `mode` | `measure` or `render`. |
 | `source` | Absolute `path` to the original GLB, its `sha256` and the selected original glTF `scene` index. |
 | `subject`, `variant` | Input stem and `default`, matching every requested frame address. |
-| `settings` | The accepted sheet settings, using resolved option values, with the global frame count `frames` and each clip entry's own `frames` as given, which the script checks (a count, `auto`, or for a clip `null`); the job's `frames` list already holds the times they sample, so Blender never resamples, and `time_scale` is not in the job. In measure mode, `pixels_per_meter`, `cell` and `ground_px` are null: fitting belongs to the caller. In render mode all three are resolved, fixed values. `shade` carries the shade's capture values, exactly `ao_distance_m` (finite, greater than 0), `ao_samples` (an integer, 1 to 128), `occlusion_weight` and `convexity_weight` (finite, 0 or greater), and `materials`: for each glTF material whose library entry gives its own `ao_distance_m`, `occlusion_weight` or `convexity_weight`, in ascending material order, exactly `material` (its glTF index) and its three resolved capture values, each its own or the global. Both the launcher and the script check them. Of the style, the job carries only those per-material values (owner decision 2026-10-11, settings design D-36, amending the rule below): the sheet's ramps, palette, reduction, default ramp, `previews` and shade ranges are left out, as they act after capture, so the job and its `job_sha256` are the same whatever they are (owner decisions 2026-10-04, 2026-10-12). |
+| `settings` | The accepted sheet settings, using resolved option values, with the global frame count `frames` and each clip entry's own `frames` as given, which the script checks (a count, `auto`, or for a clip `null`); the job's `frames` list already holds the times they sample, so Blender never resamples, and `time_scale` is not in the job. In measure mode, `pixels_per_meter`, `cell` and `ground_px` are null: fitting belongs to the caller. In render mode all three are resolved, fixed values. `shade` carries the shade's capture values, exactly `ao_distance_m` (finite, greater than 0), `ao_samples` (an integer, 1 to 128), `occlusion_weight` and `convexity_weight` (finite, 0 or greater), and `materials`: for each glTF material whose library entry gives its own `ao_distance_m`, `occlusion_weight` or `convexity_weight`, in ascending material order, exactly `material` (its glTF index) and its three resolved capture values, each its own or the global. Both the launcher and the script check them. Of the style, the job carries only those per-material values (owner decision 2026-10-11, settings design D-36, amending the rule below): the sheet's ramps, generated or listed, palette, reduction, default ramp, `previews` and shade ranges, the library's own `shade` included, are left out, as they act after capture, so the job and its `job_sha256` are the same whatever they are (owner decisions 2026-10-04, 2026-10-12). |
 | `clips` | Selected clips in sheet order. Each carries its original `animation_index`, `name`, `t0_s`, `t1_s` and candidate `roots`. The synthetic `static` clip has a null animation index, zero endpoints and no animated roots. |
 | `clips[].roots` | Each candidate root's original `node_index` and optional original `node_name`, determined using the accepted ancestry rule. Indices identify nodes; names are diagnostics, never assumed unique. |
 | `frames` | The exact requested samples in sheet order: clip, direction, then sample. Each carries an `address`, sample `index` and direction `angle_deg`. The address has `subject`, `variant`, `clip`, `direction` and `time_s`. |
@@ -1335,31 +1366,55 @@ libraries are YAML. `read_library_bytes` and `validate_library` never inspect
 
 ```yaml
 # Ramps run darkest first, as indices into the palette.
-schema: moskophoros.materials/2
+schema: moskophoros.materials/3
 ramps:
   metal: [12, 13, 14, 15, 47]
   cloth: [80, 81, 82]
+  gold: {base: "#ca9337", bands: 4}        # generated from properties
+  chrome: {base: "#8c939c", bands: 5, hue_shift_deg: -35, chroma_fade: 0.6}
 default: cloth          # a named material with no entry takes this ramp
+shade: {range: [190, 225]}   # the range its materials fall back to
 materials:
   steel: {uses: metal}
   cloth.red:
     ramp: [80, 81, 82]
     shade: {range: [120, 255], convexity_weight: 0.5}   # its own values
+  leather: {ramp: {base: "#6b4226", bands: 3}}
   face: ordinary
 ```
 
-- `schema` is exactly `moskophoros.materials/2`. A `moskophoros.materials/1`
-  library, from before per-material shading, is refused, saying to change its
-  `schema` line to `moskophoros.materials/2`, the only edit it needs (owner
-  decision 2026-10-11, settings design D-29). `schema`, `ramps` and
-  `materials` are required; `ramps` and `materials` are mappings and may be
-  empty. No other field is allowed at any level.
+- `schema` is `moskophoros.materials/3`, the current schema, or
+  `moskophoros.materials/2`, which still loads and reads exactly as before:
+  every `/2` library is valid `/3` (owner decision 2026-10-14, material
+  styling design D-34). Only a `/3` library may give a generated ramp or a
+  top-level `shade`; a `/2` library using either is an error naming the ramp
+  or key. A `moskophoros.materials/1` library, from before per-material
+  shading, is refused, saying to change its `schema` line to
+  `moskophoros.materials/3`, the only edit it needs (owner decision
+  2026-10-11, settings design D-29). `schema`, `ramps` and `materials` are
+  required; `ramps` and `materials` are mappings and may be empty. No other
+  field is allowed at any level.
 - `ramps` holds named generic ramps. A ramp is a non-empty list of at most
   256 integers, never booleans or numbers such as `3.0`, each an index
   from `0` to one less than the palette's length. A one-entry ramp is a flat
   material; indices may repeat. "Darkest first", band 0 being the least
   light, is the authoring convention and is not checked.
+- Wherever a ramp is a list, a `/3` library may give it as a mapping of
+  properties instead, a **generated ramp** ([Generated
+  ramps](#generated-ramps)): `base`, an sRGB `#rrggbb` (any case, recorded
+  lowercase), and `bands`, a whole number from 1 to 256, are required;
+  `lightness_step` (0 to 1), `hue_shift_deg` (−180 to 180) and `chroma_fade`
+  (0 to 1), finite, are optional, each beating the global `ramp` setting of
+  that name. No other key is allowed. A library may mix listed and generated
+  ramps, and `uses` and `default` may name either. Listing a ramp's indices
+  stays the exact control (material styling design D-12).
 - `default`, optional, names one ramp in `ramps`; `null` is not allowed.
+- A `/3` library may give a top-level `shade`, its own shade **range** only:
+  `{range: [lo, hi]}`, checked as a material's `range`. A library `shade`
+  giving `ao_distance_m`, `occlusion_weight`, `convexity_weight` or
+  `ao_samples` is an error naming the key: capture values come only from a
+  material's own `shade` or the globals (owner decision 2026-10-14, material
+  styling design D-35, D-36).
 - Each `materials` entry is exactly one of `{"ramp": [...]}`, its own ramp;
   `{"uses": NAME}`, a ramp in `ramps`; or the string `"ordinary"`.
 - An entry with `ramp` or `uses` may carry a `shade` mapping, its material's
@@ -1374,7 +1429,11 @@ materials:
   material with no entry, taking the default ramp or the ordinary look, or
   translucent (`BLEND`), takes the global values. Materials sharing a name
   share their entry and its values. The values live only in the library, so
-  they never merge across settings layers (D-22).
+  they never merge across settings layers (D-22). A material's **shade
+  range** is the first given of: its entry's own `range`, the library's
+  `shade.range`, the settings layers' `shade.range`, the shipped default. A
+  material with no entry that takes the default ramp also takes the library's
+  range; the ordinary look uses none (D-35, D-36).
 - Names are non-empty strings, kept and compared exactly, case and
   whitespace included. A reference to an undefined ramp is an error. Entries
   and ramps no model uses are valid and not reported. An unquoted name the
@@ -1444,13 +1503,67 @@ material and the position in a ramp, such as `materials["steel"].ramp[2]`, in
 wording that does not depend on the format, since they also check a reused
 sheet's inline record. The module neither prints nor exits.
 
+#### Generated ramps
+
+A generated ramp turns a base colour and a band count into palette indices
+when the library is read (owner decisions 2026-10-14, material styling
+design D-28 to D-34 and its numerical reference; `ramps.generate`). Band
+`i` of `N` (0 the darkest) is `k = N − 1 − i` shades below the base, so the
+last band is the base colour itself. With `step`, `hue` and `fade` the
+ramp's own `lightness_step`, `hue_shift_deg` and `chroma_fade`, else the
+global `ramp` settings ([Settings files](#settings-files)):
+
+1. **Base to OKLab:** the base's 8-bit sRGB is decoded with the palette
+   mapping's table and converted with palette mapping's OKLab conversion
+   (`imageops._oklab`: its matrices, `cbrt`, the same operation order).
+   `C0 = hypot(a0, b0)`, and `h0 = atan2(b0, a0)` in degrees.
+2. **Each band:** `L = max(0, L0 − step·k)`; `h = h0 + hue·k`, except
+   `h = h0` when `C0 < 0.02` (a near-grey keeps its hue);
+   `C = C0·(1 − fade·k/(N − 1))`, and `C = C0` when `N = 1`;
+   `a = C·cos(h·π/180)` and `b = C·sin(h·π/180)` in float64, with no hue
+   wrapping.
+3. **The gamut predicate** converts `(L, a, b)` to linear sRGB with the
+   inverse of Björn Ottosson's 2021 matrices:
+   `l = (L + 0.3963377774a + 0.2158037573b)³`,
+   `m = (L − 0.1055613458a − 0.0638541728b)³`,
+   `s = (L − 0.0894841775a − 1.2914855480b)³`,
+   `R = 4.0767416621l − 3.3077115913m + 0.2309699292s`,
+   `G = −1.2684380046l + 2.6097574011m − 0.3413193965s`,
+   `B = −0.0041960863l − 0.7034186147m + 1.7076147010s`. The colour is in
+   gamut when every channel is in `[−10⁻⁶, 1 + 10⁻⁶]`; the tolerance belongs
+   to this predicate only.
+4. **The search:** a shade out of gamut keeps its lightness and hue and loses
+   chroma: with `lo = 0` and `hi = C`, 40 times `mid = (lo + hi)/2`, setting
+   `lo = mid` if `mid` passes, else `hi = mid`; the result is `lo`.
+5. **Snapping** compares the shade's own `(L, a, b)`, never converted back to
+   RGB, clamped or rounded, with each palette entry's OKLab as palette
+   mapping computes it, by the sum of squared differences. A later entry wins
+   only when strictly nearer, so equal distances keep the lower index.
+   Repeats are kept, so the band count never changes.
+
+Pinned cases: base `#000040`, `N = 2`, step 1, hue −12°, fade 0.3, on the
+two-entry palette `[#000003, #010000]`, gives `[0, 0]` (a clamped RGB round
+trip would give `[1, 0]`). On the Vince 144 palette, the shipped setting B
+(0.12, −12°, 0.3) gives gold `#ca9337`, `N = 4`, `[18, 19, 4, 5]` and the
+near-grey steel `#8c939c`, `N = 4`, `[111, 133, 135, 137]`; setting C (0.09,
+−35°, 0.6) gives `[110, 13, 4, 5]` and `[132, 134, 136, 137]`.
+
+A generated ramp is then used exactly as a listed ramp of its indices: a
+sheet from it is byte-identical to one from the listed ramp. A ramp's own
+formula value beats the global from any layer; a global given explicitly, by
+an option or a `--config` file, that a generated ramp in use keeps its own
+value over is named in a warning, naming the ramp and the value it kept
+(settings design D-23); a value from the shipped defaults, the user file or
+a loaded sheet warns nothing.
+
 #### Material ramps
 
 `stylize.plain` and `stylize.mode` take three further arguments, none used
 unless `library` is given: `library`, a validated `materials.Library`;
 `identities`, the asset's `sampling.Identities`; and `shade_range`, the pair
 `(lo, hi)` of 8-bit shade values with `0 ≤ lo < hi ≤ 255`, the global range;
-a material whose entry gives its own `range` is banded over that instead,
+a material whose entry gives its own `range`, or else whose library gives
+one (material styling design D-35, D-36), is banded over that instead,
 throughout: clamping, band boundaries and `mode`'s band centres (owner
 decisions 2026-10-11, settings design D-9; this amends material design D-7's
 one global range) (owner decisions
@@ -1560,6 +1673,11 @@ D-18), before capture starts:
   settings design D-23). A global from the shipped defaults, the user file or
   a loaded sheet warns nothing, nor does an entry the model never uses or a
   translucent material's
+- an explicit global `shade.range` that the library's own range beats for a
+  material in use, once, naming the library's value (material styling design
+  D-35)
+- an explicit global `ramp` value that a generated ramp in use keeps its own
+  value over, naming the ramp and the value it kept (D-33)
 
 Library entries and named ramps the model never uses are silent (D-15).
 Names are shown as JSON strings, so quotes and whitespace are visible. The
@@ -1615,11 +1733,11 @@ game recovers `depth = (code − 32768) / 16` and, with the pixel's position,
 published with the other outputs, rolled back with them, and named in an
 output error (exit 6) when it cannot be written.
 
-**JSON (`moskophoros.sheet/10`).**
+**JSON (`moskophoros.sheet/11`).**
 
 ```json
 {
-  "schema": "moskophoros.sheet/10",
+  "schema": "moskophoros.sheet/11",
   "generator": {
     "tool": "moskophoros", "version": "0.1.0",
     "python": "3.x.y", "numpy": "x.y.z", "pillow": "x.y.z",
@@ -1649,6 +1767,8 @@ output error (exit 6) when it cannot be written.
     "shade": { "ao_distance_m": 0.3, "ao_samples": 64,
                "occlusion_weight": 0.25, "convexity_weight": 1.0,
                "range": [84, 191] },
+    "ramp": { "lightness_step": 0.12, "hue_shift_deg": -12.0,
+              "chroma_fade": 0.3 },
     "style": { "reduce": "plain", "palette": null, "materials": null },
     "clips": [ { "name": "walk", "loop": true, "frames": null },
                { "name": "attack", "loop": false, "frames": null } ]
@@ -1676,15 +1796,21 @@ output error (exit 6) when it cannot be written.
   palette file's base filename), `sha256` (SHA-256 of its bytes), and `colors`
   (ordered canonical lowercase `#rrggbb` strings); `materials`, either `null`
   or an object with `source` (the library file's base filename), `sha256`
-  (SHA-256 of its bytes), `ramps` (each named ramp, a list of palette indices,
-  in name order), `default` (a ramp name, or `null`) and `materials` (each
-  entry in name order: `{"ramp": [...]}`, `{"uses": NAME}` or `"ordinary"`,
+  (SHA-256 of its bytes), `ramps` (each named ramp in name order: a listed
+  ramp as its list of palette indices, a generated ramp as a mapping of its
+  properties as given, `base` in canonical lowercase, `bands`, its own
+  `lightness_step`, `hue_shift_deg` and `chroma_fade` in that order, then
+  `indices`, the generated result), `default` (a ramp name, or `null`), the
+  library's own `shade` when it gives one (holding only `range`; a library
+  without one has no `shade`), and `materials` (each
+  entry in name order: `{"ramp": [...]}` or a generated ramp's mapping,
+  `{"uses": NAME}` or `"ordinary"`,
   and an entry giving its own shading values has a `shade` after its `ramp`
   or `uses`, holding only the values the library gives, in the fixed order
   `ao_distance_m`, `occlusion_weight`, `convexity_weight`, `range`, whatever
   the file's order (settings design D-37); an entry without them has no
   `shade`).
-  It sits between `shade` and `clips`. Export writes and fingerprints the record the
+  It sits between `ramp` and `clips`. Export writes and fingerprints the record the
   command resolved without interpreting it, so a new look changes neither
   export nor capture (owner decisions 2026-10-04, 2026-10-07).
 - `settings.frames` records the global frame count as given, `auto` or a
@@ -1708,6 +1834,10 @@ output error (exit 6) when it cannot be written.
   (`[x, y, z]` or `null`), `intensity` and `ambient`, whether or not a light
   is placed or used, between `depth` and `shade`, inside the fingerprint
   (lighting sheet design D-13, D-18).
+- `settings.ramp` records the global formula of generated ramps, in the order
+  `lightness_step`, `hue_shift_deg`, `chroma_fade`, between `shade` and
+  `style`, inside the fingerprint, whether or not a library is used (material
+  styling design D-33).
 - `maps`, directly after `image`, names each map's base file name, or `null`
   for a map not written: `normal` is `{"file": "<stem>.normal.png"}`, or
   `null` with `normals` false, and `depth` is `{"file": "<stem>.depth.png"}`
@@ -1728,7 +1858,8 @@ output error (exit 6) when it cannot be written.
   `time_scale`; `moskophoros.sheet/7` had no normal map, `maps` or
   `settings.normals`; `moskophoros.sheet/8` had no depth map or
   `settings.depth`; `moskophoros.sheet/9` had no `settings.light`;
-  [reuse](#scale-and-ground-point) loads only `/10`
+  `moskophoros.sheet/10` had no `settings.ramp`, generated ramp records or
+  library `shade`; [reuse](#scale-and-ground-point) loads only `/11`
   (settings design D-24). The normal and depth capture adds no fixed
   parameter to `generator.shade` (lighting sheet design D-26).
 - `fingerprint` is the SHA-256 of the canonical JSON (sorted keys, no

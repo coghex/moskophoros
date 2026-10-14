@@ -74,8 +74,33 @@ not know takes its default ramp or the ordinary look, named in a warning.
 The library is recorded in the sheet's JSON and reused with `--settings-from`
 without the original file; `--materials FILE` replaces it and `--no-materials`
 drops it. See [docs/design.md](docs/design.md#material-libraries) for the file
-format. A library is `schema: moskophoros.materials/2`; a `/1` library only
-needs that line changed.
+format. A library is `schema: moskophoros.materials/3`; a `/2` library still
+loads as before, and a `/1` library only needs that line changed.
+
+A `/3` library may give a ramp as properties instead of indices, a base
+colour (its lightest shade) and a band count, and the tool generates the
+darker shades and snaps each to the palette. `--ramp-step L` (default 0.12),
+`--ramp-hue-shift DEG` (default −12) and `--ramp-fade F` (default 0.3) set how
+much lighter each shade drops, how far its hue turns and how much colour the
+darkest loses; a generated ramp may give its own. Listing indices stays the
+exact control. A library may also give the shade range its materials fall
+back to:
+
+```yaml
+schema: moskophoros.materials/3
+ramps:
+  stone: [133, 135, 137, 138, 139]
+  gold: {base: "#ca9337", bands: 4}
+  chrome: {base: "#8c939c", bands: 5, hue_shift_deg: -35, chroma_fade: 0.6}
+shade: {range: [190, 225]}   # the range only
+materials:
+  Main: {uses: gold}
+  Cloth: {ramp: {base: "#7a3b2e", bands: 3}}
+```
+
+The sheet records each generated ramp's indices, so `--settings-from`
+reproduces it without generating again; an explicit `--ramp-*` value
+regenerates the ramps it reaches.
 
 With a library, each material's shade comes from ambient occlusion and the
 surface's own curvature. `--ao-distance M` (default 0.3), `--ao-samples N`
@@ -107,7 +132,8 @@ clips:
 ```
 
 The cell, fps, frame count, palette, library, previews, normal and depth maps,
-light and shading values can also come from YAML settings files. `~/.config/moskophoros/config.yaml` (or
+light, shading and generated-ramp values can also come from YAML settings
+files. `~/.config/moskophoros/config.yaml` (or
 `$XDG_CONFIG_HOME/moskophoros/config.yaml`) holds your own defaults, and
 `--config look.yaml`, repeatable, applies a file as if its values were given
 as options; command-line options still win. Paths in a file are relative to
@@ -128,6 +154,10 @@ shade:             # set any of them; the rest keep their defaults
   occlusion_weight: 0.5
   convexity_weight: 0.0
   range: [120, 188]
+ramp:              # generated ramps: setting C, the high-contrast one
+  lightness_step: 0.09
+  hue_shift_deg: -35
+  chroma_fade: 0.6
 ```
 
 Your own file never changes a sheet loaded with `--settings-from`, while a

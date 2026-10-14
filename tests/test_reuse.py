@@ -5,6 +5,7 @@ import copy
 import json
 import sys
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,7 +13,7 @@ import numpy as np
 import pytest
 from shading import DEFAULT_RANGE, DEFAULT_SHADE
 
-from moskophoros import cli, export, fit, gltf, sampling, views
+from moskophoros import cli, export, fit, gltf, ramps, sampling, views
 from moskophoros.capture.backend import Settings, Shade, Source
 
 USAGE_LINE = "usage: moskophoros [options] <infile.glb> <outfile.png>"
@@ -46,6 +47,7 @@ SETTINGS = {
         "convexity_weight": 0.0,
         "range": [120, 188],
     },
+    "ramp": {"lightness_step": 0.09, "hue_shift_deg": -35.0, "chroma_fade": 0.6},
     "style": {
         "reduce": "plain",
         "palette": None,
@@ -76,6 +78,9 @@ REUSED = {
     "light": (-20.0, 30.0, 40.5),
     "light_intensity": 1.5,
     "light_ambient": 0.25,
+    "ramp_step": 0.09,
+    "ramp_hue_shift": -35.0,
+    "ramp_fade": 0.6,
     "clip": ("walk", "attack"),
     "once": ("attack",),
     "clip_frames": {"walk": 8, "attack": None},
@@ -90,7 +95,7 @@ REUSED = {
 
 def write_sheet(tmp_path, settings=None, name="old.json", **document):
     path = tmp_path / name
-    contents = {"schema": "moskophoros.sheet/10"} | document
+    contents = {"schema": "moskophoros.sheet/11"} | document
     contents["settings"] = copy.deepcopy(SETTINGS if settings is None else settings)
     path.write_text(json.dumps(contents, ensure_ascii=False), encoding="utf-8")
     return path
@@ -417,7 +422,7 @@ def test_previews_must_be_a_boolean(tmp_path, capsys, value):
 def test_a_document_with_only_schema_and_settings_is_enough(tmp_path):
     path = tmp_path / "minimal.json"
     path.write_text(
-        json.dumps({"schema": "moskophoros.sheet/10", "settings": SETTINGS})
+        json.dumps({"schema": "moskophoros.sheet/11", "settings": SETTINGS})
     )
     assert values(reuse(path)) == REUSED
 
@@ -486,7 +491,7 @@ def test_a_deeply_nested_file_is_rejected(tmp_path, capsys):
     ("text", "key"),
     [
         (
-            '{"schema": "moskophoros.sheet/10", "schema": "moskophoros.sheet/10"}',
+            '{"schema": "moskophoros.sheet/11", "schema": "moskophoros.sheet/11"}',
             "schema",
         ),
         ('{"settings": {"fps": 12, "fps": 12}}', "fps"),
@@ -501,11 +506,11 @@ def test_a_repeated_key_anywhere_is_rejected(tmp_path, capsys, text, key):
     assert rejected(capsys, path) == f"repeats the key {key!r}"
 
 
-NOT_A_SHEET = "is not a moskophoros.sheet/10 document"
+NOT_A_SHEET = "is not a moskophoros.sheet/11 document"
 
 
 def older(schema):
-    return f"is a {schema} sheet; only moskophoros.sheet/10 sheets load, so generate it again"
+    return f"is a {schema} sheet; only moskophoros.sheet/11 sheets load, so generate it again"
 
 
 @pytest.mark.parametrize(
@@ -519,7 +524,8 @@ def older(schema):
         ({"schema": "moskophoros.sheet/6"}, older("moskophoros.sheet/6")),
         ({"schema": "moskophoros.sheet/5"}, older("moskophoros.sheet/5")),
         ({"schema": "moskophoros.sheet/4"}, older("moskophoros.sheet/4")),
-        ({"schema": "moskophoros.sheet/11"}, older("moskophoros.sheet/11")),
+        ({"schema": "moskophoros.sheet/12"}, older("moskophoros.sheet/12")),
+        ({"schema": "moskophoros.sheet/10"}, older("moskophoros.sheet/10")),
         ({"schema": "moskophoros.sheet/9"}, older("moskophoros.sheet/9")),
         ({"schema": "moskophoros.sheet/8"}, older("moskophoros.sheet/8")),
         ({"schema": "moskophoros.sheet/7"}, older("moskophoros.sheet/7")),
@@ -529,17 +535,17 @@ def older(schema):
         ),
         ({"schema": 1}, f"{NOT_A_SHEET}: schema is 1"),
         (
-            {"schema": ["moskophoros.sheet/10"]},
-            f'{NOT_A_SHEET}: schema is ["moskophoros.sheet/10"]',
+            {"schema": ["moskophoros.sheet/11"]},
+            f'{NOT_A_SHEET}: schema is ["moskophoros.sheet/11"]',
         ),
         ({"schema": None}, f"{NOT_A_SHEET}: schema is null"),
-        ({"schema": "moskophoros.sheet/10"}, "settings: missing"),
+        ({"schema": "moskophoros.sheet/11"}, "settings: missing"),
         (
-            {"schema": "moskophoros.sheet/10", "settings": None},
+            {"schema": "moskophoros.sheet/11", "settings": None},
             "settings: must be set, got null",
         ),
         (
-            {"schema": "moskophoros.sheet/10", "settings": []},
+            {"schema": "moskophoros.sheet/11", "settings": []},
             "settings: expected an object, got []",
         ),
     ],
@@ -587,6 +593,10 @@ REUSED_FIELDS = [
     "shade.occlusion_weight",
     "shade.convexity_weight",
     "shade.range",
+    "ramp",
+    "ramp.lightness_step",
+    "ramp.hue_shift_deg",
+    "ramp.chroma_fade",
     "style",
     "style.reduce",
     "style.palette",
@@ -808,6 +818,7 @@ def test_an_explicit_reduce_overrides_the_reused_one(tmp_path, sheet, explicit):
 @pytest.mark.parametrize(
     "schema",
     [
+        "moskophoros.sheet/10",
         "moskophoros.sheet/9",
         "moskophoros.sheet/8",
         "moskophoros.sheet/7",
@@ -952,6 +963,7 @@ def _encode(
     normals=True,
     depth=False,
     light=export.NO_LIGHT,
+    ramp=export.DEFAULT_RAMP,
 ):
     """The encoded sheet, with `lit`, its lit previews' GIFs when a light is
     placed and previews are on."""
@@ -988,6 +1000,7 @@ def _encode(
         normals=normals,
         depth=depth,
         light=light,
+        ramp=ramp,
         shade_range=shade_range,
         selected_clips=selected,
         image_path=Path("hero.png"),
@@ -1020,6 +1033,7 @@ def _rerun(path, *options):
         resolved.normals,
         resolved.depth,
         export.Light(resolved.light, resolved.light_intensity, resolved.light_ambient),
+        cli._formula(resolved),
     )
 
 
@@ -1249,3 +1263,98 @@ def test_a_reused_mode_sheet_round_trips_and_differs_from_plain(tmp_path):
     assert json.loads(again.json)["settings"]["style"] == mode
     assert plain["settings"]["style"] == PLAIN
     assert plain["fingerprint"] != json.loads(original.json)["fingerprint"]
+
+
+# A generated library (material styling design D-33, D-34)
+
+GENERATED_LIBRARY = """\
+schema: moskophoros.materials/3
+ramps:
+  metal: [1, 2]
+  gold: {base: "#ca9337", bands: 3}
+shade: {range: [190, 225]}
+default: gold
+materials:
+  cloth: {ramp: {base: "#7a3b2e", bands: 2, hue_shift_deg: -35}}
+"""
+
+
+def _generated_sheet(tmp_path, *options):
+    palette = tmp_path / "p.hex"
+    palette.write_text(
+        "".join(f"{i * 30:02x}{255 - i * 30:02x}{i * 7:02x}\n" for i in range(8))
+    )
+    library = tmp_path / "lib.yaml"
+    library.write_text(GENERATED_LIBRARY)
+    resolved = cli.resolve_settings(
+        cli.parse_args(
+            [
+                "--no-user-config",
+                "--palette",
+                str(palette),
+                "--materials",
+                str(library),
+                *options,
+                "in.glb",
+                "out.png",
+            ]
+        )
+    )
+    settings = replace(ORIGINALS["iso"], view="iso")
+    sheet = _encode(
+        settings,
+        (),
+        (),
+        cli.style_record(resolved),
+        ramp=cli._formula(resolved),
+    )
+    path = tmp_path / "hero.json"
+    path.write_bytes(sheet.json)
+    return path, sheet
+
+
+def test_a_generated_library_reproduces_without_regenerating(tmp_path, monkeypatch):
+    path, original = _generated_sheet(tmp_path, "--ramp-fade", "0.5")
+    record = json.loads(original.json)["settings"]["style"]["materials"]
+    assert record["ramps"]["gold"]["indices"] and record["shade"] == {
+        "range": [190, 225]
+    }
+
+    def refuse(*args):
+        raise AssertionError("a reused ramp was regenerated")
+
+    monkeypatch.setattr(ramps, "generate", refuse)
+    assert _rerun(path).json == original.json
+
+
+def test_an_explicit_hue_shift_regenerates_a_reused_generated_ramp(tmp_path):
+    path, original = _generated_sheet(tmp_path)
+    again = _rerun(path, "--ramp-hue-shift", "-90")
+    before = json.loads(original.json)["settings"]
+    after = json.loads(again.json)["settings"]
+    assert after["ramp"]["hue_shift_deg"] == -90.0
+    gold = after["style"]["materials"]["ramps"]["gold"]
+    assert gold["indices"] == list(
+        ramps.generate((0xCA, 0x93, 0x37), 3, 0.12, -90.0, 0.3, PALETTE_8)
+    )
+    # cloth's own hue shift shadows the global: kept as recorded.
+    assert (
+        after["style"]["materials"]["materials"]["cloth"]
+        == before["style"]["materials"]["materials"]["cloth"]
+    )
+
+
+def test_a_reused_generated_ramp_with_malformed_indices_is_refused(tmp_path, capsys):
+    path, _ = _generated_sheet(tmp_path)
+    document = json.loads(path.read_text())
+    gold = document["settings"]["style"]["materials"]["ramps"]["gold"]
+    gold["indices"] = [*gold["indices"][:2], 8]
+    path.write_text(json.dumps(document))
+    message = rejected(capsys, path)
+    assert (
+        'ramps["gold"].indices[2]: 8 is not an index into the 8-colour palette'
+        in message
+    )
+
+
+PALETTE_8 = [(i * 30, 255 - i * 30, i * 7) for i in range(8)]

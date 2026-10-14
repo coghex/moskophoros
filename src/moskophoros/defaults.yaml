@@ -25,3 +25,7 @@ shade:           # the material ramps' shade (design §Capture, Shade)
   occlusion_weight: 0.25 # 0 or greater
   convexity_weight: 1.0  # 0 or greater
   range: [84, 191]       # the shade values a ramp spans, 0 <= lo < hi <= 255
+ramp:            # how a library's generated ramps are made (setting B)
+  lightness_step: 0.12   # OKLab lightness lost per shade, 0 to 1
+  hue_shift_deg: -12     # hue turned per shade, degrees, -180 to 180
+  chroma_fade: 0.3       # chroma lost by the darkest shade, 0 to 1

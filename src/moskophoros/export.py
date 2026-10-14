@@ -1,4 +1,4 @@
-"""The sheet PNG, its normal and depth maps, its `moskophoros.sheet/10` JSON
+"""The sheet PNG, its normal and depth maps, its `moskophoros.sheet/11` JSON
 and the animated previews, flat and lit, following design §Export.
 
 `encode` lays the reduced frames out on the sheet and its maps, describes
@@ -20,6 +20,7 @@ import struct
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
+from types import MappingProxyType
 
 import numpy as np
 import PIL
@@ -29,7 +30,12 @@ import moskophoros
 from moskophoros import imageops, sampling, views
 from moskophoros.capture.backend import settings_document
 
-SCHEMA = "moskophoros.sheet/10"
+SCHEMA = "moskophoros.sheet/11"
+# The global formula of generated ramps, in its recorded order, at the
+# shipped defaults (material styling design D-30, D-33).
+DEFAULT_RAMP = MappingProxyType(
+    {"lightness_step": 0.12, "hue_shift_deg": -12.0, "chroma_fade": 0.3}
+)
 OVERFLOW_ERROR = 4
 # The depth map's code for "no surface", for a depth of 0 (the ground point's
 # plane), and the depths it can hold, in sheet pixels (lighting sheet design
@@ -178,12 +184,15 @@ def sheet_settings(
     normals=True,
     depth=False,
     light=NO_LIGHT,
+    ramp=DEFAULT_RAMP,
 ):
     """The sheet's `settings` object: the capture job's settings, fitted, then
     `previews`, whether the animated previews are written, `normals` and
     `depth`, whether the normal and depth maps are written, `light`, the
     preview light's record whether or not one is placed, `shade`, the
-    capture's shade values with the shade range `[lo, hi]` stylize used, and
+    capture's shade values with the shade range `[lo, hi]` stylize used,
+    `ramp`, the global formula of generated ramps (`lightness_step`,
+    `hue_shift_deg`, `chroma_fade`) whether or not a library is used, and
     `style` recorded as given, just before `clips`.
 
     `style` is the record the command resolved, written and fingerprinted as
@@ -209,6 +218,10 @@ def sheet_settings(
         "depth": depth,
         "light": light.record(),
         "shade": shade,
+        "ramp": {
+            name: float(ramp[name])
+            for name in ("lightness_step", "hue_shift_deg", "chroma_fade")
+        },
         "style": style,
         "clips": clips,
     }
@@ -229,6 +242,7 @@ def encode(
     normals=True,
     depth=False,
     light=NO_LIGHT,
+    ramp=DEFAULT_RAMP,
 ):
     """Lay out and describe the sheet, returning its PNG, JSON and, with
     `normals` and `depth`, its normal and depth maps' bytes.
@@ -332,6 +346,7 @@ def encode(
         normals=normals,
         depth=depth,
         light=light,
+        ramp=ramp,
     )
     description = {
         "schema": SCHEMA,
