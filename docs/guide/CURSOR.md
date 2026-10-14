@@ -5,12 +5,12 @@ Covered beyond the boundary: none
 
 ## Next
 
-Process GUIDE-2 with the owner. GUIDE-1 is filed as #109; its repair remains
+Walk GUIDE-2’s saved issue proposal with the owner. GUIDE-1 is filed as #109; its repair remains
 open. The completed audit boundary is unchanged.
 
 ## Open findings
 
-- 2026-10-14T130147Z-fc9de5d/GUIDE-2 — obsolete intermediate interface descriptions — unprocessed.
+- 2026-10-14T130147Z-fc9de5d/GUIDE-2 — obsolete intermediate interface descriptions — proposal pending (see finding).
 
 ## Pending handoff
 
