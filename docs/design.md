@@ -125,8 +125,8 @@ separate `measure/` and `render/` directories, each with `job.json`, eventual
 OpenEXR), which a successful phase removes; after a failure or interruption
 a retained workspace may still hold it. An explicitly supplied workspace
 retains available artifacts after success or failure; normal temporary
-capture workspaces are deleted in either case, so no capture file outlives
-the command outside a workspace it was asked to keep. Retention does not make an incomplete
+capture workspaces are deleted in either case, the auxiliary scratch with
+them. Retention does not make an incomplete
 phase a valid result or supply a replay interface. Reusing a retained location
 requires choosing a new or empty directory (owner decision 2026-09-30).
 
@@ -1144,11 +1144,13 @@ sleep to guess completion.
 The [CLI work-directory contract](#cli) governs retained capture ownership.
 Normal temporary capture directories are deleted after success or failure. Explicitly retained
 capture directories preserve available job/result/buffer evidence on failure,
-without treating incomplete phases as valid results. The script keeps every
-intermediate file it writes, the auxiliary render's included, inside its
-phase directory, so the launcher's deletion or retention of the workspace
-covers them even when it has killed Blender, where no cleanup inside Blender
-can run.
+without treating incomplete phases as valid results. The script keeps the
+auxiliary render's intermediate TGA and OpenEXR inside the render phase
+directory, so the launcher's deletion or retention of the workspace covers
+them even when it has killed Blender, where no cleanup inside Blender can
+run. The script's private copy of the model, which it imports from its own
+temporary directory, is not in the workspace: it is removed when the script
+finishes or fails, but not after the launcher kills Blender.
 
 #### compatibility and verification
 
