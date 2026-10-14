@@ -120,9 +120,13 @@ With `--work-dir DIR`, `DIR` must be nonexistent or an existing empty
 directory. An existing nonempty directory is a usage error (exit 2) naming
 the directory, and its contents are untouched. The capture workspace contains
 separate `measure/` and `render/` directories, each with `job.json`, eventual
-`result.json` and produced buffers. An explicitly supplied workspace retains
-available artifacts after success or failure; normal temporary capture
-workspaces are deleted in either case. Retention does not make an incomplete
+`result.json` and produced buffers. During rendering, `render/` also holds
+`auxiliary/`, the auxiliary render's scratch directory (its TGA and
+OpenEXR), which a successful phase removes; after a failure or interruption
+a retained workspace may still hold it. An explicitly supplied workspace
+retains available artifacts after success or failure; normal temporary
+capture workspaces are deleted in either case, the auxiliary scratch with
+them. Retention does not make an incomplete
 phase a valid result or supply a replay interface. Reusing a retained location
 requires choosing a new or empty directory (owner decision 2026-09-30).
 
@@ -946,7 +950,12 @@ other change. After the render, its result is also saved, every pass and AOV,
 as an uncompressed multilayer OpenEXR of 32-bit floats in the script's
 scratch directory (the image settings' media type set to multilayer before
 the format, and every image setting restored), which the script reads with
-the standard library and removes.
+the standard library and removes. The scratch directory, which also takes
+the render's TGA, is `auxiliary/` inside the render phase directory: the
+script creates it before the first frame and removes it after the last, and
+otherwise the workspace's lifetime governs it ([ownership and failure
+handling](#ownership-and-failure-handling)), so a failed or interrupted
+Blender never leaves it outside the workspace.
 
 - *Normal:* the unit **shading** normal, the model's interpolated vertex
   normals rather than the flat face normal, in the frame's camera space: +X
@@ -1135,7 +1144,13 @@ sleep to guess completion.
 The [CLI work-directory contract](#cli) governs retained capture ownership.
 Normal temporary capture directories are deleted after success or failure. Explicitly retained
 capture directories preserve available job/result/buffer evidence on failure,
-without treating incomplete phases as valid results.
+without treating incomplete phases as valid results. The script keeps the
+auxiliary render's intermediate TGA and OpenEXR inside the render phase
+directory, so the launcher's deletion or retention of the workspace covers
+them even when it has killed Blender, where no cleanup inside Blender can
+run. The script's private copy of the model, which it imports from its own
+temporary directory, is not in the workspace: it is removed when the script
+finishes or fails, but not after the launcher kills Blender.
 
 #### compatibility and verification
 
