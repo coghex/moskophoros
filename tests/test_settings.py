@@ -51,8 +51,11 @@ def test_the_schema_holds_this_slices_settings():
         "shade.occlusion_weight",
         "shade.convexity_weight",
         "shade.range",
+        "ramp.lightness_step",
+        "ramp.hue_shift_deg",
+        "ramp.chroma_fade",
     ]
-    assert settings.GROUPS == {"shade", "light"}
+    assert settings.GROUPS == {"shade", "light", "ramp"}
     for name, setting in settings.SCHEMA.items():
         assert setting.kind, name
         assert callable(setting.check), name
@@ -80,6 +83,9 @@ def test_the_defaults_file_and_the_schema_table_agree():
         "shade.occlusion_weight": 0.25,
         "shade.convexity_weight": 1.0,
         "shade.range": (84, 191),
+        "ramp.lightness_step": 0.12,
+        "ramp.hue_shift_deg": -12.0,
+        "ramp.chroma_fade": 0.3,
     }
 
 

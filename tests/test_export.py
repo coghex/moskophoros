@@ -86,6 +86,7 @@ CANONICAL = (
     '"depth":false,"fps":3.0,"frames":"auto","ground_m":{"x":0.0,"y":0.0,"z":0.0},"ground_px":{"x":1,"y":2},'
     '"light":{"ambient":0.3,"intensity":1.0,"position":null},'
     '"model_yaw_deg":0.0,"normals":true,"pixels_per_meter":24.5,"previews":true,'
+    '"ramp":{"chroma_fade":0.3,"hue_shift_deg":-12.0,"lightness_step":0.12},'
     '"root_motion":"error",'
     '"shade":{"ao_distance_m":0.3,"ao_samples":64,"convexity_weight":1.0,'
     '"occlusion_weight":0.25,"range":[84,191]},'
@@ -170,7 +171,7 @@ EXPECTED_FRAMES = ",\n".join(
 
 EXPECTED_JSON = (
     """{
-  "schema": "moskophoros.sheet/10",
+  "schema": "moskophoros.sheet/11",
   "generator": {
     "tool": "moskophoros",
     "version": "0.1.0",
@@ -231,6 +232,11 @@ EXPECTED_JSON = (
         84,
         191
       ]
+    },
+    "ramp": {
+      "lightness_step": 0.12,
+      "hue_shift_deg": -12.0,
+      "chroma_fade": 0.3
     },
     "style": {
       "reduce": "plain",
@@ -343,6 +349,7 @@ def test_the_fingerprint_hashes_the_canonical_mirrored_object():
         "depth": False,
         "light": {"position": None, "intensity": 1.0, "ambient": 0.3},
         "shade": SHADE_RECORD,
+        "ramp": {"lightness_step": 0.12, "hue_shift_deg": -12.0, "chroma_fade": 0.3},
         "style": PLAIN,
         "clips": [
             {"name": "läuft", "loop": True, "frames": None},
@@ -411,13 +418,14 @@ def test_previews_normals_shade_and_the_style_record_sit_just_before_clips(
     settings = export.sheet_settings(
         SIDE, (RUN,), PLAIN, shade_range=RANGE, previews=previews, normals=normals
     )
-    assert list(settings)[-8:] == [
+    assert list(settings)[-9:] == [
         "root_motion",
         "previews",
         "normals",
         "depth",
         "light",
         "shade",
+        "ramp",
         "style",
         "clips",
     ]
@@ -435,7 +443,7 @@ def test_previews_normals_shade_and_the_style_record_sit_just_before_clips(
     rest = {
         k: v
         for k, v in settings.items()
-        if k not in ("style", "previews", "normals", "depth", "light")
+        if k not in ("style", "previews", "normals", "depth", "light", "ramp")
     }
     job = settings_document(SIDE, (RUN,))
     capture = {key: value for key, value in job["shade"].items() if key != "materials"}

@@ -310,7 +310,7 @@ def test_a_run_records_the_library_inline_and_the_shade_range(setup, capsys):
     named_hero(setup, HERO_MATERIALS)
     run_with_library(setup, capsys, "--no-preview")
     description = json.loads(setup.json.read_text())
-    assert description["schema"] == "moskophoros.sheet/10"
+    assert description["schema"] == "moskophoros.sheet/11"
     style = description["settings"]["style"]
     assert list(style) == ["reduce", "palette", "materials"]
     assert description["settings"]["shade"]["range"] == DEFAULT_RANGE
@@ -643,6 +643,7 @@ def test_a_reused_shade_range_is_kept_when_an_explicit_library_replaces_the_libr
 @pytest.mark.parametrize(
     "schema",
     [
+        "moskophoros.sheet/10",
         "moskophoros.sheet/9",
         "moskophoros.sheet/8",
         "moskophoros.sheet/7",
@@ -658,7 +659,7 @@ def test_a_sheet_from_before_the_shade_was_recorded_no_longer_loads(
     with pytest.raises(cli.UsageError):
         cli.read_settings(path)
     assert (
-        f"is a {schema} sheet; only moskophoros.sheet/10 sheets load"
+        f"is a {schema} sheet; only moskophoros.sheet/11 sheets load"
         in capsys.readouterr().err
     )
 

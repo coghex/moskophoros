@@ -283,7 +283,7 @@ def test_a_run_writes_the_sheet_its_json_and_a_preview_per_clip(setup, capsys):
         "hero.walk.gif",
     ]
     description = json.loads(setup.json.read_text())
-    assert description["schema"] == "moskophoros.sheet/10"
+    assert description["schema"] == "moskophoros.sheet/11"
     assert description["maps"] == {
         "normal": {"file": "hero.normal.png"},
         "depth": None,
@@ -370,6 +370,7 @@ def test_the_fingerprint_reaches_the_frames_before_stylize(setup, capsys, monkey
             "convexity_weight": 1.0,
             "range": [84, 191],
         },
+        "ramp": {"lightness_step": 0.12, "hue_shift_deg": -12.0, "chroma_fade": 0.3},
         "style": PLAIN_STYLE,
         "clips": [
             {"name": "walk", "loop": True, "frames": None},
@@ -1032,7 +1033,7 @@ def test_a_bad_settings_file_is_a_usage_error(setup, capsys):
     bad.write_text("{}")
     status, _, err = run(capsys, setup.argv("--settings-from", str(bad)))
     assert status == 2
-    assert "is not a moskophoros.sheet/10 document" in err
+    assert "is not a moskophoros.sheet/11 document" in err
     assert setup.listing() == earlier
 
 

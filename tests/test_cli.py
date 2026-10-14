@@ -155,6 +155,7 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
             "--depth",
             *["--light", "-20,30,40", "--light-intensity", "2"],
             *["--light-ambient", "0.5"],
+            *["--ramp-step", "0.09", "--ramp-hue-shift", "-35", "--ramp-fade", "0.6"],
             *["--config", "a.yaml", "--config", "b.yaml", "--no-user-config"],
             *["--work-dir", "work", "--blender", "/opt/blender", "--any-blender"],
             *POSITIONALS,
@@ -211,6 +212,9 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         light=(-20.0, 30.0, 40.0),
         light_intensity=2.0,
         light_ambient=0.5,
+        ramp_step=0.09,
+        ramp_hue_shift=-35.0,
+        ramp_fade=0.6,
     )
 
 

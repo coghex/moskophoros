@@ -424,7 +424,7 @@ def test_a_missing_field(tmp_path, field):
 @pytest.mark.parametrize(
     ("schema", "shown"),
     [
-        ("moskophoros.materials/3", '"moskophoros.materials/3"'),
+        ("moskophoros.materials/4", '"moskophoros.materials/4"'),
         ("Moskophoros.materials/2", '"Moskophoros.materials/2"'),
         ("moskophoros.materials/2 ", '"moskophoros.materials/2 "'),
         (1, "1"),
@@ -436,7 +436,10 @@ def test_a_wrong_schema(tmp_path, schema, shown):
     document = library()
     document["schema"] = schema
     problem = refused_document(tmp_path, document)
-    assert problem == f'schema: expected "moskophoros.materials/2", got {shown}'
+    assert problem == (
+        'schema: expected "moskophoros.materials/3" or "moskophoros.materials/2", '
+        f"got {shown}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -479,7 +482,12 @@ def test_maps_must_be_mappings(tmp_path, field, value):
     [
         ([], "has 0 entries; expected 1 to 256"),
         ([1] * 257, "has 257 entries; expected 1 to 256"),
-        ({"0": 1}, "expected a list of palette indices"),
+        # A mapping is a generated ramp, which a /2 library cannot give.
+        (
+            {"0": 1},
+            'a generated ramp needs schema "moskophoros.materials/3"; this '
+            'library is "moskophoros.materials/2"',
+        ),
         ("1, 2", "expected a list of palette indices"),
         (1, "expected a list of palette indices"),
         (None, "expected a list of palette indices"),
@@ -774,7 +782,7 @@ def test_a_version_1_library_is_refused_with_the_schema_hint(tmp_path):
     text = LIBRARY_TEXT.replace("moskophoros.materials/2", "moskophoros.materials/1")
     assert refused(tmp_path, text) == (
         'schema: "moskophoros.materials/1" libraries no longer load; change the '
-        'schema line to "moskophoros.materials/2", the only edit the library needs'
+        'schema line to "moskophoros.materials/3", the only edit the library needs'
     )
 
 

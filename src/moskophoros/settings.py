@@ -206,6 +206,18 @@ def _check_ambient(value):
     return number
 
 
+def _within(low, high):
+    def check(value):
+        number = _finite(value, f"from {low} to {high}")
+        if not low <= number <= high:
+            raise _Bad(
+                f"expected a finite number from {low} to {high}, got {_shown(value)}"
+            )
+        return number
+
+    return check
+
+
 def _check_path(value):
     if value is None:
         return None
@@ -369,6 +381,24 @@ SCHEMA = MappingProxyType(
             None,
             [84, 191],
             _check_range,
+        ),
+        "ramp.lightness_step": Setting(
+            "how much OKLab lightness each shade of a generated ramp drops, 0 to 1",
+            None,
+            0.12,
+            _within(0, 1),
+        ),
+        "ramp.hue_shift_deg": Setting(
+            "how far each shade of a generated ramp turns the hue, -180 to 180",
+            "degrees",
+            -12.0,
+            _within(-180, 180),
+        ),
+        "ramp.chroma_fade": Setting(
+            "how much chroma a generated ramp loses by its darkest shade, 0 to 1",
+            None,
+            0.3,
+            _within(0, 1),
         ),
     }
 )
