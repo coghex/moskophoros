@@ -1,6 +1,6 @@
 # Material styling acceptance
 
-This records the owner's **qualified** acceptance of the material styling proof of concept (the first release of the arc: hand-listed ramps judged by the owner), following #70 and vision V-12. The material styling epic is #63; its code slices were delivered with #64, #65, #66, #67, #68 and #69.
+This records the owner's **qualified** acceptance of the material styling proof of concept (the first release of the arc: hand-listed ramps judged by the owner), following #70 and vision V-12. The material styling epic is #63; its code slices were delivered with #64, #65, #66, #67, #68 and #69. The owner's later acceptance of MAT-8, generated ramps (#107, PR #108), is recorded separately under [MAT-8: generated ramps](#mat-8-generated-ramps).
 
 ## Verdict
 
@@ -256,3 +256,67 @@ Two read-only diagnoses followed the feedback. Their full write-ups are local fi
 ## Completion
 
 This record holds the owner's verdict (qualified acceptance of the proof of concept, 2026-10-08 23:00 UTC). It is not unqualified visual acceptance and not approval of the shading as polished; the shading tweaks are recorded above as follow-up notes and filed as the deferred refinement issues #78 and #79, as #70's requirement 8 asks for changes the owner raises. It is not the closure of epic #63 and not authority for MAT-8. Whether this verdict meets #70's completion criterion ("the published record holds the owner's verdict") and whether the epic stays open is for the owner to say; #70 and #63 were open when this was written.
+
+## MAT-8: generated ramps
+
+This section records the owner's visual acceptance of MAT-8 (#107), required by the issue's approval review (comment 6160971420) before PR #108 merges. The design is [`docs/designs/material_styling_design.md`](../designs/material_styling_design.md), decisions D-28 to D-36.
+
+### Verdict
+
+**Accepted by the owner on 2026-10-14 at 12:11 UTC.** The owner typed it directly in the moskophoros manager's terminal, after viewing the review page described below, which asked: "Do generated ramps work for you, as the default (B) and as your Synarchy setting (C)?"
+
+> "yes, i approve"
+
+The verdict covers the outputs listed below, which PR #108's head `9d75525d47ee2de46358f53bb161c098d8b2cf76` rendered. It approves generated ramps under setting B, the shipped default, and under setting C, the owner's own setting. It does not change any default beyond what D-30 records.
+
+### Earlier owner decisions
+
+These are kept apart from the verdict:
+- the base colour is the lightest shade (D-28), and it is written in the library (D-29);
+- B is the default, and C is the owner's Synarchy setting (D-30);
+- per-material overrides (D-31, D-34);
+- the shade range 190–225, carried by the material files (D-32, D-35), with the library's `shade` giving the range only (D-36).
+
+All were made on 2026-10-14 after the sample reviews of ramp settings A, B and C on ten Suzanne test heads and the robot.
+
+### Input
+
+- **Model:** `RobotExpressive.glb`, SHA-256 `047f5e5fb3bb6d378bd1df16ca6137f2a596c99b3a1b5690b4020c05aaf6f319` (see [slice 1](slice-1.md#input)).
+- **Test model:** `suzannes.glb`, SHA-256 `e455cc9858b72f972eff98e5748fb217e30849deaea6938977b72bd4b7236e55`. It holds ten smoothed Suzanne heads, one per named material, and was generated with Blender's built-in monkey primitive by `make_suzannes.py`. It is not committed.
+- **The owner's look:**
+  - user settings `~/.config/moskophoros/config.yaml`, SHA-256 `4f6d474af5526cd298a7628c69d6a51a7268a614d0e55a0737360a7e995828b1`: Vince 144, the N3 shading and range 190–225;
+  - the hand-listed robot library `~/.config/moskophoros/libraries/robotexpressive.yaml`, SHA-256 `33ebb76998abc2366d45a4d1c88f8cef82ccc7a9d4401907e4cde66dc27a2162`, a `/2` library.
+- **Generated libraries** (`moskophoros.materials/3`, with library `shade: {range: [190, 225]}`):
+  - `robot-generated.yaml` (`5f25b70168da2c4556dcf70d27b2fd79f3bcad8e0bc1699b25f944f158e13c0f`), with bases `#ca9337` (3 bands), `#adadad` (5) and `#404040` (3);
+  - `heads-generated.yaml` (`7c1f4403e9b815fb2080cd8b6fe1faef38101afa3744712feac9c3c69fe26d1e`), with the ten sample bases.
+
+### Commands
+
+Each ran from `~/.local/share/moskophoros-acceptance/ramp-gen/mat8-review/`, with PR #108's head built in a throwaway worktree, under the shared Blender lock and with the owner's user settings in effect:
+
+    moskophoros --no-normals --clip Walking --clip Jump --once Jump --cell 48x48 --view iso --directions 8 \
+      --materials <library> RobotExpressive.glb <run>/RobotExpressive.png
+
+That command used `<library>` = the owner's robot library for `robot-listed`, and `robot-generated.yaml` for `robot-B` and `robot-C`. The C runs added `--ramp-step 0.09 --ramp-hue-shift -35 --ramp-fade 0.6`. The heads used `--directions 1 --view iso --cell auto --ppm 24 --materials heads-generated.yaml suzannes.glb`. The literal commands are kept as `command.txt` in each run's folder. Blender 5.2.2.
+
+### Output
+
+Every sheet is `moskophoros.sheet/11` and records `settings.ramp`. Each generated ramp is recorded as its properties plus `indices`.
+
+| Run | Robot body / joints / visor indices | Sheet | Bytes | SHA-256 |
+|---|---|---|---|---|
+| `robot-listed` | [18, 4, 5] / [133, 135, 137, 138, 139] / [129, 131, 132] | `RobotExpressive.png` | 63,919 | `17b700210cfffb4cb61f7ef7512156bb554270f91c1ae3b358ec4a787bfffdf1` |
+| `robot-B` | [19, 4, 5] / [130, 132, 135, 137, 139] / [128, 130, 132] | `RobotExpressive.png` | 62,887 | `f714c4028ca8cf26e12067ab39b5ebe2f7cbda8ae644543e1fdd5d57b27d467d` |
+| `robot-C` | [13, 4, 5] / [132, 134, 136, 137, 139] / [112, 130, 132] | `RobotExpressive.png` | 64,315 | `30a50c927bd5da6c9e57025d8ad28581b92a3d1733b99e5904095d4f5e84ba03` |
+| `heads-B` | the ten B sample ramps | `s.png` | 8,649 | `bfaffa8846c3c4413da4d282ea8b13e690858bb0e8bc3afb8434ec11149aa19d` |
+| `heads-C` | the ten C sample ramps | `s.png` | 8,770 | `b06922180ebe269f81bb3295e5c23511411f35d922150f6d0d8e33a8eb30a8fb` |
+
+The generated indices equal those the owner reviewed in the sample ramps. The outputs stay outside the repository.
+
+### Review page
+
+The owner viewed one private page, made from these outputs and enlarged by whole pixels only. It showed:
+- the three robots side by side: a Walking pose in all eight directions, a 6× close-up and the animated previews;
+- each ramp's colours, darkest first;
+- the ten heads under B and C at 4×, each with its ramp.
+
