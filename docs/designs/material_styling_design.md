@@ -15,13 +15,14 @@ design §Deferred and style pass 1 D-8 set for the first auxiliary capture
 buffer. It benefits the owner producing game art, and any later project that
 uses the tool (V-1).
 
-Design state: `exploring`
+Design state: `ready for issue processing`
 
-*Reset 2026-10-14 for MAT-8 review 1* ([below](#mat-8-review-1)). Codex
-review 1 found that D-35 conflicts with settings design D-36, which needs an
-owner decision (Q-30, since resolved by D-36), and asked for three contract fixes. MAT-1 to MAT-7 are
-unaffected. The design returns to ready on the owner's signoff of the
-revision.
+*MAT-8 review 1* ([below](#mat-8-review-1)) reset this design to exploring on
+2026-10-14. Codex review 1 found that D-35 conflicts with settings design
+D-36 (Q-30, resolved by D-36), and asked for three contract fixes. The owner
+signed off the revision the same day, relayed verbatim by the manager: "ok
+good, i sign off on this, mark it ready, then begin the issue drafting". The
+owner asked for no further Codex round.
 
 Status legend: `[ ]` unprocessed · `[#N]` linked to issue N · `[no-issue]`
 reviewed and deliberately not tracked separately · `[deferred]` blocked on a
@@ -1970,7 +1971,7 @@ the same day without changing the slices.*
 
 ### MAT-8. Generate ramps from material properties
 
-> **Ready** on 2026-10-14: the owner reviewed sample ramps and decided D-28 to D-35, which specify Q-24. It was deferred on 2026-10-07 until then. **Reopened** the same day by MAT-8 review 1: not ready until Q-30 is decided and the owner signs off the revision. Q-30 is resolved by D-36.
+> **Ready** on 2026-10-14: the owner reviewed sample ramps and decided D-28 to D-35, which specify Q-24. It was deferred on 2026-10-07 until then. **Reopened** the same day by MAT-8 review 1: not ready until Q-30 is decided and the owner signs off the revision. Q-30 is resolved by D-36. **Ready again** on 2026-10-14 on the owner's signoff of the revision ("ok good, i sign off on this, mark it ready"), with no further Codex round.
 
 - **Outcome:** a library can give a ramp as properties instead of a list of
   palette indices. The tool generates the ramp by D-33's formula and snaps it
