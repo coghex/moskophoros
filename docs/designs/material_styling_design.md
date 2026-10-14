@@ -2092,6 +2092,36 @@ the same day without changing the slices.*
   - changing the shipped shade range (D-32).
 - **Open questions:** None.
 
+*MAT-8's implementation notes* (recorded by MAT-8, #107, 2026-10-14;
+`docs/design.md` §Generated ramps, §Material libraries, §Export and *Reuse*
+hold the contract). They record choices the decisions left to the slice:
+
+- **Where the formula lives:** `ramps.generate`, a pure function over the
+  palette, implements D-33's numerical reference exactly, `h·π/180` taken as
+  `h * math.pi / 180`. `materials.generate(library, colors, globals_,
+  recorded=None)` fills every generated ramp of a read or reused library;
+  `materials.indices` resolves a ramp of either kind, so stylize treats a
+  generated ramp exactly as a listed ramp of its indices.
+- **When a reused ramp is regenerated:** a recorded ramp keeps its `indices`
+  when its effective formula values (its own, else the global) are the same
+  under the sheet's recorded `settings.ramp` and the values in force; only
+  an explicit `--ramp-*` option or a `--config` file can make them differ,
+  since the user file sits below the loaded sheet. An explicit value equal to
+  the recorded one, or one a ramp's own value shadows, regenerates nothing.
+- **The `/1` refusal** now tells the owner to change the schema line to
+  `moskophoros.materials/3`; the edit is still the only one a `/1` library
+  needs.
+- **Warnings:** a generated ramp's own formula value beats an explicit global
+  with one warning per ramp in use and value, naming a material's own ramp as
+  `material "X"'s own ramp` and a named ramp as `ramp "X"`; the library's
+  range beats an explicit global range with one warning, given only when some
+  material in use takes the library's range.
+- **Evidence:** the twenty reference vectors (settings B and C on Vince 144)
+  are literal data in `tests/test_generated_ramps.py`, and the owner's
+  `robot-B.yaml` and `robot-C.yaml` are reproduced exactly by a generated
+  library of the same three ramps (black `#404040` ×3, grey `#adadad` ×5,
+  gold `#ca9337` ×3).
+
 ## Later arc: the lighting sheet
 
 Not part of this epic; recorded so this arc rules nothing out. A second sheet,
