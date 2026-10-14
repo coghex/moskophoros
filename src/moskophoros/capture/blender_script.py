@@ -1060,6 +1060,9 @@ _AUXILIARY_SETTINGS = (
 NO_MATERIAL = "moskophoros.no-material"
 # Every render frame's buffers, each at <name>/NNNNNN.png.
 BUFFERS = ("color", "matid", "shade", "normal", "depth")
+# The render phase's directory for the auxiliary render's TGA and OpenEXR,
+# removed once every frame is done.
+SCRATCH = "auxiliary"
 # The view-layer AOVs the auxiliary render adds (lighting sheet design D-11):
 # the camera-space shading normal, a colour, and the camera depth, a value.
 AOVS = (("normal", "COLOR"), ("depth", "VALUE"))
@@ -1647,7 +1650,11 @@ def render_frames(job, document, statics):
     width, height, _, _ = frame_size(settings)
     for name in BUFFERS:
         os.makedirs(os.path.join(job["output_dir"], name), exist_ok=False)
-    scratch = tempfile.mkdtemp(prefix="moskophoros-auxiliary-")
+    # The auxiliary render's intermediate files live in the phase directory,
+    # so they share the command workspace's lifetime: a temporary workspace
+    # is deleted whatever happens to Blender, and a retained one keeps them.
+    scratch = os.path.join(job["output_dir"], SCRATCH)
+    os.mkdir(scratch)
 
     ordinals = {}
     for ordinal, frame in enumerate(job["frames"]):
