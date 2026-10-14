@@ -31,7 +31,7 @@ concrete precondition
 - [x] MAT-5. Map frames onto material ramps — [#68]
 - [x] MAT-6. Choose, record and reuse a material library from the command — [#69]
 - [x] MAT-7. Render materials for the owner's visual review — [#70]
-- [ ] MAT-8. Generate ramps from material properties — [deferred]: Q-24 (the ramp-generation formula) must be specified, with the owner's review of sample ramps, and recorded in this design; it follows #70
+- [ ] MAT-8. Generate ramps from material properties
 
 The owner approved this slice list on 2026-10-07 (D-14); it replaces the
 earlier M1–M5 shape.
@@ -586,8 +586,10 @@ file and the entry (D-8):
   `"ordinary"`; `uses` and `default` name a ramp in `ramps`.
 - Names are non-empty strings; the empty name is not a material (D-18).
 
-MAT-8 later lets an entry give **properties** that generate its ramp instead
-(D-12, D-21).
+MAT-8 lets a ramp be given as **properties** that generate it instead (D-12,
+D-21, D-28 to D-34), and lets a library give a default `shade` (D-35). The
+library schema becomes `moskophoros.materials/3`, and `/2` still loads
+(D-34).
 
 ### Mapping a block (D-7, D-9, D-20)
 
@@ -757,6 +759,8 @@ not replace it. **Amended by settings design D-9 and D-20 (owner,
 2026-10-11):** the bands are taken over the global shade range unless a
 material's library entry gives its own `shade.range`, which that material is
 banded over instead; there is no longer one range for every material.
+**Amended by D-35 (owner, 2026-10-14):** a library's own `shade.range` comes
+between the material's and the global range.
 
 ### D-8. The library is a JSON file the tool only reads
 
@@ -799,7 +803,7 @@ uses only hand-listed palette-index ramps (D-7), so the owner can judge the
 banding sooner. Generating a ramp from material properties (base colour, band
 count, hue shift toward shadow and toward light, saturation, contrast), then
 snapping each shade to the palette, follows as MAT-8. A hand-listed `ramp`
-overrides generated shades.
+overrides generated shades. **Specified by D-28 to D-35 (owner, 2026-10-14).**
 
 ### D-13. The new buffers are captured on every render
 
@@ -916,6 +920,9 @@ entry. Two shades that snap to the same entry keep the repeat, so the band
 count never silently changes. The sheet records both the properties and the
 resulting index ramp (D-19), so a later change to the generator cannot change
 an old sheet's look. Saturation and contrast controls are MAT-8's detail.
+**Amended by D-28 and D-33 (owner, 2026-10-14):** the base is the lightest
+shade, so there is no hue shift toward light; contrast is `lightness_step`
+and saturation is `chroma_fade`.
 
 *Clarified on review:* OKLCh fixes the space, not the formula. The rest is
 [Q-24](#q-24-what-is-the-ramp-generation-formula), specified when MAT-8
@@ -1112,10 +1119,156 @@ a default, whichever sounds best to you."
 
 Affects MAT-8.
 
+### D-33. The exact formula, and its values as settings
+
+Decided 2026-10-14 by the owner in this design's pane (resolves Q-27, as
+proposed): "yes, all of your recommendations are sound to me, i approve".
+
+**The formula.** It is the manager's reviewed prototype, made exact. It snaps
+from the unrounded colour, which picks the same indices on all 30 reviewed
+sample ramps. Given:
+
+- a base colour (sRGB `#rrggbb`), and its OKLCh lightness, chroma and hue
+  `L0, C0, h0`, with `h0 = atan2(b0, a0)` in degrees, using the OKLab
+  conversion that palette mapping already uses;
+- a band count N;
+- the values `step` (`lightness_step`), `hue` (`hue_shift_deg`) and `fade`
+  (`chroma_fade`).
+
+Band `i` (0 the darkest) is `k = N − 1 − i` shades below the base, so band
+N − 1 is the base (D-28). For each band:
+
+- `L = max(0, L0 − step·k)`;
+- `h = h0 + hue·k`, except that `h = h0` when `C0 < 0.02`: a near-grey keeps
+  its hue;
+- `C = C0·(1 − fade·k/(N − 1))`, and `C = C0` when N = 1;
+- **Gamut:** if `(L, C, h)` lies outside the sRGB gamut, `C` is reduced by 40
+  halvings of the interval `[0, C]`, keeping the largest value tested in
+  gamut. A colour is outside the gamut when a linear channel is below −10⁻⁶
+  or above 1 + 10⁻⁶. Lightness and hue never change.
+- **Snapping:** the shade snaps to the palette entry nearest it in OKLab, by
+  Euclidean distance. Equal distances go to the lower index, as in palette
+  mapping. Repeats are kept, so the band count never changes (D-21).
+
+**The settings.** A new global `ramp` mapping (settings design D-2 layers),
+with one option per value:
+
+| Setting | Option | Default (B, D-30) | Limits |
+|---|---|---|---|
+| `ramp.lightness_step` | `--ramp-step L` | 0.12 | finite, 0 to 1 |
+| `ramp.hue_shift_deg` | `--ramp-hue-shift DEG` | −12 | finite, −180 to 180 |
+| `ramp.chroma_fade` | `--ramp-fade F` | 0.3 | finite, 0 to 1 |
+
+- A generated ramp's own value (D-34) beats the global value from any layer.
+  An explicit global (from `--config` or an option) that loses to a ramp in
+  use gives a warning naming that ramp and the value it kept, as settings
+  design D-23 does for shade values.
+- **The sheet record:**
+  - The sheet records the global values as `settings.ramp`, in the order
+    `lightness_step`, `hue_shift_deg`, `chroma_fade`, between `shade` and
+    `style`, inside the fingerprint, whether or not a library is used.
+  - This bumps the sheet schema, and under settings design D-24 and D-30 the
+    previous schema stops loading.
+- Each generated ramp is recorded in the inline library with its properties
+  as given and its resulting indices (D-21, D-34).
+- **A loaded sheet** reuses each recorded result without regenerating it.
+  - When an explicit value (from `--config` or an option) changes a reused
+    ramp's effective inputs, that ramp is regenerated from its recorded
+    properties.
+  - The user file sits below the loaded sheet (settings design D-8), so it
+    never changes a loaded sheet's ramps.
+  - The reused-library palette rules (D-24) are unchanged.
+
+Affects MAT-8.
+
+### D-34. A ramp may be given as properties, with its own formula values
+
+Decided 2026-10-14 by the owner in this design's pane (resolves Q-28, as
+recommended).
+
+- Wherever a library gives a ramp as a list of palette indices, it may give a
+  mapping of properties instead. That covers a named ramp under `ramps` and a
+  material's own `ramp`.
+  - `base` (sRGB `#rrggbb`) and `bands` (a whole number from 1 to 256) are
+    required.
+  - `lightness_step`, `hue_shift_deg` and `chroma_fade` are optional, with
+    the global settings' limits. An omitted value takes the global value
+    (D-33).
+  - No other key is allowed.
+- **Per-ramp overrides ship in MAT-8.** This is D-31's capability: for
+  example, a metal ramp with a larger hue shift. Adding them later would cost
+  another library schema bump.
+- A hand-listed ramp and a generated ramp are alternatives for the same
+  place, and a library may mix them. D-12's "a hand-listed `ramp` overrides
+  generated shades" means that listing a ramp's indices remains the exact
+  control.
+- **The library schema becomes `moskophoros.materials/3`.**
+  - A `moskophoros.materials/2` library still loads, since every `/2` library
+    is valid `/3`, and is read exactly as before.
+  - `/1` stays refused (settings design D-29).
+  - Only a `/3` library may give generated ramps or a library `shade` (D-35).
+- **The sheet record:** a generated ramp is a mapping of the properties as
+  given, in the order `base` (canonical lowercase), `bands`,
+  `lightness_step`, `hue_shift_deg` and `chroma_fade`, then `indices`, the
+  generated result. A hand-listed ramp stays a list.
+- **Validation:**
+  - A malformed mapping, a value out of its limits or a `/2` library using a
+    `/3` feature is a usage error (exit 2) before Blender, naming the file
+    and the ramp.
+  - A reloaded record's `indices` must be N valid palette indices.
+
+Example:
+
+```yaml
+schema: moskophoros.materials/3
+ramps:
+  stone: [133, 135, 137, 138, 139]
+  gold: {base: "#ca9337", bands: 4}
+  chrome: {base: "#8c939c", bands: 5, hue_shift_deg: -35, chroma_fade: 0.6}
+materials:
+  Main: {uses: gold}
+  Cloth: {ramp: {base: "#7a3b2e", bands: 3}}
+```
+
+Affects MAT-8.
+
+### D-35. A library may give a default shade
+
+Decided 2026-10-14 by the owner in this design's pane (resolves Q-29, the
+manager's form, as recommended). This is the form of D-32.
+
+- A `/3` library may give a top-level `shade` mapping, with the keys a
+  material's `shade` may give: `ao_distance_m`, `occlusion_weight`,
+  `convexity_weight` and `range` (settings design D-20). The validation is
+  the same.
+- **Resolution order:** each value is taken from the first of these that
+  sets it:
+  1. the material's own `shade`;
+  2. the library's `shade`;
+  3. the settings layers;
+  4. the shipped default.
+- Materials without an entry that take the library's default ramp also use
+  the library's `shade`. The ordinary look uses no shade, as now.
+- **Consequence:** where a library sets a value, `--shade-range`, the other
+  shade options and the user file's values no longer reach that library's
+  materials.
+  - An explicit global that loses to the library's value gives one warning,
+    naming the library's value.
+  - This follows settings design D-23.
+- **The sheet record:** the library's `shade` sits in the inline library
+  record after `default`, holding only the keys given, in settings design
+  D-37's fixed order. A library without one has no `shade`.
+- The library's capture values reach Blender per material, in the capture
+  job (settings design D-36).
+- The shipped default range is unchanged (D-32). The owner's library can then
+  state `shade: {range: [190, 225]}` once instead of on every material.
+
+Affects MAT-8.
+
 ## Open questions
 
-Open: Q-24, in progress for MAT-8 (D-28 to D-32 decided on 2026-10-14), with
-its remainder in Q-27, Q-28 and Q-29. Q-11 is resolved by D-27. Q-21, Q-22 and Q-23, raised by an
+None open. Q-24 is resolved by D-28 to D-35 (2026-10-14), with Q-27, Q-28
+and Q-29 by D-33, D-34 and D-35. Q-11 is resolved by D-27. Q-21, Q-22 and Q-23, raised by an
 outside review on 2026-10-07, are resolved by D-22, D-23 and D-24; Q-25,
 raised by D-22, by D-25; Q-26, raised by the D-10 spike, by D-26.
 
@@ -1342,6 +1495,9 @@ Affects MAT-6.
 
 ### Q-24. What is the ramp-generation formula?
 
+**Resolved by D-28 to D-35** (2026-10-14). Kept for its list of what the
+formula had to settle.
+
 For MAT-8, beyond D-21: the lightness endpoints and where the base colour
 sits in the ramp; how hue shifts interpolate across bands; how achromatic
 (grey) base colours take a hue shift; the units and limits of saturation and
@@ -1354,6 +1510,8 @@ D-32. What remains is split into Q-27 (the exact formula and its settings),
 Q-28 (the library format) and Q-29 (the library's default shade).
 
 ### Q-27. What exactly is the formula, and how is it set?
+
+**Resolved by D-33** (as proposed).
 
 **Proposal: the formula as reviewed, made exact.** It is the manager's
 prototype, with one change: shades snap from the unrounded colour, not from an
@@ -1398,6 +1556,8 @@ Affects MAT-8.
 
 ### Q-28. How does a library give a generated ramp?
 
+**Resolved by D-34** (as recommended).
+
 **Proposal:** anywhere a library gives a ramp as a list of indices, a named
 ramp under `ramps` or a material's own `ramp`, it may give a mapping instead:
 
@@ -1426,6 +1586,8 @@ materials:
 Affects MAT-8.
 
 ### Q-29. Does a library give a default shade?
+
+**Resolved by D-35** (as recommended).
 
 **Proposal (the manager's form):** a top-level `shade` mapping in the
 library, with the same keys a material's `shade` may give (`ao_distance_m`,
@@ -1664,22 +1826,83 @@ the same day without changing the slices.*
 
 ### MAT-8. Generate ramps from material properties
 
-> **Deferred** on 2026-10-07 during issue processing: not ready until Q-24, the ramp-generation formula, is specified with a short owner review of sample ramps and recorded here (Q-24, D-21). It follows the owner's review in #70 (MAT-7). Process this entry again once that is recorded.
+> **Ready** on 2026-10-14: the owner reviewed sample ramps and decided D-28 to D-35, which specify Q-24. It was deferred on 2026-10-07 until then.
 
-- **Outcome:** a library entry can give properties instead of a hand-listed
-  ramp; the tool builds the ramp and snaps it to the palette, records both,
-  and reuses the recorded ramp without regenerating it.
-- **Scope:** the library reader, generation, the recorded settings and their
-  reuse in `cli.py`, design §Stylize and §Export amendments.
+- **Outcome:** a library can give a ramp as properties instead of a list of
+  palette indices. The tool generates the ramp by D-33's formula and snaps it
+  to the palette. It records the properties and the result, and reuses the
+  recorded result without regenerating it. The formula's values are settings
+  with options, defaulting to setting B. A library can also give a default
+  `shade` for its materials.
+- **Scope:**
+  - **The library reader:** the `moskophoros.materials/3` schema, with `/2`
+    still loading (D-34). Generated ramp mappings, wherever a ramp may be
+    given, with optional per-ramp formula values (D-34). The library-level
+    `shade` and its validation (D-35).
+  - **Generation:** a pure function from base colour, band count and formula
+    values to palette indices (D-28, D-33).
+  - **Settings:** the `ramp` settings, `ramp.lightness_step`,
+    `ramp.hue_shift_deg` and `ramp.chroma_fade`, in the shipped defaults
+    (setting B). Their options `--ramp-step`, `--ramp-hue-shift` and
+    `--ramp-fade`, and their validation (D-30, D-33).
+  - **Resolution order:** a ramp's own formula values beat the globals. Shade
+    values resolve from the material, then the library's `shade`, then the
+    settings, then the shipped default (D-33, D-35). The warnings for
+    explicit globals that lose (D-33, D-35).
+  - **The capture job:** each material's resolved capture values reach it,
+    including the library's `shade` (settings design D-36).
+  - **Recording and reuse:** `settings.ramp`, the generated-ramp records and
+    the library `shade` record (D-33, D-34, D-35), with the sheet schema
+    bump. Reuse without regeneration. Regeneration when an explicit value
+    changes a reused ramp's inputs (D-33).
+  - **Documents:** the design.md amendments, in §CLI, §Settings files,
+    §Stylize and §Export, in the same pull request, since tests read
+    design.md.
 - **Phase:** 5.
-- **Depends on:** MAT-7.
-- **Ordering:** after the first release; required for epic completion. Needs
-  Q-24 specified before it is ready.
-- **Relevant decisions:** D-6, D-7, D-12, D-19, D-21.
-- **Acceptance signals:** pure tests for generation, snapping and recording;
-  the owner reviews generated ramps against hand-listed ones.
-- **Out of scope:** dithering; eased (non-linear) bands.
-- **Open questions:** Q-24.
+- **Depends on:** MAT-7 (#70, done).
+- **Ordering:** after the first release; required for epic completion.
+- **Relevant decisions:** D-6, D-7, D-12, D-19, D-21, D-24, D-28 to D-35;
+  settings design D-20, D-23, D-24, D-29, D-30, D-36, D-37.
+- **Acceptance signals:**
+  - **Pure tests for generation:**
+    - lightness, hue and chroma per band;
+    - the near-grey rule;
+    - N = 1;
+    - the lightness floor at 0;
+    - gamut clipping;
+    - snapping ties going to the lower index;
+    - repeats kept.
+  - **Reference vectors:** with the Vince 144 palette, setting B and setting C
+    reproduce the indices recorded for the ten materials in
+    `~/.local/share/moskophoros-acceptance/ramp-gen/samples.json`. These are
+    copied into the tests as literal data, with no file outside the
+    repository read.
+  - **Reader tests:**
+    - `/2` libraries load unchanged;
+    - `/3` features are refused in a `/2` library;
+    - mapping and limit errors are usage errors (exit 2) before Blender;
+    - `/1` is still refused.
+  - **Resolution tests:**
+    - the formula values and shade values resolve in D-33's and D-35's
+      orders;
+    - each warning fires;
+    - the capture job carries the library `shade`.
+  - **The reproduction test** (settings design D-16) covers a generated
+    library: rerunning from a sheet reproduces it byte for byte without
+    regenerating, and an explicit `--ramp-hue-shift` regenerates it.
+  - **Without a library,** every existing look's PNG and previews are
+    unchanged; the JSON changes only by the schema, `settings.ramp` and the
+    fingerprint.
+  - **The owner's review** (V-12): the owner reviews sheets from generated
+    ramps against hand-listed ones. The pull request gives the exact
+    commands, under both setting B and setting C.
+- **Out of scope:**
+  - dithering;
+  - eased (non-linear) bands;
+  - taking the base colour from the glTF (D-29);
+  - palette swaps that keep a library (D-24);
+  - changing the shipped shade range (D-32).
+- **Open questions:** None.
 
 ## Later arc: the lighting sheet
 

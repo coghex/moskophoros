@@ -773,6 +773,11 @@ Decided by the owner on 2026-10-11, round 8. This resolves Q-16 with option
   it. To vary one material for one generation, the owner edits or copies the
   library.
 
+**Amended by material styling D-35 (owner, 2026-10-14):** a
+`moskophoros.materials/3` library may also give a top-level `shade`. It
+comes between a material's own values and the global ones, and materials
+taking the default ramp use it too.
+
 Affects SET-3.
 
 ### D-21. The slice plan, file shape, formats and options
@@ -904,6 +909,8 @@ Decided by the owner on 2026-10-11, round 12. This resolves Q-19 as proposed.
 
 After SET-3 only `moskophoros.materials/2` loads. A `/1` library is a usage
 error saying to change its `schema` line, which is the only edit it needs.
+**Amended by material styling D-34 (owner, 2026-10-14):** MAT-8 adds
+`moskophoros.materials/3`, and `/2` keeps loading beside it.
 
 Affects SET-3.
 
