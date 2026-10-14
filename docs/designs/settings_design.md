@@ -775,8 +775,9 @@ Decided by the owner on 2026-10-11, round 8. This resolves Q-16 with option
 
 **Amended by material styling D-35 (owner, 2026-10-14):** a
 `moskophoros.materials/3` library may also give a top-level `shade`. It
-comes between a material's own values and the global ones, and materials
-taking the default ramp use it too.
+gives `range` only (material styling D-36), which comes between a material's
+own range and the global one, and materials taking the default ramp use it
+too. Capture values, and this design's D-36, are unchanged.
 
 Affects SET-3.
 

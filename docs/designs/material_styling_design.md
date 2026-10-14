@@ -19,7 +19,7 @@ Design state: `exploring`
 
 *Reset 2026-10-14 for MAT-8 review 1* ([below](#mat-8-review-1)). Codex
 review 1 found that D-35 conflicts with settings design D-36, which needs an
-owner decision (Q-30), and asked for three contract fixes. MAT-1 to MAT-7 are
+owner decision (Q-30, since resolved by D-36), and asked for three contract fixes. MAT-1 to MAT-7 are
 unaffected. The design returns to ready on the owner's signoff of the
 revision.
 
@@ -1284,7 +1284,9 @@ Affects MAT-8.
 ### D-35. A library may give a default shade
 
 Decided 2026-10-14 by the owner in this design's pane (resolves Q-29, the
-manager's form, as recommended). This is the form of D-32.
+manager's form, as recommended). This is the form of D-32. **Amended by D-36
+(owner, 2026-10-14):** the library `shade` gives `range` only, so the
+capture-value parts below no longer apply.
 
 - A `/3` library may give a top-level `shade` mapping, with the keys a
   material's `shade` may give: `ao_distance_m`, `occlusion_weight`,
@@ -1314,10 +1316,39 @@ manager's form, as recommended). This is the form of D-32.
 
 Affects MAT-8.
 
+### D-36. A library's default shade gives the range only
+
+Decided 2026-10-14 by the owner in this design's pane (resolves Q-30, option
+A, as recommended): "A". It amends D-35.
+
+- A library's top-level `shade` may give only `range`. The range is a
+  stylize value. A library `shade` giving `ao_distance_m`,
+  `occlusion_weight` or `convexity_weight` is a usage error (exit 2) before
+  Blender, naming the file and the key.
+- **The range resolves in D-35's order:** the material's own, then the
+  library's, then the settings layers, then the shipped default. The
+  library's range also applies to materials with no entry that take the
+  default ramp.
+- **Capture values are unchanged from today.** They come from a material
+  entry's own `shade`, else the global values. Materials taking the default
+  ramp, the ordinary look, unnamed and `BLEND` surfaces take the globals.
+- **Settings design D-36, design.md §Capture and the capture job contract
+  stand unchanged.**
+  - The job never carries the library's `shade`.
+  - The job is the same whatever the default ramp and the ranges.
+- **Consequence:** where a library sets a range, `--shade-range` and the user
+  file's range no longer reach that library's materials. The warning of D-35
+  applies. The other shade options keep reaching every material without its
+  own value.
+- **Later:** library-wide capture values remain possible as Q-30's option B,
+  at the cost of a library schema bump.
+
+Affects MAT-8.
+
 ## Open questions
 
-Open: Q-30 (MAT-8 review 1, M-1). Q-24 is resolved by D-28 to D-35
-(2026-10-14), with Q-27, Q-28 and Q-29 by D-33, D-34 and D-35. Q-11 is resolved by D-27. Q-21, Q-22 and Q-23, raised by an
+None open. Q-24 is resolved by D-28 to D-36 (2026-10-14), with Q-27, Q-28,
+Q-29 and Q-30 by D-33, D-34, D-35 and D-36. Q-11 is resolved by D-27. Q-21, Q-22 and Q-23, raised by an
 outside review on 2026-10-07, are resolved by D-22, D-23 and D-24; Q-25,
 raised by D-22, by D-25; Q-26, raised by the D-10 spike, by D-26.
 
@@ -1666,6 +1697,8 @@ Affects MAT-8.
 
 ### Q-30. Which materials take a library's capture values?
 
+**Resolved by D-36** (option A, as recommended).
+
 Raised by MAT-8 review 1 (M-1, blocking).
 
 **The conflict:** D-35 makes three promises that cannot all hold:
@@ -1775,7 +1808,7 @@ Each was verified against the code and design.md before its disposition.
 
 | Id | Finding | Disposition |
 |---|---|---|
-| M-1 | D-35's library capture values for default-ramped materials contradict settings design D-36 and the capture contract | Confirmed (`materials.capture_overrides` gives such materials the global values). Owner decision: Q-30. |
+| M-1 | D-35's library capture values for default-ramped materials contradict settings design D-36 and the capture contract | Confirmed (`materials.capture_overrides` gives such materials the global values). Resolved by D-36 (Q-30, option A): the library `shade` gives the range only, so D-36 of the settings design and the capture contract stand. |
 | M-2 | Snapping after the gamut search is ambiguous (direct OKLab vs the prototype's RGB clamp) | Fixed. D-33 gains a numerical reference: snap directly from the post-search OKLab; the tolerance is the predicate's only; the counterexample is pinned. Reproduced: `[0, 0]`, and all 30 sample ramps still match. |
 | M-3 | Acceptance omits existing hand-listed libraries | Fixed. MAT-8 adds before-and-after preservation for `/2` and listed `/3` libraries under `plain` and `mode`, and a generated-equals-listed check. |
 | M-4 | MAT-8's documentation scope misses design.md *Reuse*, *Capture* and the capture job contract | Fixed. They are assigned to MAT-8 with the reuse validation rules carried forward. The sheet schema is `/11`. |
@@ -1937,7 +1970,7 @@ the same day without changing the slices.*
 
 ### MAT-8. Generate ramps from material properties
 
-> **Ready** on 2026-10-14: the owner reviewed sample ramps and decided D-28 to D-35, which specify Q-24. It was deferred on 2026-10-07 until then. **Reopened** the same day by MAT-8 review 1: not ready until Q-30 is decided and the owner signs off the revision.
+> **Ready** on 2026-10-14: the owner reviewed sample ramps and decided D-28 to D-35, which specify Q-24. It was deferred on 2026-10-07 until then. **Reopened** the same day by MAT-8 review 1: not ready until Q-30 is decided and the owner signs off the revision. Q-30 is resolved by D-36.
 
 - **Outcome:** a library can give a ramp as properties instead of a list of
   palette indices. The tool generates the ramp by D-33's formula and snaps it
@@ -1949,7 +1982,7 @@ the same day without changing the slices.*
   - **The library reader:** the `moskophoros.materials/3` schema, with `/2`
     still loading (D-34). Generated ramp mappings, wherever a ramp may be
     given, with optional per-ramp formula values (D-34). The library-level
-    `shade` and its validation (D-35).
+    `shade`, which gives `range` only, and its validation (D-35, D-36).
   - **Generation:** a pure function from base colour, band count and formula
     values to palette indices (D-28, D-33).
   - **Settings:** the `ramp` settings, `ramp.lightness_step`,
@@ -1957,11 +1990,12 @@ the same day without changing the slices.*
     (setting B). Their options `--ramp-step`, `--ramp-hue-shift` and
     `--ramp-fade`, and their validation (D-30, D-33).
   - **Resolution order:** a ramp's own formula values beat the globals. Shade
-    values resolve from the material, then the library's `shade`, then the
-    settings, then the shipped default (D-33, D-35). The warnings for
+    ranges resolve from the material, then the library's `shade`, then the
+    settings, then the shipped default (D-33, D-35, D-36). The warnings for
     explicit globals that lose (D-33, D-35).
-  - **The capture job:** each material's resolved capture values reach it,
-    including the library's `shade` (settings design D-36).
+  - **The capture job is unchanged:** capture values still come only from a
+    material entry's own `shade` or the globals, and the job never carries
+    the library `shade` (D-36; settings design D-36).
   - **Recording and reuse:** `settings.ramp`, the generated-ramp records and
     the library `shade` record (D-33, D-34, D-35), with the sheet schema
     bump. Reuse without regeneration. Regeneration when an explicit value
@@ -1983,12 +2017,13 @@ the same day without changing the slices.*
         indices) without regenerating;
       - the recorded `indices` change only when an explicit value changes
         that ramp's effective inputs (D-33);
-    - §Capture and §Capture job and result contract, for which materials
-      take library capture values, as Q-30 decides.
+    - §Capture and §Capture job and result contract: state that a
+      library's `shade` (a range) never reaches capture, so the job stays
+      the same whatever the default ramp and the ranges (D-36).
 - **Phase:** 5.
 - **Depends on:** MAT-7 (#70, done).
 - **Ordering:** after the first release; required for epic completion.
-- **Relevant decisions:** D-6, D-7, D-12, D-19, D-21, D-24, D-28 to D-35;
+- **Relevant decisions:** D-6, D-7, D-12, D-19, D-21, D-24, D-28 to D-36;
   settings design D-20, D-23, D-24, D-29, D-30, D-36, D-37.
 - **Acceptance signals:**
   - **Pure tests for generation:**
@@ -2015,9 +2050,9 @@ the same day without changing the slices.*
     - the formula values and shade values resolve in D-33's and D-35's
       orders;
     - each warning fires;
-    - the capture job carries the library `shade` exactly as Q-30 decides,
-      including adding and removing a default ramp, and a library `shade`
-      that gives only a range.
+    - the capture job and its `job_sha256` are unchanged by a library
+      `shade` and by adding or removing a default ramp (D-36);
+    - a library `shade` giving a capture value is refused.
   - **The reproduction test** (settings design D-16) covers a generated
     library: rerunning from a sheet reproduces it byte for byte without
     regenerating, and an explicit `--ramp-hue-shift` regenerates it.
@@ -2054,7 +2089,7 @@ the same day without changing the slices.*
   - taking the base colour from the glTF (D-29);
   - palette swaps that keep a library (D-24);
   - changing the shipped shade range (D-32).
-- **Open questions:** Q-30.
+- **Open questions:** None.
 
 ## Later arc: the lighting sheet
 
