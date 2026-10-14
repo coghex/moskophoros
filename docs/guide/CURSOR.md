@@ -5,16 +5,16 @@ Covered beyond the boundary: none
 
 ## Next
 
-Walk GUIDE-2’s saved issue proposal with the owner. GUIDE-1 is filed as #109; its repair remains
-open. The completed audit boundary is unchanged.
+No finding awaits disposition. Follow #109 and #110 through implementation in
+a future review; filing does not advance the completed audit boundary.
 
 ## Open findings
 
-- 2026-10-14T130147Z-fc9de5d/GUIDE-2 — obsolete intermediate interface descriptions — proposal pending (see finding).
+- none
 
 ## Pending handoff
 
-- GUIDE-1 is processed through [#109](https://github.com/coghex/moskophoros/issues/109), still open; filing is not a merged repair.
+- GUIDE-1 is processed through [#109](https://github.com/coghex/moskophoros/issues/109) and GUIDE-2 through [#110](https://github.com/coghex/moskophoros/issues/110); both are open. Filing is not a merged repair.
 
 - Recheck found no movement after fc9de5d; documentation-only landings excluded.
 - Settings D-36's accepted capture-shading exception is not reflected in V-4's literal no-re-render wording; owner vision reconciliation pending, no new design decision inferred.
