@@ -219,9 +219,9 @@ recorded, so identical resolved settings give identical bytes.
 
 **Files.** A user or `--config` file is read through the strict YAML reader
 (see [Material libraries](#material-libraries)) and is a mapping of
-settings. `version: 1` is optional at its top. An unknown key, including a
-later slice's such as `frames`, `clips` or `shade`, an unknown version, a
-value of the wrong type or out of range, or any YAML error is a usage error
+settings. `version: 1` is optional at its top. A key the table above does
+not list, such as a misspelt `fame` or a `shade.ao_radius`, an unknown
+version, a value of the wrong type or out of range, or any YAML error is a usage error
 (exit 2) naming the file, the key and the line. A path inside a settings file
 resolves relative to that file's directory, with a leading `~` expanded;
 paths on the command line resolve as before. Every path a settings file
@@ -724,8 +724,10 @@ present with a value its option would accept, `projection` must be
 `normals` and `depth` must be `true` or `false`. `light` must be an object
 with exactly `position`, `null` or a list of three numbers, never booleans,
 `intensity` and `ambient`, each a value its option would accept. `clips` must be a nonempty list of distinct clips, each
-an object with exactly `name`, a nonempty string, and `loop`, `true` or
-`false`; it is checked even when `--clip` replaces it. `shade` must be an
+an object with exactly `name`, a nonempty string, `loop`, `true` or
+`false`, and `frames`, the clip's own frame count as given: an integer of 1
+or more (never a boolean), `"auto"`, or `null` to take the global
+`settings.frames`; it is checked even when `--clip` replaces it. `shade` must be an
 object with exactly `ao_distance_m`, `ao_samples`, `occlusion_weight`,
 `convexity_weight` and `range`, each a value its option would accept:
 numbers, never booleans, and `ao_samples` an integer from 1 to 128.
@@ -778,10 +780,13 @@ The command loads every buffer the capture result names for a frame: `color`
 becomes the frame's pixels; `matid` and `shade` are decoded into the
 identity and shade arrays below, `normal` and `depth` into the normal and
 depth arrays; and any other buffer is carried under its own name as an
-8-bit RGBA array. The reductions read only the colour, unless they are given
-a material library, which also reads the identity and shade arrays (see
-[Material ramps](#material-ramps)). No reduction reads the normal or depth
-arrays yet (lighting sheet design LIT-2 reduces them).
+8-bit RGBA array. The colour reduction reads only the colour, unless it is
+given a material library, which also reads the identity and shade arrays
+(see [Material ramps](#material-ramps)). Independently of that choice, both
+reductions reduce a frame's normal and depth arrays when it carries both, as
+[Normal and depth maps](#normal-and-depth-maps) specifies; a frame must carry
+both or neither, and one carrying only one of them is a `ValueError` naming
+the frame.
 
 Four buffer names are reserved, for material identity, shade, normal and
 depth, with this interface:
@@ -1587,10 +1592,13 @@ in [the material design](designs/material_styling_design.md#decisions)). The
 range is a parameter: stylize never chooses or normalises it. A library needs
 a palette, and each frame must carry the `identity` and `shade` buffers
 ([Frames into stylize](#frames-into-stylize)), or stylize raises
-`ValueError` naming the frame. Without a library both reductions behave
-exactly as above and read only the colour. Frames are handled one at a time;
-a frame's colour, identity and shade arrays are released once it is reduced,
-and the result is an ordinary reduced colour frame with no buffers.
+`ValueError` naming the frame. Without a library both reductions colour each
+block exactly as above, from the colour alone. Frames
+are handled one at a time; a frame's colour, identity, shade, normal and
+depth arrays are released once it is reduced. The result is a reduced colour
+frame whose only buffers are its reduced `normal_map` and `depth_map` when
+the frame carried both normal and depth, and none when it carried neither
+([Normal and depth maps](#normal-and-depth-maps)).
 
 **Resolution.** `stylize.resolve(library, name)` gives the ramp a material
 name takes: its own entry (its `ramp`, or the ramp it `uses`; `"ordinary"`
