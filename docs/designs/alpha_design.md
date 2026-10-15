@@ -94,9 +94,55 @@ Slices are proposed once scope is settled.
 - **Tracker:** #75 (open, `enhancement`, `blocked`) records `MASK` cutouts
   as deferred work. No other open epic overlaps this arc.
 
+## Decisions
+
+### D-1. Both cutouts and translucency are in scope
+
+Decided 2026-10-15 by the owner in this design's pane (Q-1): "yes both i
+guess. we should be able to render sprites with alpha where the cutoff is, i
+dont want to see any background in my final sprites, and also if we have a
+transparent material, such as a translucent cloth, we should be able to
+render the effects that blender puts on it properly, as in see through it,
+perhaps with a nonbinary alpha value in the output sprite."
+
+- **Cutouts (`MASK`):** a cut-out texel is transparent in the sprite. No
+  background colour shows through it, and the surface behind it shows if
+  there is one.
+- **Translucency (`BLEND`):** a translucent surface, such as cloth, is seen
+  through as Blender renders it, with partial alpha in the sprite.
+- **Test model:** the owner offered to build a test model first; see
+  [Test inputs](#test-inputs).
+
+### D-2. One 8-bit alpha channel; a cutout is alpha 0
+
+Decided 2026-10-15 by the owner (Q-2, option C): "full 8 bit alpha, cutouts
+should just be an alpha of 0, right? i dont really see why you are seperating
+the two into two different contexts, they are all just cases of 0-1 alpha
+space."
+
+- The sheet's alpha is full 8-bit, 0 to 255, not quantised to levels.
+- Cutouts and translucency are not separate outputs. Both are values in one
+  0 to 1 alpha: a cut-out texel is 0, an opaque surface 1, and a translucent
+  surface in between.
+- `MASK` and `BLEND` differ only in how Blender computes a surface's alpha.
+
+How partial alpha meets the outline rule is [Q-9](#q-9-outlines-hard-pixel-edges-or-soft).
+
+### D-3. Alpha comes from the material, as Blender imports it
+
+Decided 2026-10-15 by the owner (Q-3): "yes, it comes from blender, and the
+material definitions."
+
+- A surface's alpha is what Blender's glTF importer builds from the material:
+  the base colour texture's alpha times `baseColorFactor`'s alpha, with the
+  material's `alphaMode` and `alphaCutoff` (0.5 by default).
+- The tool adds no transparency rule of its own.
+
 ## Open questions
 
 ### Q-1. Scope: what does "alpha" cover?
+
+**Resolved by D-1.**
 
 glTF has two kinds of transparency:
 
@@ -115,6 +161,8 @@ needs it today.
 
 ### Q-2. Output alpha: binary, or levels of translucency?
 
+**Resolved by D-2** (full 8-bit). Kept for the alternatives: binary, or a few levels.
+
 A sheet pixel can be binary, fully there or not, which is the pixel-art
 convention, or it can carry levels of partial alpha. With levels:
 
@@ -125,6 +173,8 @@ convention, or it can carry levels of partial alpha. With levels:
   in the model, or the front surface's colour with a partial alpha.
 
 ### Q-3. Where does a surface's alpha come from?
+
+**Resolved by D-3.**
 
 Follow glTF: `baseColorFactor` alpha × texture alpha × vertex colour alpha,
 with `alphaCutoff` for `MASK`. Or a subset.
@@ -158,6 +208,63 @@ the schema-bump rule.
 
 The new epic either supersedes #75 or absorbs it as a child. This design
 recommends one; `process-design-doc` and the manager act on it.
+
+### Q-9. Outlines: hard pixel edges, or soft?
+
+Raised by D-2. Two kinds of partial alpha meet in a pixel's block:
+
+- **Edge coverage:** at a sprite's outline, or at a cutout's edge, part of
+  the block shows a surface and part shows nothing.
+- **Material alpha:** a translucent surface covers the whole block but is
+  partly see-through.
+
+Today edges are hard: a block at least half covered is a full pixel (alpha
+255), and anything less is empty. This is the pixel-art convention, and every
+existing sheet relies on it.
+
+- **A. Hard edges, translucency kept (proposal).**
+  - Each supersample records whether it shows a surface. A cut-out hole
+    shows the surface behind, or nothing.
+  - Each supersample also records the alpha it shows: 1 for an opaque
+    surface, partial through a translucent one.
+  - A pixel exists when at least half its block shows a surface, as today.
+    Its alpha is the mean alpha of those surface samples, in 8 bits.
+  - Outlines and cutout edges stay crisp. Only translucent materials give
+    partial alpha. An opaque model's pixels stay at 255, so its sheets can
+    stay byte-identical.
+- **B. Soft edges everywhere.**
+  - A pixel's alpha is its block's mean alpha.
+  - Outlines and cutout edges become antialiased, partly transparent
+    pixels.
+  - Every existing sheet changes, opaque ones included, and the sprite
+    gains the soft fringe that pixel art usually avoids.
+
+## Test inputs
+
+The repository's tests generate their own `.glb` fixtures (AGENTS.md), so
+the automated checks never wait on a hand-made model. The capture spike
+(Q-4) also uses generated fixtures.
+
+An owner-made model is the right input for the owner's visual review (V-12),
+and it is needed only by that last slice. It can be built in parallel with
+this design. **Proposal for what it holds**, as one model or a few small
+ones:
+
+- **A cutout:** a `MASK` material with a texture whose alpha has holes, such
+  as leaves, a fence or hair cards, with an `alphaCutoff` set. The holes
+  should show both another surface of the model behind them and empty
+  background.
+- **Translucent cloth:** a `BLEND` material with partial alpha (a texture's
+  alpha, or only `baseColorFactor`'s alpha), over an opaque part of the model
+  and also against empty background.
+- **A translucent material with an alpha gradient,** to show the range of
+  levels.
+- **An opaque part** beside them, with named materials, so that material
+  ramps and the maps can be checked next to the transparency.
+- **Ideally a short animation,** so cutouts and translucency are seen moving
+  across frames.
+- **Export:** a binary glTF (`.glb`), with each material's alpha mode set in
+  Blender, so the glTF records `MASK` or `BLEND`.
 
 ## Verification strategy
 
