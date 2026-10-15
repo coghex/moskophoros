@@ -138,6 +138,42 @@ material definitions."
   material's `alphaMode` and `alphaCutoff` (0.5 by default).
 - The tool adds no transparency rule of its own.
 
+### D-4. Hard edges by default; soft edges as an option
+
+Decided 2026-10-15 by the owner (Q-9): "ideally, this would be an option,
+defaulting to hard edges, but allowing the user to select soft edges if they
+want to render the transparency that naturally arises from whatever scaling
+algorithm we use."
+
+- **Hard (the default):** Q-9's option A.
+  - A pixel exists when at least half its block shows a surface, as today.
+  - Its alpha is the mean alpha of the surfaces it shows. Outlines and cutout
+    edges stay crisp, and only translucent materials give partial alpha.
+- **Soft (chosen by the user):** Q-9's option B. A pixel's alpha is its
+  block's mean alpha, so outlines and cutout edges keep the partial
+  transparency that reducing the supersampled block produces.
+- It is a setting with an option; its name and form are
+  [Q-7](#q-7-settings).
+
+### D-5. Existing sheets need not be preserved
+
+Decided 2026-10-15 by the owner (Q-6): "i dont need the old renders anymore,
+i dont want any opaque renders, they are just artifacts of development, so
+feel free to overwrite them".
+
+- "Byte-identical" meant that, after this arc, rendering an opaque model
+  with the same command gives exactly the same files as before. That is
+  usually a regression check: a test proves nothing changed.
+- The owner does not need that. The arc may change the output of every
+  model, opaque ones included, for example by using one capture path for all
+  models. Each changed output is then judged in the owner's review (V-12),
+  not compared to the old one.
+- Existing tests that pin today's exact output are updated deliberately by
+  the slice that changes it, and each such change is named in its pull
+  request.
+- Alignment stays a hard rule: the colour, material ID, shade and every map
+  agree pixel for pixel.
+
 ## Open questions
 
 ### Q-1. Scope: what does "alpha" cover?
@@ -193,6 +229,8 @@ previews (one-bit transparency) show it?
 
 ### Q-6. Compatibility
 
+**Resolved by D-5:** no byte-identical guarantee; the rest is folded into the capture technique (Q-4) and the review.
+
 - Sheets of models without `MASK` or `BLEND` materials stay byte-identical
   (to confirm).
 - Sheets of existing `MASK` models change. The owner decides that change and
@@ -210,6 +248,8 @@ The new epic either supersedes #75 or absorbs it as a child. This design
 recommends one; `process-design-doc` and the manager act on it.
 
 ### Q-9. Outlines: hard pixel edges, or soft?
+
+**Resolved by D-4** (both, hard by default).
 
 Raised by D-2. Two kinds of partial alpha meet in a pixel's block:
 
