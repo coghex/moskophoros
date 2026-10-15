@@ -94,6 +94,69 @@ Slices are proposed once scope is settled.
 - **Tracker:** #75 (open, `enhancement`, `blocked`) records `MASK` cutouts
   as deferred work. No other open epic overlaps this arc.
 
+## Design
+
+### Capture spike 1 (Q-4)
+
+Run on 2026-10-15 with Blender 5.2.2, on generated fixtures. The report,
+scripts, fixtures, renders and every command are in
+`~/.local/share/moskophoros-acceptance/alpha-design/spike-1/` (`REPORT.md`).
+`renders/contact_sheet.png` shows the main results side by side.
+
+- **What the glTF importer builds:**
+  - `MASK` alpha is node math, `1 − (texture alpha × factor < cutoff)`:
+    exactly 0 or 1, with no hashing or dithering.
+  - `BLEND` alpha is the factor, the texture alpha, their product, or the
+    vertex colour's alpha.
+  - `MASK` and `OPAQUE` materials differ only in that node chain.
+- **Workbench cannot do this.**
+  - It shows a `BLEND` material's factor alpha, but never the glTF cutoff and
+    never partial texture alpha.
+  - Its blending is not the linear "over" composite.
+  - Today it also shows the hidden colour of alpha-0 texels: red holes come
+    out as (177, 55, 55, 255).
+- **One Cycles render does it exactly and deterministically.** It uses the
+  auxiliary render's settings (1 sample per pixel, Box 0.01 px, seed 0, film
+  transparent), with each material's surface replaced by
+  `Mix(Transparent, Emission(the importer's colour chain))`, its factor taken
+  from the importer's alpha chain.
+  - Alpha equals glTF's at every probe: holes 0, the cutoff at 127 cut and
+    128 kept, translucency 0.4, and the gradient texel for texel.
+  - A 0.4 veil over the body is exactly `0.4·veil + 0.6·body` in linear.
+  - Pixels are bit-identical across runs and processes.
+  - Cycles writes render-time text into its own PNG and EXR files, so the
+    colour is written from pixels, as the auxiliary buffers already are.
+- **The other buffers need a gate.**
+  - Cycles adds shader output passes (AOVs) over every surface a ray
+    crosses, holes included. It stops at the first surface whose alpha
+    reaches `pass_alpha_threshold`.
+  - Multiplying every AOV by a gate `alpha ≥ T`, with the threshold at the
+    same T, makes the material ID, shade, normal and depth all describe one
+    surface. T near 0 gives the front-most surface that is not a hole; T 0.5
+    the first with alpha at least 0.5; T 1 the first opaque one. All three
+    were exact.
+  - Today's ID and shade, carried in the emission colour, would be blended
+    by partial alpha, so they move to AOVs, as floats.
+- **The surface flag:**
+  - "This supersample shows a surface" is exactly "alpha > 0", read from the
+    float result.
+  - More stacked transparent layers than `transparent_max_bounces` give
+    false opaque black pixels. Capture sets a generous limit (64 cost
+    nothing measurable) and fails loudly when alpha > 0 but no gated surface
+    was written.
+- **Cost:** one render replaces today's two, at about the same time per
+  frame on an ordinary model (1024²: 0.54–0.63 s, against 0.56–0.63 s).
+  - Ambient occlusion runs again on every layer crossed, so 10 stacked
+    cut-out layers cost 7× more.
+  - Gating the occlusion distance by the same gate removes that extra cost,
+    with identical output.
+- **Two findings need owner decisions:**
+  - **Studio light:** the Cycles colour is the flat, unlit material colour,
+    not Workbench's studio-lit colour. This conflicts with lighting design
+    D-23 (Q-11).
+  - **Occlusion:** cut-out holes and translucent surfaces occlude like solid
+    ones in the shade's ambient occlusion (Q-12).
+
 ## Decisions
 
 ### D-1. Both cutouts and translucency are in scope
@@ -278,6 +341,66 @@ existing sheet relies on it.
     pixels.
   - Every existing sheet changes, opaque ones included, and the sprite
     gains the soft fringe that pixel art usually avoids.
+
+### Q-10. Translucency over a material with a ramp
+
+Raised by spike 1. A material ramp *replaces* a pixel's colour with palette
+colours chosen by the shade (material styling). A single composited colour
+cannot be both ramped and seen through. Consider translucent cloth over a
+ramped body:
+
+- **A. One layer (simplest).**
+  - Each pixel is described by one surface (the gate's T).
+  - With the front-most surface, the cloth has no identity (`BLEND` takes
+    the ordinary look today), so the body seen through it loses its ramp and
+    shows its raw colour.
+  - With the first opaque surface, the body's ramp replaces the composite,
+    and the cloth disappears.
+- **B. Two layers (proposal).**
+  - Capture also records the front translucent layer: its colour, alpha and
+    identity.
+  - Stylize ramps the opaque surface behind it as usual, then lays the
+    translucent layer over it with its alpha. A translucent material can
+    have a ramp too.
+  - The look is decided after capture (V-4), and cloth over a ramped body
+    looks right.
+  - It costs more design and one more slice.
+  - Several translucent layers stacked in front would be combined into one
+    front layer.
+
+It also decides which surface the normal and depth maps describe under
+translucency.
+
+### Q-11. The colour's lighting: flat, or studio-lit?
+
+Raised by spike 1. Lighting design D-23 (owner, 2026-10-13) keeps the
+ordinary look's Workbench studio light. Workbench cannot render alpha, and
+the Cycles colour is the material's flat, unlit colour. For the body that is
+(231, 137, 89), against (162, 105, 80) studio-lit.
+
+Options:
+- **A. Flat colour:** the ordinary look becomes the material's own colour
+  with no light, which fits D-27's "no light baked". Light comes from the
+  normal map and the lit preview. An object without a ramp looks flat.
+- **B. Imitate the studio light:** emit the colour times a fixed function of
+  the camera-space normal. This is close to today, but a baked directional
+  light again, and untested.
+- **C. Ambient-shaded colour:** the colour times a factor from the shade
+  (occlusion and curvature). This needs a mapping to be designed.
+
+Ramped materials are unaffected, since their colour comes from the ramp.
+
+### Q-12. Do cutouts and translucent surfaces occlude the shade?
+
+Raised by spike 1. The shade's ambient occlusion (material styling D-25)
+treats every surface as solid.
+
+- A body behind a leaf's holes is darkened as if the holes were solid: shade
+  0.18, against 0.34–0.38 without the leaf.
+- A translucent quad darkens what it covers.
+- Making `MASK` and `BLEND` surfaces not occlude at all is possible, but
+  then a leaf's solid texels cast no occlusion either.
+- Honouring the holes exactly needs a further spike.
 
 ## Test inputs
 
