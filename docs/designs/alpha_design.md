@@ -34,7 +34,7 @@ concrete precondition
 Slices as delegated to the designer by the owner (D-16).
 
 - [x] EPIC. Carry the model's transparency into the sprite sheet — [#113]
-- [ ] ALPHA-1. Capture colour and buffers in one flat Cycles render
+- [x] ALPHA-1. Capture colour and buffers in one flat Cycles render — [#114]
 - [ ] ALPHA-2. Cut out `MASK` materials
 - [ ] ALPHA-3. Carry 8-bit alpha, the `edges` setting and preview blending
 - [ ] ALPHA-4. Capture and composite translucent layers
