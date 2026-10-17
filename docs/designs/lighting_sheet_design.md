@@ -818,6 +818,11 @@ camera-fixed studio light and its bytes, as material styling D-22 left it.
 A lit preview over it applies directional light a second time; that is
 accepted and noted, not corrected, in this arc.
 
+**Replaced by alpha design D-8** (owner, 2026-10-17). Once the alpha arc
+lands, the ordinary look's colour is the material's flat, unlit colour, and
+Workbench's studio light is no longer used. Until then this decision
+describes current behaviour.
+
 ### D-24. The depth range is checked only for what a run produces
 
 Decided 2026-10-13 by the owner in this design's session (resolves Q-14,

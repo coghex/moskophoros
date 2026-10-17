@@ -285,6 +285,54 @@ to investigate until we have a baseline anyways."
   occlusion distance is a cost measure with identical output, and does not
   conflict with this.
 
+### D-8. The colour is flat and unlit; this replaces lighting D-23
+
+Decided 2026-10-17 by the owner in this design's session (Q-11, option A),
+approving the recommendation put to them in these words: yes to flat, which
+replaces lighting design D-23 for materials without a ramp and fits "no light
+baked" (material styling D-27); an unramped model that looks too flat is
+given a generated ramp. The owner: "all of your recommendations here are
+correct, i approve".
+
+- Capture records each surface's flat, unlit material colour. In spike 1 the
+  body is (231, 137, 89), not the studio-lit (162, 105, 80).
+- **Materials with a ramp** are unchanged: their colour comes from the ramp,
+  and the shade moves along it (material styling).
+- **The ordinary look** (no library, or a material without a ramp) shows the
+  material's flat colour with no shading. Light comes from the normal map and
+  the lit preview. Workbench's camera-fixed studio light is no longer used,
+  so lighting design D-23 is replaced, and a lit preview no longer applies
+  light a second time over a lit colour.
+- Not implied: quantising translucent composites to the palette. That is
+  part of the palette question still to settle.
+
+### D-9. Edges are a setting, `edges: hard | soft`
+
+Decided 2026-10-17 by the owner in this design's session (Q-7), approving
+the recommendation: "all of your recommendations here are correct, i
+approve".
+
+- Setting `edges`, values `hard` (the default) and `soft`, with the option
+  `--edges hard|soft`, under the settings layers (settings design).
+- It is recorded in the sheet's settings, so `--settings-from` reproduces it.
+- `hard` and `soft` are the two rules of D-4.
+- It acts after capture (V-4), so the capture job is the same whichever is
+  chosen.
+- The sheet schema bump that carries it is settled with the slices.
+
+### D-10. The alpha epic supersedes #75
+
+Decided 2026-10-17 by the owner in this design's session (Q-8), approving
+the recommendation: "all of your recommendations here are correct, i
+approve".
+
+- The new alpha epic replaces #75. #75 is closed with a link to the epic
+  when the epic is filed.
+- Its framing, rendering cutouts through Workbench, no longer matches the
+  capture this design uses (spike 1).
+- `process-design-doc` and the manager act on it; this design changes no
+  tracker state.
+
 ## Open questions
 
 ### Q-1. Scope: what does "alpha" cover?
@@ -338,6 +386,32 @@ The material ID, shade, normal and depth: do they show the front surface,
 the first opaque surface, or none? And how do the lit preview and the GIF
 previews (one-bit transparency) show it?
 
+Narrowed by D-6. Each layer, the opaque surface behind and the translucent
+front layer, carries its own material identity and shade, because stylize
+ramps each. The previews are Q-14. What stays open is which surface the
+**normal and depth maps** describe where a translucent layer covers a pixel,
+and what alpha the maps carry there:
+
+- **A. The front-most surface (proposal).** The maps describe the nearest
+  surface that is not a hole: the cloth where cloth covers the body.
+  - One rule covers cloth over the body and cloth over the background, which
+    has nothing opaque behind it.
+  - Depth is the depth of what is in front, which is what a game needs to
+    sort the sprite against others.
+  - A game lighting the pixel lights the cloth's direction. For thin cloth
+    that is close to the body's.
+- **B. The opaque surface behind, falling back to the translucent one** where
+  nothing opaque is behind. The body seen through glass is lit as the body,
+  but the rule has a fallback, and depth sorts by what is behind the glass.
+- **C. Both,** as a second normal and depth map for the front layer. Most
+  information, but more files and more for a game to load.
+
+In every option the normal map's alpha copies the colour's alpha, and the
+depth map is non-zero exactly where the colour's alpha is above 0. The
+lighting design's rule that "the two alphas are identical" and "whatever is
+transparent in the colour sheet is transparent in every map" then hold
+unchanged with partial alpha. The normal's direction is stored unblended.
+
 ### Q-6. Compatibility
 
 **Resolved by D-5:** no byte-identical guarantee; the rest is folded into the capture technique (Q-4) and the review.
@@ -349,11 +423,16 @@ previews (one-bit transparency) show it?
 
 ### Q-7. Settings
 
+**Resolved by D-9** (`edges: hard | soft`). Other settings, such as a cutoff
+override, were not asked for.
+
 Whether anything is a setting or an option, such as an alpha cutoff
 override, the number of levels or an opt-out, under the settings layers and
 the schema-bump rule.
 
 ### Q-8. What happens to #75?
+
+**Resolved by D-10** (superseded).
 
 The new epic either supersedes #75 or absorbs it as a child. This design
 recommends one; `process-design-doc` and the manager act on it.
@@ -423,7 +502,8 @@ translucency.
 
 ### Q-11. The colour's lighting: flat, or studio-lit?
 
-**Owner leaning A (flat colour), not yet a decision.** Relayed on 2026-10-17 by the owner's assistant laz to the moskophoros manager, which recorded it (owner message Sentinel_89d25b4bec048191ad74761c24fd93fc, delivery key owner-alpha-q10-q12-20261017-Sentinel_89d25, cmux message 3f7199ab-16e1-4cc4-8af6-73bdf50451c5). The owner asked that the decisions be passed to the manager as an attributed message. The owner leans
+**Resolved by D-8** (A, flat colour, confirmed 2026-10-17). The owner's
+earlier leaning, kept for its wording: relayed on 2026-10-17 by the owner's assistant laz to the moskophoros manager, which recorded it (owner message Sentinel_89d25b4bec048191ad74761c24fd93fc, delivery key owner-alpha-q10-q12-20261017-Sentinel_89d25, cmux message 3f7199ab-16e1-4cc4-8af6-73bdf50451c5). The owner asked that the decisions be passed to the manager as an attributed message. The owner leans
 "flat base colour" and said: "sprite colors should be straight from the color
 palette, there shouldnt be any shading on them, the shading just shifts up and
 down the color ramp in the render". The owner also said the question was not
@@ -475,6 +555,52 @@ treats every surface as solid.
 - Making `MASK` and `BLEND` surfaces not occlude at all is possible, but
   then a leaf's solid texels cast no occlusion either.
 - Honouring the holes exactly needs a further spike.
+
+### Q-13. A stack of translucent layers, each with a ramp
+
+Raised by D-6. Two panes of glass, or cloth over a veil, put two translucent
+layers in front of one opaque surface. When both have a material ramp,
+something has to say whose ramp colours the front.
+
+- **A. One combined front layer (proposal).**
+  - Capture combines all translucent layers in front of the opaque surface
+    into one front layer: its colour and alpha are their front-over-back
+    composite (D-6), and its identity and shade are the front-most
+    translucent surface's.
+  - Stylize ramps that layer by the front-most material, then lays it over
+    the ramped opaque surface.
+  - When the front-most translucent material has no ramp, both panes' own
+    colours survive in the composite. When it has a ramp, the rear pane's
+    ramp is not applied: its own colour is replaced by the front ramp's
+    colours.
+  - It fits the spike's capture: one more gated layer, about today's cost.
+- **B. Every translucent layer kept separately** up to a fixed count, such as
+  4, each with its own colour, alpha, identity and shade. Stylize ramps each
+  and composites them back to front.
+  - Exact for any stack.
+  - Untested. Separating layers probably needs a further render per layer
+    (depth peeling), and a stack deeper than the count needs its own rule.
+- **C. A first, B later if a model needs it.** Judge the baseline as D-7
+  does for occlusion.
+
+### Q-14. Partial alpha in the previews
+
+The flat GIF previews draw each frame on a solid `#808080` background
+(design §Export), so a GIF's one-bit transparency is never used. A
+translucent pixel needs only a blend rule.
+
+- **Proposal:** blend each pixel over the grey with its alpha, in 8-bit sRGB
+  straight alpha, as an image viewer shows a PNG. The lit preview lights the
+  colour with the normal map (Q-5) first, then blends the same way.
+- Consequences:
+  - Blended pixels add colours. A frame with more than 256 colours takes the
+    existing reduction to 256, with its warning.
+  - The rule that a paletted frame keeps exact colours (at most 255 plus the
+    grey) no longer holds for a frame with translucent pixels. Such a frame
+    can then warn.
+- **Alternative:** blend in linear colour, matching the capture composite
+  (D-6). It is closer to the render, but differs from how viewers and most
+  engines show the sheet.
 
 ## Test inputs
 
