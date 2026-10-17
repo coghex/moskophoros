@@ -23,9 +23,16 @@ concrete precondition
 
 ## Processing status
 
-Slices are proposed once scope is settled.
+Slices are proposed (Q-17), not yet signed off.
 
 - [ ] EPIC. Carry the model's transparency into the sprite sheet
+- [ ] ALPHA-1. Capture colour and buffers in one flat Cycles render
+- [ ] ALPHA-2. Cut out `MASK` materials
+- [ ] ALPHA-3. Carry 8-bit alpha and the `edges` setting
+- [ ] ALPHA-4. Capture and composite translucent layers
+- [ ] ALPHA-5. Give translucent materials identities and ramps
+- [ ] ALPHA-6. Blend translucent pixels in the previews
+- [ ] ALPHA-7. Owner review of alpha sheets
 
 ## Epic contract
 
@@ -33,10 +40,18 @@ Slices are proposed once scope is settled.
   whose pixels carry that transparency as the design settles it. Its normal
   and depth maps, material identity and shade agree with the colour pixel for
   pixel, and the owner judges the look (V-12).
-- **Done when:** to be settled with the scope (Q-1). It will include
-  automated alignment checks on generated fixtures, and byte-identical
-  output for models without transparent materials (Q-6). The owner reviews
-  sheets and previews and approves them, in a slice of its own.
+- **Done when:**
+  - `MASK` cutouts and `BLEND` translucency reach the sheet as 8-bit alpha
+    (D-1 to D-3), with hard edges by default and soft ones on request (D-4,
+    D-9).
+  - Translucent layers composite over ramped surfaces (D-6, D-12).
+  - Every map agrees with the colour pixel for pixel, its alpha included
+    (D-11), and the previews show translucency (D-13).
+  - Automated checks on generated fixtures prove alignment and determinism.
+    Output of opaque models changes by design (D-5, D-8), and tests pinning
+    exact output are updated deliberately.
+  - The owner reviews sheets and previews of a model of their own and
+    approves them, in a slice of its own (ALPHA-7).
 - **Users and operators:** the owner producing game art; agents maintaining
   the tool.
 - **Arc label:** None proposed.
@@ -156,6 +171,70 @@ scripts, fixtures, renders and every command are in
     D-23 (Q-11).
   - **Occlusion:** cut-out holes and translucent surfaces occlude like solid
     ones in the shade's ambient occlusion (Q-12).
+
+### The pipeline with alpha (proposal, assembled from D-1 to D-13)
+
+This puts the decisions together. Where it goes beyond them it is a proposal,
+and the exact arithmetic is pinned by each slice's numerical reference, as
+the lighting and MAT-8 arcs did.
+
+**Capture.** One Cycles render per frame replaces Workbench's colour and the
+auxiliary render, with spike 1's settings and `transparent_max_bounces` 64.
+
+- Each material's surface becomes `Mix(Transparent, Emission(colour))`,
+  with its colour and alpha taken from the importer's chains (D-3): flat and
+  unlit (D-8), `MASK` cut at `alphaCutoff`, `BLEND` partial.
+- Every supersample carries two layers:
+  - **the back layer,** the first opaque surface: its colour, identity,
+    shade, normal and depth, or nothing;
+  - **the front layer,** the translucent layers in front of it combined
+    (D-12): its colour and alpha, and the front-most translucent surface's
+    identity and shade, or nothing.
+  - The maps take the front-most surface's normal and depth (D-11). A
+    cut-out hole is no surface at all.
+- The material ID and shade move to float shader output passes (AOVs),
+  gated as in spike 1. Every alpha mode has an identity, so a `BLEND`
+  material can take a ramp (Q-16).
+- How the front layer's own colour and alpha are separated from the back
+  layer in one render is not yet tested. Gated AOVs for the front-most and
+  the first opaque surface were exact in spike 1. The slice that adds
+  translucency settles it by its own spike.
+- Occlusion stays as today (D-7). Gating its distance keeps stacked cutouts
+  cheap.
+- A supersample whose alpha is above 0 but which has no gated surface (more
+  layers than the bounce limit) is a capture error naming the file, clip and
+  frame, never a silent black pixel.
+- The colour is written from pixels by the production PNG writer, as the
+  auxiliary buffers are, so no render-time text reaches the output.
+
+**Stylize,** for each output pixel's `s×s` block:
+
+1. **Coverage** (D-4, D-9). A supersample is a surface when its composite
+   alpha is above 0.
+   - `hard`: the pixel exists when at least half the block is surface, and
+     its alpha is the mean composite alpha of the surface samples.
+   - `soft`: its alpha is the block's mean composite alpha.
+2. **Each layer is reduced** over its own samples by today's rules: `plain`
+   or `mode`, the identity vote and the ramp band, or the ordinary look. The
+   back layer is ramped as an opaque surface is today, and the front layer
+   by its own identity (D-6, D-12).
+3. **The front is composited over the back** in linear colour (D-6), using
+   the front layer's mean alpha over the block.
+4. **The palette**, when the sheet has one (Q-15).
+5. **The maps** take the front-most surface's normal and depth, reduced as
+   today, with the colour's alpha (D-11).
+
+**Previews** blend over their grey (D-13).
+
+**Settings and formats.**
+
+- The `edges` setting and `--edges` (D-9).
+- The sheet's schema takes the next number when the first slice that
+  changes the sheet's JSON lands. MAT-8 takes `/11`, so alpha takes `/12` if
+  MAT-8 lands first. Older sheets still load for `--settings-from`, with
+  `edges: hard`, under settings design's schema rule.
+- The capture job and result contract change with the layers. Style values,
+  `edges` included, stay out of the job (settings design D-36).
 
 ## Decisions
 
@@ -333,6 +412,56 @@ approve".
 - `process-design-doc` and the manager act on it; this design changes no
   tracker state.
 
+### D-11. The maps describe the front-most surface
+
+Decided 2026-10-17 by the owner in this design's session (Q-5, option A),
+approving the recommendation: "all 3 recommendations are sound, once again, i
+approve".
+
+- Where a translucent layer covers a pixel, the normal and depth maps
+  describe the nearest surface that is not a hole: the cloth, where cloth
+  covers the body or the background.
+- The normal map's alpha copies the colour's alpha, and the depth map is
+  non-zero exactly where the colour's alpha is above 0. A pixel transparent
+  in the colour is transparent in every map, and the lighting design's
+  "the two alphas are identical" holds with partial alpha.
+- The normal's direction is stored unblended.
+- The lit preview lights the front-most surface's direction.
+
+### D-12. Translucent layers combine into one front layer, first
+
+Decided 2026-10-17 by the owner in this design's session (Q-13, option C),
+approving the recommendation: "all 3 recommendations are sound, once again, i
+approve".
+
+- All translucent layers in front of the first opaque surface combine into
+  one front layer. Its colour and alpha are their front-over-back composite
+  (D-6). Its identity and shade are those of the front-most translucent
+  surface.
+- Stylize ramps that layer by the front-most material, then lays it over the
+  ramped opaque surface.
+- When the front-most translucent material has no ramp, every pane's own
+  colour survives in the composite. When it has a ramp, a rear pane's ramp is
+  not applied.
+- Keeping each translucent layer separately (Q-13 B) is done only if a real
+  model needs it, judged on the baseline, as D-7 does for occlusion.
+
+### D-13. Previews blend translucent pixels over their grey
+
+Decided 2026-10-17 by the owner in this design's session (Q-14), approving
+the recommendation: "all 3 recommendations are sound, once again, i approve".
+
+- Each preview pixel is blended over the solid `#808080` background with its
+  alpha, in 8-bit sRGB straight alpha, as an image viewer shows a PNG.
+- The lit preview lights the colour with the normal map (D-11) first, then
+  blends the same way.
+- Blended pixels add colours. A frame over 256 colours takes the existing
+  reduction to 256 with its warning, even with a palette: the rule that a
+  paletted frame keeps exact colours holds only for frames without
+  translucent pixels.
+- Rejected: blending in linear colour, which is closer to the render but
+  further from how viewers and engines show the sheet.
+
 ## Open questions
 
 ### Q-1. Scope: what does "alpha" cover?
@@ -381,6 +510,9 @@ deterministically: Cycles for the colour, a separate alpha pass, or another
 method, with its cost per frame. To settle by a spike once scope is known.
 
 ### Q-5. The other buffers through a cutout or a translucent surface
+
+**Resolved by D-11** (front-most surface). The previews are D-13; the GIF
+previews sit on solid grey, so their one-bit transparency is never used.
 
 The material ID, shade, normal and depth: do they show the front surface,
 the first opaque surface, or none? And how do the lit preview and the GIF
@@ -558,6 +690,8 @@ treats every surface as solid.
 
 ### Q-13. A stack of translucent layers, each with a ramp
 
+**Resolved by D-12** (option C: one combined front layer first).
+
 Raised by D-6. Two panes of glass, or cloth over a veil, put two translucent
 layers in front of one opaque surface. When both have a material ramp,
 something has to say whose ramp colours the front.
@@ -585,6 +719,8 @@ something has to say whose ramp colours the front.
 
 ### Q-14. Partial alpha in the previews
 
+**Resolved by D-13** (blend over the grey in 8-bit sRGB).
+
 The flat GIF previews draw each frame on a solid `#808080` background
 (design §Export), so a GIF's one-bit transparency is never used. A
 translucent pixel needs only a blend rule.
@@ -601,6 +737,55 @@ translucent pixel needs only a blend rule.
 - **Alternative:** blend in linear colour, matching the capture composite
   (D-6). It is closer to the render, but differs from how viewers and most
   engines show the sheet.
+
+### Q-15. The palette and translucent pixels
+
+A palette has no alpha. With a palette today, every kept pixel's colour is a
+palette colour. Translucency adds two kinds of colour that are not:
+
+- a translucent layer over an opaque one, which composites to alpha 1;
+- a translucent layer over the background, which keeps a partial alpha.
+
+Options:
+
+- **A. Snap after compositing (proposal).**
+  - Each layer is ramped or mapped to the palette, composited, then the
+    result is mapped to its nearest palette colour, as `plain` maps a pixel
+    today. Alpha is unchanged.
+  - Every pixel's colour in a paletted sheet stays a palette colour, as the
+    owner put it, "straight from the color palette". Translucency shows only
+    in alpha, and in which palette colour a see-through mix lands on.
+  - Cloth at 0.4 over a body becomes the palette colour nearest the mix.
+- **B. Do not snap the composite.**
+  - Each layer is a palette colour, but their blend is not.
+  - Smoother see-through, but a paletted sheet then holds colours outside
+    its palette.
+
+Without a palette nothing is snapped, under either option.
+
+### Q-16. The revision of material styling D-26
+
+D-26 (owner, 2026-10-08) captured `MASK` opaque, with no cutouts, and the
+material styling design keeps `BLEND` materials in the no-identity class,
+always taking the ordinary look. D-1, D-6 and D-12 supersede both. The
+revision recorded in `material_styling_design.md` would say:
+
+- **D-26 is superseded by the alpha design** (D-1 to D-3, D-6, D-11, D-12).
+  `MASK` cutouts and `BLEND` translucency are captured with the model's
+  alpha. The ID, shade, normal and depth describe the surfaces of the
+  colour's layers, as the alpha design sets out.
+- **`BLEND` materials have an identity** like any other: they leave the
+  no-identity class, and can take a ramp through their entry or the
+  library's default. The warning for a library that maps a name used only by
+  `BLEND` materials goes.
+- Until the alpha slices land, D-26 and the no-identity rule describe
+  current behaviour.
+
+### Q-17. The delivery slices
+
+The proposed slices are in the Delivery plan below: seven, in dependency
+order, with the owner's visual review last, as LIT-6 was. To settle: whether
+the split and order are right, and whether anything is missing.
 
 ## Test inputs
 
@@ -631,11 +816,152 @@ ones:
 
 ## Verification strategy
 
-To be settled with Q-1 to Q-6. Expected families:
+- **Generated fixtures** (the repository's tests build their own `.glb`, as
+  `tests/material_models.py` does): a cutout plane over a body and over the
+  background, with texels on both sides of the cutoff (127 cut, 128 kept); a
+  translucent quad over a body and over the background; an alpha gradient;
+  two translucent panes; a stack deeper than the bounce limit; an opaque
+  named material beside them.
+- **Alignment:** the material ID, shade, normal and depth describe the
+  surfaces D-11 and the layers name. The normal map's alpha equals the
+  colour's, and the depth map is non-zero exactly where the colour's alpha
+  is above 0, under `plain` and `mode`, with and without a palette or a
+  library, and under both `edges` values.
+- **Exact values:** composite alpha and colour against the front-over-back
+  formula (D-6); hard and soft coverage against D-4; palette snapping
+  against Q-15's answer.
+- **Determinism:** repeated runs, in separate processes, give identical
+  bytes.
+- **Failure:** the bounce-limit fixture fails loudly, naming the file, clip
+  and frame.
+- **Cost:** per-frame time on an ordinary model and on stacked cutouts,
+  compared with today's two renders, reported in the slice's pull request.
+- **Compatibility:** no byte-identical guarantee (D-5). Each pull request
+  that changes output names the tests whose pinned output it updates, and
+  gives the command that reproduces the new sheets. Older sheets still load
+  for `--settings-from`.
+- **Look:** the owner's visual review, ALPHA-7 (V-12), on the owner's model
+  (Test inputs). Tests prove alignment, not how a sprite looks.
 
-- generated fixtures, such as a cutout plane and a translucent quad over an
-  opaque body;
-- alignment tests across the colour and every map;
-- byte-identical output for models without transparent materials;
-- the owner's visual review as its own slice (V-12), as the lighting arc
-  did with LIT-6.
+## Delivery plan
+
+Proposed (Q-17). Each slice updates the parts of `docs/design.md` it
+changes, in its own pull request, since tests read that document.
+
+### ALPHA-1. Capture colour and buffers in one flat Cycles render
+
+- **Outcome:** one Cycles render per frame gives the colour, material ID,
+  shade, normal and depth; Workbench is gone from capture.
+- **Scope:** spike 1's settings; the flat, unlit colour (D-8); ID and shade
+  as float AOVs; the colour written from pixels; `transparent_max_bounces`
+  64; the capture job and result contract; design §Capture. Every material
+  is still captured opaque, as D-26 has it.
+- **Phase:** 1.
+- **Depends on:** none.
+- **Ordering:** critical path, can land first.
+- **Relevant decisions:** D-5, D-7, D-8.
+- **Acceptance signals:** buffers aligned on the existing fixtures;
+  identical bytes across runs; cost reported; tests pinning Workbench output
+  updated and named.
+- **Out of scope:** any alpha from materials.
+- **Open questions:** None.
+
+### ALPHA-2. Cut out `MASK` materials
+
+- **Outcome:** a `MASK` material's cut-out texels are holes in the colour and
+  in every buffer, showing the surface behind or nothing.
+- **Scope:** the importer's alpha chain for `MASK` (D-3), with its cutoff;
+  gated AOVs; gated occlusion distance; the bounce-limit capture error.
+  Output alpha stays binary, by today's coverage rule. `BLEND` is still
+  captured opaque.
+- **Phase:** 2.
+- **Depends on:** ALPHA-1.
+- **Ordering:** critical path.
+- **Relevant decisions:** D-1, D-3, D-7, D-10.
+- **Acceptance signals:** cutoff fixture 127 cut, 128 kept; holes over a body
+  show the body's ID, shade, normal and depth; holes over the background are
+  transparent in every map; the deep stack fails loudly; stacked-cutout cost
+  reported.
+- **Out of scope:** partial alpha, `BLEND`.
+- **Open questions:** None.
+
+### ALPHA-3. Carry 8-bit alpha and the `edges` setting
+
+- **Outcome:** sheets carry 8-bit alpha under the `hard` and `soft` rules,
+  and the maps copy it.
+- **Scope:** D-4's two rules for `plain` and `mode`; the `edges` setting and
+  `--edges` (D-9); the maps' alpha (D-11); the sheet schema bump; reuse of
+  older sheets with `edges: hard`.
+- **Phase:** 2.
+- **Depends on:** ALPHA-2.
+- **Ordering:** critical path.
+- **Relevant decisions:** D-2, D-4, D-9, D-11.
+- **Acceptance signals:** `hard` keeps today's outlines, `soft` gives the
+  block mean; map alpha equals colour alpha under both; settings round trip
+  through `--settings-from`.
+- **Out of scope:** translucency, previews.
+- **Open questions:** None.
+
+### ALPHA-4. Capture and composite translucent layers
+
+- **Outcome:** a `BLEND` surface is see-through: its front layer is captured
+  apart from the opaque surface behind, and composited over it in stylize.
+- **Scope:** `BLEND` alpha (D-3); the front and back layers (D-6, D-12),
+  settled by a spike in the slice; the maps from the front-most surface
+  (D-11); compositing in linear colour; the palette rule (Q-15). The front
+  layer keeps the ordinary look.
+- **Phase:** 3.
+- **Depends on:** ALPHA-3.
+- **Ordering:** critical path.
+- **Relevant decisions:** D-1, D-3, D-6, D-11, D-12.
+- **Acceptance signals:** a 0.4 quad over a body matches the formula; over
+  the background its alpha is 0.4; two panes of 0.5 give 0.75; a ramped body
+  keeps its ramp under the quad; the maps show the quad.
+- **Out of scope:** ramps on translucent materials.
+- **Open questions:** Q-15.
+
+### ALPHA-5. Give translucent materials identities and ramps
+
+- **Outcome:** a `BLEND` material can take a ramp, by its entry or the
+  library's default, and its front layer is ramped before compositing.
+- **Scope:** `BLEND` leaves the no-identity class (Q-16); the front layer's
+  identity vote and band; the library warnings; design §Pipeline.
+- **Phase:** 3.
+- **Depends on:** ALPHA-4.
+- **Ordering:** critical path.
+- **Relevant decisions:** D-6, D-12.
+- **Acceptance signals:** a ramped translucent quad over a ramped body shows
+  both ramps; a name shared by opaque and `BLEND` materials pools as one.
+- **Out of scope:** keeping translucent layers separately (D-12).
+- **Open questions:** Q-16.
+
+### ALPHA-6. Blend translucent pixels in the previews
+
+- **Outcome:** flat and lit previews show partial alpha over their grey.
+- **Scope:** D-13's blend, lighting before blending in the lit preview, the
+  colour-count warning.
+- **Phase:** 3.
+- **Depends on:** ALPHA-3.
+- **Ordering:** not on the critical path; independent of ALPHA-4 and
+  ALPHA-5.
+- **Relevant decisions:** D-13.
+- **Acceptance signals:** a soft-edged or translucent pixel previews as the
+  blend over `#808080`; opaque frames are unchanged.
+- **Out of scope:** the sheet itself.
+- **Open questions:** None.
+
+### ALPHA-7. Owner review of alpha sheets
+
+- **Outcome:** the owner reviews sheets, maps and previews of their own
+  model and approves the look, or names what to change (V-12).
+- **Scope:** renders of the owner's model (Test inputs) under both `edges`
+  values, with and without a library, with the commands to reproduce them;
+  the occlusion baseline D-7 asks for; whether D-12's combined layer is
+  enough.
+- **Phase:** 4.
+- **Depends on:** ALPHA-1 to ALPHA-6.
+- **Ordering:** critical path, last.
+- **Relevant decisions:** D-7, D-12.
+- **Acceptance signals:** the owner's recorded verdict.
+- **Out of scope:** code changes, which become their own issues.
+- **Open questions:** None.
