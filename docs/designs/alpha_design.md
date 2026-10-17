@@ -17,6 +17,11 @@ It benefits the owner producing game art, and any project using the tool
 
 Design state: `ready for issue processing`
 
+Reset to `exploring` on 2026-10-17 for Codex review 1 (5 blocking, 3 should
+fix), then marked ready again the same day under the owner's delegation
+(request moskophoros-20261017-1): every finding is fixed and no owner
+decision changed; see *Review 1*.
+
 Status legend: `[ ]` unprocessed · `[#N]` linked to issue N · `[no-issue]`
 reviewed and deliberately not tracked separately · `[deferred]` blocked on a
 concrete precondition
@@ -28,10 +33,10 @@ Slices as delegated to the designer by the owner (D-16).
 - [ ] EPIC. Carry the model's transparency into the sprite sheet
 - [ ] ALPHA-1. Capture colour and buffers in one flat Cycles render
 - [ ] ALPHA-2. Cut out `MASK` materials
-- [ ] ALPHA-3. Carry 8-bit alpha and the `edges` setting
+- [ ] ALPHA-3. Carry 8-bit alpha, the `edges` setting and preview blending
 - [ ] ALPHA-4. Capture and composite translucent layers
 - [ ] ALPHA-5. Give translucent materials identities and ramps
-- [ ] ALPHA-6. Blend translucent pixels in the previews
+- [no-issue] ALPHA-6. Blend translucent pixels in the previews (merged into ALPHA-3, Review 1 A-4)
 - [ ] ALPHA-7. Owner review of alpha sheets
 
 ## Epic contract
@@ -158,7 +163,9 @@ scripts, fixtures, renders and every command are in
   - More stacked transparent layers than `transparent_max_bounces` give
     false opaque black pixels. Capture sets a generous limit (64 cost
     nothing measurable) and fails loudly when alpha > 0 but no gated surface
-    was written.
+    was written. *Superseded by spike 2:* that check misses a stack
+    exhausted behind a visible front layer, and the minimum must be pinned
+    too (Review 1, A-1, A-3).
 - **Cost:** one render replaces today's two, at about the same time per
   frame on an ordinary model (1024²: 0.54–0.63 s, against 0.56–0.63 s).
   - Ambient occlusion runs again on every layer crossed, so 10 stacked
@@ -172,19 +179,103 @@ scripts, fixtures, renders and every command are in
   - **Occlusion:** cut-out holes and translucent surfaces occlude like solid
     ones in the shade's ambient occlusion (Q-12).
 
-### The pipeline with alpha (proposal, assembled from D-1 to D-13)
+### Capture spike 2 (Review 1: A-1, A-2, A-3, A-8)
+
+Run on 2026-10-17 with Blender 5.2.2, on generated fixtures, to prove the
+remedies Codex review 1 asked for. The report, scripts, fixtures, results
+and every command are in
+`~/.local/share/moskophoros-acceptance/alpha-design/spike-2/` (`REPORT.md`,
+`commands.log`). The Cycles behaviour it relies on was read from Blender's
+bundled kernel source, then confirmed by experiment.
+
+- **Exact composites (A-1).** Pinning `min_transparent_bounces` and
+  `transparent_max_bounces` both to 64 gives exact front-over-back
+  composites through mixed stacks: a 0.4 veil over 10 holes over blue; a
+  hole, a 0.5 pane, 3 holes, a 0.25 pane, 5 holes, blue; two 0.5 panes over
+  the background (alpha 0.75); 30 alternating translucent and hole layers.
+  The largest error is 4.1e-8. With the minimum left at 0 (the control),
+  Russian roulette makes blue 0.999 instead of 0.6. Separate processes are
+  bit-identical. Cost is unchanged: 0.55 s at 1024² on the ordinary model,
+  against 0.54–0.63 s in spike 1.
+- **An exact surface gate (A-2).** The gate is computed in Math nodes in the
+  order Cycles computes the Mix shader's transparency:
+  - `sat = clamp(α)`, `t = 1 − sat`, `v = 1 − t`, and
+    `g = 1 − (v < T)`, with `pass_alpha_threshold = T = 2^-30`;
+  - every AOV and the occlusion distance are multiplied by `g`.
+  - Cycles stops its passes exactly where `v > 0`, which is exactly where
+    `g = 1`, so one surface contributes exactly once.
+  - Over 9 fixtures of 4096 pixels: factor alpha from 0 to 1, texture ×
+    factor, `LINEAR`-filtered sweeps, vertex alpha, `MASK` cutoffs. There
+    were 0 anomalies. The review's counterexample (a 5e-7 front) now gives
+    the front's ID, hit 1, its depth and a unit normal.
+- **Detecting an exhausted stack (A-3).** With both limits at `L`, the
+  colour is wrong exactly when a camera path crosses `L + 1` or more
+  surfaces that still have a transparent closure. This was proven both
+  ending at an opaque surface and at the background, at `L = 64` (90 of 90
+  cases) and `L = 8` (42 of 42).
+  - **In the one render:** every shading point at transparent depth ≥ `L`
+    that still has a transparent closure (Cycles' own test, transparent
+    weight ≥ 1e-5) adds a white emission of strength −1e30. A truncated
+    path then has a colour channel far below 0. **The frame fails when any
+    Combined RGB channel is below −1.** The marker changed no correct
+    render (42 bit-identical EXRs) and costs nothing measurable. It needs
+    Cycles' sample clamping off, as the factory default has it.
+  - A separate count render is also exact (`error iff count ≥ L + 1`, about
+    5 % of the main render's time), but is not needed.
+- **Unlit and material-less inputs (A-8).** The importer builds two
+  material shapes, and one extraction rule covers both:
+  - a Principled BSDF: colour from `Base Color`, alpha from `Alpha`;
+  - the `KHR_materials_unlit` core, `Mix(Light Path "Is Camera Ray",
+    Transparent, Emission)`, alone (alpha 1) or wrapped in
+    `Mix(alpha chain, Transparent, core)`: colour from the Emission's
+    colour, alpha from the wrapper's factor.
+  - Any other shape is refused, naming the material.
+  - Unlit opaque, `MASK` and `BLEND` render exactly (≤ 1.2e-7).
+  - A primitive without a material keeps code 65535, and its stand-in
+    becomes glTF's default material, white, opaque. It renders exactly.
+    Today Workbench shows it lit grey.
+- **Precision limits** of Blender's own representation, not cutoffs this
+  design chooses:
+  - A surface is a hole to Cycles when `α ≤ 2^-25` (about 3e-8): `1 − α`
+    rounds to 1 in 32-bit floats. The composite gives it no coverage and
+    the gate does not select it, so they agree. This is the alpha "as
+    Blender imports it" (D-3).
+  - A layer with `α` above about `1 − 1e-5` is opaque to Cycles: it drops a
+    transparent closure weaker than 1e-5. The error is below 1e-5, invisible
+    at 8 bits and 16 bits alike.
+  - Blender's glTF importer stores vertex colours (`COLOR_0`) as 8-bit, so
+    vertex alpha comes in steps of 1/255.
+  - A pixel of alpha 0 can carry a tiny premultiplied colour (`α · colour`
+    for a hole-floor surface). Capture treats alpha 0 as empty and writes
+    `(0, 0, 0, 0)`.
+- **Not tested:** skinned or animated models, the owner's models,
+  perspective cameras, GPU devices, texture transforms, other
+  `KHR_materials_*` extensions, importer material copies.
+
+### The pipeline with alpha (proposal, assembled from D-1 to D-16)
 
 This puts the decisions together. Where it goes beyond them it is a proposal,
-and the exact arithmetic is pinned by each slice's numerical reference, as
-the lighting and MAT-8 arcs did.
+and the arithmetic is pinned below and by each slice's tests, as the
+lighting and MAT-8 arcs did.
 
 **Capture.** One Cycles render per frame replaces Workbench's colour and the
-auxiliary render, with spike 1's settings and `transparent_max_bounces` 64.
+auxiliary render.
 
-- Each material's surface becomes `Mix(Transparent, Emission(colour))`,
-  with its colour and alpha taken from the importer's chains (D-3): flat and
-  unlit (D-8), `MASK` cut at `alphaCutoff`, `BLEND` partial.
-- Every supersample carries two layers:
+- **Settings:** 1 sample per pixel, Box filter 0.01 px, seed 0, film
+  transparent, every light bounce 0, `min_transparent_bounces` and
+  `transparent_max_bounces` both 64, `pass_alpha_threshold` 2^-30, sample
+  clamping off. These are recorded in the provenance (transport table).
+- **Surfaces:** each material's surface becomes `Mix(Transparent,
+  Emission(colour))`, with its colour and alpha taken from the importer's
+  chains (D-3) by the extraction rule of spike 2 (Principled or unlit;
+  any other shape is a backend error, exit 5, naming the material). It is
+  flat and unlit (D-8), with `MASK` cut at `alphaCutoff` and `BLEND`
+  partial. A primitive without a material takes the white, opaque stand-in,
+  code 65535.
+- **Surface selection:** spike 2's gate. A non-hole is a surface Cycles
+  renders with any opacity. A selected surface writes each gated AOV exactly
+  once; a hit value other than 0 or 1 is a backend error (exit 5).
+- **Two layers** per supersample:
   - **the back layer,** the first opaque surface: its colour, identity,
     shade, normal and depth, or nothing;
   - **the front layer,** the translucent layers in front of it combined
@@ -192,53 +283,176 @@ auxiliary render, with spike 1's settings and `transparent_max_bounces` 64.
     identity and shade, or nothing.
   - The maps take the front-most surface's normal and depth (D-11). A
     cut-out hole is no surface at all.
-- The material ID and shade move to float shader output passes (AOVs),
-  gated as in spike 1. Every alpha mode has an identity, so a `BLEND`
-  material can take a ramp (D-15).
-- How the front layer's own colour and alpha are separated from the back
-  layer in one render is not yet tested. Gated AOVs for the front-most and
-  the first opaque surface were exact in spike 1. The slice that adds
-  translucency (ALPHA-4) settles it by its own spike. If no exact separation
-  fits in the one render, a second render is acceptable. If the capture
-  would then cost more than twice today's per frame on an ordinary model,
-  that slice stops and asks the owner.
-- Occlusion stays as today (D-7). Gating its distance keeps stacked cutouts
-  cheap.
-- A supersample whose alpha is above 0 but which has no gated surface (more
-  layers than the bounce limit) is a capture error naming the file, clip and
-  frame, never a silent black pixel.
-- The colour is written from pixels by the production PNG writer, as the
-  auxiliary buffers are, so no render-time text reaches the output.
+  - How the front layer's own colour and alpha are separated from the back
+    layer is the one capture step not yet proven. Gated AOVs for the
+    front-most and the first opaque surface are exact (spike 2). ALPHA-4
+    settles the separation by a feasibility spike first. A second render
+    is acceptable. If the capture would then cost more than twice today's
+    per frame on an ordinary model, or no exact separation is found, that
+    slice stops and reports to the owner before going further.
+- **Material ID and shade** move to float AOVs, gated. Every alpha mode has
+  an identity, so a `BLEND` material can take a ramp (D-15).
+- **Occlusion** stays as today (D-7), with its distance gated, which keeps
+  stacked cutouts cheap.
+- **An exhausted stack fails loudly** by spike 2's in-render marker: a frame
+  with any Combined RGB channel below −1 is a backend error (exit 5) naming
+  the input, clip, direction, frame and the limit 64, and nothing is
+  published. This covers stacks behind a visible front layer and stacks
+  ending at the background alike.
+- **Written from pixels** by the production PNG writer, as the auxiliary
+  buffers are, so no render-time text reaches the output.
 
-**Stylize,** for each output pixel's `s×s` block:
+**Stylize** decides coverage once per output pixel, reduces each layer
+with its own weights, composites the front over the back in linear colour,
+then snaps to the palette (D-4, D-6, D-9, D-12, D-14). The numerical
+reference below pins it.
 
-1. **Coverage** (D-4, D-9). A supersample is a surface when its composite
-   alpha is above 0.
-   - `hard`: the pixel exists when at least half the block is surface, and
-     its alpha is the mean composite alpha of the surface samples.
-   - `soft`: its alpha is the block's mean composite alpha.
-2. **Each layer is reduced** over its own samples by today's rules: `plain`
-   or `mode`, the identity vote and the ramp band, or the ordinary look. The
-   back layer is ramped as an opaque surface is today, and the front layer
-   by its own identity (D-6, D-12).
-3. **The front is composited over the back** in linear colour (D-6), using
-   the front layer's mean alpha over the block.
-4. **The palette**, when the sheet has one: the composite's RGB snaps to the
-   nearest palette colour, and alpha stays smooth (D-14).
-5. **The maps** take the front-most surface's normal and depth, reduced as
-   today, with the colour's alpha (D-11).
-
-**Previews** blend over their grey (D-13).
+**Previews** blend over their grey (D-13), in the same slice that first
+produces partial alpha (ALPHA-3).
 
 **Settings and formats.**
 
-- The `edges` setting and `--edges` (D-9).
-- The sheet's schema takes the next number when the first slice that
-  changes the sheet's JSON lands. MAT-8 takes `/11`, so alpha takes `/12` if
-  MAT-8 lands first. Older sheets still load for `--settings-from`, with
-  `edges: hard`, under settings design's schema rule.
-- The capture job and result contract change with the layers. Style values,
-  `edges` included, stay out of the job (settings design D-36).
+- The `edges` setting and `--edges` (D-9): a top-level setting in settings
+  files, recorded in the sheet as `settings.style.edges` beside `reduce`,
+  inside the fingerprint, required in the new schema, with the settings
+  layers' strict validation (an unknown value is a usage error, exit 2).
+- Only the current sheet schema loads (settings design D-24): sheets of the
+  previous schema are refused by `--settings-from`, as every bump does.
+  Nothing defaults a missing `edges`.
+- The capture job does not change with `edges` or any other style value
+  (settings design D-36): the job's hash is the same under `hard` and
+  `soft`.
+- Which slice bumps which schema is in the transport table below.
+
+#### Capture transport and provenance (Review 1, A-7)
+
+What addressed frames receive. Presence always comes from Blender's float
+data (the gated hits), written as each buffer's alpha. It is never
+recovered from a quantized colour or alpha, so a surface of tiny alpha still
+counts as a surface in stylize.
+
+| Buffer | Slice | File | Content | Absent |
+|---|---|---|---|---|
+| `color` | ALPHA-1 | 8-bit RGBA PNG | the back layer's flat colour, straight sRGB through Blender's `Standard` transform, dither 0, written from pixels by the production writer | `(0, 0, 0, 0)` |
+| `matid` | ALPHA-1 | 8-bit RGBA PNG, as today | the back layer's material code from a float AOV: R high byte, G low byte, B 0, alpha 255 | `(0, 0, 0, 0)` |
+| `shade` | ALPHA-1 | 8-bit RGBA PNG, as today | the back layer's linear shade from a float AOV, encoded to the byte the `Standard` transform gives (0.25 → 137), `R = G = B` | `(0, 0, 0, 0)` |
+| `normal`, `depth` | ALPHA-1; front-most from ALPHA-4 | 16-bit RGBA PNG, as today | the front-most surface's (D-11); the back's until ALPHA-4 adds a front | `(0, 0, 0, 0)` |
+| `front_color` | ALPHA-4 | 8-bit RGBA PNG | the combined front layer's straight colour (D-12), encoded as `color` | `(0, 0, 0, 0)` |
+| `front_alpha` | ALPHA-4 | 16-bit RGBA PNG, the form of `normal` | R = `q = floor(65535 · f + ½)` of the front layer's alpha `f`, G = B = 0, alpha 65535 | `(0, 0, 0, 0)` |
+| `front_matid`, `front_shade` | ALPHA-4 (used from ALPHA-5) | as `matid`, `shade` | the front-most translucent surface's code and shade | `(0, 0, 0, 0)` |
+
+- **Codes** keep today's mapping: material index `i` is code `i + 1`, a
+  primitive without a material 65535, background 0, at most 65534
+  materials. A float AOV that is not exactly an integer code in range is a
+  backend error (exit 5); every code is exact in a 32-bit float.
+- **Decoded arrays** (the command decodes, stylize never does): per layer an
+  `int32` identity array and a `uint8` shade array as today; `front_alpha`
+  as `uint16`; presence as `bool` arrays from each buffer's alpha.
+- **Validation** (exit 5, as today's buffer checks): a layer's colour, ID
+  and shade present on exactly the same pixels; `front_alpha` present
+  exactly where `front_color` is; `normal` and `depth` present exactly where
+  a back or front layer is; missing, misplaced or wrongly formatted files,
+  as today. A front alpha may round to 65535 (a deep combined stack); the
+  back then gets weight 0.
+- **Provenance.** ALPHA-1 removes Workbench, so `backend.studio_light` and
+  `generator.studio_light` go, `renderer` becomes `"cycles"`, and a `color`
+  record beside `shade` names the technique and its fixed parameters
+  (`technique`, `samples_per_pixel`, `seed`, `pixel_filter`,
+  `filter_width_px`, both transparent bounce limits and
+  `pass_alpha_threshold`).
+- **Material-less parts** change from Workbench's lit grey to the stand-in's
+  flat white (spike 2), glTF's default material. That is part of D-5's
+  accepted change.
+- **Schemas.** ALPHA-1 bumps the capture result to `/2` and the sheet to its
+  next number. ALPHA-3 bumps the sheet again for `edges`. ALPHA-4 bumps the
+  capture result to `/3` for the front buffers. Under settings design D-24,
+  each sheet bump stops the previous schema loading.
+
+#### Stylize: numerical reference (Review 1, A-6)
+
+This replaces "each layer is reduced by today's rules". Today's reducers
+and ramp mapper each apply the 0.5 coverage cut themselves; here coverage is
+decided once, for the composite, and only their colour, vote and band rules
+are reused, with the layer weights below in place of colour alpha.
+
+**Per supersample `i`** of an output pixel's `s×s` block (`n = s²`), as
+decoded from the capture buffers (transport table above):
+
+- `b_i` is 1 where a back (first opaque) surface exists, else 0; its colour
+  `B_i` is 8-bit sRGB.
+- `p_i` is 1 where a front (combined translucent) layer exists, else 0; its
+  alpha is the 16-bit integer `q_i` (`f_i = q_i / 65535`, 0 when `p_i` is
+  0), its straight colour `F_i` 8-bit sRGB.
+- The sample is a **surface** when `b_i` or `p_i` is 1. A front layer whose
+  `q_i` is 0 is still a surface, with alpha 0: presence never comes from
+  the quantized alpha.
+- Integer weights in units of `1/65535`: the front's `u_i = q_i`, the back's
+  transmitted weight `t_i = b_i · (65535 − q_i)`, and the composite alpha
+  `a_i = u_i + t_i`. The per-sample composite is exactly D-6's
+  front-over-back.
+
+**1. Coverage and alpha,** once per pixel, in exact integers. Let `m` be the
+number of surface samples and `S = Σ a_i`.
+
+- `hard`: the pixel exists when `2m ≥ n`; `D = 65535 · m`.
+- `soft`: the pixel exists when `S > 0`; `D = 65535 · n`.
+- The alpha byte is `α = (510 · S + D) // (2 · D)`, that is
+  `floor(255 · S / D + ½)`. A pixel that does not exist, or whose `α` is 0,
+  is `(0, 0, 0, 0)`.
+- An opaque model has `a_i = 65535` on every surface sample, so under
+  `hard` every kept pixel is 255, as today.
+
+**2. Each layer's colour,** with weights `u_i` (front) or `t_i` (back) in
+place of colour alpha. `W_f = Σ u_i`, `W_b = Σ t_i`. A layer with weight 0
+is absent from the pixel. Samples where a layer is absent cast no vote and
+add nothing to its sums.
+
+- Ordinary look, `plain`: the weighted mean of the layer's 8-bit sRGB
+  values, rounded half up.
+- Ordinary look, `mode`: the weighted vote, with today's tie rules against
+  the weighted mean.
+- With a palette, `mode` maps the layer's samples before voting, as today.
+- Ramp: the identity vote with the layer's weights, then the band from the
+  winner's weighted shade, with today's integer rules (design §Stylize,
+  *Mapping a block*), giving a palette colour.
+
+**3. Composite** in linear colour, `float64`, through the fixed
+256-entry sRGB-to-linear table palette mapping already uses:
+
+- `C = (W_f · lin(F̄) + W_b · lin(B̄)) / (W_f + W_b)`, encoded to 8-bit
+  sRGB with the standard sRGB transfer function, rounded half up.
+- When only one layer has weight, the colour is that layer's colour
+  unchanged: no conversion round trip.
+- The weights carry each layer's share of the per-sample composite, so a
+  block where the front and back cover different samples weights each by
+  where it is, not by its mean alpha alone.
+
+**4. Palette** (D-14): with a palette, the composite's 8-bit RGB maps to the
+nearest palette colour by `imageops.map_palette` (OKLab, earlier entry on a
+tie). A one-layer pixel already holds a palette colour and maps to itself
+(a palette has no duplicates). Alpha is `α` from step 1, never snapped.
+
+**5. Maps** (D-11): a sample's map surface is the front layer's where
+`p_i` is 1, otherwise the back's. Normal and depth reduce over those
+samples by the lighting design's numerical reference, unchanged. A map
+pixel exists exactly where `α > 0`; the normal map's alpha is `α`, and the
+depth map is non-zero there.
+
+**Pinned cases** (each slice's tests pin these exactly, `hard` unless
+said; colours given are what the composite must use):
+
+| Block (2×2 unless said) | Expected |
+|---|---|
+| empty | `(0, 0, 0, 0)`, no map pixel |
+| opaque, every sample | today's colour, alpha 255 |
+| front only, `f = 0.4`, every sample | alpha 102, the front's colour |
+| front only, `f = 0.4`, two samples | `hard` 102, `soft` 51 |
+| two samples front only `f = 0.5`, two back only | alpha 191 (0.75), colour `(1 · red + 2 · blue) / 3` in linear, under either rule; not 0.625 |
+| front `f = 0.5` over back on the same two samples, two empty | `hard` 255, `soft` 128; colour the composite of the two |
+| `f` of `[0.001, 0.001]` front only, two back only | four surfaces, alpha 128 (0.5005); not 255 |
+| one surface sample of four | `hard` transparent; `soft` its alpha ÷ 4 |
+| ramped front over ramped back | each layer its own ramp colour, composited, then snapped |
+| `mode`, two front colours tied | today's tie rule against the weighted mean |
 
 ## Decisions
 
@@ -892,14 +1106,20 @@ ones:
   against D-14.
 - **Determinism:** repeated runs, in separate processes, give identical
   bytes.
-- **Failure:** the bounce-limit fixture fails loudly, naming the file, clip
-  and frame.
+- **Mixed stacks** (spike 2): exact composites through holes and panes
+  under the pinned bounce limits; tiny-alpha and hole-floor surfaces; the
+  surface gate's hit exactly 0 or 1.
+- **Failure:** a stack one deeper than the limit fails with exit 5, behind a
+  visible front layer and ending at the background alike, naming the input,
+  clip, direction, frame and limit, and publishing nothing; an unsupported
+  material graph and a missing or corrupt buffer fail the same way.
 - **Cost:** per-frame time on an ordinary model and on stacked cutouts,
   compared with today's two renders, reported in the slice's pull request.
 - **Compatibility:** no byte-identical guarantee (D-5). Each pull request
   that changes output names the tests whose pinned output it updates, and
-  gives the command that reproduces the new sheets. Older sheets still load
-  for `--settings-from`.
+  gives the command that reproduces the new sheets. Only the current sheet
+  schema loads (settings design D-24); a new sheet reproduces itself byte
+  for byte through `--settings-from`.
 - **Look:** the owner's visual review, ALPHA-7 (V-12), on the owner's model
   (Test inputs). Tests prove alignment, not how a sprite looks.
 
@@ -912,105 +1132,154 @@ changes, in its own pull request, since tests read that document.
 
 - **Outcome:** one Cycles render per frame gives the colour, material ID,
   shade, normal and depth; Workbench is gone from capture.
-- **Scope:** spike 1's settings; the flat, unlit colour (D-8); ID and shade
-  as float AOVs; the colour written from pixels; `transparent_max_bounces`
-  64; the capture job and result contract; design §Capture. Every material
-  is still captured opaque, as D-26 has it.
+- **Scope:**
+  - the capture settings of *The pipeline with alpha*, both bounce limits
+    pinned at 64 (A-1);
+  - the extraction rule for Principled and unlit graphs, refusing other
+    shapes, and the white material-less stand-in (A-8);
+  - the flat, unlit colour (D-8);
+  - ID and shade as float AOVs, encoded as the transport table says;
+  - the colour written from pixels;
+  - provenance: `renderer` `"cycles"`, `studio_light` removed, the `color`
+    record; the capture result `/2` and the next sheet schema (A-7);
+  - design §Capture, *Capture job and result contract* and the sheet JSON.
+  - Every material is still captured opaque, as D-26 has it.
 - **Phase:** 1.
 - **Depends on:** none.
 - **Ordering:** critical path, can land first.
 - **Relevant decisions:** D-5, D-7, D-8.
-- **Acceptance signals:** buffers aligned on the existing fixtures;
-  identical bytes across runs; cost reported; tests pinning Workbench output
-  updated and named.
+- **Acceptance signals:**
+  - buffers aligned on the existing fixtures;
+  - identical bytes across runs in separate processes;
+  - material codes 255, 256 and 65535 (material-less) round trip; shade
+    0.25 encodes to 137;
+  - unlit opaque fixtures and a material-less primitive render their flat
+    colour, the latter white;
+  - an unsupported material graph fails with exit 5 naming it;
+  - per-frame cost against today's two renders, reported;
+  - tests pinning Workbench output updated and named.
 - **Out of scope:** any alpha from materials.
 - **Open questions:** None.
 
 ### ALPHA-2. Cut out `MASK` materials
 
 - **Outcome:** a `MASK` material's cut-out texels are holes in the colour and
-  in every buffer, showing the surface behind or nothing.
-- **Scope:** the importer's alpha chain for `MASK` (D-3), with its cutoff;
-  gated AOVs; gated occlusion distance; the bounce-limit capture error.
-  Output alpha stays binary, by today's coverage rule. `BLEND` is still
-  captured opaque.
+  in every buffer, showing the surface behind or nothing, and a stack too
+  deep to render fails loudly.
+- **Scope:**
+  - the importer's alpha chain for `MASK` (D-3), with its cutoff, Principled
+    and unlit;
+  - spike 2's surface gate (A-2) and the gated occlusion distance;
+  - the in-render exhaustion marker and its exit 5 (A-3).
+  - Output alpha stays binary, by today's coverage rule. `BLEND` is still
+    captured opaque.
 - **Phase:** 2.
 - **Depends on:** ALPHA-1.
 - **Ordering:** critical path.
 - **Relevant decisions:** D-1, D-3, D-7, D-10.
-- **Acceptance signals:** cutoff fixture 127 cut, 128 kept; holes over a body
-  show the body's ID, shade, normal and depth; holes over the background are
-  transparent in every map; the deep stack fails loudly; stacked-cutout cost
-  reported.
+- **Acceptance signals:**
+  - the cutoff fixture keeps 128 and cuts 127; a `LINEAR`-filtered cutoff
+    stays binary; an unlit `MASK` cuts the same;
+  - holes over a body show the body's ID, shade, normal and depth; holes
+    over the background are transparent in every map;
+  - every gated hit is exactly 0 or 1;
+  - 64 holes over a body or over the background render correctly; 65 fail
+    with exit 5 naming the input, clip, direction, frame and limit, and
+    publish nothing; so does a front surface followed by 65 holes (the
+    review's mixed stack);
+  - a correct frame is unchanged by the marker;
+  - stacked-cutout cost reported.
 - **Out of scope:** partial alpha, `BLEND`.
 - **Open questions:** None.
 
-### ALPHA-3. Carry 8-bit alpha and the `edges` setting
+### ALPHA-3. Carry 8-bit alpha, the `edges` setting and preview blending
 
 - **Outcome:** sheets carry 8-bit alpha under the `hard` and `soft` rules,
-  and the maps copy it.
-- **Scope:** D-4's two rules for `plain` and `mode`; the `edges` setting and
-  `--edges` (D-9); the maps' alpha (D-11); the sheet schema bump; reuse of
-  older sheets with `edges: hard`.
+  the maps copy it, and the flat and lit previews show it over their grey.
+- **Scope:**
+  - steps 1 and 5 of the numerical reference, for `plain` and `mode`, with
+    and without a palette or a library (A-6);
+  - the `edges` setting and `--edges` (D-9), recorded in
+    `settings.style.edges`; the next sheet schema, with the previous one
+    refused (A-5);
+  - the maps' alpha (D-11);
+  - preview blending in 8-bit sRGB over `#808080`, flat and lit, with the
+    colour-count warning (D-13), merged here from ALPHA-6 because previews
+    are on by default (A-4).
 - **Phase:** 2.
 - **Depends on:** ALPHA-2.
 - **Ordering:** critical path.
-- **Relevant decisions:** D-2, D-4, D-9, D-11.
-- **Acceptance signals:** `hard` keeps today's outlines, `soft` gives the
-  block mean; map alpha equals colour alpha under both; settings round trip
-  through `--settings-from`.
-- **Out of scope:** translucency, previews.
+- **Relevant decisions:** D-2, D-4, D-9, D-11, D-13.
+- **Acceptance signals:**
+  - the pinned cases of the numerical reference that need no front layer;
+  - `hard` keeps today's outlines; `soft` gives the block mean;
+  - map alpha equals colour alpha under both;
+  - a whole command with `--edges soft` and default previews succeeds, and
+    so does one with a light; a partial pixel previews as the blend over
+    the grey; opaque previews are byte-identical to before the slice;
+  - `--settings-from` reproduces a new sheet byte for byte; a sheet of the
+    previous schema is refused with exit 2; the capture job's hash is the
+    same under `hard` and `soft`.
+- **Out of scope:** translucency.
 - **Open questions:** None.
 
 ### ALPHA-4. Capture and composite translucent layers
 
 - **Outcome:** a `BLEND` surface is see-through: its front layer is captured
   apart from the opaque surface behind, and composited over it in stylize.
-- **Scope:** `BLEND` alpha (D-3); the front and back layers (D-6, D-12),
-  settled by a spike in the slice; the maps from the front-most surface
-  (D-11); compositing in linear colour; snapping the composite's RGB to the
-  palette (D-14). The front layer keeps the ordinary look.
+- **Scope:**
+  - **first, a feasibility spike** separating the front layer from the
+    back, with the stop rule of *The pipeline with alpha*;
+  - `BLEND` alpha (D-3), Principled and unlit;
+  - the front buffers and the capture result `/3` (transport table);
+  - the maps from the front-most surface (D-11);
+  - steps 2 to 4 of the numerical reference: layer weights, the linear
+    composite and snapping the composite's RGB to the palette (D-14).
+  - The front layer keeps the ordinary look.
 - **Phase:** 3.
 - **Depends on:** ALPHA-3.
 - **Ordering:** critical path.
 - **Relevant decisions:** D-1, D-3, D-6, D-11, D-12, D-14.
-- **Acceptance signals:** a 0.4 quad over a body matches the formula; over
-  the background its alpha is 0.4; two panes of 0.5 give 0.75; a ramped body
-  keeps its ramp under the quad; the maps show the quad; with a palette,
-  every colour is a palette colour and alpha is unsnapped.
+- **Acceptance signals:**
+  - spike 2's mixed stacks (a)–(d) match front-over-back;
+  - a 0.4 quad over a body matches the formula; over the background its
+    alpha is 0.4; two panes of 0.5 give 0.75;
+  - every pinned case of the numerical reference;
+  - tiny alpha (5e-7) is a surface; alpha at the hole floor (1e-9) is not;
+    vertex alpha and texture × factor alpha render;
+  - presence survives transport: the `[0.001, 0.001, 1, 1]` block gives
+    alpha 128;
+  - a ramped body keeps its ramp under the quad; the maps show the quad;
+  - with a palette every colour is a palette colour and alpha is
+    unsnapped;
+  - a missing or corrupt front buffer fails with exit 5;
+  - per-frame cost reported against ALPHA-1's.
 - **Out of scope:** ramps on translucent materials.
-- **Open questions:** None. If separating the front layer needs a second
-  render costing more than twice today's, stop and ask the owner.
+- **Open questions:** None. If separating the front layer fails or costs more
+  than twice today's capture, stop and report to the owner.
 
 ### ALPHA-5. Give translucent materials identities and ramps
 
 - **Outcome:** a `BLEND` material can take a ramp, by its entry or the
   library's default, and its front layer is ramped before compositing.
 - **Scope:** `BLEND` leaves the no-identity class (D-15); the front layer's
-  identity vote and band; the library warnings; design §Pipeline.
+  identity vote and band with its own weights (numerical reference, step
+  2); the library warnings; design §Pipeline.
 - **Phase:** 3.
 - **Depends on:** ALPHA-4.
 - **Ordering:** critical path.
 - **Relevant decisions:** D-6, D-12, D-14, D-15.
 - **Acceptance signals:** a ramped translucent quad over a ramped body shows
-  both ramps; a name shared by opaque and `BLEND` materials pools as one.
+  both ramps, composited then snapped; a name shared by opaque and `BLEND`
+  materials pools as one; the `mode` tie case.
 - **Out of scope:** keeping translucent layers separately (D-12).
 - **Open questions:** None.
 
 ### ALPHA-6. Blend translucent pixels in the previews
 
-- **Outcome:** flat and lit previews show partial alpha over their grey.
-- **Scope:** D-13's blend, lighting before blending in the lit preview, the
-  colour-count warning.
-- **Phase:** 3.
-- **Depends on:** ALPHA-3.
-- **Ordering:** not on the critical path; independent of ALPHA-4 and
-  ALPHA-5.
-- **Relevant decisions:** D-13.
-- **Acceptance signals:** a soft-edged or translucent pixel previews as the
-  blend over `#808080`; opaque frames are unchanged.
-- **Out of scope:** the sheet itself.
-- **Open questions:** None.
+Merged into ALPHA-3 (Review 1, A-4): previews are on by default and refuse
+partial alpha today, so the slice that first produces partial alpha must
+blend it. Kept as an identifier only, marked `[no-issue]`.
 
 ### ALPHA-7. Owner review of alpha sheets
 
@@ -1021,9 +1290,35 @@ changes, in its own pull request, since tests read that document.
   the occlusion baseline D-7 asks for; whether D-12's combined layer is
   enough.
 - **Phase:** 4.
-- **Depends on:** ALPHA-1 to ALPHA-6.
+- **Depends on:** ALPHA-1 to ALPHA-5.
 - **Ordering:** critical path, last.
 - **Relevant decisions:** D-7, D-12.
 - **Acceptance signals:** the owner's recorded verdict.
 - **Out of scope:** code changes, which become their own issues.
 - **Open questions:** None.
+
+## Review 1
+
+Codex review 1 by mosk-reviewer-53, against `553fe50`:
+`~/.local/share/moskophoros-acceptance/alpha-design/review-codex-1.md`
+(sha256 `44d3d899dec7ec0f17b9545623b645a9de7cc3512013b0d573b6dbd17408ef37`),
+with its probes in `review-1/` beside it. Revision request
+moskophoros-20261017-1. Five blocking findings and three should-fix; every
+one was verified against the probes and the code, and all are fixed. No
+owner decision changed.
+
+| Id | Severity | Disposition |
+|---|---|---|
+| A-1 | blocking | **Fixed.** Both transparent bounce limits are pinned at 64; spike 2 proves exact composites through mixed stacks and unchanged cost. Settings in *The pipeline with alpha*; tests in ALPHA-1 and ALPHA-4. |
+| A-2 | blocking | **Fixed** without an owner decision. Spike 2's gate repeats Cycles' own transparency arithmetic, so it selects exactly the surface where Cycles stops (0 anomalies over 9 fixtures; the review's 5e-7 case now correct). No epsilon is chosen: the only surfaces treated as holes are those with `α ≤ 2^-25`, which Cycles itself renders with no coverage, so this is the alpha "as Blender imports it" (D-3). Recorded under *Precision limits*; tests in ALPHA-2 and ALPHA-4. |
+| A-3 | blocking | **Fixed.** Spike 2's in-render marker detects exhaustion exactly, behind a visible front layer and ending at the background, with no second render; exit 5 with the diagnostic and nothing published. Tests in ALPHA-2. |
+| A-4 | blocking | **Fixed.** Preview blending (D-13) moves into ALPHA-3, which first produces partial alpha; ALPHA-6 is merged and marked `[no-issue]`. Whole-command acceptance with default previews and with a light. |
+| A-5 | blocking | **Fixed** by honouring settings D-24: the older-sheet promise is removed, `edges` is required in the new schema, and the previous schema is refused. |
+| A-6 | should fix | **Fixed.** *Stylize: numerical reference*: one coverage decision, per-layer weights carried per sample, the linear composite, rounding, palette snapping and pinned cases, including the review's 0.75 case and a front-only 0.4 block. |
+| A-7 | should fix | **Fixed.** *Capture transport and provenance*: buffers, encodings, presence, validation, the shade byte (0.25 → 137), codes, provenance without `studio_light`, and which slice bumps which schema. |
+| A-8 | should fix | **Fixed.** Spike 2's extraction rule covers Principled and `KHR_materials_unlit` graphs and refuses other shapes; the material-less stand-in is white, opaque, code 65535; unlit, vertex-alpha and `LINEAR` cutoff cases assigned to ALPHA-1, ALPHA-2 and ALPHA-4. |
+
+Remaining risk, stated plainly: separating the front layer from the back
+(ALPHA-4) is not yet proven. ALPHA-4 starts with a feasibility spike, and
+stops and reports to the owner if it fails or costs more than twice
+today's capture.
