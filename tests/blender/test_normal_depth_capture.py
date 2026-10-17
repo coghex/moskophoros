@@ -438,6 +438,7 @@ def state():
         "render": [scene.render.engine, scene.render.filepath],
         "cycles": [scene.cycles.samples, scene.cycles.seed],
         "materials": sorted(m.name for m in bpy.data.materials),
+        "groups": sorted(g.name for g in bpy.data.node_groups),
         "slots": len(cube.data.materials),
     }
 
@@ -495,15 +496,18 @@ def test_the_capture_shaders_are_restored_and_save_exr_keeps_the_settings(
     ]
     assert completed.returncode == 0 and lines, completed.stdout + completed.stderr
     probed = json.loads(lines[0].removeprefix("PROBE "))
-    # While it runs: the four AOVs and the stand-in; after it, nothing, and
-    # saving the OpenEXR leaves the render's own image settings as they were.
+    # While it runs: the five AOVs, the stand-in and the count switch; after
+    # it, nothing, and saving the OpenEXR leaves the render's own image
+    # settings as they were.
     assert probed["during"]["aovs"] == [
         ["matid", "VALUE"],
         ["shade", "VALUE"],
         ["normal", "COLOR"],
         ["depth", "VALUE"],
+        ["hit", "VALUE"],
     ]
     assert "moskophoros.no-material" in probed["during"]["materials"]
+    assert probed["during"]["groups"] == ["moskophoros.count"]
     assert probed["before"]["render"][0] == "CYCLES"
     assert probed["after"] == probed["before"]
     assert probed["before"]["aovs"] == []

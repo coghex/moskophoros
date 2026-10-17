@@ -2,8 +2,9 @@
 D-5, D-8; design §Capture): each surface's flat material colour, through
 the importer's colour chain, with the material ID, shade, normal and depth
 on exactly the same pixels; material codes round trip; every material is
-still captured opaque (material styling design D-26); and a material graph
-the capture cannot read fails the command, naming the material."""
+captured opaque but for `MASK` cut-outs (material styling design D-26,
+alpha design D-1); and a material graph the capture cannot read fails the
+command, naming the material."""
 
 import math
 
@@ -163,23 +164,23 @@ def test_each_material_renders_its_flat_colour(found, tmp_path):
     # exactly the encoded factor; the material-less part is glTF's white.
     for index in (0, 2, 7):
         assert tuple(slot_pixels(colour, index)[0]) == wanted[index]
-    # The MASK checker is opaque everywhere (D-26), its cut texels showing
-    # their own black, and its code covers the whole face.
+    # The unlit MASK checker cuts out (alpha design D-1): its kept texels are
+    # its flat yellow, its cut ones nothing, in the colour and the ID alike.
     leaf = slot_pixels(colour, 5)
-    assert (leaf[:, 3] == 255).all()
     assert {tuple(p) for p in leaf} == {
         expected((1, 1, 1), (255, 220, 0, 255)),
-        (0, 0, 0, 255),
+        (0, 0, 0, 0),
     }
     leaf_ids = slot_pixels(ids, 5)
-    assert (leaf_ids[:, 3] == 255).all()
-    assert {(int(r) << 8 | int(g)) for r, g, *_ in leaf_ids} == {6}
+    assert ((leaf_ids[:, 3] == 255) == (leaf[:, 3] == 255)).all()
+    assert {(int(r) << 8 | int(g)) for r, g, b, a in leaf_ids if a} == {6}
 
 
-def test_every_material_is_opaque_and_every_buffer_covers_it(found, tmp_path):
+def test_every_material_but_mask_is_opaque_and_every_buffer_covers_it(found, tmp_path):
+    # BLEND stays opaque until ALPHA-4, alpha 0 included.
     result, _ = row(found, looks(tmp_path), tmp_path)
     colour = loaded(result, "color")
-    for index in range(8):
+    for index in (0, 1, 2, 3, 4, 6, 7):
         assert (slot_pixels(colour, index)[:, 3] == 255).all(), index
     aligned(result)
 

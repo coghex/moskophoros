@@ -132,12 +132,12 @@ class Model:
         materials.append(entry)
         return len(materials) - 1
 
-    def texture(self, size, pixel):
+    def texture(self, size, pixel, *, linear=False):
         image = Image.new("RGBA", size)
         image.putdata([pixel(x, y) for y in range(size[1]) for x in range(size[0])])
         data = io.BytesIO()
         image.save(data, "PNG")
-        return self.writer.texture(data.getvalue())
+        return self.writer.texture(data.getvalue(), linear=linear)
 
     def primitive(
         self, positions, material=None, *, normals=None, texcoords=None, colors=None

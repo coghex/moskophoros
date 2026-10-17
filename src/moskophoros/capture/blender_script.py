@@ -1088,7 +1088,22 @@ SCRATCH = "scratch"
 # The view-layer AOVs the render adds: the material-ID code and the linear
 # shade, values; the camera-space shading normal, a colour (lighting sheet
 # design D-11); and the camera depth, a value.
-AOVS = (("matid", "VALUE"), ("shade", "VALUE"), ("normal", "COLOR"), ("depth", "VALUE"))
+AOVS = (
+    ("matid", "VALUE"),
+    ("shade", "VALUE"),
+    ("normal", "COLOR"),
+    ("depth", "VALUE"),
+    ("hit", "VALUE"),
+)
+# The surface gate's threshold, the view layer's `pass_alpha_threshold`.
+GATE_THRESHOLD = COLOR["pass_alpha_threshold"]
+# Cycles drops a closure whose weight is below this (CLOSURE_WEIGHT_CUTOFF).
+CLOSURE_CUTOFF = 1e-5
+# The shared node group whose value switches every surface to the count.
+SWITCH = "moskophoros.count"
+# A camera path may cross this many surfaces that still let light through:
+# both transparent bounce limits (alpha design spike 3).
+LAYER_LIMIT = COLOR["transparent_max_bounces"]
 # Where the render result is saved for its AOVs: a multilayer OpenEXR of
 # 32-bit floats, uncompressed, since decompressing in pure Python is slow.
 _EXR_SETTINGS = (
@@ -1144,12 +1159,13 @@ def _is_unlit_core(node):
     )
 
 
-def colour_socket(material, where):
-    """The socket of `material`'s node tree whose value is its surface
-    colour, by the extraction rule of alpha design spike 2: a Principled
-    BSDF's `Base Color`, or the Emission colour of the `KHR_materials_unlit`
-    core, alone or wrapped in a `Mix` with an alpha chain. Any other shape
-    is refused, naming the material as `where`."""
+def surface_sockets(material, where):
+    """The sockets of `material`'s node tree whose values are its surface
+    colour and alpha, by the extraction rule of alpha design spike 2: a
+    Principled BSDF's `Base Color` and `Alpha`; or the Emission colour of the
+    `KHR_materials_unlit` core, with alpha 1 alone and the factor of the
+    `Mix` wrapping it in an alpha chain otherwise (None for alpha 1). Any
+    other shape is refused, naming the material as `where`."""
     tree = material.node_tree
     outputs = [
         node
@@ -1162,8 +1178,8 @@ def colour_socket(material, where):
         )
     surface = _from_node(outputs[0].inputs["Surface"])
     if surface is not None and surface.bl_idname == "ShaderNodeBsdfPrincipled":
-        return surface.inputs["Base Color"]
-    core = None
+        return surface.inputs["Base Color"], surface.inputs["Alpha"]
+    core, alpha = None, None
     if _is_unlit_core(surface):
         core = surface
     elif (
@@ -1173,14 +1189,14 @@ def colour_socket(material, where):
         and _from_node(surface.inputs[1]).bl_idname == "ShaderNodeBsdfTransparent"
         and _is_unlit_core(_from_node(surface.inputs[2]))
     ):
-        core = _from_node(surface.inputs[2])
+        core, alpha = _from_node(surface.inputs[2]), surface.inputs[0]
     if core is None:
         shape = "nothing" if surface is None else surface.bl_idname
         raise ScriptError(
             f"{where}'s surface is {shape}; the capture reads a Principled BSDF "
             "or a KHR_materials_unlit graph as the glTF importer builds them"
         )
-    return _from_node(core.inputs[2]).inputs["Color"]
+    return _from_node(core.inputs[2]).inputs["Color"], alpha
 
 
 class Surfaces:
@@ -1202,6 +1218,26 @@ class Surfaces:
         self.appended = []
         self.aovs = []
         self.stand_in = None
+        self.switch = None
+
+    def make_switch(self):
+        """The shared node group whose one value, 0 or 1, switches every
+        surface between the main and the count render."""
+        self.switch = bpy.data.node_groups.new(SWITCH, "ShaderNodeTree")
+        self.switch.interface.new_socket(
+            "count", in_out="OUTPUT", socket_type="NodeSocketFloat"
+        )
+        value = self.switch.nodes.new("ShaderNodeValue")
+        value.outputs[0].default_value = 0.0
+        output = self.switch.nodes.new("NodeGroupOutput")
+        self.switch.links.new(value.outputs[0], output.inputs[0])
+
+    def count(self, counting):
+        """Switch every surface to the count render's shader, or back: one
+        shared value, which Cycles folds into each material (alpha design
+        spike 3)."""
+        node = next(n for n in self.switch.nodes if n.bl_idname == "ShaderNodeValue")
+        node.outputs[0].default_value = 1.0 if counting else 0.0
 
     def apply(self):
         rendered = {
@@ -1223,8 +1259,13 @@ class Surfaces:
                 )
             index = int(match.group(1))
             where = _shown_material(self.document, index)
+            colour, alpha = surface_sockets(material, where)
+            # Only a MASK material's alpha reaches the capture: it cuts out
+            # (alpha design D-1, D-3). Every other material is captured
+            # opaque, BLEND included, until ALPHA-4.
+            mode = self.document["materials"][index].get("alphaMode", "OPAQUE")
             materials.append(
-                (material, self.codes[index], colour_socket(material, where))
+                (material, self.codes[index], colour, alpha if mode == "MASK" else None)
             )
         layer = bpy.context.view_layer
         for name, kind in AOVS:
@@ -1232,11 +1273,12 @@ class Surfaces:
             aov.name = name
             aov.type = kind
             self.aovs.append(aov)
+        self.make_switch()
         self.stand_in = bpy.data.materials.new(NO_MATERIAL)
         self.stand_in.use_nodes = True
-        materials.append((self.stand_in, NO_MATERIAL_ID, None))
-        for material, code, colour in materials:
-            self._inject(material, code, colour)
+        materials.append((self.stand_in, NO_MATERIAL_ID, None, None))
+        for material, code, colour, alpha in materials:
+            self._inject(material, code, colour, alpha)
         for obj in self.objects:
             if obj.type != "MESH":
                 continue
@@ -1248,7 +1290,7 @@ class Surfaces:
                     self.slots.append(slot)
                     slot.material = self.stand_in
 
-    def _inject(self, material, code, colour):
+    def _inject(self, material, code, colour, alpha):
         tree = material.node_tree
         outputs = [n for n in tree.nodes if n.bl_idname == "ShaderNodeOutputMaterial"]
         added = []
@@ -1257,6 +1299,31 @@ class Surfaces:
             created = tree.nodes.new(kind)
             added.append(created)
             return created
+
+        def math(operation, first, second=None, clamp=False):
+            """A Math node of `operation` on sockets or constants."""
+            made = node("ShaderNodeMath")
+            made.operation = operation
+            made.use_clamp = clamp
+            for index, value in enumerate((first, second)):
+                if value is None:
+                    continue
+                if isinstance(value, float):
+                    made.inputs[index].default_value = value
+                else:
+                    tree.links.new(value, made.inputs[index])
+            return made.outputs[0]
+
+        def source(socket, kind):
+            """What feeds `socket`: its link's source, or a constant node."""
+            if socket.is_linked:
+                return socket.links[0].from_socket
+            constant = node("ShaderNodeRGB" if kind == "rgb" else "ShaderNodeValue")
+            value = socket.default_value
+            constant.outputs[0].default_value = (
+                tuple(value) if kind == "rgb" else float(value)
+            )
+            return constant.outputs[0]
 
         output = next((n for n in outputs if n.is_active_output), None)
         if output is None:
@@ -1269,60 +1336,117 @@ class Surfaces:
         for link in [link for link in tree.links if link.to_node == output]:
             tree.links.remove(link)
         # The flat colour (alpha design D-8), through the importer's colour
-        # chain, or the stand-in's white. Every material is opaque here
-        # (material styling design D-26): the mix takes the emission alone.
+        # chain, or the stand-in's white.
         emission = node("ShaderNodeEmission")
         emission.inputs["Strength"].default_value = 1.0
         if colour is None:
             emission.inputs["Color"].default_value = NO_MATERIAL_COLOR
-        elif colour.is_linked:
-            tree.links.new(colour.links[0].from_socket, emission.inputs["Color"])
         else:
-            emission.inputs["Color"].default_value = tuple(colour.default_value)
+            tree.links.new(source(colour, "rgb"), emission.inputs["Color"])
+        # The alpha: a MASK material's chain, exactly 0 or 1, or 1.
+        if alpha is None:
+            one = node("ShaderNodeValue")
+            one.outputs[0].default_value = 1.0
+            opacity = one.outputs[0]
+        else:
+            opacity = source(alpha, "value")
         transparent = node("ShaderNodeBsdfTransparent")
         transparent.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)
         surface = node("ShaderNodeMixShader")
-        surface.inputs["Fac"].default_value = 1.0
+        tree.links.new(opacity, surface.inputs["Fac"])
         tree.links.new(transparent.outputs[0], surface.inputs[1])
         tree.links.new(emission.outputs[0], surface.inputs[2])
-        tree.links.new(surface.outputs[0], output.inputs["Surface"])
+        # The surface gate (alpha design spike 2), in the order Cycles computes
+        # the Mix shader's transparency: Cycles stops its passes exactly where
+        # the opacity v > 0, which is where g = 1, so the surface it selects
+        # writes each gated AOV exactly once and a hole writes none.
+        saturated = math("ADD", opacity, 0.0, clamp=True)
+        through = math("SUBTRACT", 1.0, saturated)
+        opaque = math("SUBTRACT", 1.0, through)
+        gate = math("SUBTRACT", 1.0, math("LESS_THAN", opaque, GATE_THRESHOLD))
+        # The count render's surface (alpha design spike 3): a shading point
+        # that still has a transparent closure, by Cycles' own test, adds 1
+        # and lets the path through; any other emits nothing.
+        average = math(
+            "MULTIPLY", math("ADD", math("ADD", through, through), through), 1 / 3
+        )
+        closure = math("SUBTRACT", 1.0, math("LESS_THAN", average, CLOSURE_CUTOFF))
+        let_through = node("ShaderNodeBsdfTransparent")
+        let_through.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+        one_more = node("ShaderNodeEmission")
+        one_more.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+        one_more.inputs["Strength"].default_value = 1.0
+        crossed = node("ShaderNodeAddShader")
+        tree.links.new(let_through.outputs[0], crossed.inputs[0])
+        tree.links.new(one_more.outputs[0], crossed.inputs[1])
+        stopped = node("ShaderNodeEmission")
+        stopped.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+        stopped.inputs["Strength"].default_value = 0.0
+        counted = node("ShaderNodeMixShader")
+        tree.links.new(math("SUBTRACT", 1.0, closure), counted.inputs["Fac"])
+        tree.links.new(crossed.outputs[0], counted.inputs[1])
+        tree.links.new(stopped.outputs[0], counted.inputs[2])
+        # One shared switch: 0 for the main render, 1 for the count render,
+        # which also zeroes every AOV and the occlusion distance.
+        switch = node("ShaderNodeGroup")
+        switch.node_tree = self.switch
+        chosen = node("ShaderNodeMixShader")
+        tree.links.new(switch.outputs[0], chosen.inputs["Fac"])
+        tree.links.new(surface.outputs[0], chosen.inputs[1])
+        tree.links.new(counted.outputs[0], chosen.inputs[2])
+        tree.links.new(chosen.outputs[0], output.inputs["Surface"])
+        kept = math("MULTIPLY", gate, math("SUBTRACT", 1.0, switch.outputs[0]))
 
-        def aov(name, socket, value=None):
+        def aov(name, value):
             written = node("ShaderNodeOutputAOV")
             written.aov_name = name
-            target = written.inputs[socket]
-            if value is None:
-                return target
-            target.default_value = value
-            return target
+            if name == "normal":
+                scaled = node("ShaderNodeVectorMath")
+                scaled.operation = "SCALE"
+                tree.links.new(value, scaled.inputs[0])
+                tree.links.new(kept, scaled.inputs["Scale"])
+                tree.links.new(scaled.outputs[0], written.inputs["Color"])
+            else:
+                tree.links.new(math("MULTIPLY", value, kept), written.inputs["Value"])
 
         # A glTF material's code is its index plus 1, exact in a float.
-        aov("matid", "Value", float(code))
+        identity = node("ShaderNodeValue")
+        identity.outputs[0].default_value = float(code)
+        aov("matid", identity.outputs[0])
+        hit = node("ShaderNodeOutputAOV")
+        hit.aov_name = "hit"
+        tree.links.new(kept, hit.inputs["Value"])
         # The shade (material styling design D-9); the stand-in for surfaces
-        # without a material takes the global values.
+        # without a material takes the global values. The occlusion distance
+        # is gated too, so a hole runs no occlusion (alpha design D-7).
         values = self.own.get(code - 1, self.shade)
         outside = node("ShaderNodeAmbientOcclusion")
         inside = node("ShaderNodeAmbientOcclusion")
+        distance = math("MULTIPLY", kept, float(values["ao_distance_m"]))
+        distance.node.label = "moskophoros.ao_distance_m"
         for ao, is_inside in ((outside, False), (inside, True)):
             ao.samples = self.shade["ao_samples"]
             ao.inside = is_inside
             ao.only_local = False
-            ao.inputs["Distance"].default_value = values["ao_distance_m"]
+            tree.links.new(distance, ao.inputs["Distance"])
         occlusion = node("ShaderNodeMath")
+        occlusion.label = "moskophoros.occlusion_weight"
         occlusion.operation = "MULTIPLY"
         occlusion.inputs[1].default_value = values["occlusion_weight"]
         tree.links.new(outside.outputs["AO"], occlusion.inputs[0])
         convexity = node("ShaderNodeMath")
+        convexity.label = "moskophoros.convexity"
         convexity.operation = "SUBTRACT"
         convexity.inputs[0].default_value = 1.0
         tree.links.new(inside.outputs["AO"], convexity.inputs[1])
         shade = node("ShaderNodeMath")
+        shade.label = "moskophoros.convexity_weight"
         shade.operation = "MULTIPLY_ADD"
         shade.use_clamp = True
         shade.inputs[1].default_value = values["convexity_weight"]
         tree.links.new(convexity.outputs[0], shade.inputs[0])
         tree.links.new(occlusion.outputs[0], shade.inputs[2])
-        tree.links.new(shade.outputs[0], aov("shade", "Value"))
+        aov("shade", shade.outputs[0])
         # The shading normal, the model's interpolated vertex normal, in the
         # camera's space; no material property reaches it (D-2, D-16).
         geometry = node("ShaderNodeNewGeometry")
@@ -1331,10 +1455,10 @@ class Surfaces:
         transform.convert_from = "WORLD"
         transform.convert_to = "CAMERA"
         tree.links.new(geometry.outputs["Normal"], transform.inputs["Vector"])
-        tree.links.new(transform.outputs["Vector"], aov("normal", "Color"))
+        aov("normal", transform.outputs["Vector"])
         # The distance along the camera's viewing axis (D-10).
         camera = node("ShaderNodeCameraData")
-        tree.links.new(camera.outputs["View Z Depth"], aov("depth", "Value"))
+        aov("depth", camera.outputs["View Z Depth"])
         self.trees.append((tree, added, links))
 
     def restore(self):
@@ -1349,11 +1473,14 @@ class Surfaces:
             data.materials.pop()
         if self.stand_in is not None:
             bpy.data.materials.remove(self.stand_in)
+        if self.switch is not None:
+            bpy.data.node_groups.remove(self.switch)
         layer = bpy.context.view_layer
         for aov in reversed(self.aovs):
             layer.aovs.remove(aov)
         self.trees, self.slots, self.appended, self.aovs = [], [], [], []
         self.stand_in = None
+        self.switch = None
 
 
 def save_exr(scene, path):
@@ -1532,16 +1659,16 @@ def material_code(value, codes):
 
 def coverage(alpha, width, where):
     """Each row of the render's float `alpha` as bytes, 255 where the pixel
-    shows a surface and 0 where it shows none. Every material is opaque, so
-    a surface's alpha is exactly 1; any other value is refused."""
-    for value in set(alpha):
-        if value not in (0.0, 1.0):
-            index = alpha.index(value)
-            raise ScriptError(
-                f"{where}: the render's alpha at pixel "
-                f"{(index % width, index // width)} is {value!r}, not a whole "
-                "opaque surface or none"
-            )
+    shows a surface and 0 where it shows none. A surface is opaque or a
+    `MASK` material's whole texel, so its alpha is exactly 1, and a hole's
+    0; any other value is refused."""
+    if not set(alpha) <= {0.0, 1.0}:
+        index = _first_other(alpha)
+        raise ScriptError(
+            f"{where}: the render's alpha at pixel "
+            f"{(index % width, index // width)} is {alpha[index]!r}, not a whole "
+            "opaque surface or none"
+        )
     # 0.0 and 1.0 differ in their 32-bit floats' high byte: 0x00 and 0x3F.
     data = array("f", alpha)
     if sys.byteorder != "little":
@@ -1552,6 +1679,42 @@ def coverage(alpha, width, where):
 
 
 _COVERED = bytes(255 if byte == 0x3F else 0 for byte in range(256))
+
+
+def _first_other(values):
+    """The index of the first value that is neither 0 nor 1, NaN included."""
+    return next(i for i, value in enumerate(values) if value not in (0.0, 1.0))
+
+
+def check_hits(hit, covered, width, where):
+    """Refuse a frame whose gated hit AOV is not exactly 0 or 1 at every
+    pixel, or whose hits are not exactly the colour's surfaces, `covered`:
+    the surface gate selects each surface exactly once (alpha design
+    spike 2)."""
+    if not set(hit) <= {0.0, 1.0}:
+        index = _first_other(hit)
+        raise ScriptError(
+            f"{where}: the surface gate's hit at pixel "
+            f"{(index % width, index // width)} is {hit[index]!r}, not exactly 0 "
+            "or 1"
+        )
+    _check_coverage("surface gate", bytes(map(bool, hit)), covered, width, where)
+
+
+def check_count(red, width, place):
+    """Refuse a frame where the count render's `red`, the surfaces each camera
+    path crossed that still let light through, reaches `LAYER_LIMIT` + 1:
+    Cycles stopped that path before its end, so the frame would render
+    wrong (alpha design spike 3). `place` names the frame."""
+    deepest = max(red, default=0.0)
+    if deepest >= LAYER_LIMIT + 1:
+        index = red.index(deepest)
+        raise ScriptError(
+            f"{place}: a camera path at pixel {(index % width, index // width)} "
+            f"crossed more than {LAYER_LIMIT} surfaces that still let light "
+            f"through, which the capture cannot render (the limit is "
+            f"{LAYER_LIMIT})"
+        )
 
 
 def _masked(data, mask):
@@ -1899,8 +2062,10 @@ def render_frames(job, document, statics):
                     camera, settings, rotation, reach(objects, depsgraph, ground)
                 )
                 relative = {name: f"{name}/{ordinal:06d}.png" for name in BUFFERS}
+                address = frame["address"]
                 render_frame(
                     scene,
+                    surfaces,
                     scratch,
                     (width, height),
                     job,
@@ -1908,6 +2073,9 @@ def render_frames(job, document, statics):
                     known,
                     ground_view_z,
                     f"frame {ordinal}",
+                    f"{job['source']['path']}: clip {address['clip']!r}, "
+                    f"direction {address['direction']}, frame {ordinal} "
+                    f"(t = {address['time_s']!r} s)",
                 )
                 paths[ordinal] = relative
     finally:
@@ -1928,29 +2096,45 @@ def render_frames(job, document, statics):
     )
 
 
-def render_frame(scene, scratch, size, job, relative, codes, ground_view_z, where):
+def render_frame(
+    scene, surfaces, scratch, size, job, relative, codes, ground_view_z, where, place
+):
     """The frame's colour, material-ID, shade, normal and depth buffers, from
     one Cycles render: the 8-bit TGA it writes through the `Standard`
-    transform, and its alpha and AOVs saved as an OpenEXR."""
+    transform, and its alpha and AOVs saved as an OpenEXR. A count render
+    after it refuses a frame too deep to render (`check_count`)."""
     width, height = size
     target = os.path.join(scratch, "capture.tga")
     exr = os.path.join(scratch, "capture.exr")
     scene.render.filepath = target
     bpy.ops.render.render(write_still=True)
     save_exr(scene, exr)
+    layer = bpy.context.view_layer.name
+    # Background mode keeps no render in memory, so the count is read back
+    # from its own OpenEXR; the switch back restores the main render exactly.
+    count = os.path.join(scratch, "count.exr")
+    surfaces.count(True)
+    try:
+        bpy.ops.render.render(write_still=False)
+        save_exr(scene, count)
+    finally:
+        surfaces.count(False)
+    red = f"{layer}.Combined.R"
+    check_count(read_exr(count, width, height, [red])[red], width, place)
+    os.remove(count)
     rows = read_targa(target, width, height)
     os.remove(target)
-    layer = bpy.context.view_layer.name
     names = (
         [f"{layer}.Combined.A", f"{layer}.matid.X", f"{layer}.shade.X"]
         + [f"{layer}.normal.{axis}" for axis in "RGB"]
-        + [f"{layer}.depth.X"]
+        + [f"{layer}.depth.X", f"{layer}.hit.X"]
     )
     channels = read_exr(exr, width, height, names)
     os.remove(exr)
-    alpha, ids, shades, x, y, z, view_z = (channels[name] for name in names)
+    alpha, ids, shades, x, y, z, view_z, hit = (channels[name] for name in names)
     output = job["output_dir"]
     covered = coverage(alpha, width, where)
+    check_hits(hit, covered, width, where)
     write_png(
         os.path.join(output, relative["color"]),
         width,
