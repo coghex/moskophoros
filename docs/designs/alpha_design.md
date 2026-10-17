@@ -38,7 +38,7 @@ Slices as delegated to the designer by the owner (D-16).
 - [x] ALPHA-2. Cut out `MASK` materials — [#115]
 - [x] ALPHA-3. Carry 8-bit alpha, the `edges` setting and preview blending — [#116]
 - [x] ALPHA-4. Capture and composite translucent layers — [#117]
-- [ ] ALPHA-5. Give translucent materials identities and ramps
+- [x] ALPHA-5. Give translucent materials identities and ramps — [#118]
 - [x] ALPHA-6. Blend translucent pixels in the previews — [no-issue]: merged into ALPHA-3 (Review 1, A-4)
 - [ ] ALPHA-7. Owner review of alpha sheets
 
