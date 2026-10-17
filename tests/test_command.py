@@ -91,6 +91,14 @@ else:
                               rng.randrange(256), 255)
             )
             image = Image.frombytes("RGBA", size, data)
+        elif config["pixels"] == "rim":
+            # The left half wholly covered; on the right, one surface sample
+            # in every 2x2 block, as a cut-out edge or outline gives.
+            image = Image.new("RGBA", size, (200, 40, 10, 255))
+            for y in range(size[1]):
+                for x in range(size[0] // 2, size[0]):
+                    if x % 2 or y % 2:
+                        image.putpixel((x, y), (0, 0, 0, 0))
         elif config["pixels"] == "speckled":
             # Three of one colour and one of another in every 2x2 block.
             image = Image.new("RGBA", size, (200, 40, 10, 255))
@@ -196,6 +204,7 @@ DEFAULT_CONFIG = {
 }
 PLAIN_STYLE = {
     "reduce": "plain",
+    "edges": "hard",
     "palette": None,
     "materials": None,
 }
@@ -305,7 +314,7 @@ def test_a_run_writes_the_sheet_its_json_and_a_preview_per_clip(setup, capsys):
         "hero.walk.gif",
     ]
     description = json.loads(setup.json.read_text())
-    assert description["schema"] == "moskophoros.sheet/12"
+    assert description["schema"] == "moskophoros.sheet/13"
     assert description["maps"] == {
         "normal": {"file": "hero.normal.png"},
         "depth": None,
@@ -422,9 +431,9 @@ def test_each_captured_frame_is_reduced_before_the_next_is_loaded(
         events.append("load")
         return real_load(path)
 
-    def reduce(pixels, factor):
+    def reduce(pixels, factor, edges):
         events.append("reduce")
-        return real_reduce(pixels, factor)
+        return real_reduce(pixels, factor, edges)
 
     monkeypatch.setattr(imageops, "load_png", load)
     monkeypatch.setattr(imageops, "reduce_blocks", reduce)
@@ -591,9 +600,9 @@ def test_mode_reduces_each_captured_frame_before_the_next_is_loaded(
         events.append("load")
         return real_load(path)
 
-    def reduce(pixels, factor):
+    def reduce(pixels, factor, edges):
         events.append("reduce")
-        return real_reduce(pixels, factor)
+        return real_reduce(pixels, factor, edges)
 
     def plain(pixels, factor):
         raise AssertionError("plain ran under --reduce mode")
@@ -1055,7 +1064,7 @@ def test_a_bad_settings_file_is_a_usage_error(setup, capsys):
     bad.write_text("{}")
     status, _, err = run(capsys, setup.argv("--settings-from", str(bad)))
     assert status == 2
-    assert "is not a moskophoros.sheet/12 document" in err
+    assert "is not a moskophoros.sheet/13 document" in err
     assert setup.listing() == earlier
 
 
@@ -1189,3 +1198,102 @@ def test_the_script_s_alpha_refusals_are_backend_errors_publishing_nothing(
     assert "Blender's render phase exited with status 1" in err
     assert message in err
     assert setup.listing() == earlier
+
+
+# Edges and partial alpha (alpha design D-2, D-4, D-9, D-11, D-13)
+
+
+def rim_argv(setup, *options):
+    """A run at supersample 2, where the fake's rim gives partly covered
+    blocks on each frame's right half."""
+    return [
+        *["--once", "attack", "--supersample", "2", "--cell", "16x16", "--fps", "4"],
+        *options,
+        "--blender",
+        str(setup.fake),
+        str(setup.model),
+        str(setup.png),
+    ]
+
+
+def sheet_alpha(setup):
+    with Image.open(setup.png) as image:
+        return np.asarray(image)[..., 3]
+
+
+def test_soft_edges_with_default_previews_carry_and_blend_partial_alpha(setup, capsys):
+    setup.configure(pixels="rim")
+    assert run(capsys, rim_argv(setup, "--edges", "soft")) == (0, "", "")
+    description = json.loads(setup.json.read_text())
+    assert description["settings"]["style"] == PLAIN_STYLE | {"edges": "soft"}
+    alpha = sheet_alpha(setup)
+    # One surface of four is alpha 64, the block mean; whole blocks are 255,
+    # and cells no frame fills are empty.
+    assert set(np.unique(alpha)) == {0, 64, 255}
+    assert set(np.unique(alpha[:16, :16])) == {64, 255}
+    # The normal map's alpha is the colour's (alpha design D-11).
+    with Image.open(setup.out / "hero.normal.png") as image:
+        assert np.array_equal(np.asarray(image)[..., 3], alpha)
+    # The preview blends the partial pixels over its grey: (200, 40, 10) at
+    # alpha 64 is (146, 106, 98).
+    with Image.open(setup.walk_gif) as image:
+        rgb = np.asarray(image.convert("RGB"))[::4, ::4]
+    with Image.open(setup.png) as image:
+        cell = np.asarray(image)[:16, :16]
+    preview_cell = rgb[:16, :16]
+    partial = cell[..., 3] == 64
+    assert partial.any()
+    assert (preview_cell[partial] == (146, 106, 98)).all()
+    assert (preview_cell[cell[..., 3] == 255] == (200, 40, 10)).all()
+
+
+def test_hard_edges_keep_todays_outlines(setup, capsys):
+    setup.configure(pixels="rim")
+    assert run(capsys, rim_argv(setup)) == (0, "", "")
+    hard = sheet_alpha(setup)
+    assert set(np.unique(hard)) == {0, 255}
+    assert run(capsys, rim_argv(setup, "--edges", "soft")) == (0, "", "")
+    soft = sheet_alpha(setup)
+    # Hard drops the one-in-four blocks soft keeps at alpha 64.
+    assert np.array_equal(hard == 255, soft == 255)
+    assert ((hard == 0) & (soft == 64)).any()
+
+
+def _srgb_to_linear(byte):
+    c = byte / 255
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def _linear_to_byte(linear):
+    s = 12.92 * linear if linear <= 0.0031308 else 1.055 * linear ** (1 / 2.4) - 0.055
+    return min(255, int(np.floor(255 * s + 0.5)))
+
+
+def test_soft_edges_with_a_light_light_partial_pixels_then_blend_them(setup, capsys):
+    setup.configure(pixels="rim")
+    # Intensity 0 lights every surface by the ambient alone, 0.5.
+    light = ["--light", "0,0,40", "--light-intensity", "0", "--light-ambient", "0.5"]
+    assert run(capsys, rim_argv(setup, "--edges", "soft", *light)) == (0, "", "")
+    lit_gif = setup.out / "hero-lit.walk.gif"
+    with Image.open(lit_gif) as image:
+        rgb = np.asarray(image.convert("RGB"))[::4, ::4][:16, :16]
+    with Image.open(setup.png) as image:
+        cell = np.asarray(image)[:16, :16]
+    lit = tuple(_linear_to_byte(0.5 * _srgb_to_linear(c)) for c in (200, 40, 10))
+    blended = tuple((2 * (c * 64 + 128 * 191) + 255) // 510 for c in lit)
+    assert (rgb[cell[..., 3] == 64] == blended).all()
+    assert (rgb[cell[..., 3] == 255] == lit).all()
+
+
+def test_the_capture_jobs_are_the_same_under_hard_and_soft_edges(setup, capsys):
+    setup.configure(pixels="rim")
+    work = setup.tmp_path / "work"
+    jobs = []
+    for edges in ("hard", "soft"):
+        argv = rim_argv(setup, "--edges", edges, "--work-dir", str(work))
+        assert run(capsys, argv)[0] == 0
+        jobs.append({mode: (work / mode / "job.json").read_bytes() for mode in MODES})
+        shutil.rmtree(work)
+    assert jobs[0] == jobs[1]
+    digests = [hashlib.sha256(job["render"]).hexdigest() for job in jobs]
+    assert digests[0] == digests[1]

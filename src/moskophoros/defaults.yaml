@@ -11,6 +11,8 @@ frames: auto     # each clip's frame count, 1 or more; auto: by duration.
                  # A clips: mapping may give each clip its own
 palette: null    # a .hex, .gpl or .png palette, relative to the file; null: none
 materials: null  # a .yaml or .yml material library; null: none; needs a palette
+edges: hard      # hard: a pixel shows when half its block does, crisp outlines;
+                 # soft: its alpha is its block's mean alpha
 previews: true   # false: write no animated previews
 normals: true    # false: write no normal map (<stem>.normal.png)
 depth: false     # true: write the depth map (<stem>.depth.png)

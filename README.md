@@ -38,7 +38,7 @@ A run writes, beside each other:
   would, beside the flat one; the light is in sheet pixels from the ground
   point (x right, y up, z toward the viewer), `--light-intensity` and
   `--light-ambient` set its strength, and the sheet itself stays flat;
-- `hero.json`, the `moskophoros.sheet/10` description of every frame, the
+- `hero.json`, the `moskophoros.sheet/13` description of every frame, the
   settings and style used and a fingerprint of them, naming the maps;
 - `hero.<clip>.gif`, an animated preview of each clip in every direction,
   unless `--no-preview` is given.
@@ -62,6 +62,11 @@ the scale, cell and ground pixel are fixed rather than fitted again, and a
 new frame that does not fit the cell is an overflow error (exit 4). Only
 sheets from this version load; generate older ones again.
 `--reduce mode` keeps the most common colour in each supersampled block.
+The sheet has 8-bit alpha. `--edges hard`, the default, keeps outlines and
+cut-out edges crisp: a pixel shows when at least half its block shows a
+surface. `--edges soft` gives each pixel its block's mean alpha instead, so
+edges keep the partial transparency of the reduction; the maps copy the
+alpha, and the previews blend partial pixels over their grey.
 `--palette colours.hex` (also `.gpl` or `.png`) adds palette mapping: plain maps
 after averaging; mode maps before voting, so nearby shades pool their votes.
 An earlier sheet's palette is reused from its JSON without the original file;
@@ -131,8 +136,9 @@ clips:
   Idle: {frames: auto}   # by duration; null: take frames
 ```
 
-The cell, fps, frame count, palette, library, previews, normal and depth maps,
-light, shading and generated-ramp values can also come from YAML settings
+The cell, fps, frame count, palette, library, edges, previews, normal and
+depth maps, light, shading and generated-ramp values can also come from YAML
+settings
 files. `~/.config/moskophoros/config.yaml` (or
 `$XDG_CONFIG_HOME/moskophoros/config.yaml`) holds your own defaults, and
 `--config look.yaml`, repeatable, applies a file as if its values were given
@@ -144,6 +150,7 @@ cell: 48x48        # or auto
 fps: 12
 palette: ~/palettes/vince-144.gpl
 materials: robot-library.yaml
+edges: soft        # or hard, the default
 previews: false
 normals: true      # false: write no normal map
 depth: false       # true: write the depth map

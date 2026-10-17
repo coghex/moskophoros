@@ -19,6 +19,12 @@ _SRGB_LINEAR = np.where(
 )
 _SRGB_LINEAR.setflags(write=False)
 _PALETTE_BATCH = 65536
+# How a pixel takes its alpha from its block (alpha design D-4, D-9); the
+# first is the default.
+EDGES = ("hard", "soft")
+# A sample's composite alpha is in units of 1/65535: an 8-bit alpha `a` is
+# `257 · a`, so 255 is the whole 65535.
+_UNIT = 65535
 
 
 def _oklab(rgb):
@@ -110,44 +116,99 @@ def load_png(path):
     return pixels
 
 
-def reduce_blocks(pixels, factor):
+def block_alpha(alpha, factor, edges):
+    """Each `s×s` block's alpha byte: the one coverage decision for its output
+    pixel (alpha design, *Stylize: numerical reference*, step 1; D-2, D-4).
+
+    `alpha` is an `(H·s)×(W·s)` array of 8-bit alphas. A sample is a surface
+    where its alpha is above 0, and its composite alpha `aᵢ` is its alpha in
+    units of 1/65535, `257 · alpha`. With `n = s²`, `m` surface samples and
+    `S = Σ aᵢ`, in exact integers:
+
+    - `hard`: the pixel exists when `2m ≥ n`, with `D = 65535 · m`, so its
+      alpha is the mean alpha of the surfaces it shows;
+    - `soft`: the pixel exists when `S > 0`, with `D = 65535 · n`, so its
+      alpha is its block's mean alpha.
+
+    Its alpha is `(510 · S + D) // (2 · D)`, that is `floor(255 · S / D + ½)`,
+    and 0 where it does not exist. Returns a new `H×W` `uint8` array.
+
+    Raises `ValueError` for an `edges` other than `EDGES`, and the errors
+    `reduce_blocks` raises for a malformed plane or factor.
+    """
+    if not isinstance(alpha, np.ndarray):
+        raise TypeError(f"alpha must be a NumPy array, not {type(alpha).__name__}")
+    if alpha.dtype != np.uint8:
+        raise TypeError(f"alpha must be uint8, not {alpha.dtype}")
+    if alpha.ndim != 2:
+        raise ValueError(f"alpha must have shape (height, width), not {alpha.shape}")
+    factor = _check_factor(alpha.shape, factor)
+    height, width = alpha.shape
+    return _alpha_bytes(_by_block(alpha, factor), edges).reshape(
+        height // factor, width // factor
+    )
+
+
+def _alpha_bytes(alpha, edges):
+    """`block_alpha` for alphas given as one row of `s²` values per block."""
+    _check_edges(edges)
+    n = alpha.shape[1]
+    surfaces = (alpha > 0).sum(axis=1)
+    total = 257 * alpha.sum(axis=1)
+    if edges == "hard":
+        exists = 2 * surfaces >= n
+        denominator = _UNIT * surfaces
+    else:
+        exists = total > 0
+        denominator = np.full_like(total, _UNIT * n)
+    # The placeholder 1 where the pixel does not exist is discarded below.
+    denominator = np.where(exists, denominator, 1)
+    result = (510 * total + denominator) // (2 * denominator)
+    return np.where(exists, result, 0).astype(np.uint8)
+
+
+def _check_edges(edges):
+    if edges not in EDGES:
+        raise ValueError(f"edges must be one of {', '.join(EDGES)}, not {edges!r}")
+
+
+def reduce_blocks(pixels, factor, edges=EDGES[0]):
     """Reduce an `(H·s)×(W·s)` RGBA image by `s×s` blocks to `H×W`.
 
-    For each block, coverage is its mean alpha over 255. Below 0.5 the output
-    pixel is `(0, 0, 0, 0)`; otherwise its RGB is the alpha-weighted mean
-    `Σ(aᵢ·cᵢ) / Σaᵢ` of the block's RGB, rounded half up, and its alpha is
-    255. The arithmetic is exact integer arithmetic. The input is not changed.
+    Each output pixel's alpha is its block's `block_alpha` under `edges`; a
+    pixel of alpha 0 is `(0, 0, 0, 0)`. Otherwise its RGB is the
+    alpha-weighted mean `Σ(aᵢ·cᵢ) / Σaᵢ` of the block's RGB, rounded half
+    up. The arithmetic is exact integer arithmetic. The input is not changed.
 
     Raises `TypeError` for a non-array, a non-`uint8` array or a factor that is
     not an integer, and `ValueError` for a malformed shape, a factor below 1,
-    or dimensions that are not multiples of the factor.
+    dimensions that are not multiples of the factor, or an unknown `edges`.
     """
     blocks = _blocks(pixels, factor)
     rows, factor, columns, _, _ = blocks.shape
     alpha = blocks[..., 3]
     alpha_sum = alpha.sum(axis=(1, 3))
     weighted = (blocks[..., :3] * alpha[..., np.newaxis]).sum(axis=(1, 3))
-    # Coverage alpha_sum / (255·s²) is below 0.5 exactly when this holds.
-    transparent = _transparent(alpha_sum, factor)
+    alphas = block_alpha(pixels[..., 3], factor, edges)
+    kept = alphas > 0
     # round(w / a) half up is floor((2w + a) / 2a); a is positive wherever the
     # pixel is kept, and the placeholder 1 elsewhere is discarded below.
-    divisor = np.where(transparent, 1, alpha_sum)[..., np.newaxis]
+    divisor = np.where(kept, alpha_sum, 1)[..., np.newaxis]
     rgb = (2 * weighted + divisor) // (2 * divisor)
     result = np.zeros((rows, columns, 4), dtype=np.uint8)
-    opaque = ~transparent
-    result[opaque, :3] = rgb[opaque]
-    result[opaque, 3] = 255
+    result[kept, :3] = rgb[kept]
+    result[kept, 3] = alphas[kept]
     return result
 
 
-def reduce_blocks_mode(pixels, factor):
+def reduce_blocks_mode(pixels, factor, edges=EDGES[0]):
     """Reduce an `(H·s)×(W·s)` RGBA image by `s×s` blocks to `H×W`, keeping
     each block's most common colour.
 
-    Coverage is `reduce_blocks`'s: below 0.5 the output pixel is
+    Each output pixel's alpha is `reduce_blocks`'s, and a pixel of alpha 0 is
     `(0, 0, 0, 0)`. Otherwise each pixel votes for its exact RGB with its
     alpha as the weight, so a transparent pixel casts no vote, and the colour
-    with the most votes wins, with alpha 255. A tie goes to the tied colour
+    with the most votes wins. A tie goes to the tied colour
     nearest the block's alpha-weighted mean RGB by squared distance, compared
     exactly against the mean as a fraction, then to the smallest packed
     `0xRRGGBB`. The arithmetic is exact integer arithmetic. The input is not
@@ -155,6 +216,7 @@ def reduce_blocks_mode(pixels, factor):
 
     Raises the errors `reduce_blocks` raises, for the same problems.
     """
+    _check_edges(edges)
     blocks = _blocks(pixels, factor)
     rows, factor, columns, _, _ = blocks.shape
     count = rows * columns
@@ -192,9 +254,10 @@ def reduce_blocks_mode(pixels, factor):
         ranked = np.lexsort((colour, distance, -votes, owner))
         first = ranked[np.flatnonzero(np.diff(owner[ranked], prepend=-1))]
         result[owner[first], :3] = channels[first]
-        result[owner[first], 3] = 255
 
-    result[_transparent(alpha_sum, factor)] = 0
+    alphas = _alpha_bytes(alpha, edges)
+    result[:, 3] = alphas
+    result[alphas == 0] = 0
     return result.reshape(rows, columns, 4)
 
 
@@ -215,7 +278,7 @@ def reduce_normal_depth(normal, depth, covered, factor, pixels_per_meter):
     `depth` an `(H·s, W·s)` array of depths in meters toward the viewer from
     the ground point, NaN where no surface was sampled, as the command
     decodes them (`sampling.NORMAL`, `sampling.DEPTH`). `covered` is the
-    reduced colour's coverage, an `(H, W)` boolean array: its alpha 255.
+    reduced colour's coverage, an `(H, W)` boolean array: its alpha above 0.
 
     Returns `(normals, depths)`, new `float64` arrays of shapes `(H, W, 3)`
     and `(H, W)`. For a covered pixel:
@@ -351,14 +414,15 @@ def light_factors(normal_bytes, depth_codes, ground_px, position, intensity, amb
 def light_pixels(
     pixels, normal_bytes, depth_codes, ground_px, position, intensity, ambient
 ):
-    """A cell lit by a point light: each covered pixel's (alpha 255) R, G and
-    B decoded with the fixed sRGB table, multiplied by its `light_factors`,
-    and encoded again as `min(255, floor(255 · s + ½))` with
+    """A cell lit by a point light: each covered pixel's (alpha above 0) R, G
+    and B decoded with the fixed sRGB table, multiplied by its
+    `light_factors`, and encoded again as `min(255, floor(255 · s + ½))` with
     `s = 12.92 · x` for `x ≤ 0.0031308`, else `1.055 · x^(1/2.4) − 0.055`.
-    Alpha is unchanged and every other pixel is `(0, 0, 0, 0)`. Returns a
-    new `uint8` RGBA array; the inputs are not changed."""
+    Alpha is unchanged, partial alpha included (alpha design D-11, D-13), and
+    every other pixel is `(0, 0, 0, 0)`. Returns a new `uint8` RGBA array;
+    the inputs are not changed."""
     pixels = np.asarray(pixels)
-    covered = pixels[..., 3] == 255
+    covered = pixels[..., 3] > 0
     factors = light_factors(
         normal_bytes, depth_codes, ground_px, position, intensity, ambient
     )
@@ -371,7 +435,7 @@ def light_pixels(
     rgb = np.minimum(255, np.floor(255 * encoded + 0.5)).astype(np.uint8)
     lit = np.zeros(pixels.shape, dtype=np.uint8)
     lit[covered, :3] = rgb[covered]
-    lit[covered, 3] = 255
+    lit[covered, 3] = pixels[covered, 3]
     return lit
 
 
@@ -388,6 +452,7 @@ def map_ramps(
     by_mode,
     pool=None,
     ranges=None,
+    edges=EDGES[0],
 ):
     """Give each block of a supersampled frame its winning material's ramp
     entry, following design §Stylize (Material ramps).
@@ -406,17 +471,20 @@ def map_ramps(
 
     Returns `(result, mapped)`: `mapped`, an `H×W` boolean array, marks the
     blocks that took a ramp entry, and `result`, `H×W×4`, holds that entry's
-    colour with alpha 255 there and `(0, 0, 0, 0)` elsewhere. Every other
-    block, including a block of no vote and one whose winner has no ramp, is
-    left to the caller's ordinary look; coverage is `reduce_blocks`'s.
+    colour there, with the block's `block_alpha` under `edges`, and
+    `(0, 0, 0, 0)` elsewhere. Only a block whose alpha is above 0 takes an
+    entry. Every other block, including a block of no vote and one whose
+    winner has no ramp, is left to the caller's ordinary look, whose alpha
+    is the same.
 
     Coverage, identity votes, shade sums, bands and `by_mode` tie comparisons
     are exact integer arithmetic. Nothing is changed in place.
 
-    Raises `TypeError` and `ValueError` for malformed arguments, as
-    `reduce_blocks` does.
+    Raises `TypeError` and `ValueError` for malformed arguments, an unknown
+    `edges` included, as `reduce_blocks` does.
     """
     factor = _check_image(pixels, factor)
+    _check_edges(edges)
     palette = np.asarray(validate_colors(colors, source="palette"), dtype=np.uint8)
     height, width = pixels.shape[:2]
     for name, array in (("identity", identity), ("shade", shade)):
@@ -466,7 +534,8 @@ def map_ramps(
 
     # Identity: each pixel with an identity votes with its colour alpha.
     voting = (alpha > 0) & (ident >= 0)
-    covered = ~_transparent(alpha.sum(axis=1), factor)
+    alphas = _alpha_bytes(alpha, edges)
+    covered = alphas > 0
     if voting.any():
         block = np.broadcast_to(np.arange(count)[:, np.newaxis], ident.shape)
         keys = block[voting] * identities + ident[voting]
@@ -498,7 +567,7 @@ def map_ramps(
                 by_mode,
             )
             result[chosen, :3] = palette[entries]
-            result[chosen, 3] = 255
+            result[chosen, 3] = alphas[chosen]
             mapped[chosen] = True
     return result.reshape(rows, columns, 4), mapped.reshape(rows, columns)
 
@@ -579,14 +648,20 @@ def _check_image(pixels, factor):
         raise ValueError(
             f"pixels must have shape (height, width, 4), not {pixels.shape}"
         )
+    return _check_factor(pixels.shape, factor)
+
+
+def _check_factor(shape, factor):
+    """Check that an image of `shape` divides into `factor`×`factor` blocks;
+    return `factor` as an `int`."""
     if isinstance(factor, bool) or not isinstance(factor, int | np.integer):
         raise TypeError(f"factor must be an integer, not {factor!r}")
     factor = int(factor)
     if factor < 1:
         raise ValueError(f"factor must be at least 1, not {factor}")
-    height, width = pixels.shape[:2]
+    height, width = shape[:2]
     if height == 0 or width == 0:
-        raise ValueError(f"pixels must not be empty, but have shape {pixels.shape}")
+        raise ValueError(f"pixels must not be empty, but have shape {shape}")
     if height % factor or width % factor:
         raise ValueError(
             f"a {width}x{height} image does not divide into {factor}x{factor} blocks"
@@ -614,8 +689,3 @@ def _by_block(plane, factor):
         .transpose(0, 2, 1, 3)
         .reshape(-1, factor * factor)
     )
-
-
-def _transparent(alpha_sum, factor):
-    """Where a block's coverage, its alpha sum over `255·s²`, is below 0.5."""
-    return 2 * alpha_sum < 255 * factor * factor

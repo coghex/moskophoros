@@ -27,6 +27,7 @@ from types import MappingProxyType
 
 from moskophoros import yamlfile
 from moskophoros.capture.backend import MAX_AO_SAMPLES
+from moskophoros.imageops import EDGES
 
 VERSION = 1
 DEFAULTS_FILE = "defaults.yaml"
@@ -280,6 +281,13 @@ def _check_clip_frames(value):
         ) from None
 
 
+def _check_edges(value):
+    """One of `EDGES`, the shipped default first (alpha design D-4, D-9)."""
+    if isinstance(value, str) and value in EDGES:
+        return value
+    raise _Bad(f"expected {' or '.join(EDGES)}, got {_shown(value)}")
+
+
 def _check_previews(value):
     if not isinstance(value, bool):
         raise _Bad(f"expected true or false, got {_shown(value)}")
@@ -321,6 +329,14 @@ SCHEMA = MappingProxyType(
             None,
             _check_path,
             path=True,
+        ),
+        "edges": Setting(
+            "how a pixel's alpha comes from its supersampled block: hard, a "
+            "pixel shows when at least half its block shows a surface, at "
+            "their mean alpha; soft, its alpha is the block's mean alpha",
+            None,
+            EDGES[0],
+            _check_edges,
         ),
         "previews": Setting(
             "whether the animated previews are written", None, True, _check_previews

@@ -236,9 +236,9 @@ def test_the_command_loads_frames_lazily_and_releases_each_before_the_next(
         held[frame] += [weakref.ref(normal), weakref.ref(depth)]
         return normal, depth
 
-    def reduce_blocks(pixels, factor):
+    def reduce_blocks(pixels, factor, edges):
         events.append("reduce")
-        return real_reduce(pixels, factor)
+        return real_reduce(pixels, factor, edges)
 
     def passthrough(frames):
         # The reduced frames are all held here, and keep no supersampled array:

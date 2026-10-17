@@ -51,6 +51,7 @@ moskophoros [options] <infile.glb> <outfile.png>
 | `--root-motion MODE` | `error` | `error` or `keep`. See [Root motion](#root-motion). |
 | `--supersample N` | `8` | Capture resolution multiplier, 1 to 16. |
 | `--reduce NAME` | `plain` | How each supersampled block becomes one pixel: `plain`, the alpha-weighted mean, or `mode`, the most common colour. See [Stylize](#stylize). |
+| `--edges RULE` | `hard` | How a pixel's alpha comes from its supersampled block: `hard`, a pixel shows when at least half its block shows a surface, at their mean alpha, so outlines stay crisp; or `soft`, its alpha is the block's mean alpha, so outlines and cut-out edges keep the partial alpha reducing the block gives (alpha design D-4, D-9). See [Stylize](#stylize). A [settings file](#settings-files) may set it. |
 | `--palette FILE` | none | Map colours to an ordered `.hex`, `.gpl` or `.png` palette. See [Stylize](#stylize). A [settings file](#settings-files) may set it. |
 | `--no-palette` | off | Use no palette, dropping a reused or configured one; cannot accompany `--palette`. |
 | `--materials FILE` | none | Draw each named material from the ramps of a YAML material library, a `.yaml` or `.yml` file, on the palette in force. Needs a palette. See [Material libraries](#material-libraries). A [settings file](#settings-files) may set it. |
@@ -64,7 +65,7 @@ moskophoros [options] <infile.glb> <outfile.png>
 | `--ramp-hue-shift DEG` | `-12` | How far each shade of a generated ramp turns the hue, in degrees, finite, −180 to 180. |
 | `--ramp-fade F` | `0.3` | How much chroma a generated ramp loses by its darkest shade, finite, 0 to 1. |
 | `--frames N` | `auto` | How many frames each clip is sampled to, a whole number 1 or more, retimed so every frame lasts `1/fps`; `auto` samples by duration. A clip's own count, set in a [settings file](#settings-files), beats it. See [Clips and sampling](#clips-and-sampling). |
-| `--settings-from FILE` | none | Load every recorded setting of an earlier `moskophoros.sheet/12` sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
+| `--settings-from FILE` | none | Load every recorded setting of an earlier `moskophoros.sheet/13` sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
 | `--config FILE` | none | Repeatable. Read settings from a YAML file; later files win, and its values act as the options would. See [Settings files](#settings-files). |
 | `--no-user-config` | off | Skip the user settings file. |
 | `--preview` | on | Write the animated previews, also over a sheet or settings file without them; cannot accompany `--no-preview`. |
@@ -132,11 +133,11 @@ requires choosing a new or empty directory (owner decision 2026-09-30).
 
 ### Settings files
 
-The cell, `fps`, the palette, the material library, whether previews and
-the normal and depth maps are written, and the preview light are also
-settings, which YAML settings files may
+The cell, `fps`, the palette, the material library, the edges rule,
+whether previews and the normal and depth maps are written, and the preview
+light are also settings, which YAML settings files may
 set (owner decisions 2026-10-11, settings design D-2, D-5, D-8, D-14, D-17,
-D-22, D-28, D-30 and D-32; lighting sheet design D-18). Each is validated exactly as its option is. One schema table
+D-22, D-28, D-30 and D-32; lighting sheet design D-18; alpha design D-9). Each is validated exactly as its option is. One schema table
 in `settings.py` gives each setting's type, unit, default and validation
 rule, and the packaged `defaults.yaml` gives every setting its shipped
 default; a test keeps the two in agreement.
@@ -149,6 +150,7 @@ default; a test keeps the two in agreement.
 | `clips.NAME.frames` | none: files only | none | a whole number 1 or more, `auto`, or `null` to take `frames` |
 | `palette` | `--palette FILE`, `--no-palette` | `null` | a palette file path, or `null` for none |
 | `materials` | `--materials FILE`, `--no-materials` | `null` | a material library path, or `null` for none |
+| `edges` | `--edges RULE` | `hard` | `hard` or `soft` |
 | `previews` | `--preview`, `--no-preview` | `true` | `true` or `false` |
 | `normals` | `--normals`, `--no-normals` | `true` | `true` or `false` |
 | `depth` | `--depth`, `--no-depth` | `false` | `true` or `false` |
@@ -243,6 +245,7 @@ cell: 48x48             # or auto
 fps: 12
 palette: ~/palettes/vince-144.gpl
 materials: robot-library.yaml   # relative to this file
+edges: hard             # soft: a pixel takes its block's mean alpha
 previews: true          # false: write no animated previews
 normals: true           # false: write no normal map
 depth: false            # true: write the depth map
@@ -279,6 +282,10 @@ decision 2026-10-01):
   [input error](#input-contract).
 - A single-value option given more than once; the last value does not win.
 - A `--reduce` value other than `plain` or `mode` (owner decision 2026-10-04).
+- An `--edges` value other than `hard` or `soft`; in a settings file, an
+  `edges` that is not one of those two strings, named with the file, the key
+  and its line; in a reused sheet, a `settings.style.edges` that is missing
+  or not one of them (alpha design D-9).
 - `--palette` together with `--no-palette`, or either option repeated.
 - `--materials` together with `--no-materials`, or either option repeated.
 - `--preview` together with `--no-preview`, or either option repeated.
@@ -614,7 +621,8 @@ required when checking.
 Fitting bounds only a subject's extent on screen, never its depth, so a valid
 fit can hold depths the depth map cannot encode (lighting sheet design R-1).
 When the depth map is written, or previews are on and a light is placed
-(the lit previews use the encoded depth), a covered pixel whose reduced depth
+(the lit previews use the encoded depth), a covered pixel, any whose alpha
+is above 0 (alpha design D-11), whose reduced depth
 lies outside −2047.9375 to +2047.9375 sheet pixels is also an overflow
 (exit 4), raised before anything is published (D-21, D-24). The two share
 one check and one message. The message gives the
@@ -638,7 +646,8 @@ settings design D-15, D-16, D-19 and D-28):
 - the preview light, `settings.light`
 - the shading values, `settings.shade`: the ambient occlusion distance and
   samples, the occlusion and convexity weights, and the shade range
-- the style: its reduction and inline palette, `settings.style.reduce` and
+- the style: its reduction, edges rule and inline palette,
+  `settings.style.reduce`, `settings.style.edges` and
   `settings.style.palette`, and its inline material library,
   `settings.style.materials`
 - the clip selection and its one-shot marks, `settings.clips`
@@ -646,7 +655,8 @@ settings design D-15, D-16, D-19 and D-28):
 This makes scale, cell and ground pixel fixed. Options given explicitly, and
 `--config` values, override the reused values; the user file and the shipped
 defaults never do. An explicit `--reduce` replaces the reused reduction,
-retaining the palette. `--palette FILE` replaces the reused palette;
+retaining the palette, and an explicit `--edges`, or a `--config` file's
+`edges`, replaces the reused edges rule (alpha design D-9). `--palette FILE` replaces the reused palette;
 `--no-palette` drops it. Reuse applies the recorded ordered colours without
 opening the original palette file and keeps its record unchanged. `--preview`
 writes previews over a sheet made without them, and `--no-preview` skips them
@@ -683,9 +693,10 @@ from its recorded properties; the user file sits below the loaded sheet, so it
 never changes a loaded sheet's ramps (material styling design D-33). The
 global formula reloads from `settings.ramp`.
 
-Only the current sheet schema, `moskophoros.sheet/12`, loads (owner decision
-2026-10-11, settings design D-24). A sheet of any other schema, `/1` to `/11`
-included, is a usage error naming its schema and the supported one. A file
+Only the current sheet schema, `moskophoros.sheet/13`, loads (owner decision
+2026-10-11, settings design D-24). A sheet of any other schema, `/1` to `/12`
+included, is a usage error naming its schema and the supported one. Nothing
+defaults a missing `settings.style.edges`. A file
 that is unreadable, or not a sheet document, is a usage error.
 
 The reused library follows the palette's pattern (owner decisions 2026-10-07,
@@ -732,7 +743,8 @@ object with exactly `ao_distance_m`, `ao_samples`, `occlusion_weight`,
 `convexity_weight` and `range`, each a value its option would accept:
 numbers, never booleans, and `ao_samples` an integer from 1 to 128.
 `style` must be an object with exactly `reduce`, a value
-`--reduce` accepts, `palette`, either `null` or an object with exactly
+`--reduce` accepts, `edges`, a value `--edges` accepts, `palette`, either
+`null` or an object with exactly
 `source`, `sha256` and `colors`, `materials`, either `null` or an object with
 exactly `source`, `sha256`, `ramps`, `default` and `materials`, and the
 library's own `shade` after `default` when it gave one. The source is a nonempty base filename, never a path; the
@@ -750,7 +762,7 @@ it. `ramp` must hold exactly `lightness_step`, `hue_shift_deg` and
 `shade.range` is an array of exactly two JSON integers, never booleans or
 floating-point numbers, with `0 ≤ lo < hi ≤ 255`; it is validated even when
 `materials` is `null`. All reused fields are validated before any
-override, including `--reduce`, `--palette`, `--no-palette`, `--materials`,
+override, including `--reduce`, `--edges`, `--palette`, `--no-palette`, `--materials`,
 `--no-materials`, `--clip`, `--once`, `--preview`, `--no-preview`,
 `--normals`, `--no-normals`, `--depth`, `--no-depth`, `--light`,
 `--no-light`, `--light-intensity`, `--light-ambient` and the shading
@@ -1308,17 +1320,41 @@ it.
 ### Stylize
 
 Each supersampled frame is reduced by `s×s` blocks, by the reduction
-`--reduce` names. Both reductions decide coverage the same way, for each
-output pixel:
+`--reduce` names. **Coverage and alpha are decided once per output pixel**,
+by the edges rule `--edges` names, before and apart from any colour rule
+(alpha design, *Stylize: numerical reference*, step 1; D-2, D-4, D-9). The
+reductions, the palette and the material ramps then only choose the colour;
+none applies a coverage cut of its own, and the pixel keeps this alpha
+whatever its colour, a palette never snapping it.
 
-- **coverage** is the mean alpha of its block, from 0 to 1
-- if coverage is below 0.5, the pixel is `(0, 0, 0, 0)`; exactly 0.5 is kept
+- A supersample is a **surface sample** where its alpha is above 0. Its
+  composite alpha `aᵢ` is in units of 1/65535: its 8-bit alpha times 257,
+  so an opaque surface is 65535. Captures are binary until translucency
+  (ALPHA-4), so today `aᵢ` is 65535 on a surface and 0 elsewhere.
+- For a block of `n = s²` samples with `m` surface samples and
+  `S = Σ aᵢ`, in exact integers:
+  - **`hard`** (the default): the pixel exists when `2m ≥ n`, at least half
+    its block showing a surface, with `D = 65535 · m`: its alpha is the mean
+    alpha of the surfaces it shows, so outlines and cut-out edges stay as
+    crisp as an opaque model's, and an opaque model's kept pixels are 255;
+  - **`soft`**: the pixel exists when `S > 0`, with `D = 65535 · n`: its
+    alpha is its block's mean alpha, so outlines and cut-out edges keep the
+    partial transparency reducing the block gives.
+- The alpha byte is `α = (510 · S + D) // (2 · D)`, that is
+  `floor(255 · S / D + ½)`, half up. A pixel that does not exist, or whose
+  `α` is 0, is `(0, 0, 0, 0)`. The numerator reaches 8,573,026,560 at
+  supersample 16, beyond 32 bits, so the arithmetic is 64-bit.
+- For example, at supersample 2, one surface sample of four is transparent
+  under `hard` and 64 under `soft`, and two are 255 and 128.
+
+It is `imageops.block_alpha`, which every reduction and the material ramps
+call.
 
 **Plain** (`--reduce plain`, the default): a kept pixel's color is the
-alpha-weighted mean of the block's RGB, rounded half up, with alpha 255.
+alpha-weighted mean of the block's RGB, rounded half up.
 
 **Most common colour** (`--reduce mode`, owner decisions 2026-10-04): a kept
-pixel takes the colour with the most votes, with alpha 255.
+pixel takes the colour with the most votes.
 
 - Each pixel of the block votes for its exact RGB with a weight equal to its
   alpha, so a pixel with alpha 0 casts no vote.
@@ -1328,7 +1364,7 @@ pixel takes the colour with the most votes, with alpha 255.
 - A tie at equal distance goes to the smallest packed `0xRRGGBB` value.
 
 Both reductions use exact integer arithmetic and are fully determined. The
-transparent pixels are the same under either. A textured surface, or a
+alpha, and so the transparent pixels, are the same under either. A textured surface, or a
 ramp's bands, can give a block nearly as many colours as pixels, so the vote
 can fall to the tie-break; that is accepted, and the owner judges the look
 (vision V-12). Future style passes replace or extend these (vision,
@@ -1348,9 +1384,11 @@ block and a transparent one can have some; the rules below also define a
 kept pixel with none.
 
 - *Coverage:* a map pixel exists exactly where the reduced colour's alpha is
-  255, under either reduction, with or without a palette or a library. A
-  transparent colour pixel has no surface in the maps, whatever its block
-  holds.
+  above 0, a partly transparent pixel included, under either edges rule and
+  either reduction, with or without a palette or a library (alpha design
+  D-11). A transparent colour pixel has no surface in the maps, whatever its
+  block holds. The map surface of a sample is the surface it shows, and
+  normal and depth reduce over those samples as below, unchanged.
 - *Normal:* a covered pixel's normal is the sum of the unit normals of every
   surface sample in its `s×s` block, renormalised to unit length, whatever
   material each sample shows, and whatever the reduction, palette or library.
@@ -1698,9 +1736,10 @@ materials) always takes the ordinary look.
 **Mapping a block.** For each `s×s` block, every weight is the colour
 buffer's alpha, as in the reductions above:
 
-1. **Coverage** is decided exactly as above, from the colour buffer's alpha.
-   Transparent blocks stay `(0, 0, 0, 0)`; a pixel with colour alpha but
-   background identity counts towards coverage and casts no vote.
+1. **Coverage and alpha** are decided exactly as above, by the edges rule,
+   from the colour buffer's alpha. Transparent blocks stay `(0, 0, 0, 0)`; a
+   pixel with colour alpha but background identity counts towards coverage
+   and casts no vote.
 2. **Identity.** Each pixel with an identity votes for it with its colour
    alpha. Materials sharing a name pool their votes as one identity (D-18); the
    no-identity class is one candidate; background pixels cast no vote. The most
@@ -1726,7 +1765,7 @@ buffer's alpha, as in the reductions above:
      `|2·N·W − (2·N·lo + (2k + 1)·L)·A|` (scaled by `2·N·A`), minimised over
      the entry's occurrences. A tie at equal distance goes to the smaller
      palette index.
-   - The output alpha is 255.
+   - The output alpha is the block's, from step 1.
 4. **Otherwise** (no-identity, `"ordinary"`, unmapped without a default, or no
    vote) the block takes the existing look for the chosen reduction and
    palette over the whole block, including losing identities and background
@@ -1819,12 +1858,13 @@ through unchanged, their normal and depth maps included.
 beside the sheet unless `normals` is false: an 8-bit RGBA PNG written by
 Pillow with no text or time chunks, exactly the sheet's size and in its
 layout, the same cells, frames and positions. Each pixel the colour sheet
-covers (alpha 255) holds that pixel's reduced normal ([Normal and depth
+covers (alpha above 0) holds that pixel's reduced normal ([Normal and depth
 maps](#normal-and-depth-maps)), in the frame's camera space (+X screen
 right, +Y screen up, +Z toward the viewer), encoded per component as
-`floor(255 · (n + 1) / 2 + ½)`, with alpha 255: a pixel facing the viewer
-is `(128, 128, 255, 255)`. Every pixel transparent in the colour sheet is
-`(0, 0, 0, 0)`, so the two alphas are identical. It is published
+`floor(255 · (n + 1) / 2 + ½)`, its direction never blended, with the
+colour's alpha `α` (alpha design D-11): an opaque pixel facing the viewer is
+`(128, 128, 255, 255)`. Every pixel transparent in the colour sheet is
+`(0, 0, 0, 0)`, so the two alphas are identical, partial alpha included. It is published
 all-or-nothing with the sheet, JSON and previews, rolled back with them, and
 named in an output error (exit 6) when it cannot be written. A game decodes
 a normal as `2 · byte / 255 − 1` per component and renormalises it.
@@ -1832,8 +1872,8 @@ a normal as `2 · byte / 255 − 1` per component and renormalises it.
 **Depth map** (lighting sheet design D-3, D-10, D-17, D-21), `<stem>.depth.png`
 beside the sheet when `depth` is true (off by default): a 16-bit greyscale
 PNG written by Pillow with no text or time chunks, exactly the sheet's size
-and in its layout. Each pixel the colour sheet covers (alpha 255) holds
-`32768 + floor(16 · depth + ½)`, where `depth` is the pixel's reduced depth
+and in its layout. Each pixel the colour sheet covers (alpha above 0, a
+partly transparent one included) holds `32768 + floor(16 · depth + ½)`, where `depth` is the pixel's reduced depth
 ([Normal and depth maps](#normal-and-depth-maps)) in sheet pixels, toward
 the viewer from the plane through the ground point that faces the camera:
 a surface in front of that plane reads above 32768 and one behind it below.
@@ -1845,11 +1885,11 @@ game recovers `depth = (code − 32768) / 16` and, with the pixel's position,
 published with the other outputs, rolled back with them, and named in an
 output error (exit 6) when it cannot be written.
 
-**JSON (`moskophoros.sheet/12`).**
+**JSON (`moskophoros.sheet/13`).**
 
 ```json
 {
-  "schema": "moskophoros.sheet/12",
+  "schema": "moskophoros.sheet/13",
   "generator": {
     "tool": "moskophoros", "version": "0.1.0",
     "python": "3.x.y", "numpy": "x.y.z", "pillow": "x.y.z",
@@ -1885,7 +1925,8 @@ output error (exit 6) when it cannot be written.
                "range": [84, 191] },
     "ramp": { "lightness_step": 0.12, "hue_shift_deg": -12.0,
               "chroma_fade": 0.3 },
-    "style": { "reduce": "plain", "palette": null, "materials": null },
+    "style": { "reduce": "plain", "edges": "hard", "palette": null,
+               "materials": null },
     "clips": [ { "name": "walk", "loop": true, "frames": null },
                { "name": "attack", "loop": false, "frames": null } ]
   },
@@ -1908,7 +1949,8 @@ output error (exit 6) when it cannot be written.
 - `frames` lists every frame, in sheet order. A frame's address is `subject`,
   `variant`, `clip`, `direction` and `time_s` (V-9).
 - `settings.style` records the look, in this order: `reduce`, the `--reduce`
-  value; `palette`, either `null` or an ordered object with `source` (the
+  value; `edges`, the edges rule in force, `hard` or `soft`, required and
+  inside the fingerprint (alpha design D-9); `palette`, either `null` or an ordered object with `source` (the
   palette file's base filename), `sha256` (SHA-256 of its bytes), and `colors`
   (ordered canonical lowercase `#rrggbb` strings); `materials`, either `null`
   or an object with `source` (the library file's base filename), `sha256`
@@ -1977,8 +2019,9 @@ output error (exit 6) when it cannot be written.
   `moskophoros.sheet/10` had no `settings.ramp`, generated ramp records or
   library `shade`; `moskophoros.sheet/11` had Workbench's lit colour,
   recorded `generator.renderer` `"workbench"` and `generator.studio_light`,
-  and had no `generator.color`; [reuse](#scale-and-ground-point) loads only
-  `/12` (settings design D-24). The normal and depth capture adds no fixed
+  and had no `generator.color`; `moskophoros.sheet/12` had no
+  `settings.style.edges`, and its pixels' alpha was only 0 or 255;
+  [reuse](#scale-and-ground-point) loads only `/13` (settings design D-24). The normal and depth capture adds no fixed
   parameter to `generator.shade` (lighting sheet design D-26).
 - `generator` records this tool, its Python and libraries, and what the
   render result's `backend` reports: the Blender version, `renderer`
@@ -2023,10 +2066,18 @@ side in index order, packed with no gap between cells (owner decision
 2026-10-01):
 
 - scaled 4× with nearest-neighbor
-- in exact colors when a frame has at most 256 of them; otherwise reduced to
-  256 without dithering, with a warning naming the clip (owner decision
-  2026-10-01)
-- on a solid `#808080` background
+- each pixel blended over a solid `#808080` background in 8-bit sRGB
+  straight alpha, as an image viewer shows a PNG (alpha design D-13): each
+  channel is `floor((c · α + 128 · (255 − α)) / 255 + ½)`, with `c` the
+  pixel's 8-bit channel and `α` its alpha, in exact integers. It is exact at
+  `α` 0 and 255, so a transparent pixel is the grey, an opaque one keeps its
+  colour, and a preview of opaque frames is the same bytes as before
+  blending. For example, `(255, 0, 64)` at `α = 191` previews as
+  `(223, 32, 80)`, and `200` at `α = 100` as `156`.
+  (`export.blend_over_background`)
+- in exact colors when a frame, blends included, has at most 256 of them;
+  otherwise reduced to 256 without dithering, with a warning naming the clip
+  (owner decision 2026-10-01)
 - each frame lasting the clip's frame duration, rounded to the nearest 10 ms
   and at least 20 ms
 - looping forever; one-shot clips hold their last frame for an extra 500 ms
@@ -2038,16 +2089,22 @@ preview wider than 65,535 pixels, or any frame delay over 655,350 ms
 clip, the computed width or delay, and the limit. The preview is never
 scaled, clamped or split to fit (owner decisions 2026-10-02).
 
-A paletted frame uses at most 255 colours plus the grey background, so its
-preview keeps exact colours without a quantization warning. Preview handling
-is otherwise unchanged.
+A paletted frame without partly transparent pixels uses at most 255 colours
+plus the grey background, so its preview keeps exact colours without a
+quantization warning. Partly transparent pixels add their blends, so a
+paletted frame with them may exceed 256 colours, and then takes the
+reduction and its warning like any other frame (alpha design D-13); while
+it has at most 256 it keeps them exactly. Preview handling is otherwise
+unchanged.
 
 **Lit previews** (lighting sheet design D-4, D-5, D-13, D-14, D-22, D-23,
 D-24). With a light placed (`light.position` set) and previews on, each
 clip's lit preview, `<stem>-lit.<clip>.gif`, is written beside its flat one
 and handled exactly as it is: the same layout, scale, background, timing and
 limits, and the same 256-colour reduction, whose warning names the clip's
-lit preview. Without a light every preview is flat and no lit preview is
+lit preview. Each covered pixel, alpha above 0, is lit with the normal map
+first, keeping its alpha, then blended over the grey exactly as a flat
+preview's is (alpha design D-11, D-13). Without a light every preview is flat and no lit preview is
 written. With previews off a placed light is recorded but unused, with one
 warning saying so. Light is previewed, never baked: the colour sheet, flat
 previews and maps are the same with and without a light. The ordinary look

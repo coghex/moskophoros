@@ -225,6 +225,7 @@ def test_two_mode_runs_give_byte_identical_outputs(capsys, found, model, tmp_pat
     description = json.loads((first / "hero.json").read_text())
     assert description["settings"]["style"] == {
         "reduce": "mode",
+        "edges": "hard",
         "palette": None,
         "materials": None,
     }

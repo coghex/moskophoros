@@ -97,7 +97,7 @@ ROOT_MOTION_MODES = ("error", "keep")
 # The values --reduce accepts; the first is the default.
 REDUCTIONS = ("plain", "mode")
 # The only sheet schema `--settings-from` loads (settings design D-24).
-SHEET_SCHEMA = "moskophoros.sheet/12"
+SHEET_SCHEMA = "moskophoros.sheet/13"
 _MAX_DIGITS = 4300
 _VIEW_FIELDS = ("view", "pitch", "directions", "start_angle")
 _REPEATABLE = frozenset({"--clip", "--once", "--config"})
@@ -208,6 +208,9 @@ class Options:
     # D-13, D-31).
     frames: int | str = layered.DEFAULTS["frames"]
     clip_frames: MappingProxyType = MappingProxyType({})
+    # How a pixel's alpha comes from its block, hard or soft (alpha design
+    # D-4, D-9).
+    edges: str = layered.DEFAULTS["edges"]
     # Whether the normal map is written (lighting sheet design D-9, D-18).
     normals: bool = layered.DEFAULTS["normals"]
     # Whether the depth map is written (lighting sheet design D-3, D-18).
@@ -295,6 +298,7 @@ def parse_args(argv: Sequence[str]) -> Options:
         root_motion=args.root_motion,
         supersample=args.supersample,
         reduce=args.reduce,
+        edges=args.edges,
         settings_from=args.settings_from,
         previews=(
             not args.no_preview
@@ -368,6 +372,7 @@ class ReusedSettings:
     frames: int | str
     clip_frames: MappingProxyType
     reduce: str
+    edges: str
     shade_range: tuple[int, int]
     ao_distance: float
     ao_samples: int
@@ -703,6 +708,7 @@ def read_settings(path) -> ReusedSettings:
         clip=tuple(entry["name"] for entry in checked["clips"]),
         once=tuple(entry["name"] for entry in checked["clips"] if not entry["loop"]),
         reduce=style["reduce"],
+        edges=style["edges"],
         shade_range=shade["range"],
         ao_distance=shade["ao_distance_m"],
         ao_samples=shade["ao_samples"],
@@ -790,11 +796,13 @@ def capture_settings(options: Options) -> backend.Settings:
 
 def style_record(options: Options) -> dict:
     """The sheet's ordered look record, independent of capture settings:
-    `reduce`, `palette` and `materials` (the library snapshot, or `None`), in
-    that order. The shade range is a setting, recorded in `settings.shade`."""
+    `reduce`, `edges`, `palette` and `materials` (the library snapshot, or
+    `None`), in that order. The shade range is a setting, recorded in
+    `settings.shade`."""
     record = options.palette
     return {
         "reduce": options.reduce,
+        "edges": options.edges,
         "palette": None
         if record is None
         else {
@@ -1062,7 +1070,11 @@ def _command(options):
         colors = options.palette.colors if options.palette is not None else None
         identities = lookup.identities
         # Depth is reduced to sheet pixels at the sheet's scale.
-        scale = {"identities": identities, "pixels_per_meter": settings.ppm}
+        scale = {
+            "identities": identities,
+            "pixels_per_meter": settings.ppm,
+            "edges": options.edges,
+        }
         if colors is None:
             reduced = reduce(captured, settings.supersample, **scale)
         elif options.materials is None:
@@ -1807,6 +1819,17 @@ def _build_parser():
     )
     defaults = layered.DEFAULTS
     single(
+        "--edges",
+        "RULE",
+        str,
+        defaults["edges"],
+        "how a pixel's alpha comes from its supersampled block: hard, a pixel "
+        "shows when half its block shows a surface, keeping outlines crisp; "
+        "soft, its alpha is the block's mean alpha, so outlines and cut-out "
+        f"edges keep partial alpha (default: {defaults['edges']})",
+        choices=layered.EDGES,
+    )
+    single(
         "--ao-distance",
         "M",
         _positive,
@@ -2359,6 +2382,7 @@ _SETTINGS = {
     },
     "style": {
         "reduce": _one_of(*REDUCTIONS),
+        "edges": _one_of(*layered.EDGES),
         "palette": _PALETTE,
         "materials": _MATERIALS,
     },

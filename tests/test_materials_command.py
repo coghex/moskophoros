@@ -310,9 +310,9 @@ def test_a_run_records_the_library_inline_and_the_shade_range(setup, capsys):
     named_hero(setup, HERO_MATERIALS)
     run_with_library(setup, capsys, "--no-preview")
     description = json.loads(setup.json.read_text())
-    assert description["schema"] == "moskophoros.sheet/12"
+    assert description["schema"] == "moskophoros.sheet/13"
     style = description["settings"]["style"]
-    assert list(style) == ["reduce", "palette", "materials"]
+    assert list(style) == ["reduce", "edges", "palette", "materials"]
     assert description["settings"]["shade"]["range"] == DEFAULT_RANGE
     record = style["materials"]
     assert list(record) == ["source", "sha256", "ramps", "default", "materials"]
@@ -660,7 +660,7 @@ def test_a_sheet_from_before_the_shade_was_recorded_no_longer_loads(
     with pytest.raises(cli.UsageError):
         cli.read_settings(path)
     assert (
-        f"is a {schema} sheet; only moskophoros.sheet/12 sheets load"
+        f"is a {schema} sheet; only moskophoros.sheet/13 sheets load"
         in capsys.readouterr().err
     )
 
@@ -687,6 +687,7 @@ PALETTE_RECORD = {
 def style_sheet(tmp_path, **changes):
     style = {
         "reduce": "plain",
+        "edges": "hard",
         "palette": PALETTE_RECORD,
         "materials": GOOD_RECORD,
     } | changes
@@ -798,9 +799,10 @@ def test_a_shade_range_in_the_style_is_an_unknown_field(tmp_path, capsys):
 
 
 def test_a_style_member_missing_from_a_sheet_is_an_error(tmp_path, capsys):
-    for member in ("reduce", "palette", "materials"):
+    for member in ("reduce", "edges", "palette", "materials"):
         style = {
             "reduce": "plain",
+            "edges": "hard",
             "palette": None,
             "materials": None,
         }

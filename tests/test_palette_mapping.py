@@ -184,13 +184,15 @@ def test_paletted_stages_keep_silhouette_addresses_and_metadata_one_frame_at_a_t
     for frame, output in zip(frames, result, strict=True):
         assert output.address == frame.address
         assert output.metadata is frame.metadata
+        # The palette maps colour only: alpha is the block's, partial alpha
+        # included, never snapped.
         np.testing.assert_array_equal(
             output.pixels[..., 3], imageops.reduce_blocks(frame.pixels, 2)[..., 3]
         )
+        assert set(np.unique(output.pixels[..., 3])) - {0, 255}
         assert set(map(tuple, output.pixels[output.pixels[..., 3] != 0, :3])) <= set(
             COLORS
         )
-        assert set(np.unique(output.pixels[..., 3])) <= {0, 255}
         np.testing.assert_array_equal(frame.pixels, pixels)
 
 
@@ -351,6 +353,7 @@ def test_palette_reuse_and_overrides_do_not_need_original_file(tmp_path):
         cli.style_record(resolve())
         == {
             "reduce": "mode",
+            "edges": "soft",
             "palette": RECORD,
         }
         | unmaterialed
@@ -359,6 +362,7 @@ def test_palette_reuse_and_overrides_do_not_need_original_file(tmp_path):
         cli.style_record(resolve("--reduce", "plain"))
         == {
             "reduce": "plain",
+            "edges": "soft",
             "palette": RECORD,
         }
         | unmaterialed
@@ -367,6 +371,7 @@ def test_palette_reuse_and_overrides_do_not_need_original_file(tmp_path):
         cli.style_record(resolve("--no-palette"))
         == {
             "reduce": "mode",
+            "edges": "soft",
             "palette": None,
         }
         | unmaterialed

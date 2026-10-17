@@ -105,7 +105,7 @@ class ImageFrame:
 
     A reduced frame, from stylize to cleanup and export, carries its maps:
     under `NORMAL_MAP`, a `float64` array of shape `(height, width, 3)`, the
-    unit normal of each pixel the colour covers (alpha 255) in the same
+    unit normal of each pixel the colour covers (alpha above 0) in the same
     camera space, `(0, 0, 0)` elsewhere; under `DEPTH_MAP`, a `float64`
     array of shape `(height, width)`, each covered pixel's depth in sheet
     pixels toward the viewer from the ground point, a multiple of 1/16, and
