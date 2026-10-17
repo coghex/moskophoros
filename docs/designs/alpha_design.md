@@ -1327,9 +1327,12 @@ changes, in its own pull request, since tests read that document.
     alpha is 0.4; two panes of 0.5 give 0.75;
   - every pinned case of the numerical reference that needs no ramp on the
     front layer (the front-ramp cases are ALPHA-5's);
-  - a visible translucent front followed by 65 holes, ending at an opaque
-    surface and at the background, fails with exit 5; the same with 64
-    renders correctly (Review 1 A-3, Review 2 B-1);
+  - the front's own transparent closure counts toward the limit: a visible
+    translucent front followed by 63 holes (64 surfaces) renders correctly,
+    and the same front followed by 64 holes (65 surfaces) fails with exit
+    5, both ending at an opaque surface and at the background (spike 3 rows
+    `vf_63_*`, `vf_64_*`); a front followed by 65 holes fails too (Review 1
+    A-3, Review 2 B-1, Review 3 C-1);
   - tiny alpha (5e-7) is a surface; alpha at the hole floor (1e-9) is not;
     vertex alpha and texture × factor alpha render;
   - presence survives transport: the `[0.001, 0.001, 1, 1]` block gives
@@ -1413,7 +1416,7 @@ stops and reports to the owner if it fails its correctness or cost gate
 
 Codex rereview 2 by mosk-reviewer-53, against `0a69fba`:
 `~/.local/share/moskophoros-acceptance/alpha-design/review-codex-2.md`
-(sha256 `875e7fa49424f6310852c39b67e2c6003d2280728533f482e2ae6318965f62e`),
+(sha256 `875e7fa494243f6310852c39b67e2c6003d2280728533f482e2ae6318965f62e`),
 with its probes in `review-2/` beside it. It found A-1, A-2, A-4, A-5, A-7
 and A-8 resolved, A-3 and A-6 partly resolved (through B-1 and B-2), and
 confirmed that A-2's `α ≤ 2^-25` floor is Cycles' own arithmetic, needing no
@@ -1427,3 +1430,18 @@ fixed, and no owner decision changed.
 | B-3 | should fix | **Fixed.** ALPHA-2 keeps the pure-hole 64/65 cases; the visible translucent-front exhaustion cases move to ALPHA-4; the front-ramp pinned cases move to ALPHA-5. |
 | B-4 | should fix | **Fixed.** The cost gate names its baseline (production capture at `0a69fba`), the frozen fixture and hash, the timing boundary over the complete capture, and the aggregation. A failed correctness or cost gate stops implementation after the spike pending the owner. |
 | B-5 | minor | **Fixed.** The job is invariant under `edges` and the style values D-36 leaves out; its per-material capture overrides stay. |
+
+## Review 3
+
+Codex rereview 3 by mosk-reviewer-53, against `f2dec32`:
+`~/.local/share/moskophoros-acceptance/alpha-design/review-codex-3.md`
+(sha256 `8024d599bf4d858a6a125182c4f6318d0056ee87d22bf8008779205c3d4562a0`).
+No blocking finding. It found B-1, B-2, B-4, B-5, A-3 and A-6 resolved and
+B-3 partly resolved (through C-1), and confirmed that refusing harmless
+truncations needs no owner decision. Both findings are fixed; no owner
+decision changed, and the design stays ready.
+
+| Id | Severity | Disposition |
+|---|---|---|
+| C-1 | should fix | **Fixed.** ALPHA-4's boundary counts the front's own closure: front + 63 holes renders, front + 64 holes fails with exit 5, at both endings (spike 3 rows `vf_63_*`, `vf_64_*`); front + 65 kept as an extra refusal. ALPHA-2's pure-hole 64/65 boundary is unchanged. |
+| C-2 | minor | **Fixed.** Review 2's report hash corrected. |
