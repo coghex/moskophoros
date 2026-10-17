@@ -438,6 +438,7 @@ def state():
         "render": [scene.render.engine, scene.render.filepath],
         "cycles": [scene.cycles.samples, scene.cycles.seed],
         "materials": sorted(m.name for m in bpy.data.materials),
+        "groups": sorted(g.name for g in bpy.data.node_groups),
         "slots": len(cube.data.materials),
     }
 
@@ -502,8 +503,10 @@ def test_the_capture_shaders_are_restored_and_save_exr_keeps_the_settings(
         ["shade", "VALUE"],
         ["normal", "COLOR"],
         ["depth", "VALUE"],
+        ["hit", "VALUE"],
     ]
     assert "moskophoros.no-material" in probed["during"]["materials"]
+    assert probed["during"]["groups"] == ["moskophoros.count"]
     assert probed["before"]["render"][0] == "CYCLES"
     assert probed["after"] == probed["before"]
     assert probed["before"]["aovs"] == []

@@ -1164,3 +1164,22 @@ def test_an_unusable_blender_is_a_backend_error(setup, capsys):
     assert status == 5
     assert "is not an executable file" in err
     assert setup.listing() == earlier
+
+
+def test_a_stack_too_deep_to_render_is_a_backend_error_publishing_nothing(
+    setup, capsys
+):
+    # The script's own refusal (alpha design ALPHA-2), as Blender reports it.
+    message = (
+        "moskophoros: error: /models/hero.glb: clip 'attack', direction 2, "
+        "frame 9 (t = 0.25 s): a camera path at pixel (3, 4) crossed more than "
+        "64 surfaces that still let light through, which the capture cannot "
+        "render (the limit is 64)"
+    )
+    earlier = earlier_outputs(setup, *EARLIER)
+    setup.configure(render={"fail": message})
+    status, _, err = run(capsys, setup.argv())
+    assert status == 5
+    assert "Blender's render phase exited with status 1" in err
+    assert message in err
+    assert setup.listing() == earlier

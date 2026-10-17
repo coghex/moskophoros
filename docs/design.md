@@ -121,7 +121,8 @@ directory. An existing nonempty directory is a usage error (exit 2) naming
 the directory, and its contents are untouched. The capture workspace contains
 separate `measure/` and `render/` directories, each with `job.json`, eventual
 `result.json` and produced buffers. During rendering, `render/` also holds
-`scratch/`, the capture render's scratch directory (its TGA and OpenEXR),
+`scratch/`, the capture's scratch directory (its TGA and its main and
+count renders' OpenEXRs),
 which a successful phase removes; after a failure or interruption a
 retained workspace may still hold it. An explicitly supplied workspace
 retains available artifacts after success or failure; normal temporary
@@ -341,7 +342,7 @@ A usage error prints the usage synopsis to stderr, followed by the
 | 2 | Usage error: bad option, value or combination. |
 | 3 | Input error: see [Input contract](#input-contract) and [Root motion](#root-motion). |
 | 4 | Overflow: the subject does not fit a fixed cell and scale, or, with the depth map written, its depth does not fit the map's range. |
-| 5 | Backend error: Blender missing, wrong version, or failed. |
+| 5 | Backend error: Blender missing, wrong version, or failed, including a frame with a stack of see-through surfaces deeper than the capture renders (see [Capture](#capture)). |
 | 6 | Output error: an output could not be written (a full disk, no permission, a failed rename). The message names the output and the reason; the earlier outputs are kept, and no usage synopsis or traceback is printed (owner decision 2026-10-03). |
 | 130 | Interrupted (Ctrl-C): `moskophoros: error: interrupted`, no traceback, nothing published (owner decision 2026-10-01). |
 
@@ -902,9 +903,10 @@ buffers can be added without changing it.
 
 **Surfaces** (alpha design spikes 1 to 3, A-8). Every rendered surface's
 shader is replaced, for the whole render phase, by
-`Mix(Transparent, Emission(colour))`, which also writes the surface's
-material-ID code, shade, normal and depth to four AOVs; the replacements are
-removed and the original shaders restored when the phase ends.
+`Mix(alpha, Transparent, Emission(colour))`, which also writes the surface's
+material-ID code, shade, normal, depth and a hit flag to five AOVs; the
+replacements are removed and the original shaders restored when the phase
+ends.
 
 - *Colour extraction,* from the shader the glTF importer built:
   - a Principled BSDF: the colour feeding its `Base Color` (a constant, or
@@ -914,10 +916,29 @@ removed and the original shaders restored when the phase ends.
     chain: the colour feeding the Emission's `Color`;
   - any other shape is a backend error (exit 5) naming the glTF material by
     index and by its name when it has one, and nothing is published.
-- *Opaque:* every material is captured opaque, whatever its alpha mode
-  (material styling D-26): the mix takes the emission alone, so `MASK` and
-  `BLEND` materials, alpha 0 included, cover their whole surface in every
-  buffer, and no material alpha reaches any buffer.
+- *Alpha* (alpha design ALPHA-2, D-1, D-3): a `MASK` material's alpha is
+  the importer's own chain, `1 − (texture alpha × factor < alphaCutoff)`,
+  with the cutoff 0.5 when the glTF gives none, so a texel is kept when its
+  alpha is at least the cutoff. It is the extraction rule's: a Principled
+  BSDF's `Alpha`, or the factor of the `Mix` wrapping the unlit core. A
+  cut-out texel is a **hole**: no surface in any buffer, showing the surface
+  behind it in all of them, or nothing. The tool adds no transparency rule
+  of its own. Every other material is captured opaque, `BLEND` included,
+  alpha 0 too (alpha 1; translucency is ALPHA-4), so the colour's alpha
+  stays 0 or 255.
+- *The surface gate* (alpha design spike 2): every AOV is multiplied by a
+  gate computed, in Math nodes, in the order Cycles computes the mix's
+  transparency: `sat = clamp(α)`, `t = 1 − sat`, `v = 1 − t`,
+  `g = 1 − (v < T)`, with `T` the view layer's `pass_alpha_threshold`.
+  Cycles stops its passes exactly where `v > 0`, which is where `g = 1`, so
+  the surface it selects writes each AOV exactly once and a hole writes
+  none. The hit AOV is `g` itself; a hit other than exactly 0 or 1, or hits
+  not exactly on the colour's surfaces, is a backend error (exit 5).
+- *Gated occlusion distance:* the shade's occlusion distance is multiplied
+  by the same gate, so a hole runs no occlusion and stacked cut-outs do not
+  re-run it on every layer crossed. Occlusion otherwise keeps its
+  approximation, in which every surface occludes as if solid (alpha design
+  D-7); the shade's values are unchanged by the gate.
 - *Without a material:* a primitive without one takes a stand-in, glTF's
   default material: white, opaque, code 65535.
 - No material property but the colour (texture, metallic, roughness, normal
@@ -979,7 +1000,7 @@ render gives both, from the same camera sample as the colour, material ID
 and shade, through two more AOVs that every replacement shader, the
 stand-in's included, writes beside its emission: Geometry *Normal* through a
 Vector Transform (normal, world to camera) to a colour AOV `normal`, and
-Camera Data *View Z Depth* to a value AOV `depth`. The four view-layer AOVs
+Camera Data *View Z Depth* to a value AOV `depth`. The five view-layer AOVs
 are added for the render phase and removed after it.
 
 After each frame's render, its colour is written as an 8-bit TGA through the
@@ -987,9 +1008,33 @@ After each frame's render, its colour is written as an 8-bit TGA through the
 uncompressed multilayer OpenEXR of 32-bit floats (the image settings' media
 type set to multilayer before the format, and every image setting restored),
 which the script reads with the standard library and removes. The float
-alpha of the OpenEXR's `Combined` pass decides coverage; the TGA's alpha must
-agree with it, and every AOV must hold a surface exactly where it does,
-or the frame is a backend error (exit 5). Both files go to the script's
+alpha of the OpenEXR's `Combined` pass decides coverage, exactly 0 or 1 at
+every pixel; the TGA's alpha, the gated hits and every AOV must hold a
+surface exactly where it does, or the frame is a backend error (exit 5).
+
+**The count render** (alpha design spike 3, Review 2 B-1). After each
+frame's main render, one shared node-group value switches every surface to
+a count shader: a shading point that still has a transparent closure, by
+Cycles' own test (its transparent weight, averaged over the channels, at
+least 10⁻⁵), becomes `Add(Transparent white, Emission white 1)`, and any
+other point an `Emission` of strength 0. The switch also zeroes every AOV
+and the occlusion distance, so the count render runs no occlusion and
+writes no AOV. It uses the same camera, sampling and both transparent
+bounce limits, 64, and is read back from its own OpenEXR, since background
+mode keeps no render in memory. Its red channel counts, per pixel, the
+surfaces the camera path crossed that still let light through, capped at
+65. A frame where any pixel counts 65 or more is a backend error (exit 5):
+the message names the input, the clip, the direction, the frame and its
+time, the pixel, and the limit 64, and nothing is published. It means a
+camera path crossed more than 64 surfaces that still let light through, so
+Cycles stopped it before its end; it covers stacks ending at an opaque
+surface and at the background alike, whatever their alphas. It is
+conservative: it can refuse a frame whose lost light is below 8-bit
+precision, and never accepts a damaged one. The switch back restores the
+main render exactly, and the main render carries no marker, so the count
+changes no buffer.
+
+All three files go to the script's
 scratch directory, `scratch/` inside the render phase directory: the script
 creates it before the first frame and removes it after the last, and
 otherwise the workspace's lifetime governs it ([ownership and failure
@@ -1121,6 +1166,10 @@ absolute, contain parent traversal or escape through a symlink.
 
 The launcher also rejects, as a backend error (exit 5):
 
+- a render phase the script ended with an error, Blender's failure: among
+  them a frame whose stack of see-through surfaces is deeper than the
+  capture renders, the [count render](#capture)'s refusal naming the input,
+  clip, direction, frame and limit;
 - a colour pixel whose alpha is other than 0 or 255, an empty colour pixel
   other than `(0, 0, 0, 0)`, or a colour pixel whose coverage differs from
   the material ID's, in either direction;
@@ -1187,7 +1236,7 @@ The [CLI work-directory contract](#cli) governs retained capture ownership.
 Normal temporary capture directories are deleted after success or failure. Explicitly retained
 capture directories preserve available job/result/buffer evidence on failure,
 without treating incomplete phases as valid results. The script keeps the
-capture render's intermediate TGA and OpenEXR inside the render phase
+capture's intermediate TGA and OpenEXRs inside the render phase
 directory, so the launcher's deletion or retention of the workspace covers
 them even when it has killed Blender, where no cleanup inside Blender can
 run. The script's private copy of the model, which it imports from its own

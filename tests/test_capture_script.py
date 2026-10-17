@@ -161,3 +161,54 @@ def test_a_frame_of_more_than_256_codes(script):
     ]
     assert identity[4 * 300 :] == bytes(16)
     assert level[0:4] == bytes([137, 137, 137, 255]) and level[4 * 300 :] == bytes(16)
+
+
+# The surface gate and the count render (alpha design ALPHA-2)
+
+
+def test_whole_hits_on_the_colour_s_surfaces_pass(script):
+    script.check_hits(
+        array("f", [0.0, 1.0, 1.0, 0.0]), [bytes([0, 255]), bytes([255, 0])], 2, "f"
+    )
+
+
+@pytest.mark.parametrize("value", [0.5, 2.0, 1e-30, -1.0, math.nan])
+def test_a_hit_other_than_0_or_1_is_refused(script, value):
+    hits = array("f", [0.0, 1.0, value, 1.0])
+    with pytest.raises(
+        script.ScriptError, match=r"surface gate's hit at pixel \(0, 1\) is"
+    ):
+        script.check_hits(hits, [bytes([0, 255]), bytes([255, 255])], 2, "frame 3")
+
+
+def test_hits_off_the_colour_s_surfaces_are_refused(script):
+    with pytest.raises(
+        script.ScriptError,
+        match=r"frame 3: the surface gate at pixel \(1, 0\) shows no surface, but "
+        r"the colour there shows a surface",
+    ):
+        script.check_hits(array("f", [1.0, 0.0]), [bytes([255, 255])], 2, "frame 3")
+
+
+PLACE = "/models/fence.glb: clip 'walk', direction 3, frame 17 (t = 0.25 s)"
+
+
+def test_a_count_of_64_passes(script):
+    script.check_count(array("f", [0.0, 64.0, 12.0, 64.0]), 2, PLACE)
+
+
+@pytest.mark.parametrize("deepest", [65.0, 100.0])
+def test_a_count_of_65_or_more_names_the_frame_and_the_limit(script, deepest):
+    with pytest.raises(script.ScriptError) as raised:
+        script.check_count(array("f", [0.0, 3.0, deepest, 64.0]), 2, PLACE)
+    assert str(raised.value) == (
+        f"{PLACE}: a camera path at pixel (0, 1) crossed more than 64 surfaces "
+        "that still let light through, which the capture cannot render (the "
+        "limit is 64)"
+    )
+    assert script.LAYER_LIMIT == 64
+
+
+def test_a_nan_alpha_is_refused(script):
+    with pytest.raises(script.ScriptError, match=r"alpha at pixel \(1, 0\) is nan"):
+        script.coverage(array("f", [0.0, math.nan]), 2, "frame 0")

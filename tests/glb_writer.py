@@ -144,15 +144,16 @@ class GlbWriter:
         materials.append({"pbrMetallicRoughness": pbr})
         return len(materials) - 1
 
-    def texture(self, png):
+    def texture(self, png, *, linear=False):
         """Embed `png`, the bytes of a PNG image, as a texture with nearest
-        filtering; return its index."""
+        filtering, or linear with `linear`; return its index."""
         view = self._view(png)
         self.document.setdefault("images", []).append(
             {"bufferView": view, "mimeType": "image/png"}
         )
         samplers = self.document.setdefault("samplers", [])
-        samplers.append({"magFilter": 9728, "minFilter": 9728})
+        mode = 9729 if linear else 9728
+        samplers.append({"magFilter": mode, "minFilter": mode})
         textures = self.document.setdefault("textures", [])
         textures.append(
             {"source": len(self.document["images"]) - 1, "sampler": len(samplers) - 1}

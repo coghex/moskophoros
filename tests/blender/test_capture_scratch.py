@@ -17,7 +17,10 @@ from moskophoros.capture import backend, blender
 
 pytestmark = pytest.mark.blender
 
+# What the scratch holds when the fault strikes, just after the main
+# render's OpenEXR is saved; the count render's OpenEXR comes after it.
 INTERMEDIATES = {"capture.tga", "capture.exr"}
+EVERY_INTERMEDIATE = INTERMEDIATES | {"count.exr"}
 
 # Runs the real script with its own temporary files under `child_temp`.
 # `fault` is "none", "raise" (fail right after the OpenEXR is saved) or
@@ -113,7 +116,7 @@ class Run:
         return sorted(
             str(path.relative_to(self.child_temp))
             for path in self.child_temp.rglob("*")
-            if path.name in INTERMEDIATES
+            if path.name in EVERY_INTERMEDIATE
         )
 
 

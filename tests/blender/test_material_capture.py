@@ -28,6 +28,10 @@ pytestmark = pytest.mark.blender
 PPM = 40.0
 CELL = (96, 128)
 GROUND_PX = (48, 100)
+# Texel centres of the `edges` MASK quad's checker (x −1–0, y 1.1–2.1): the
+# texel (4, 4) is transparent, so cut out; (2, 4) is opaque, so kept.
+CUT_TEXEL = (-0.4375, 1.5375)
+KEPT_TEXEL = (-0.6875, 1.5375)
 
 
 @pytest.fixture(scope="module")
@@ -85,7 +89,8 @@ def test_the_material_id_buffer_is_exact_and_its_table_maps_the_gltf_materials(
     expected = {
         (-0.7, 0.5): code["left"],
         (0.5, 0.5): code["right"],
-        (-0.5, 1.6): code["mask"],
+        KEPT_TEXEL: code["mask"],
+        CUT_TEXEL: code["behind"],
         (0.55, 1.6): code["occluder"],
         (0.2, 1.2): code["occluded"],
         (-0.5, -0.5): code["glass"],
@@ -94,10 +99,10 @@ def test_the_material_id_buffer_is_exact_and_its_table_maps_the_gltf_materials(
     for point, value in expected.items():
         assert image[at(*point, supersample)] == value, point
     used = set(np.unique(image).tolist())
-    # Every code is a table entry or background; the unused material and the
-    # surface wholly behind the MASK material never show.
+    # Every code is a table entry or background; the unused material never
+    # shows, and the surface behind the MASK material shows through its holes.
     assert used <= set(result.materials) | {0}
-    assert code["unused"] not in used and code["behind"] not in used
+    assert code["unused"] not in used and code["behind"] in used
     # Two materials meet along x = 0 with no pixel of anything else between.
     row = at(0.0, 0.5, supersample)[0]
     left, right = at(-0.45, 0.5, supersample)[1], at(0.45, 0.5, supersample)[1]
@@ -108,9 +113,9 @@ def test_the_material_id_buffer_is_exact_and_its_table_maps_the_gltf_materials(
     assert strip == 0 if supersample == 1 else strip > 0
 
 
-def test_a_mask_material_is_opaque_in_colour_id_and_shade(found, tmp_path):
-    # D-26: no cutouts. Where the MASK texture is transparent, the colour shows
-    # the MASK material opaque, and so do the ID and the shade.
+def test_a_mask_material_cuts_out_in_colour_id_and_shade(found, tmp_path):
+    # Alpha design D-1, D-3: where the MASK texture is transparent, the colour,
+    # ID and shade show the surface behind it; elsewhere the MASK material.
     path = edges(tmp_path)
     result, _ = front(found, path, tmp_path, 4)
     buffers = list(result.buffers.values())[0]
@@ -119,11 +124,17 @@ def test_a_mask_material_is_opaque_in_colour_id_and_shade(found, tmp_path):
     top, left = at(-0.95, 2.05, 4)
     bottom, right = at(-0.05, 1.15, 4)
     region = (slice(top, bottom), slice(left, right))
-    assert (image[region] == EDGES["mask"] + 1).all()
+    assert set(np.unique(image[region]).tolist()) == {
+        EDGES["mask"] + 1,
+        EDGES["behind"] + 1,
+    }
     assert (color[region][..., 3] == 255).all()
     assert (shade[region][..., 3] == 255).all()
-    # The texture's transparent cells are there: dark texels in the colour.
-    assert (color[region][..., 0] < 100).any() and (color[region][..., 0] > 150).any()
+    # The cut texels show the blue surface behind, the kept ones the yellow.
+    hole, kept = at(*CUT_TEXEL, 4), at(*KEPT_TEXEL, 4)
+    assert image[hole] == EDGES["behind"] + 1 and image[kept] == EDGES["mask"] + 1
+    assert color[hole][2] > 150 > color[hole][0]
+    assert color[kept][0] > 150 > color[kept][2]
 
 
 def test_an_importer_copy_of_a_material_keeps_its_glTF_material(found, tmp_path):
@@ -173,7 +184,8 @@ def test_identities_decode_duplicate_unnamed_missing_and_blend_materials(
         (-0.7, 0.5): 0,  # steel
         (0.55, 1.6): 0,  # the second material named steel pools into it
         (0.5, 0.5): 1,  # cloth
-        (-0.5, 1.6): 3,  # leaf (MASK)
+        KEPT_TEXEL: 3,  # leaf (MASK)
+        CUT_TEXEL: 4,  # bark, through the leaf's hole
         (0.2, 1.2): none,  # unnamed
         (-0.5, -0.5): none,  # BLEND
         (0.5, -0.5): none,  # no material
@@ -333,22 +345,32 @@ spec.loader.exec_module(script)
 material = bpy.data.materials.new("probe")
 material.use_nodes = True
 surfaces = script.Surfaces(bpy.context.scene, [], {}, json.loads(shade), {})
-surfaces._inject(material, int(code), None)
+surfaces.make_switch()
+surfaces._inject(material, int(code), None, None)
 nodes = material.node_tree.nodes
+labelled = {node.label: node for node in nodes if node.label.startswith("moskophoros.")}
+distance = labelled["moskophoros.ao_distance_m"]
 print("PROBE " + json.dumps({
+    # Each AO node's samples, and the distance its gated input carries.
     "ao": sorted(
-        (node.inside, node.samples, round(node.inputs["Distance"].default_value, 6))
+        (
+            node.inside,
+            node.samples,
+            round(distance.inputs[1].default_value, 6)
+            if node.inputs["Distance"].links[0].from_node == distance
+            else None,
+        )
         for node in nodes
         if node.bl_idname == "ShaderNodeAmbientOcclusion"
     ),
-    # Each math node's constant input: the weight, or the 1 in 1 - AO_in.
+    # Each shade math node's constant input: the weight, or the 1 in 1 - AO_in.
     "math": sorted(
         (
             node.operation,
             round(node.inputs[0 if node.operation == "SUBTRACT" else 1].default_value, 6),
         )
-        for node in nodes
-        if node.bl_idname == "ShaderNodeMath"
+        for label, node in labelled.items()
+        if label != "moskophoros.ao_distance_m"
     ),
 }))
 """
