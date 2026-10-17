@@ -324,6 +324,10 @@ they win keeps the ordinary look even when the library or its default would
 map the name. A library that maps a name used only by `BLEND` materials
 gets a warning naming it.
 
+*Superseded by alpha design D-15 (owner, 2026-10-17), once its slices land:*
+cutouts and translucency are captured, and `BLEND` materials have an identity
+and can take a ramp. See D-26's note.
+
 **Shade numerical contract.** The shade pass replaces every surface with one
 uniform white, **specular highlights off and every material display setting
 (metallic, roughness) standardised**, shaded by **occlusion and surface
@@ -1006,6 +1010,17 @@ aligned. No surface behind a `MASK` texel is identified. Honouring `MASK`
 cutouts in the colour (Q-26's option C) is a separate, deferred follow-up that
 needs its own explicit owner request; until then nothing here changes the
 colour output or implies alpha support.
+
+**Superseded by alpha design D-15** (owner, 2026-10-17;
+`docs/designs/alpha_design.md`). `MASK` cutouts and `BLEND` translucency are
+captured with the model's alpha, and the ID, shade, normal and depth describe
+the surfaces of the colour's layers as the alpha design sets out (its D-1 to
+D-3, D-6, D-11, D-12, D-14). `BLEND` materials leave the no-identity class:
+they have an identity like any other material, pool by name with opaque
+materials, and take a ramp through their entry or the library's default; the
+warning for a library mapping a name used only by `BLEND` materials goes.
+Until the alpha slices land, this decision and the no-identity rule describe
+current behaviour.
 
 ### D-27. The lighting sheet is a normal map with an optional depth map; light is previewed, not baked
 
