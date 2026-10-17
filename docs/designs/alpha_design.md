@@ -40,7 +40,7 @@ Slices as delegated to the designer by the owner (D-16).
 - [x] ALPHA-4. Capture and composite translucent layers — [#117]
 - [x] ALPHA-5. Give translucent materials identities and ramps — [#118]
 - [x] ALPHA-6. Blend translucent pixels in the previews — [no-issue]: merged into ALPHA-3 (Review 1, A-4)
-- [ ] ALPHA-7. Owner review of alpha sheets
+- [x] ALPHA-7. Owner review of alpha sheets — [#119]
 
 ## Epic contract
 
