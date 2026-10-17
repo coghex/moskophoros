@@ -36,7 +36,7 @@ Slices as delegated to the designer by the owner (D-16).
 - [x] EPIC. Carry the model's transparency into the sprite sheet — [#113]
 - [x] ALPHA-1. Capture colour and buffers in one flat Cycles render — [#114]
 - [x] ALPHA-2. Cut out `MASK` materials — [#115]
-- [ ] ALPHA-3. Carry 8-bit alpha, the `edges` setting and preview blending
+- [x] ALPHA-3. Carry 8-bit alpha, the `edges` setting and preview blending — [#116]
 - [ ] ALPHA-4. Capture and composite translucent layers
 - [ ] ALPHA-5. Give translucent materials identities and ramps
 - [x] ALPHA-6. Blend translucent pixels in the previews — [no-issue]: merged into ALPHA-3 (Review 1, A-4)
