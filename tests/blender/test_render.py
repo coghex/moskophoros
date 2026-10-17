@@ -1,9 +1,9 @@
 """Render jobs run through the launcher on generated models, in real Blender.
 
 Expected pixel positions are worked out here from the fixtures' known
-geometry, independently of the script. Workbench antialiases with a small
-fixed sample pattern, which moves a shape's coverage centroid by up to about
-a quarter of a supersampled pixel, so positions are compared within
+geometry, independently of the script. One camera sample at each pixel
+centre decides coverage, which moves a shape's coverage centroid by a
+fraction of a supersampled pixel, so positions are compared within
 `TOLERANCE_PX`.
 """
 
@@ -312,31 +312,22 @@ def test_material_and_texture_colors_on_a_transparent_background(found, tmp_path
     assert a == 255 and b > 3 * max(r, g, 1), pixels[30, 10]
 
 
-def test_edge_pixels_keep_straight_alpha(found, tmp_path):
+def test_edge_pixels_are_wholly_covered_or_empty(found, tmp_path):
     # A red quad facing the camera, whose left and right edges fall halfway
-    # across pixel columns: partly covered pixels keep the face's color, with
-    # alpha giving the coverage, rather than color scaled by alpha.
+    # across pixel columns. One camera sample at each pixel centre decides
+    # its coverage (alpha design D-5): every pixel is the face's flat colour
+    # at alpha 255, or (0, 0, 0, 0), and the material ID covers exactly the
+    # same pixels.
     model = GlbWriter()
     mesh = model.mesh(quad(-0.425, -0.3, 0.425, 0.3), material=model.material(RED))
     model.scene([model.node("plate", mesh=mesh)], default=True)
     result, _ = render(found, model.write(tmp_path, "plate"), tmp_path)
     (image,) = images(result).values()
-    pixels = image.load()
-    face = pixels[20, 20]
-    assert face[3] == 255
-    partial = [
-        pixels[x, y]
-        for x in range(image.width)
-        for y in range(image.height)
-        if 30 < pixels[x, y][3] < 225
-    ]
-    assert len(partial) >= 10
-    # Straight alpha keeps each channel near the face's, within the slight
-    # darkening of Workbench's edge filtering. Premultiplied alpha would
-    # scale red by the coverage, below 225/255 ≈ 0.88 of the face's.
-    for r, g, b, a in partial:
-        assert r >= 0.9 * face[0], (r, g, b, a)
-        assert abs(g - face[1]) <= 3 and abs(b - face[2]) <= 3, (r, g, b, a)
+    colours = set(image.getdata())
+    assert colours == {(255, 0, 0, 255), (0, 0, 0, 0)}
+    (buffers,) = result.buffers.values()
+    with Image.open(buffers["matid"]) as ids:
+        assert [p[3] for p in ids.getdata()] == [p[3] for p in image.getdata()]
 
 
 # Clips, repeatability and the result
@@ -415,7 +406,8 @@ def test_the_same_job_renders_byte_identical_files_without_stamps(found, tmp_pat
     path = clip_model(tmp_path)
     first, _ = render(found, path, tmp_path, workspace="first")
     second, _ = render(found, path, tmp_path, workspace="second")
-    for name in ("color", "matid", "shade"):
+    # Each render runs in a Blender process of its own.
+    for name in ("color", "matid", "shade", "normal", "depth"):
         one = [buffers[name] for buffers in first.buffers.values()]
         other = [buffers[name] for buffers in second.buffers.values()]
         assert [p.name for p in one] == [f"{i:06d}.png" for i in range(8)]
@@ -424,12 +416,21 @@ def test_the_same_job_renders_byte_identical_files_without_stamps(found, tmp_pat
             assert not {"tEXt", "zTXt", "iTXt", "tIME"} & set(png_chunks(a))
 
 
-def test_the_result_records_the_renderer_and_studio_light(found, tmp_path):
+def test_the_result_records_the_renderer_and_both_techniques(found, tmp_path):
     result, job = render(found, placement_model(tmp_path), tmp_path)
     assert result.backend == {
         "blender": found.version,
-        "renderer": "workbench",
-        "studio_light": "Default",
+        "renderer": "cycles",
+        "color": {
+            "technique": "cycles-flat-emission",
+            "samples_per_pixel": 1,
+            "seed": 0,
+            "pixel_filter": "BOX",
+            "filter_width_px": 0.01,
+            "min_transparent_bounces": 64,
+            "transparent_max_bounces": 64,
+            "pass_alpha_threshold": 2.0**-30,
+        },
         "shade": {
             "technique": "cycles-ambient-occlusion",
             "samples_per_pixel": 1,

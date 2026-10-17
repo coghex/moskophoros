@@ -266,7 +266,7 @@ def make_job(tmp_path, mode="measure"):
 def measure_result(job):
     return json.dumps(
         {
-            "schema": "moskophoros.capture-result/1",
+            "schema": "moskophoros.capture-result/2",
             "mode": "measure",
             "job_sha256": job_sha256(job),
             "source_sha256": job["source"]["sha256"],
@@ -329,6 +329,16 @@ SHADE = {
     "pixel_filter": "BOX",
     "filter_width_px": 0.01,
 }
+COLOR = {
+    "technique": "cycles-flat-emission",
+    "samples_per_pixel": 1,
+    "seed": 0,
+    "pixel_filter": "BOX",
+    "filter_width_px": 0.01,
+    "min_transparent_bounces": 64,
+    "transparent_max_bounces": 64,
+    "pass_alpha_threshold": 2.0**-30,
+}
 RENDER_BUFFERS = {
     name: f"{name}/000000.png"
     for name in ("color", "matid", "shade", "normal", "depth")
@@ -356,17 +366,18 @@ def copy_buffers(tmp_path, color):
 def test_a_render_phase(tmp_path):
     workspace, job = make_job(tmp_path, "render")
     color = tmp_path / "color.png"
-    Image.new("RGBA", (8, 6)).save(color)
+    # The material-less stand-in's flat white, on every pixel.
+    Image.new("RGBA", (8, 6), (255, 255, 255, 255)).save(color)
     result_text = json.dumps(
         {
-            "schema": "moskophoros.capture-result/1",
+            "schema": "moskophoros.capture-result/2",
             "mode": "render",
             "job_sha256": job_sha256(job),
             "source_sha256": job["source"]["sha256"],
             "backend": {
                 "blender": "5.2.2",
-                "renderer": "workbench",
-                "studio_light": "Default",
+                "renderer": "cycles",
+                "color": COLOR,
                 "shade": SHADE,
             },
             "frames": [
@@ -578,14 +589,14 @@ def test_an_undecodable_buffer_is_a_backend_error_with_diagnostics(tmp_path):
     raw_png(color, 8, 6, 8, 6, 4, [(b"iCCP", b"")])
     result_text = json.dumps(
         {
-            "schema": "moskophoros.capture-result/1",
+            "schema": "moskophoros.capture-result/2",
             "mode": "render",
             "job_sha256": job_sha256(job),
             "source_sha256": job["source"]["sha256"],
             "backend": {
                 "blender": "5.2.2",
-                "renderer": "workbench",
-                "studio_light": "Default",
+                "renderer": "cycles",
+                "color": COLOR,
                 "shade": SHADE,
             },
             "frames": [

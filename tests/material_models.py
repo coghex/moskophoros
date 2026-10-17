@@ -107,6 +107,7 @@ class Model:
         texture=None,
         metallic=0.0,
         roughness=1.0,
+        unlit=False,
     ):
         pbr = {
             "baseColorFactor": list(color),
@@ -122,6 +123,11 @@ class Model:
             entry["alphaMode"] = alpha_mode
         if cutoff is not None:
             entry["alphaCutoff"] = cutoff
+        if unlit:
+            entry["extensions"] = {"KHR_materials_unlit": {}}
+            used = self.writer.document.setdefault("extensionsUsed", [])
+            if "KHR_materials_unlit" not in used:
+                used.append("KHR_materials_unlit")
         materials = self.writer.document.setdefault("materials", [])
         materials.append(entry)
         return len(materials) - 1

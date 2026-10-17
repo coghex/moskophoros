@@ -95,7 +95,7 @@ REUSED = {
 
 def write_sheet(tmp_path, settings=None, name="old.json", **document):
     path = tmp_path / name
-    contents = {"schema": "moskophoros.sheet/11"} | document
+    contents = {"schema": "moskophoros.sheet/12"} | document
     contents["settings"] = copy.deepcopy(SETTINGS if settings is None else settings)
     path.write_text(json.dumps(contents, ensure_ascii=False), encoding="utf-8")
     return path
@@ -422,7 +422,7 @@ def test_previews_must_be_a_boolean(tmp_path, capsys, value):
 def test_a_document_with_only_schema_and_settings_is_enough(tmp_path):
     path = tmp_path / "minimal.json"
     path.write_text(
-        json.dumps({"schema": "moskophoros.sheet/11", "settings": SETTINGS})
+        json.dumps({"schema": "moskophoros.sheet/12", "settings": SETTINGS})
     )
     assert values(reuse(path)) == REUSED
 
@@ -491,7 +491,7 @@ def test_a_deeply_nested_file_is_rejected(tmp_path, capsys):
     ("text", "key"),
     [
         (
-            '{"schema": "moskophoros.sheet/11", "schema": "moskophoros.sheet/11"}',
+            '{"schema": "moskophoros.sheet/12", "schema": "moskophoros.sheet/12"}',
             "schema",
         ),
         ('{"settings": {"fps": 12, "fps": 12}}', "fps"),
@@ -506,11 +506,11 @@ def test_a_repeated_key_anywhere_is_rejected(tmp_path, capsys, text, key):
     assert rejected(capsys, path) == f"repeats the key {key!r}"
 
 
-NOT_A_SHEET = "is not a moskophoros.sheet/11 document"
+NOT_A_SHEET = "is not a moskophoros.sheet/12 document"
 
 
 def older(schema):
-    return f"is a {schema} sheet; only moskophoros.sheet/11 sheets load, so generate it again"
+    return f"is a {schema} sheet; only moskophoros.sheet/12 sheets load, so generate it again"
 
 
 @pytest.mark.parametrize(
@@ -524,7 +524,8 @@ def older(schema):
         ({"schema": "moskophoros.sheet/6"}, older("moskophoros.sheet/6")),
         ({"schema": "moskophoros.sheet/5"}, older("moskophoros.sheet/5")),
         ({"schema": "moskophoros.sheet/4"}, older("moskophoros.sheet/4")),
-        ({"schema": "moskophoros.sheet/12"}, older("moskophoros.sheet/12")),
+        ({"schema": "moskophoros.sheet/13"}, older("moskophoros.sheet/13")),
+        ({"schema": "moskophoros.sheet/11"}, older("moskophoros.sheet/11")),
         ({"schema": "moskophoros.sheet/10"}, older("moskophoros.sheet/10")),
         ({"schema": "moskophoros.sheet/9"}, older("moskophoros.sheet/9")),
         ({"schema": "moskophoros.sheet/8"}, older("moskophoros.sheet/8")),
@@ -535,17 +536,17 @@ def older(schema):
         ),
         ({"schema": 1}, f"{NOT_A_SHEET}: schema is 1"),
         (
-            {"schema": ["moskophoros.sheet/11"]},
-            f'{NOT_A_SHEET}: schema is ["moskophoros.sheet/11"]',
+            {"schema": ["moskophoros.sheet/12"]},
+            f'{NOT_A_SHEET}: schema is ["moskophoros.sheet/12"]',
         ),
         ({"schema": None}, f"{NOT_A_SHEET}: schema is null"),
-        ({"schema": "moskophoros.sheet/11"}, "settings: missing"),
+        ({"schema": "moskophoros.sheet/12"}, "settings: missing"),
         (
-            {"schema": "moskophoros.sheet/11", "settings": None},
+            {"schema": "moskophoros.sheet/12", "settings": None},
             "settings: must be set, got null",
         ),
         (
-            {"schema": "moskophoros.sheet/11", "settings": []},
+            {"schema": "moskophoros.sheet/12", "settings": []},
             "settings: expected an object, got []",
         ),
     ],
@@ -818,6 +819,7 @@ def test_an_explicit_reduce_overrides_the_reused_one(tmp_path, sheet, explicit):
 @pytest.mark.parametrize(
     "schema",
     [
+        "moskophoros.sheet/11",
         "moskophoros.sheet/10",
         "moskophoros.sheet/9",
         "moskophoros.sheet/8",
@@ -884,8 +886,8 @@ GENERATOR = {
     "numpy": "2.5.3",
     "pillow": "12.3.0",
     "blender": "5.2.2",
-    "renderer": "workbench",
-    "studio_light": "rim.sl",
+    "renderer": "cycles",
+    "color": {"technique": "cycles-flat-emission"},
 }
 SOURCE = Source(Path("/models/hero.glb"), "cd" * 32, 0)
 SUBJECT = gltf.Subject(

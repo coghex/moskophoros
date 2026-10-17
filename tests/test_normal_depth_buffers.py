@@ -85,14 +85,12 @@ def file(name, write):
 
 
 def matid_background_corner(document, tmp_path):
-    path = tmp_path / "matid/000000.png"
-    pixels = np.asarray(Image.open(path)).copy()
-    pixels[0, 0] = (0, 0, 0, 0)
-    Image.fromarray(pixels, "RGBA").save(path)
-    path = tmp_path / "shade/000000.png"
-    pixels = np.asarray(Image.open(path)).copy()
-    pixels[0, 0] = (0, 0, 0, 0)
-    Image.fromarray(pixels, "RGBA").save(path)
+    """Make pixel (0, 0) of frame 0's colour, material ID and shade empty."""
+    for name in ("color", "matid", "shade"):
+        path = tmp_path / f"{name}/000000.png"
+        pixels = np.asarray(Image.open(path)).copy()
+        pixels[0, 0] = (0, 0, 0, 0)
+        Image.fromarray(pixels, "RGBA").save(path)
 
 
 def both(*changes):
@@ -441,8 +439,16 @@ def test_the_command_decodes_each_frame_s_normal_and_depth_for_stylize(
         expected = rng.normal(size=(16, 16, 3))
         expected /= np.linalg.norm(expected, axis=-1, keepdims=True)
         expected_depth = rng.uniform(-5000.0, 5000.0, size=(16, 16))
-        np.testing.assert_allclose(normal, expected, atol=1.6e-5)
-        np.testing.assert_array_equal(depth, expected_depth.astype(np.float32))
+        # The fake's colour leaves its top-left quarter empty, and so do the
+        # buffers it covers.
+        covered = np.ones((16, 16), dtype=bool)
+        covered[:8, :8] = False
+        np.testing.assert_allclose(normal[covered], expected[covered], atol=1.6e-5)
+        assert (normal[~covered] == 0).all()
+        np.testing.assert_array_equal(
+            depth[covered], expected_depth.astype(np.float32)[covered]
+        )
+        assert np.isnan(depth[~covered]).all()
 
 
 # Requirement 8: whole-command outputs do not depend on the normal and depth.

@@ -905,7 +905,7 @@ def test_an_older_sheet_is_exit_2_naming_its_schema_and_the_supported_one(
     forbid_blender(monkeypatch)
     status, _, err = run(capsys, reload(setup, sheet))
     assert status == 2
-    assert "moskophoros.sheet/3" in err and "moskophoros.sheet/11" in err
+    assert "moskophoros.sheet/3" in err and "moskophoros.sheet/12" in err
 
 
 def test_a_reloaded_sheet_without_previews_writes_none(setup, capsys):
