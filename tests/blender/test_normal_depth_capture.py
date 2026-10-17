@@ -496,8 +496,9 @@ def test_the_capture_shaders_are_restored_and_save_exr_keeps_the_settings(
     ]
     assert completed.returncode == 0 and lines, completed.stdout + completed.stderr
     probed = json.loads(lines[0].removeprefix("PROBE "))
-    # While it runs: the four AOVs and the stand-in; after it, nothing, and
-    # saving the OpenEXR leaves the render's own image settings as they were.
+    # While it runs: the five AOVs, the stand-in and the count switch; after
+    # it, nothing, and saving the OpenEXR leaves the render's own image
+    # settings as they were.
     assert probed["during"]["aovs"] == [
         ["matid", "VALUE"],
         ["shade", "VALUE"],
