@@ -1225,8 +1225,11 @@ ones:
 
 ## Delivery plan
 
-The designer's slicing (D-16). Each slice updates the parts of `docs/design.md` it
-changes, in its own pull request, since tests read that document.
+The designer's slicing (D-16). ALPHA-1 to ALPHA-5 are code slices: each
+lands in its own pull request and updates the parts of `docs/design.md` it
+changes there, since tests read that document. ALPHA-7 is a
+documentation-only acceptance step with no pull request, as material
+styling MAT-7 and lighting LIT-6 were.
 
 ### ALPHA-1. Capture colour and buffers in one flat Cycles render
 
@@ -1392,7 +1395,15 @@ blend it. Kept as an identifier only, marked `[no-issue]`.
 ### ALPHA-7. Owner review of alpha sheets
 
 - **Outcome:** the owner reviews sheets, maps and previews of their own
-  model and approves the look, or names what to change (V-12).
+  model and approves the look, or names what to change (V-12). The verdict
+  is recorded in `docs/acceptance/alpha.md`.
+- **Delivery:** documentation-only, with no pull request, as MAT-7 and LIT-6
+  were. `docs/acceptance/alpha.md` lands on `master` with `docs-push`, and
+  the issue is closed by a comment linking it at its commit. Renders stay
+  outside the repository, under `~/.local/share/moskophoros-acceptance/`,
+  each labelled with what it shows and the exact command. The owner's model
+  is an owner-supplied input (Test inputs): renders wait for it and for the
+  owner's signoff of the commands.
 - **Scope:** renders of the owner's model (Test inputs) under both `edges`
   values, with and without a library, with the commands to reproduce them;
   the occlusion baseline D-7 asks for; whether D-12's combined layer is
