@@ -1,4 +1,4 @@
-"""The auxiliary render's TGA and OpenEXR share the command workspace's
+"""The capture render's TGA and OpenEXR share the command workspace's
 lifetime (design §CLI, §Capture): a temporary workspace takes them with it
 after success, failure or interruption, and a retained `--work-dir` keeps
 them inside it. Faults are injected around the real script's `save_exr`
@@ -17,7 +17,7 @@ from moskophoros.capture import backend, blender
 
 pytestmark = pytest.mark.blender
 
-INTERMEDIATES = {"auxiliary.tga", "auxiliary.exr"}
+INTERMEDIATES = {"capture.tga", "capture.exr"}
 
 # Runs the real script with its own temporary files under `child_temp`.
 # `fault` is "none", "raise" (fail right after the OpenEXR is saved) or
@@ -113,7 +113,7 @@ class Run:
         return sorted(
             str(path.relative_to(self.child_temp))
             for path in self.child_temp.rglob("*")
-            if path.name in INTERMEDIATES or "auxiliary" in path.name
+            if path.name in INTERMEDIATES
         )
 
 
@@ -177,7 +177,7 @@ def test_a_failure_with_a_work_dir_keeps_the_intermediates_inside_it(
     work = tmp_path / "work"
     status = cli.run(run.argv("--work-dir", str(work)))
     assert status == 5, capsys.readouterr().err
-    scratch = work / "render" / "auxiliary"
+    scratch = work / "render" / "scratch"
     assert {path.name for path in scratch.iterdir()} == INTERMEDIATES
     assert run.stray_intermediates() == []
     assert list(run.parent_temp.iterdir()) == []
@@ -206,7 +206,7 @@ def test_an_interruption_with_a_work_dir_keeps_the_intermediates_inside_it(
     assert (status, err) == (130, "moskophoros: error: interrupted\n")
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
-    scratch = work / "render" / "auxiliary"
+    scratch = work / "render" / "scratch"
     assert {path.name for path in scratch.iterdir()} == INTERMEDIATES
     assert run.stray_intermediates() == []
     assert list(run.parent_temp.iterdir()) == []

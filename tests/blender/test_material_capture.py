@@ -331,8 +331,9 @@ spec = importlib.util.spec_from_file_location("probe_script", path)
 script = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(script)
 material = bpy.data.materials.new("probe")
-auxiliary = script.Auxiliary(bpy.context.scene, [], {}, json.loads(shade))
-auxiliary._inject(material, int(code))
+material.use_nodes = True
+surfaces = script.Surfaces(bpy.context.scene, [], {}, json.loads(shade), {})
+surfaces._inject(material, int(code), None)
 nodes = material.node_tree.nodes
 print("PROBE " + json.dumps({
     "ao": sorted(

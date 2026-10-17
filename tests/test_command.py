@@ -57,7 +57,7 @@ canonical = json.dumps(
     job, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
 ).encode("ascii")
 result = {{
-    "schema": "moskophoros.capture-result/1",
+    "schema": "moskophoros.capture-result/2",
     "mode": mode,
     "job_sha256": hashlib.sha256(canonical).hexdigest(),
     "source_sha256": job["source"]["sha256"],
@@ -102,27 +102,38 @@ else:
             image.paste((0, 0, 0, 0), (0, 0, size[0] // 2, size[1] // 2))
         image.save(f"color/{{i:06d}}.png")
     buffers = [{{"color": f"color/{{i:06d}}.png"}} for i in range(len(job["frames"]))]
-    # Every pixel shows the configured material-ID code, shaded 137; a
+    sys.path.insert(0, {tests!r})
+    import numpy
+    from capture_buffers import write_depth, write_normal
+    # Every buffer covers exactly the colour's surfaces, as a capture's do.
+    coverage = [
+        numpy.asarray(Image.open(f"color/{{i:06d}}.png"))[..., 3] == 255
+        for i in range(len(buffers))
+    ]
+
+    def masked(value, covered):
+        pixels = numpy.zeros((size[1], size[0], 4), dtype=numpy.uint8)
+        pixels[covered] = value
+        return Image.fromarray(pixels)
+
+    # Every surface shows the configured material-ID code, shaded 137; a
     # "bad_aux" frame's shade disagrees with its material-ID.
     os.mkdir("matid")
     os.mkdir("shade")
     code = config.get("code", 65535)
     for i, named in enumerate(buffers):
-        Image.new("RGBA", size, (code >> 8, code & 255, 0, 255)).save(
+        masked((code >> 8, code & 255, 0, 255), coverage[i]).save(
             f"matid/{{i:06d}}.png"
         )
         shade = (0, 0, 0, 0) if config.get("bad_aux") == i else (137, 137, 137, 255)
-        Image.new("RGBA", size, shade).save(f"shade/{{i:06d}}.png")
+        masked(shade, coverage[i]).save(f"shade/{{i:06d}}.png")
         named["matid"] = f"matid/{{i:06d}}.png"
         named["shade"] = f"shade/{{i:06d}}.png"
-    # Normal and depth buffers covering every pixel, as the material-ID
-    # does: facing the viewer at depth 0, or with "surfaces" "varied", a
-    # different normal and depth per pixel and frame.
-    sys.path.insert(0, {tests!r})
-    import numpy
-    from capture_buffers import write_depth, write_normal
-    covered = numpy.ones((size[1], size[0]), dtype=bool)
+    # Normal and depth buffers on the same surfaces: facing the viewer at
+    # depth 0, or with "surfaces" "varied", a different normal and depth per
+    # pixel and frame.
     for i, named in enumerate(buffers):
+        covered = coverage[i]
         normal, depth = (0.0, 0.0, 1.0), 0.0
         if config.get("surfaces") == "varied":
             rng = numpy.random.default_rng(2000 + i)
@@ -147,8 +158,8 @@ else:
             data = bytes(rng.randrange(256) for _ in range(size[0] * size[1] * 4))
             Image.frombytes("RGBA", size, data).save(f"extra/{{i:06d}}.png")
             named["extra"] = f"extra/{{i:06d}}.png"
-    result["backend"] = {{"blender": "5.2.2", "renderer": "workbench",
-                          "studio_light": "Default", "shade": config["shade"]}}
+    result["backend"] = {{"blender": "5.2.2", "renderer": "cycles",
+                          "color": config["color"], "shade": config["shade"]}}
     result["frames"] = [
         {{"address": f["address"], "buffers": named}}
         for f, named in zip(job["frames"], buffers)
@@ -165,7 +176,18 @@ SHADE = {
     "pixel_filter": "BOX",
     "filter_width_px": 0.01,
 }
+COLOR = {
+    "technique": "cycles-flat-emission",
+    "samples_per_pixel": 1,
+    "seed": 0,
+    "pixel_filter": "BOX",
+    "filter_width_px": 0.01,
+    "min_transparent_bounces": 64,
+    "transparent_max_bounces": 64,
+    "pass_alpha_threshold": 2.0**-30,
+}
 DEFAULT_CONFIG = {
+    "color": COLOR,
     "shade": SHADE,
     "bounds": {"L": 0.25, "R": 0.25, "U": 0.75, "D": 0.0},
     "height": 1.0,
@@ -180,8 +202,8 @@ PLAIN_STYLE = {
 OPTIONS = ["--once", "attack", "--supersample", "1", "--cell", "16x16", "--fps", "4"]
 BACKEND = {
     "blender": "5.2.2",
-    "renderer": "workbench",
-    "studio_light": "Default",
+    "renderer": "cycles",
+    "color": COLOR,
     "shade": SHADE,
 }
 MODES = ("measure", "render")
@@ -283,7 +305,7 @@ def test_a_run_writes_the_sheet_its_json_and_a_preview_per_clip(setup, capsys):
         "hero.walk.gif",
     ]
     description = json.loads(setup.json.read_text())
-    assert description["schema"] == "moskophoros.sheet/11"
+    assert description["schema"] == "moskophoros.sheet/12"
     assert description["maps"] == {
         "normal": {"file": "hero.normal.png"},
         "depth": None,
@@ -1033,7 +1055,7 @@ def test_a_bad_settings_file_is_a_usage_error(setup, capsys):
     bad.write_text("{}")
     status, _, err = run(capsys, setup.argv("--settings-from", str(bad)))
     assert status == 2
-    assert "is not a moskophoros.sheet/11 document" in err
+    assert "is not a moskophoros.sheet/12 document" in err
     assert setup.listing() == earlier
 
 

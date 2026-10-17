@@ -25,7 +25,7 @@ from moskophoros import fit, imageops, sampling, views
 INTERNAL_ERROR = 1
 BACKEND_ERROR = 5
 JOB_SCHEMA = "moskophoros.capture-job/1"
-RESULT_SCHEMA = "moskophoros.capture-result/1"
+RESULT_SCHEMA = "moskophoros.capture-result/2"
 MODES = ("measure", "render")
 CUSTOM_VIEW = "custom"
 MAX_CELL = 4096
@@ -50,6 +50,18 @@ SHADE_FIELDS = {
     "seed": "index",
     "pixel_filter": "name",
     "filter_width_px": "positive",
+}
+# The colour's technique and its fixed parameters, which a render result's
+# `backend.color` reports (alpha design, Capture transport and provenance).
+COLOR_FIELDS = {
+    "technique": "name",
+    "samples_per_pixel": "count",
+    "seed": "index",
+    "pixel_filter": "name",
+    "filter_width_px": "positive",
+    "min_transparent_bounces": "index",
+    "transparent_max_bounces": "index",
+    "pass_alpha_threshold": "positive",
 }
 # The most samples Blender's Ambient Occlusion node takes; it silently clamps
 # more (settings design D-42).
@@ -171,8 +183,8 @@ class RootTravel:
 class CaptureResult:
     """A validated result.
 
-    `backend` holds `blender`, and for a render also `renderer`,
-    `studio_light` and `shade`. A measure result has `measurements`, keyed by
+    `backend` holds `blender`, and for a render also `renderer`, `color` and
+    `shade`. A measure result has `measurements`, keyed by
     frame address in request order, and `roots`; a render result has
     `buffers`, mapping each address to its absolute buffer paths by name, and
     `materials`, mapping each material-ID code to its glTF material index, or
@@ -649,8 +661,9 @@ def _materials(entries):
 
 
 def _auxiliary(paths, materials, where):
-    """Check a frame's material-ID and shade buffers against each other and
-    against the material table (design §Capture job and result contract)."""
+    """Check a frame's colour, material-ID and shade buffers against each
+    other and against the material table (design §Capture job and result
+    contract)."""
     ids, shade = _pixels(paths["matid"]), _pixels(paths["shade"])
     problems = (
         (
@@ -678,14 +691,7 @@ def _auxiliary(paths, materials, where):
             shade,
         ),
     )
-    for wrong, message, image in problems:
-        if wrong.any():
-            y, x = (int(i) for i in np.argwhere(wrong)[0])
-            values = tuple(int(v) for v in image[y, x])
-            raise _Invalid(
-                f"{where}: "
-                + message.format((x, y), values, tuple(int(v) for v in ids[y, x]))
-            )
+    _refuse_first(problems, ids, where)
     codes = ids[..., 0].astype(np.int32) << 8 | ids[..., 1]
     used = np.unique(codes[ids[..., 3] == 255])
     unknown = [int(code) for code in used if int(code) not in materials]
@@ -694,6 +700,44 @@ def _auxiliary(paths, materials, where):
     covered = ids[..., 3] == 255
     for name in WIDE_BUFFERS:
         _surfaces(name, paths[name], covered, ids, where)
+    # The colour covers exactly the surfaces the other buffers hold.
+    color = _pixels(paths["color"])
+    problems = (
+        (
+            ~np.isin(color[..., 3], (0, 255)),
+            "colour pixel {} is {}, whose alpha is neither 0 nor 255",
+            color,
+        ),
+        (
+            (color[..., 3] == 0) & color.any(axis=-1),
+            "colour pixel {} is {}, no surface, but not (0, 0, 0, 0)",
+            color,
+        ),
+        (
+            (color[..., 3] == 255) & (ids[..., 3] != 255),
+            "colour pixel {} is {}, a surface, but the material-ID pixel there is {}",
+            color,
+        ),
+        (
+            (color[..., 3] == 0) & (ids[..., 3] != 0),
+            "colour pixel {} is {}, no surface, but the material-ID pixel there is {}",
+            color,
+        ),
+    )
+    _refuse_first(problems, ids, where)
+
+
+def _refuse_first(problems, ids, where):
+    """Refuse the first of `problems`, `(wrong, message, image)` triples, that
+    any pixel shows, naming the pixel, its value and the material ID's."""
+    for wrong, message, image in problems:
+        if wrong.any():
+            y, x = (int(i) for i in np.argwhere(wrong)[0])
+            values = tuple(int(v) for v in image[y, x])
+            raise _Invalid(
+                f"{where}: "
+                + message.format((x, y), values, tuple(int(v) for v in ids[y, x]))
+            )
 
 
 def _surfaces(name, path, covered, ids, where):
@@ -920,18 +964,20 @@ def decode_normal_depth(paths):
 def _backend(value, mode):
     keys = ["blender"]
     if mode == "render":
-        keys += ["renderer", "studio_light", "shade"]
+        keys += ["renderer", "color", "shade"]
     _object(value, keys, "backend")
     if not isinstance(value["blender"], str) or not _VERSION.fullmatch(
         value["blender"]
     ):
         raise _Invalid(f"backend.blender is not a version: {value['blender']!r}")
-    for key in ("renderer", "studio_light"):
-        if key in keys and (not isinstance(value[key], str) or not value[key]):
-            raise _Invalid(f"backend.{key} is not a name: {value[key]!r}")
+    if mode == "render" and (
+        not isinstance(value["renderer"], str) or not value["renderer"]
+    ):
+        raise _Invalid(f"backend.renderer is not a name: {value['renderer']!r}")
     result = dict(value)
     if mode == "render":
-        result["shade"] = _shade(value["shade"])
+        result["color"] = _technique(value["color"], COLOR_FIELDS, "backend.color")
+        result["shade"] = _technique(value["shade"], SHADE_FIELDS, "backend.shade")
     return result
 
 
@@ -973,8 +1019,9 @@ def _shade_problems(shade):
     return problems
 
 
-def _shade(value):
-    _object(value, list(SHADE_FIELDS), "backend.shade")
+def _technique(value, fields, where):
+    """A fixed technique record of `fields`, each of its kind."""
+    _object(value, list(fields), where)
     checks = {
         "name": lambda v: isinstance(v, str) and bool(v),
         "count": lambda v: _is_int(v) and v >= 1,
@@ -982,9 +1029,9 @@ def _shade(value):
         "positive": lambda v: _is_number(v) and v > 0,
         "number": _is_number,
     }
-    for key, kind in SHADE_FIELDS.items():
+    for key, kind in fields.items():
         if not checks[kind](value[key]):
-            raise _Invalid(f"backend.shade.{key} is invalid: {value[key]!r}")
+            raise _Invalid(f"{where}.{key} is invalid: {value[key]!r}")
     return dict(value)
 
 

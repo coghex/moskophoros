@@ -163,7 +163,9 @@ def test_the_complete_output_set(earlier):
     assert sorted(path.name for path in earlier.iterdir()) == OUTPUTS
     description = json.loads((earlier / "hero.json").read_text())
     assert description["generator"]["blender"].startswith("5.2.")
-    assert description["generator"]["renderer"] == "workbench"
+    assert description["generator"]["renderer"] == "cycles"
+    assert "studio_light" not in description["generator"]
+    assert description["generator"]["color"]["technique"] == "cycles-flat-emission"
     assert [(c["name"], c["loop"], c["frame_count"]) for c in description["clips"]] == [
         ("walk", True, 4),
         ("attack", False, 3),

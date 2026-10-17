@@ -64,7 +64,7 @@ moskophoros [options] <infile.glb> <outfile.png>
 | `--ramp-hue-shift DEG` | `-12` | How far each shade of a generated ramp turns the hue, in degrees, finite, −180 to 180. |
 | `--ramp-fade F` | `0.3` | How much chroma a generated ramp loses by its darkest shade, finite, 0 to 1. |
 | `--frames N` | `auto` | How many frames each clip is sampled to, a whole number 1 or more, retimed so every frame lasts `1/fps`; `auto` samples by duration. A clip's own count, set in a [settings file](#settings-files), beats it. See [Clips and sampling](#clips-and-sampling). |
-| `--settings-from FILE` | none | Load every recorded setting of an earlier `moskophoros.sheet/11` sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
+| `--settings-from FILE` | none | Load every recorded setting of an earlier `moskophoros.sheet/12` sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
 | `--config FILE` | none | Repeatable. Read settings from a YAML file; later files win, and its values act as the options would. See [Settings files](#settings-files). |
 | `--no-user-config` | off | Skip the user settings file. |
 | `--preview` | on | Write the animated previews, also over a sheet or settings file without them; cannot accompany `--no-preview`. |
@@ -121,12 +121,11 @@ directory. An existing nonempty directory is a usage error (exit 2) naming
 the directory, and its contents are untouched. The capture workspace contains
 separate `measure/` and `render/` directories, each with `job.json`, eventual
 `result.json` and produced buffers. During rendering, `render/` also holds
-`auxiliary/`, the auxiliary render's scratch directory (its TGA and
-OpenEXR), which a successful phase removes; after a failure or interruption
-a retained workspace may still hold it. An explicitly supplied workspace
+`scratch/`, the capture render's scratch directory (its TGA and OpenEXR),
+which a successful phase removes; after a failure or interruption a
+retained workspace may still hold it. An explicitly supplied workspace
 retains available artifacts after success or failure; normal temporary
-capture workspaces are deleted in either case, the auxiliary scratch with
-them. Retention does not make an incomplete
+capture workspaces are deleted in either case, the scratch with them. Retention does not make an incomplete
 phase a valid result or supply a replay interface. Reusing a retained location
 requires choosing a new or empty directory (owner decision 2026-09-30).
 
@@ -683,8 +682,8 @@ from its recorded properties; the user file sits below the loaded sheet, so it
 never changes a loaded sheet's ramps (material styling design D-33). The
 global formula reloads from `settings.ramp`.
 
-Only the current sheet schema, `moskophoros.sheet/11`, loads (owner decision
-2026-10-11, settings design D-24). A sheet of any other schema, `/1` to `/10`
+Only the current sheet schema, `moskophoros.sheet/12`, loads (owner decision
+2026-10-11, settings design D-24). A sheet of any other schema, `/1` to `/11`
 included, is a usage error naming its schema and the supported one. A file
 that is unreadable, or not a sheet document, is a usage error.
 
@@ -844,8 +843,8 @@ The CLI calls Blender twice, each time as a separate process:
    sample's bounds (L, R, U, D). It renders nothing. The CLI then checks root
    motion and resolves scale, cell and ground pixel.
 2. **Render.** Renders every frame at supersampled size `(W·s) × (H·s)`, with
-   the ground point projected to `(gx·s, gy·s)`: its colour, then its
-   material-ID, shade, normal and depth buffers in one auxiliary render
+   the ground point projected to `(gx·s, gy·s)`: its colour, material-ID,
+   shade, normal and depth buffers, all from one flat, unlit Cycles render
    (below).
 
 The job JSON carries all settings, sample times and the output directory.
@@ -865,44 +864,69 @@ it animates, and resets every pose to rest. Nothing from a previously sampled
 clip may carry into the next one. This implements the rule in
 [Clips and sampling](#clips-and-sampling).
 
-**Render settings:**
-- Workbench engine, with studio lighting fixed in view space (Workbench's
-  default, which keeps lighting fixed to the camera). The studio light's name
-  is recorded in the JSON.
-- Color: texture color, falling back to material color.
-- No shadows, cavity, outline or depth of field.
-- Film transparent. View transform `Standard`, look `None`, exposure 0, gamma 1.
+**Render settings** (alpha design ALPHA-1, *The pipeline with alpha*,
+D-8). One Cycles render per frame gives every buffer from **one shared
+camera sample per pixel**, so each buffer describes exactly the surface the
+colour shows and no pixel blends two surfaces. Workbench is not used.
+
+- Cycles on the CPU, 1 sample per pixel, adaptive sampling off, seed 0 (not
+  animated), pixel filter Box of width 0.01 px (the sample sits at the pixel
+  centre), sample clamping off, denoising off.
+- Every light bounce 0; `min_transparent_bounces` and
+  `transparent_max_bounces` both 64; the view layer's
+  `pass_alpha_threshold` 2^-30.
+- Film transparent, dither 0, view transform `Standard`, look `None`,
+  exposure 0, gamma 1, display sRGB.
+- These parameters are recorded in the result's and the sheet's `color`
+  record (below).
 
 **Capture output:** five PNGs per frame, whether or not a material library
 is used, a light is placed or a map is written (material styling D-13;
 lighting sheet design D-12): the colour, the material-ID buffer and the shade
 buffer, each 8-bit RGBA, and the normal and depth buffers, each 16-bit RGBA
-(below). The colour holds Workbench's antialiased coverage in sRGB with
-straight alpha. Every `use_stamp_*` render
-setting is off, so Blender writes no date or render-time metadata and
-identical frames are identical files. The manifest format lists buffers by
-name, so further buffers can be added without changing it.
+(below). Each is written from pixels by the script's own PNG writer, with no
+chunk but IHDR, IDAT and IEND, so no date or render-time text reaches a
+buffer and identical frames are identical files; every `use_stamp_*` render
+setting is off besides. The manifest format lists buffers by name, so further
+buffers can be added without changing it.
+
+- *Coverage:* the one sample at each pixel centre decides whether the pixel
+  shows a surface: every buffer covers exactly the same pixels, and is
+  `(0, 0, 0, 0)` wherever none is shown. The colour's alpha is therefore 255
+  or 0, never fractional: this replaces Workbench's antialiased coverage
+  (alpha design D-5).
+- *Colour:* each surface's **flat, unlit** material colour (alpha design
+  D-8): no studio light, shading or shadow. It is straight 8-bit sRGB through
+  Blender's `Standard` transform with dither 0, as the render's TGA holds it,
+  where the render's float alpha shows a surface.
+
+**Surfaces** (alpha design spikes 1 to 3, A-8). Every rendered surface's
+shader is replaced, for the whole render phase, by
+`Mix(Transparent, Emission(colour))`, which also writes the surface's
+material-ID code, shade, normal and depth to four AOVs; the replacements are
+removed and the original shaders restored when the phase ends.
+
+- *Colour extraction,* from the shader the glTF importer built:
+  - a Principled BSDF: the colour feeding its `Base Color` (a constant, or
+    the importer's chain: a texture, its factor, vertex colours);
+  - the `KHR_materials_unlit` core, `Mix(Light Path "Is Camera Ray",
+    Transparent, Emission)`, alone or wrapped in a `Mix` with an alpha
+    chain: the colour feeding the Emission's `Color`;
+  - any other shape is a backend error (exit 5) naming the glTF material by
+    index and by its name when it has one, and nothing is published.
+- *Opaque:* every material is captured opaque, whatever its alpha mode
+  (material styling D-26): the mix takes the emission alone, so `MASK` and
+  `BLEND` materials, alpha 0 included, cover their whole surface in every
+  buffer, and no material alpha reaches any buffer.
+- *Without a material:* a primitive without one takes a stand-in, glTF's
+  default material: white, opaque, code 65535.
+- No material property but the colour (texture, metallic, roughness, normal
+  map, emission) reaches any buffer.
 
 **Material-ID and shade buffers** (material styling design D-10, D-11,
-D-22, D-25, D-26, and its §Spike record, which holds the measurements). After
-each frame's colour, one Cycles render gives both buffers from **one shared
-camera sample per pixel**, so each shade pixel holds the light of exactly the
-surface its ID names and no pixel blends two surfaces. Every setting,
-shader and material slot it changes is restored exactly before the next
-colour render, so a frame's colour does not depend on whether auxiliary
-renders ran before it. The colour itself is unchanged.
+D-22, D-25, D-26; alpha design, *Capture transport and provenance*). Both
+come from float AOVs, `matid` and `shade`, of the same render.
 
-- *Sampling:* Cycles on the CPU, 1 sample per pixel, adaptive sampling off,
-  seed 0 (not animated), pixel filter Box of width 0.01 px (the sample sits
-  at the pixel centre), every light bounce 0, transparent bounces 8,
-  denoising off, dither 0, film transparent, and the colour's view transform
-  (`Standard`, look `None`, exposure 0, gamma 1, sRGB).
-- *Surfaces:* every material's shader is replaced by an emission; a
-  primitive without a material gets a stand-in. Its red and blue carry the
-  surface's material-ID code and its green the shade. No material property
-  (colour, texture, metallic, roughness, normal map) reaches either. `MASK`
-  materials have no cutouts (D-26): the colour shows them opaque over their
-  whole surface, and so do the ID and shade.
 - *Shade* (D-22, D-25), occlusion and curvature only: linear
   `clamp(occlusion_weight · AO_out + convexity_weight · (1 − AO_in), 0, 1)`,
   where `AO_out` and `AO_in` are Cycles ambient occlusion looking outside and
@@ -928,11 +952,17 @@ renders ran before it. The colour itself is unchanged.
   job is the same whatever the default ramp, the ranges and the generated
   ramps (material styling design D-36). No light,
   direction or material property enters the shade. The buffer has `R = G = B` =
-  the sRGB-encoded shade (`Standard`, as the colour), alpha 255 where a
-  surface was sampled and `(0, 0, 0, 0)` elsewhere.
+  the byte the `Standard` transform gives the linear shade,
+  `floor(255 · sRGB(v) + ½)` with `v` clamped to [0, 1] (0.25 gives 137),
+  alpha 255 where a surface was sampled and `(0, 0, 0, 0)` elsewhere.
+  Occlusion keeps its approximation: every surface occludes as if solid
+  (alpha design D-7).
 - *Material-ID codes:* a glTF material of index `i` has code `i + 1`; a
   primitive without a material has the largest code, 65535; background is
-  0. The buffer holds a code's high byte in red and its low byte in green,
+  0. The AOV holds the code as a float, exact for every code; a value that
+  is not exactly one of the model's codes, a surface holding the background
+  code or a background pixel holding a code is a backend error (exit 5).
+  The buffer holds a code's high byte in red and its low byte in green,
   blue 0 and alpha 255, and background as `(0, 0, 0, 0)`. A model with more
   than 65534 materials cannot be encoded: an input error (exit 3) before any
   Blender invocation, including the version probe.
@@ -945,19 +975,23 @@ renders ran before it. The colour itself is unchanged.
 
 **Normal and depth buffers** (lighting sheet design D-2, D-10, D-11, D-12,
 D-16 and D-21, and its Spike 1, which holds the measurements). The same
-auxiliary render gives both, from the same camera sample as the material ID
-and shade, through two shader outputs (AOVs) that every replacement shader,
-the stand-in's included, writes beside its emission: Geometry *Normal*
-through a Vector Transform (normal, world to camera) to a colour AOV
-`normal`, and Camera Data *View Z Depth* to a value AOV `depth`. The two
-view-layer AOVs are added for the render and removed after it, with every
-other change. After the render, its result is also saved, every pass and AOV,
-as an uncompressed multilayer OpenEXR of 32-bit floats in the script's
-scratch directory (the image settings' media type set to multilayer before
-the format, and every image setting restored), which the script reads with
-the standard library and removes. The scratch directory, which also takes
-the render's TGA, is `auxiliary/` inside the render phase directory: the
-script creates it before the first frame and removes it after the last, and
+render gives both, from the same camera sample as the colour, material ID
+and shade, through two more AOVs that every replacement shader, the
+stand-in's included, writes beside its emission: Geometry *Normal* through a
+Vector Transform (normal, world to camera) to a colour AOV `normal`, and
+Camera Data *View Z Depth* to a value AOV `depth`. The four view-layer AOVs
+are added for the render phase and removed after it.
+
+After each frame's render, its colour is written as an 8-bit TGA through the
+`Standard` transform, and its result also saved, every pass and AOV, as an
+uncompressed multilayer OpenEXR of 32-bit floats (the image settings' media
+type set to multilayer before the format, and every image setting restored),
+which the script reads with the standard library and removes. The float
+alpha of the OpenEXR's `Combined` pass decides coverage; the TGA's alpha must
+agree with it, and every AOV must hold a surface exactly where it does,
+or the frame is a backend error (exit 5). Both files go to the script's
+scratch directory, `scratch/` inside the render phase directory: the script
+creates it before the first frame and removes it after the last, and
 otherwise the workspace's lifetime governs it ([ownership and failure
 handling](#ownership-and-failure-handling)), so a failed or interrupted
 Blender never leaves it outside the workspace.
@@ -1058,11 +1092,11 @@ never interprets human-readable stdout as a manifest.
 
 | Field | Meaning |
 |---|---|
-| `schema` | Exactly `moskophoros.capture-result/1`. |
+| `schema` | Exactly `moskophoros.capture-result/2`, for measure and render results alike (`/1` recorded Workbench's renderer and studio light; alpha design ALPHA-1). |
 | `mode` | Must match the submitted job. |
 | `job_sha256` | Hash of the submitted job encoded as canonical JSON with sorted keys, compact separators, ASCII escapes and non-finite numbers forbidden. This binds a result to its complete request, not just its source. |
 | `source_sha256` | Must match the job's source digest. |
-| `backend` | Actual Blender version; render results also record the actual renderer and studio light of the colour, and `shade`: exactly the shade technique and its fixed parameters (`technique`, `samples_per_pixel`, `seed`, `pixel_filter`, `filter_width_px`); the capture values are the job's. The version is parsed according to the owning supported-version contract. |
+| `backend` | Actual Blender version, and nothing else in a measure result. Render results also record, in this order, `renderer`, the renderer's name (`"cycles"`); `color`, exactly the colour's technique and its fixed parameters (`technique`, `samples_per_pixel`, `seed`, `pixel_filter`, `filter_width_px`, `min_transparent_bounces`, `transparent_max_bounces`, `pass_alpha_threshold`: a nonempty name, a whole number 1 or more, whole numbers 0 or more for the seed and the two bounce limits, a name, and numbers greater than 0 for the width and the threshold); and `shade`, exactly the shade technique and its fixed parameters (`technique`, `samples_per_pixel`, `seed`, `pixel_filter`, `filter_width_px`), whose capture values are the job's. There is no studio light. The version is parsed according to the owning supported-version contract. |
 | `frames` | Exactly one record per requested address, in request order. No missing, duplicate or unexpected address is accepted. |
 | `frames[].bounds_m` | Measure only: finite, nonnegative `L`, `R`, `U`, `D` as defined by the product design. |
 | `frames[].height_m` | Measure only: evaluated subject height along the glTF vertical axis, for the accepted unit warning. |
@@ -1087,6 +1121,9 @@ absolute, contain parent traversal or escape through a symlink.
 
 The launcher also rejects, as a backend error (exit 5):
 
+- a colour pixel whose alpha is other than 0 or 255, an empty colour pixel
+  other than `(0, 0, 0, 0)`, or a colour pixel whose coverage differs from
+  the material ID's, in either direction;
 - a material-ID pixel that is not exactly an encoded value (alpha other than
   0 or 255, background other than `(0, 0, 0, 0)`, blue other than 0, or
   code 0 at alpha 255), or a code missing from the table;
@@ -1150,7 +1187,7 @@ The [CLI work-directory contract](#cli) governs retained capture ownership.
 Normal temporary capture directories are deleted after success or failure. Explicitly retained
 capture directories preserve available job/result/buffer evidence on failure,
 without treating incomplete phases as valid results. The script keeps the
-auxiliary render's intermediate TGA and OpenEXR inside the render phase
+capture render's intermediate TGA and OpenEXR inside the render phase
 directory, so the launcher's deletion or retention of the workspace covers
 them even when it has killed Blender, where no cleanup inside Blender can
 run. The script's private copy of the model, which it imports from its own
@@ -1204,13 +1241,15 @@ section's settings on 5.2.2:
   interpolation: a 30° linear keyframe span read 5.967° where glTF gives 6°.
   Keyframe values are exact. The error is far below a pixel at sprite scale and
   is accepted.
-- **Render settings behave as specified.** The studio light is `Default` with
-  world-space lighting off, `TEXTURE` color falls back to the material color,
-  and the `Standard` view transform reproduces a material's sRGB color exactly
-  under flat light. Renders are pixel-identical across separate Blender
-  processes; files are byte-identical only with stamping off.
-- **Cost:** about 1 s to start Blender, about 1 s for the first render while
-  shaders compile, then 10–120 ms per frame at 384×384.
+- **Render settings behaved as specified** for the Workbench colour render
+  this experiment measured, which one flat Cycles render has since replaced
+  (alpha design ALPHA-1; its spikes 1 to 3 record that render's settings,
+  exactness and cost on 5.2.2). The `Standard` view transform reproduces a
+  material's sRGB colour exactly. Renders are pixel-identical across separate
+  Blender processes; Blender's own image files carry render-time text, so
+  every buffer is written from pixels.
+- **Cost:** about 1 s to start Blender and about 1 s for the first render
+  while shaders compile.
 
 This section is the single record of the supported version. The backend's
 version check in `capture/blender.py` must match it. Moving to a new series is
@@ -1240,10 +1279,10 @@ pixel takes the colour with the most votes, with alpha 255.
 - A tie at equal distance goes to the smallest packed `0xRRGGBB` value.
 
 Both reductions use exact integer arithmetic and are fully determined. The
-transparent pixels are the same under either. Under
-Workbench's smooth shading a block may hold nearly as many colours as pixels,
-so the vote can fall to the tie-break; that is accepted, and the owner judges
-the look (vision V-12). Future style passes replace or extend these (vision,
+transparent pixels are the same under either. A textured surface, or a
+ramp's bands, can give a block nearly as many colours as pixels, so the vote
+can fall to the tie-break; that is accepted, and the owner judges the look
+(vision V-12). Future style passes replace or extend these (vision,
 Long-term direction).
 
 #### Normal and depth maps
@@ -1253,10 +1292,11 @@ with exactly the colour's coverage, so the maps line up with the sheet pixel
 for pixel (lighting sheet design D-8, D-15, D-19, D-21, D-27 and its
 Numerical reference). They read the frame's normal and depth arrays
 ([Frames into stylize](#frames-into-stylize)): a **surface sample** is a
-supersampled pixel where capture hit a surface. The colour is Workbench's
-antialiased render and the samples come from one ray per supersampled pixel,
-so a kept colour pixel can have no sample in its block, and a transparent
-one can have some.
+supersampled pixel where capture hit a surface. The colour and the samples
+come from the same one camera sample per supersampled pixel
+([Capture](#capture)), so a kept colour pixel has surface samples in its
+block and a transparent one can have some; the rules below also define a
+kept pixel with none.
 
 - *Coverage:* a map pixel exists exactly where the reduced colour's alpha is
   255, under either reduction, with or without a palette or a library. A
@@ -1756,15 +1796,19 @@ game recovers `depth = (code − 32768) / 16` and, with the pixel's position,
 published with the other outputs, rolled back with them, and named in an
 output error (exit 6) when it cannot be written.
 
-**JSON (`moskophoros.sheet/11`).**
+**JSON (`moskophoros.sheet/12`).**
 
 ```json
 {
-  "schema": "moskophoros.sheet/11",
+  "schema": "moskophoros.sheet/12",
   "generator": {
     "tool": "moskophoros", "version": "0.1.0",
     "python": "3.x.y", "numpy": "x.y.z", "pillow": "x.y.z",
-    "blender": "x.y.z", "renderer": "workbench", "studio_light": "...",
+    "blender": "x.y.z", "renderer": "cycles",
+    "color": { "technique": "cycles-flat-emission", "samples_per_pixel": 1,
+               "seed": 0, "pixel_filter": "BOX", "filter_width_px": 0.01,
+               "min_transparent_bounces": 64, "transparent_max_bounces": 64,
+               "pass_alpha_threshold": 9.313225746154785e-10 },
     "shade": { "technique": "cycles-ambient-occlusion", "samples_per_pixel": 1,
                "seed": 0, "pixel_filter": "BOX", "filter_width_px": 0.01 }
   },
@@ -1882,9 +1926,16 @@ output error (exit 6) when it cannot be written.
   `settings.normals`; `moskophoros.sheet/8` had no depth map or
   `settings.depth`; `moskophoros.sheet/9` had no `settings.light`;
   `moskophoros.sheet/10` had no `settings.ramp`, generated ramp records or
-  library `shade`; [reuse](#scale-and-ground-point) loads only `/11`
-  (settings design D-24). The normal and depth capture adds no fixed
+  library `shade`; `moskophoros.sheet/11` had Workbench's lit colour,
+  recorded `generator.renderer` `"workbench"` and `generator.studio_light`,
+  and had no `generator.color`; [reuse](#scale-and-ground-point) loads only
+  `/12` (settings design D-24). The normal and depth capture adds no fixed
   parameter to `generator.shade` (lighting sheet design D-26).
+- `generator` records this tool, its Python and libraries, and what the
+  render result's `backend` reports: the Blender version, `renderer`
+  (`"cycles"`), `color`, the colour's technique and fixed parameters, and
+  `shade`, the shade's, each copied as the result gives it and inside the
+  fingerprint (alpha design ALPHA-1). There is no studio light.
 - `fingerprint` is the SHA-256 of the canonical JSON (sorted keys, no
   whitespace, UTF-8) of `generator`, `source.sha256` and `settings`. The
   hashed object mirrors the sheet's own structure:
@@ -1951,8 +2002,9 @@ lit preview. Without a light every preview is flat and no lit preview is
 written. With previews off a placed light is recorded but unused, with one
 warning saying so. Light is previewed, never baked: the colour sheet, flat
 previews and maps are the same with and without a light. The ordinary look
-keeps its studio light, so a lit preview over it applies directional light a
-second time; that is accepted, not corrected (D-23).
+shows each material's flat, unlit colour, so a lit preview over it applies
+the light once (alpha design D-8, which replaces lighting sheet design
+D-23).
 
 The light sits in the camera's frame, fixed to the camera, so every
 direction of the subject sees it from the same place: `x` screen right, `y`
@@ -1998,7 +2050,7 @@ contract.
 (V-2)
 
 Given the same input bytes, settings and generator (tool, Python, numpy,
-Pillow and Blender versions, renderer, shade technique), the sheet PNG, its
+Pillow and Blender versions, renderer, colour and shade techniques), the sheet PNG, its
 normal and depth maps and JSON are byte-identical. To make that true:
 
 - sample times are exact

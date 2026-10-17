@@ -57,7 +57,9 @@ def corner(value):
 
 
 def uncover_corner(document, tmp_path):
-    """Make pixel (0, 0) of frame 0's normal and depth buffers background."""
+    """Make pixel (0, 0) of frame 0's colour, normal and depth buffers
+    background."""
+    paint("color", corner((0, 0, 0, 0)))(document, tmp_path)
     covered = np.ones((6, 8), dtype=bool)
     covered[0, 0] = False
     write_normal(tmp_path / "normal/000000.png", covered)
@@ -382,8 +384,14 @@ def test_stylize_receives_decoded_identity_and_shade_arrays(setup, capsys, monke
     assert identities == Identities(())
     assert first[IDENTITY].dtype == np.int32 and first[SHADE].dtype == np.uint8
     assert first[IDENTITY].shape == first[SHADE].shape == (16, 16)
-    assert (first[IDENTITY] == identities.no_identity).all()
-    assert (first[SHADE] == 137).all()
+    # The fake's colour leaves its top-left quarter empty, and every buffer
+    # covers the colour's surfaces only.
+    covered = np.ones((16, 16), dtype=bool)
+    covered[:8, :8] = False
+    assert (first[IDENTITY][covered] == identities.no_identity).all()
+    assert (first[IDENTITY][~covered] == BACKGROUND).all()
+    assert (first[SHADE][covered] == 137).all()
+    assert (first[SHADE][~covered] == 0).all()
     assert len(seen) == 1 + (4 + 3) * 8
 
 
@@ -445,3 +453,4 @@ def test_the_script_and_the_launcher_agree_on_the_encoding_and_shade_fields():
     assert script["ID_BACKGROUND"] == backend.ID_BACKGROUND
     assert script["NO_MATERIAL_ID"] == backend.NO_MATERIAL_ID
     assert list(script["SHADE"]) == list(backend.SHADE_FIELDS)
+    assert list(script["COLOR"]) == list(backend.COLOR_FIELDS)

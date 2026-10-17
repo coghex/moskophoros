@@ -27,8 +27,8 @@ GENERATOR = {
     "numpy": "2.5.3",
     "pillow": "12.3.0",
     "blender": "5.2.2",
-    "renderer": "workbench",
-    "studio_light": "rim.sl",
+    "renderer": "cycles",
+    "color": {"technique": "cycles-flat-emission"},
 }
 
 # The described sheet: the `side` view (east, then west), three clips at 3 fps.
@@ -76,8 +76,8 @@ TIMES = {
 }
 
 CANONICAL = (
-    '{"generator":{"blender":"5.2.2","numpy":"2.5.3","pillow":"12.3.0",'
-    '"python":"3.13.15","renderer":"workbench","studio_light":"rim.sl",'
+    '{"generator":{"blender":"5.2.2","color":{"technique":"cycles-flat-emission"},'
+    '"numpy":"2.5.3","pillow":"12.3.0","python":"3.13.15","renderer":"cycles",'
     '"tool":"moskophoros","version":"0.1.0"},'
     '"settings":{"cell":{"height":3,"width":2},'
     '"clips":[{"frames":null,"loop":true,"name":"läuft"},'
@@ -171,7 +171,7 @@ EXPECTED_FRAMES = ",\n".join(
 
 EXPECTED_JSON = (
     """{
-  "schema": "moskophoros.sheet/11",
+  "schema": "moskophoros.sheet/12",
   "generator": {
     "tool": "moskophoros",
     "version": "0.1.0",
@@ -179,8 +179,10 @@ EXPECTED_JSON = (
     "numpy": "2.5.3",
     "pillow": "12.3.0",
     "blender": "5.2.2",
-    "renderer": "workbench",
-    "studio_light": "rim.sl"
+    "renderer": "cycles",
+    "color": {
+      "technique": "cycles-flat-emission"
+    }
   },
   "source": {
     "file": "héros.glb",
@@ -370,7 +372,7 @@ def test_the_fingerprint_ignores_file_names_and_paths():
     "changes",
     [
         {"generator": GENERATOR | {"blender": "5.2.3"}},
-        {"generator": GENERATOR | {"studio_light": "basic.sl"}},
+        {"generator": GENERATOR | {"color": {"technique": "another"}}},
         {"generator": GENERATOR | {"pillow": "12.3.1"}},
         {"settings": replace(SIDE, supersample=8)},
         {"settings": replace(SIDE, ppm=24.25)},
@@ -381,7 +383,7 @@ def test_the_fingerprint_ignores_file_names_and_paths():
     ],
     ids=[
         "blender",
-        "studio light",
+        "colour technique",
         "pillow",
         "supersample",
         "scale",
@@ -717,8 +719,8 @@ SHADE = {"technique": "cycles-ambient-occlusion", "seed": 0}
 def test_the_generator_records_this_tool_and_the_render_provenance():
     backend = {
         "blender": "5.2.2",
-        "renderer": "workbench",
-        "studio_light": "rim.sl",
+        "renderer": "cycles",
+        "color": {"technique": "cycles-flat-emission"},
         "shade": SHADE,
     }
     assert export.generator(backend) == {
@@ -728,15 +730,15 @@ def test_the_generator_records_this_tool_and_the_render_provenance():
         "numpy": np.__version__,
         "pillow": PIL.__version__,
         "blender": "5.2.2",
-        "renderer": "workbench",
-        "studio_light": "rim.sl",
+        "renderer": "cycles",
+        "color": {"technique": "cycles-flat-emission"},
         "shade": SHADE,
     }
     assert list(export.generator(backend)) == [*GENERATOR, "shade"]
 
 
 def test_the_generator_needs_render_provenance():
-    with pytest.raises(ValueError, match="renderer, studio_light, shade"):
+    with pytest.raises(ValueError, match="renderer, color, shade"):
         export.generator({"blender": "5.2.2"})
 
 
@@ -758,7 +760,7 @@ def test_a_different_shade_technique_or_parameter_changes_the_fingerprint(change
         "pixel_filter": "BOX",
         "filter_width_px": 0.01,
     }
-    backend = {"blender": "5.2.2", "renderer": "workbench", "studio_light": "Default"}
+    backend = {"blender": "5.2.2", "renderer": "cycles", "color": COLOR}
     settings = {"supersample": 2}
 
     def fingerprint(shade):
@@ -767,6 +769,43 @@ def test_a_different_shade_technique_or_parameter_changes_the_fingerprint(change
 
     assert fingerprint(shade) != fingerprint(shade | change)
     assert fingerprint(shade) == fingerprint(dict(shade))
+
+
+COLOR = {
+    "technique": "cycles-flat-emission",
+    "samples_per_pixel": 1,
+    "seed": 0,
+    "pixel_filter": "BOX",
+    "filter_width_px": 0.01,
+    "min_transparent_bounces": 64,
+    "transparent_max_bounces": 64,
+    "pass_alpha_threshold": 2.0**-30,
+}
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"technique": "another"},
+        {"samples_per_pixel": 2},
+        {"seed": 1},
+        {"pixel_filter": "GAUSSIAN"},
+        {"filter_width_px": 1.5},
+        {"min_transparent_bounces": 0},
+        {"transparent_max_bounces": 8},
+        {"pass_alpha_threshold": 0.5},
+    ],
+)
+def test_the_colour_record_is_copied_and_fingerprinted(change):
+    backend = {"blender": "5.2.2", "renderer": "cycles", "shade": SHADE}
+
+    def fingerprint(color):
+        generator = export.generator({**backend, "color": color})
+        assert generator["color"] == color and generator["color"] is not color
+        return export.fingerprint(generator, {"supersample": 2}, "ab" * 32)
+
+    assert fingerprint(COLOR) != fingerprint(COLOR | change)
+    assert fingerprint(COLOR) == fingerprint(dict(COLOR))
 
 
 def test_write_puts_the_bytes_at_the_given_paths(tmp_path):

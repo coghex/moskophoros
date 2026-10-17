@@ -406,7 +406,7 @@ def test_a_malformed_job_is_an_internal_error(change, message):
 
 def measure_document(job):
     return {
-        "schema": "moskophoros.capture-result/1",
+        "schema": "moskophoros.capture-result/2",
         "mode": "measure",
         "job_sha256": independent_sha256(job),
         "source_sha256": SHA,
@@ -481,7 +481,7 @@ def _swap_roots(document):
 
 
 MEASURE_REJECTIONS = {
-    "the wrong schema": (_set(["schema"], "moskophoros.capture-result/2"), "schema"),
+    "the wrong schema": (_set(["schema"], "moskophoros.capture-result/1"), "schema"),
     "the other mode": (_set(["mode"], "render"), "mode"),
     "another job's hash": (_set(["job_sha256"], "0" * 64), "job_sha256"),
     "another source": (_set(["source_sha256"], "0" * 64), "source_sha256"),
@@ -490,8 +490,12 @@ MEASURE_REJECTIONS = {
     "no backend version": (_delete(["backend", "blender"]), "missing blender"),
     "a bad backend version": (_set(["backend", "blender"], "5.2.2 LTS"), "version"),
     "render fields in a measure backend": (
-        _set(["backend", "renderer"], "workbench"),
+        _set(["backend", "renderer"], "cycles"),
         "unknown renderer",
+    ),
+    "a colour record in a measure backend": (
+        _set(["backend", "color"], {"technique": "cycles-flat-emission"}),
+        "unknown color",
     ),
     "a missing frame": (lambda d: d["frames"].pop(), "5 records for 6"),
     "an extra frame": (
@@ -556,16 +560,16 @@ def png(path, size=(8, 6), mode="RGBA", format="PNG"):
     return path
 
 
-def raw_png(path, width, height, bit_depth, color_type, channels, extra=()):
-    """A PNG written by hand, for formats Pillow does not write. `extra`
-    chunks, as (kind, data), go after the pixel data."""
+def raw_png(path, width, height, bit_depth, color_type, channels, extra=(), fill=0x7F):
+    """A PNG written by hand, for formats Pillow does not write, every byte
+    of it `fill`. `extra` chunks, as (kind, data), go after the pixel data."""
 
     def chunk(kind, data):
         body = kind + data
         return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
 
     sample = bit_depth // 8
-    row = b"\x00" + b"\x7f" * (width * channels * sample)
+    row = b"\x00" + bytes([fill]) * (width * channels * sample)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(
         b"\x89PNG\r\n\x1a\n"
@@ -589,17 +593,31 @@ SHADE = {
 # Material 0's code, with red its high byte and green its low byte.
 MATID = (0, 1, 0, 255)
 SHADED = (137, 137, 137, 255)
+# A surface's flat colour: a capture's colour is opaque or empty.
+OPAQUE = (200, 100, 50, 255)
 BUFFER_NAMES = ("color", "matid", "shade", "normal", "depth")
+COLOR = {
+    "technique": "cycles-flat-emission",
+    "samples_per_pixel": 1,
+    "seed": 0,
+    "pixel_filter": "BOX",
+    "filter_width_px": 0.01,
+    "min_transparent_bounces": 64,
+    "transparent_max_bounces": 64,
+    "pass_alpha_threshold": 2.0**-30,
+}
 
 
 def render_document(job, phase_dir):
     """A valid render result, writing its 8×6 buffers: a 4×3 cell at 2×.
-    Every pixel shows material 0, shaded 137, facing the viewer at depth
-    0.5 m."""
+    Every pixel shows material 0 in an opaque flat colour, shaded 137,
+    facing the viewer at depth 0.5 m."""
     records = []
     for ordinal, frame in enumerate(job["frames"]):
         paths = {name: f"{name}/{ordinal:06d}.png" for name in BUFFER_NAMES}
-        png(phase_dir / paths["color"])
+        Image.new("RGBA", (8, 6), OPAQUE).save(
+            phase_dir / _parent(phase_dir, paths["color"])
+        )
         Image.new("RGBA", (8, 6), MATID).save(
             phase_dir / _parent(phase_dir, paths["matid"])
         )
@@ -611,19 +629,37 @@ def render_document(job, phase_dir):
         write_depth(phase_dir / paths["depth"], covered, 0.5)
         records.append({"address": dict(frame["address"]), "buffers": paths})
     return {
-        "schema": "moskophoros.capture-result/1",
+        "schema": "moskophoros.capture-result/2",
         "mode": "render",
         "job_sha256": independent_sha256(job),
         "source_sha256": SHA,
         "backend": {
             "blender": "5.2.2",
-            "renderer": "workbench",
-            "studio_light": "Default",
+            "renderer": "cycles",
+            "color": dict(COLOR),
             "shade": dict(SHADE),
         },
         "frames": records,
         "materials": [{"id": 1, "material": 0}, {"id": 65535, "material": None}],
     }
+
+
+def _paint(path, pixel, value):
+    with Image.open(path) as opened:
+        image = opened.copy()
+    image.putpixel(pixel, value)
+    image.save(path)
+
+
+def _clear(phase_dir, ordinal, pixel):
+    """Make `pixel` of frame `ordinal` no surface in every buffer."""
+    for name in ("color", "matid", "shade"):
+        _paint(phase_dir / f"{name}/{ordinal:06d}.png", pixel, (0, 0, 0, 0))
+    for name, write in (("normal", write_normal), ("depth", write_depth)):
+        covered = np.ones((6, 8), dtype=bool)
+        covered[pixel[1], pixel[0]] = False
+        args = (covered,) if name == "normal" else (covered, 0.5)
+        write(phase_dir / f"{name}/{ordinal:06d}.png", *args)
 
 
 def _parent(phase_dir, relative):
@@ -636,8 +672,8 @@ def test_a_valid_render_result(tmp_path):
     result = validate_result(job, tmp_path, encode(render_document(job, tmp_path)))
     assert result.backend == {
         "blender": "5.2.2",
-        "renderer": "workbench",
-        "studio_light": "Default",
+        "renderer": "cycles",
+        "color": COLOR,
         "shade": SHADE,
     }
     assert result.measurements is None and result.roots is None
@@ -666,14 +702,76 @@ def _inside_link(document, phase_dir):
 def _truncate(document, phase_dir):
     path = phase_dir / "color/000003.png"
     data = path.read_bytes()
-    path.write_bytes(data[: len(data) - 20])
+    # Into the compressed pixels, past the IEND chunk and IDAT's checksum.
+    path.write_bytes(data[: len(data) - 30])
 
 
 RENDER_REJECTIONS = {
     "no renderer": (lambda d, p: d["backend"].pop("renderer"), "missing renderer"),
-    "no studio light": (
-        lambda d, p: d["backend"].pop("studio_light"),
-        "missing studio_light",
+    "no colour record": (lambda d, p: d["backend"].pop("color"), "missing color"),
+    "a studio light": (
+        lambda d, p: d["backend"].update(studio_light="Default"),
+        "unknown studio_light",
+    ),
+    "a colour record without a field": (
+        lambda d, p: d["backend"]["color"].pop("pass_alpha_threshold"),
+        "backend.color is missing pass_alpha_threshold",
+    ),
+    "a colour record with another field": (
+        lambda d, p: d["backend"]["color"].update(studio_light="Default"),
+        "backend.color has unknown studio_light",
+    ),
+    "a colour technique that is no name": (
+        lambda d, p: d["backend"]["color"].update(technique=""),
+        "backend.color.technique is invalid",
+    ),
+    "a fractional sample count": (
+        lambda d, p: d["backend"]["color"].update(samples_per_pixel=1.5),
+        "backend.color.samples_per_pixel is invalid",
+    ),
+    "a boolean seed": (
+        lambda d, p: d["backend"]["color"].update(seed=False),
+        "backend.color.seed is invalid",
+    ),
+    "a negative bounce limit": (
+        lambda d, p: d["backend"]["color"].update(min_transparent_bounces=-1),
+        "backend.color.min_transparent_bounces is invalid",
+    ),
+    "a string bounce limit": (
+        lambda d, p: d["backend"]["color"].update(transparent_max_bounces="64"),
+        "backend.color.transparent_max_bounces is invalid",
+    ),
+    "a zero alpha threshold": (
+        lambda d, p: d["backend"]["color"].update(pass_alpha_threshold=0),
+        "backend.color.pass_alpha_threshold is invalid",
+    ),
+    "a filter width that is no number": (
+        lambda d, p: d["backend"]["color"].update(filter_width_px=None),
+        "backend.color.filter_width_px is invalid",
+    ),
+    "a partly covered colour pixel": (
+        lambda d, p: _paint(p / "color/000001.png", (3, 2), (200, 100, 50, 128)),
+        r"colour pixel \(3, 2\) is \(200, 100, 50, 128\), whose alpha is neither",
+    ),
+    "a colour background pixel with a colour": (
+        lambda d, p: (
+            _clear(p, 1, (3, 2)),
+            _paint(p / "color/000001.png", (3, 2), (1, 0, 0, 0)),
+        ),
+        r"colour pixel \(3, 2\) is \(1, 0, 0, 0\), no surface, but not",
+    ),
+    "an empty colour pixel on a surface": (
+        lambda d, p: _paint(p / "color/000002.png", (0, 5), (0, 0, 0, 0)),
+        r"colour pixel \(0, 5\) is \(0, 0, 0, 0\), no surface, but the "
+        r"material-ID pixel there is \(0, 1, 0, 255\)",
+    ),
+    "a colour surface over no material ID": (
+        lambda d, p: (
+            _clear(p, 3, (7, 0)),
+            _paint(p / "color/000003.png", (7, 0), OPAQUE),
+        ),
+        r"colour pixel \(7, 0\) is \(200, 100, 50, 255\), a surface, but the "
+        r"material-ID pixel there is \(0, 0, 0, 0\)",
     ),
     "no color buffer": (
         lambda d, p: d["frames"][0]["buffers"].pop("color"),
@@ -755,7 +853,7 @@ def test_a_hand_written_8_bit_rgba_png_is_accepted(tmp_path):
     # The same writer as the 16-bit rejection, at 8 bits.
     job = render_job(str(tmp_path))
     document = render_document(job, tmp_path)
-    raw_png(tmp_path / "color/000005.png", 8, 6, 8, 6, 4)
+    raw_png(tmp_path / "color/000005.png", 8, 6, 8, 6, 4, fill=0xFF)
     validate_result(job, tmp_path, encode(document))
 
 

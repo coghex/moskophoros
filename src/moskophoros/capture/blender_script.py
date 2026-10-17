@@ -7,9 +7,9 @@ contract, §Clips and sampling, §Root motion, §Scale and ground point and
 §Camera and directions.
 
 Measure mode reports bounds, heights and root travel; render mode renders
-each frame with the accepted Workbench settings, then its material-ID,
-shade, normal and depth buffers in one auxiliary Cycles render. Both share
-the import, subject selection, identity mapping and clip isolation below.
+each frame's colour, material-ID, shade, normal and depth buffers in one
+flat, unlit Cycles render. Both share the import, subject selection,
+identity mapping and clip isolation below.
 
 Identity mapping: the script imports a private copy of the source in which
 every node is renamed `moskophoros.node.<index>` and every animation
@@ -51,7 +51,7 @@ from array import array
 import bpy
 
 JOB_SCHEMA = "moskophoros.capture-job/1"
-RESULT_SCHEMA = "moskophoros.capture-result/1"
+RESULT_SCHEMA = "moskophoros.capture-result/2"
 NODE_NAME = "moskophoros.node.{}"
 ANIMATION_NAME = "moskophoros.animation.{}"
 # Not ending in digits: Blender would read those as its own ".001" suffix
@@ -948,35 +948,75 @@ def measure(job, document, statics):
 # Rendering
 
 
-RENDERER = "workbench"
+RENDERER = "cycles"
+# The colour's technique and fixed parameters, reported in the result: one
+# flat, unlit Cycles render per frame (alpha design, The pipeline with alpha).
+COLOR = {
+    "technique": "cycles-flat-emission",
+    "samples_per_pixel": 1,
+    "seed": 0,
+    "pixel_filter": "BOX",
+    "filter_width_px": 0.01,
+    "min_transparent_bounces": 64,
+    "transparent_max_bounces": 64,
+    # 2^-30, exactly.
+    "pass_alpha_threshold": 9.313225746154785e-10,
+}
+_RENDER_SETTINGS = (
+    ("render", "engine", "CYCLES"),
+    ("render", "film_transparent", True),
+    ("render", "dither_intensity", 0.0),
+    ("cycles", "device", "CPU"),
+    ("cycles", "samples", COLOR["samples_per_pixel"]),
+    ("cycles", "use_adaptive_sampling", False),
+    ("cycles", "seed", COLOR["seed"]),
+    ("cycles", "use_animated_seed", False),
+    ("cycles", "pixel_filter_type", COLOR["pixel_filter"]),
+    ("cycles", "filter_width", COLOR["filter_width_px"]),
+    ("cycles", "max_bounces", 0),
+    ("cycles", "diffuse_bounces", 0),
+    ("cycles", "glossy_bounces", 0),
+    ("cycles", "transmission_bounces", 0),
+    ("cycles", "volume_bounces", 0),
+    ("cycles", "min_transparent_bounces", COLOR["min_transparent_bounces"]),
+    ("cycles", "transparent_max_bounces", COLOR["transparent_max_bounces"]),
+    ("cycles", "sample_clamp_direct", 0.0),
+    ("cycles", "sample_clamp_indirect", 0.0),
+    ("cycles", "use_denoising", False),
+    ("layer", "pass_alpha_threshold", COLOR["pass_alpha_threshold"]),
+    ("image", "file_format", "TARGA_RAW"),
+    ("image", "color_mode", "RGBA"),
+)
 
 
 def configure_render(scene, settings):
     """Design §Capture's render settings and capture output."""
     render = scene.render
-    render.engine = "BLENDER_WORKBENCH"
-    shading = scene.display.shading
-    # Studio lighting fixed in view space, Workbench's default.
-    shading.light = "STUDIO"
-    shading.use_world_space_lighting = False
-    # Texture color, falling back to the material color.
-    shading.color_type = "TEXTURE"
-    shading.show_shadows = False
-    shading.show_cavity = False
-    shading.show_object_outline = False
-    shading.use_dof = False
-    render.film_transparent = True
+    owners = {
+        "render": render,
+        "cycles": scene.cycles,
+        "layer": bpy.context.view_layer,
+        "image": render.image_settings,
+    }
+    for owner, name, value in _RENDER_SETTINGS:
+        setattr(owners[owner], name, value)
+        held = getattr(owners[owner], name)
+        # Blender stores floats in 32 bits.
+        if held != value and not (
+            isinstance(value, float) and math.isclose(held, value, rel_tol=1e-6)
+        ):
+            raise ScriptError(
+                f"Blender holds the render setting {owner}.{name} as {held!r}, "
+                f"not {value!r}"
+            )
     view = scene.view_settings
     view.view_transform = "Standard"
     view.look = "None"
     view.exposure = 0.0
     view.gamma = 1.0
     scene.display_settings.display_device = "sRGB"
-    image = render.image_settings
-    image.file_format = "PNG"
-    image.color_mode = "RGBA"
-    image.color_depth = "8"
-    # No date or render-time metadata, so identical frames are identical files.
+    # No date or render-time metadata reaches a buffer: every buffer is
+    # written from pixels, and Blender's own stamps are off besides.
     render.use_stamp = False
     for name in dir(render):
         if name.startswith("use_stamp_"):
@@ -1016,11 +1056,11 @@ def frame_size(settings):
     return width, height, max(width, MIN_RESOLUTION), max(height, MIN_RESOLUTION)
 
 
-# The material-ID and shade buffers (design §Capture, material styling design
-# §Spike record (D-10)): one Cycles render per frame, after its colour, with
-# every surface's shader replaced by an emission whose red and blue carry the
-# material-ID code's high and low bytes and whose green carries the shade, so
-# both come from one camera sample at the pixel centre.
+# The buffers (design §Capture; alpha design, Capture transport and
+# provenance): every surface's shader is replaced by a flat emission of its
+# material colour, `Mix(Transparent, Emission(colour))`, which writes its
+# material-ID code, shade, normal and depth to float AOVs, so every buffer
+# comes from one camera sample at the pixel centre of one render.
 
 ID_BACKGROUND = 0
 NO_MATERIAL_ID = 0xFFFF
@@ -1037,35 +1077,18 @@ SHADE = {
 }
 # The most samples the Ambient Occlusion node takes; it silently clamps more.
 MAX_AO_SAMPLES = 128
-_AUXILIARY_SETTINGS = (
-    ("render", "engine", "CYCLES"),
-    ("render", "dither_intensity", 0.0),
-    ("cycles", "device", "CPU"),
-    ("cycles", "samples", SHADE["samples_per_pixel"]),
-    ("cycles", "use_adaptive_sampling", False),
-    ("cycles", "seed", SHADE["seed"]),
-    ("cycles", "use_animated_seed", False),
-    ("cycles", "pixel_filter_type", SHADE["pixel_filter"]),
-    ("cycles", "filter_width", SHADE["filter_width_px"]),
-    ("cycles", "max_bounces", 0),
-    ("cycles", "diffuse_bounces", 0),
-    ("cycles", "glossy_bounces", 0),
-    ("cycles", "transmission_bounces", 0),
-    ("cycles", "volume_bounces", 0),
-    ("cycles", "transparent_max_bounces", 8),
-    ("cycles", "use_denoising", False),
-    ("image", "file_format", "TARGA_RAW"),
-    ("image", "color_mode", "RGBA"),
-)
 NO_MATERIAL = "moskophoros.no-material"
+# glTF's default material, which a primitive without one takes: white.
+NO_MATERIAL_COLOR = (1.0, 1.0, 1.0, 1.0)
 # Every render frame's buffers, each at <name>/NNNNNN.png.
 BUFFERS = ("color", "matid", "shade", "normal", "depth")
-# The render phase's directory for the auxiliary render's TGA and OpenEXR,
-# removed once every frame is done.
-SCRATCH = "auxiliary"
-# The view-layer AOVs the auxiliary render adds (lighting sheet design D-11):
-# the camera-space shading normal, a colour, and the camera depth, a value.
-AOVS = (("normal", "COLOR"), ("depth", "VALUE"))
+# The render phase's directory for the render's TGA and OpenEXR, removed
+# once every frame is done.
+SCRATCH = "scratch"
+# The view-layer AOVs the render adds: the material-ID code and the linear
+# shade, values; the camera-space shading normal, a colour (lighting sheet
+# design D-11); and the camera depth, a value.
+AOVS = (("matid", "VALUE"), ("shade", "VALUE"), ("normal", "COLOR"), ("depth", "VALUE"))
 # Where the render result is saved for its AOVs: a multilayer OpenEXR of
 # 32-bit floats, uncompressed, since decompressing in pure Python is slow.
 _EXR_SETTINGS = (
@@ -1090,47 +1113,97 @@ def material_codes(document):
     return codes, table
 
 
-def _linear(byte):
-    """The linear value the `Standard` sRGB transform encodes as `byte`."""
-    value = byte / 255
-    return value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+def _shown_material(document, index):
+    """A glTF material as diagnostics name it: its index, and its name."""
+    name = document.get("materials", [])[index].get("name")
+    return f"glTF material {index}" + ("" if name is None else f" ({name!r})")
 
 
-class Auxiliary:
-    """Applies the auxiliary render's settings and shaders, and restores every
-    one of them exactly, so the next colour render is as if it never ran."""
+def _from_node(socket):
+    return socket.links[0].from_node if socket.is_linked else None
 
-    def __init__(self, scene, objects, codes, shade):
+
+def _is_unlit_core(node):
+    """Whether `node` is the glTF importer's `KHR_materials_unlit` core:
+    `Mix(Light Path "Is Camera Ray", Transparent, Emission)`."""
+    if node is None or node.bl_idname != "ShaderNodeMixShader":
+        return False
+    fac = node.inputs[0]
+    if not (
+        fac.is_linked
+        and fac.links[0].from_node.bl_idname == "ShaderNodeLightPath"
+        and fac.links[0].from_socket.identifier == "Is Camera Ray"
+    ):
+        return False
+    first, second = _from_node(node.inputs[1]), _from_node(node.inputs[2])
+    return (
+        first is not None
+        and first.bl_idname == "ShaderNodeBsdfTransparent"
+        and second is not None
+        and second.bl_idname == "ShaderNodeEmission"
+    )
+
+
+def colour_socket(material, where):
+    """The socket of `material`'s node tree whose value is its surface
+    colour, by the extraction rule of alpha design spike 2: a Principled
+    BSDF's `Base Color`, or the Emission colour of the `KHR_materials_unlit`
+    core, alone or wrapped in a `Mix` with an alpha chain. Any other shape
+    is refused, naming the material as `where`."""
+    tree = material.node_tree
+    outputs = [
+        node
+        for node in (tree.nodes if tree is not None else ())
+        if node.bl_idname == "ShaderNodeOutputMaterial" and node.is_active_output
+    ]
+    if len(outputs) != 1:
+        raise ScriptError(
+            f"{where} has {len(outputs)} active material outputs; the capture reads one"
+        )
+    surface = _from_node(outputs[0].inputs["Surface"])
+    if surface is not None and surface.bl_idname == "ShaderNodeBsdfPrincipled":
+        return surface.inputs["Base Color"]
+    core = None
+    if _is_unlit_core(surface):
+        core = surface
+    elif (
+        surface is not None
+        and surface.bl_idname == "ShaderNodeMixShader"
+        and _from_node(surface.inputs[1]) is not None
+        and _from_node(surface.inputs[1]).bl_idname == "ShaderNodeBsdfTransparent"
+        and _is_unlit_core(_from_node(surface.inputs[2]))
+    ):
+        core = _from_node(surface.inputs[2])
+    if core is None:
+        shape = "nothing" if surface is None else surface.bl_idname
+        raise ScriptError(
+            f"{where}'s surface is {shape}; the capture reads a Principled BSDF "
+            "or a KHR_materials_unlit graph as the glTF importer builds them"
+        )
+    return _from_node(core.inputs[2]).inputs["Color"]
+
+
+class Surfaces:
+    """Replaces every rendered surface's shader with the capture's flat
+    emission and AOVs, adds the AOVs and the stand-in for surfaces without a
+    material, and restores every one of them exactly."""
+
+    def __init__(self, scene, objects, codes, shade, document):
         self.scene = scene
         self.objects = objects
         self.codes = codes
+        self.document = document
         # The job's capture values: settings.shade, and each glTF material's
         # own distance and weights by material index.
         self.shade = shade
         self.own = {own["material"]: own for own in shade["materials"]}
-        self.saved = []
         self.trees = []
         self.slots = []
         self.appended = []
         self.aovs = []
         self.stand_in = None
 
-    def _set(self, owner, name, value):
-        old = getattr(owner, name)
-        if not isinstance(old, (str, bytes, int, float, bool)):
-            old = tuple(old)
-        self.saved.append((owner, name, old))
-        setattr(owner, name, value)
-
-    def apply(self, filepath):
-        scene = self.scene
-        owners = {
-            "render": scene.render,
-            "cycles": scene.cycles,
-            "image": scene.render.image_settings,
-        }
-        for owner, name, value in _AUXILIARY_SETTINGS:
-            self._set(owners[owner], name, value)
+    def apply(self):
         rendered = {
             slot.material
             for obj in self.objects
@@ -1138,17 +1211,21 @@ class Auxiliary:
             for slot in obj.material_slots
             if slot.material is not None
         }
-        codes = []
+        materials = []
         for material in bpy.data.materials:
             match = _MATERIAL.fullmatch(material.name)
-            if match is not None:
-                codes.append((material, self.codes[int(match.group(1))]))
-            elif material in rendered:
+            if material not in rendered:
+                continue
+            if match is None:
                 raise ScriptError(
                     f"a rendered surface uses the material {material.name!r}, "
                     "which is no glTF material of the model"
                 )
-        self._set(scene.render, "filepath", filepath)
+            index = int(match.group(1))
+            where = _shown_material(self.document, index)
+            materials.append(
+                (material, self.codes[index], colour_socket(material, where))
+            )
         layer = bpy.context.view_layer
         for name, kind in AOVS:
             aov = layer.aovs.add()
@@ -1156,9 +1233,10 @@ class Auxiliary:
             aov.type = kind
             self.aovs.append(aov)
         self.stand_in = bpy.data.materials.new(NO_MATERIAL)
-        codes.append((self.stand_in, NO_MATERIAL_ID))
-        for material, code in codes:
-            self._inject(material, code)
+        self.stand_in.use_nodes = True
+        materials.append((self.stand_in, NO_MATERIAL_ID, None))
+        for material, code, colour in materials:
+            self._inject(material, code, colour)
         for obj in self.objects:
             if obj.type != "MESH":
                 continue
@@ -1170,9 +1248,7 @@ class Auxiliary:
                     self.slots.append(slot)
                     slot.material = self.stand_in
 
-    def _inject(self, material, code):
-        if material.node_tree is None:
-            material.use_nodes = True
+    def _inject(self, material, code, colour):
         tree = material.node_tree
         outputs = [n for n in tree.nodes if n.bl_idname == "ShaderNodeOutputMaterial"]
         added = []
@@ -1192,8 +1268,38 @@ class Auxiliary:
         ]
         for link in [link for link in tree.links if link.to_node == output]:
             tree.links.remove(link)
-        # A glTF material's code is its index plus 1; the stand-in for
-        # surfaces without a material takes the global values.
+        # The flat colour (alpha design D-8), through the importer's colour
+        # chain, or the stand-in's white. Every material is opaque here
+        # (material styling design D-26): the mix takes the emission alone.
+        emission = node("ShaderNodeEmission")
+        emission.inputs["Strength"].default_value = 1.0
+        if colour is None:
+            emission.inputs["Color"].default_value = NO_MATERIAL_COLOR
+        elif colour.is_linked:
+            tree.links.new(colour.links[0].from_socket, emission.inputs["Color"])
+        else:
+            emission.inputs["Color"].default_value = tuple(colour.default_value)
+        transparent = node("ShaderNodeBsdfTransparent")
+        transparent.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+        surface = node("ShaderNodeMixShader")
+        surface.inputs["Fac"].default_value = 1.0
+        tree.links.new(transparent.outputs[0], surface.inputs[1])
+        tree.links.new(emission.outputs[0], surface.inputs[2])
+        tree.links.new(surface.outputs[0], output.inputs["Surface"])
+
+        def aov(name, socket, value=None):
+            written = node("ShaderNodeOutputAOV")
+            written.aov_name = name
+            target = written.inputs[socket]
+            if value is None:
+                return target
+            target.default_value = value
+            return target
+
+        # A glTF material's code is its index plus 1, exact in a float.
+        aov("matid", "Value", float(code))
+        # The shade (material styling design D-9); the stand-in for surfaces
+        # without a material takes the global values.
         values = self.own.get(code - 1, self.shade)
         outside = node("ShaderNodeAmbientOcclusion")
         inside = node("ShaderNodeAmbientOcclusion")
@@ -1216,14 +1322,7 @@ class Auxiliary:
         shade.inputs[1].default_value = values["convexity_weight"]
         tree.links.new(convexity.outputs[0], shade.inputs[0])
         tree.links.new(occlusion.outputs[0], shade.inputs[2])
-        color = node("ShaderNodeCombineColor")
-        color.inputs[0].default_value = _linear(code >> 8)
-        tree.links.new(shade.outputs[0], color.inputs[1])
-        color.inputs[2].default_value = _linear(code & 0xFF)
-        emission = node("ShaderNodeEmission")
-        emission.inputs["Strength"].default_value = 1.0
-        tree.links.new(color.outputs[0], emission.inputs["Color"])
-        tree.links.new(emission.outputs[0], output.inputs["Surface"])
+        tree.links.new(shade.outputs[0], aov("shade", "Value"))
         # The shading normal, the model's interpolated vertex normal, in the
         # camera's space; no material property reaches it (D-2, D-16).
         geometry = node("ShaderNodeNewGeometry")
@@ -1232,14 +1331,10 @@ class Auxiliary:
         transform.convert_from = "WORLD"
         transform.convert_to = "CAMERA"
         tree.links.new(geometry.outputs["Normal"], transform.inputs["Vector"])
-        normal = node("ShaderNodeOutputAOV")
-        normal.aov_name = "normal"
-        tree.links.new(transform.outputs["Vector"], normal.inputs["Color"])
+        tree.links.new(transform.outputs["Vector"], aov("normal", "Color"))
         # The distance along the camera's viewing axis (D-10).
         camera = node("ShaderNodeCameraData")
-        depth = node("ShaderNodeOutputAOV")
-        depth.aov_name = "depth"
-        tree.links.new(camera.outputs["View Z Depth"], depth.inputs["Value"])
+        tree.links.new(camera.outputs["View Z Depth"], aov("depth", "Value"))
         self.trees.append((tree, added, links))
 
     def restore(self):
@@ -1257,10 +1352,7 @@ class Auxiliary:
         layer = bpy.context.view_layer
         for aov in reversed(self.aovs):
             layer.aovs.remove(aov)
-        for owner, name, value in reversed(self.saved):
-            setattr(owner, name, value)
-        self.saved, self.trees, self.slots, self.appended = [], [], [], []
-        self.aovs = []
+        self.trees, self.slots, self.appended, self.aovs = [], [], [], []
         self.stand_in = None
 
 
@@ -1308,10 +1400,10 @@ def read_exr(path, width, height, wanted):
     with open(path, "rb") as handle:
         data = handle.read()
     if data[:4] != _EXR_MAGIC:
-        raise ScriptError(f"the auxiliary render {path} is not an OpenEXR file")
+        raise ScriptError(f"the render {path} is not an OpenEXR file")
     flags = struct.unpack_from("<I", data, 4)[0]
     if flags & 0x200:
-        raise ScriptError(f"the auxiliary render {path} is tiled")
+        raise ScriptError(f"the render {path} is tiled")
     multipart = bool(flags & 0x1000)
     at, headers = 8, []
     while True:
@@ -1324,11 +1416,11 @@ def read_exr(path, width, height, wanted):
     parts = []
     for attributes in headers:
         if attributes["compression"][0] != 0:
-            raise ScriptError(f"the auxiliary render {path} is compressed")
+            raise ScriptError(f"the render {path} is compressed")
         xmin, ymin, xmax, ymax = struct.unpack("<iiii", attributes["dataWindow"])
         if (xmax - xmin + 1, ymax - ymin + 1) != (width, height):
             raise ScriptError(
-                f"the auxiliary render is {(xmax - xmin + 1, ymax - ymin + 1)}, "
+                f"the render is {(xmax - xmin + 1, ymax - ymin + 1)}, "
                 f"not {(width, height)}"
             )
         offsets = struct.unpack_from(f"<{height}Q", data, at)
@@ -1347,7 +1439,7 @@ def read_exr(path, width, height, wanted):
         names = [name for name, _ in channels]
         for name, kind in channels:
             if name in wanted and kind != _EXR_FLOAT:
-                raise ScriptError(f"the auxiliary render's {name} is not 32-bit")
+                raise ScriptError(f"the render's {name} is not 32-bit")
         if not any(name in wanted for name in names):
             continue
         # Every channel here is 32-bit or skipped by its size, in name order.
@@ -1365,16 +1457,14 @@ def read_exr(path, width, height, wanted):
                 start += size * width
         for name, lines in rows.items():
             if any(line is None for line in lines):
-                raise ScriptError(f"the auxiliary render's {name} is truncated")
+                raise ScriptError(f"the render's {name} is truncated")
             merged = array("f")
             for line in lines:
                 merged.extend(line)
             found[name] = merged
     missing = [name for name in wanted if name not in found]
     if missing:
-        raise ScriptError(
-            f"the auxiliary render has no channel {missing[0]}; it has {every}"
-        )
+        raise ScriptError(f"the render has no channel {missing[0]}; it has {every}")
     if sys.byteorder != "little":
         for values in found.values():
             values.byteswap()
@@ -1386,14 +1476,14 @@ def read_targa(path, width, height):
     with open(path, "rb") as handle:
         data = handle.read()
     if len(data) < 18 or data[2] != 2 or data[16] != 32:
-        raise ScriptError(f"the auxiliary render {path} is not a 32-bit TGA")
+        raise ScriptError(f"the render {path} is not a 32-bit TGA")
     size = (data[12] | data[13] << 8, data[14] | data[15] << 8)
     if size != (width, height):
-        raise ScriptError(f"the auxiliary render is {size}, not {(width, height)}")
+        raise ScriptError(f"the render is {size}, not {(width, height)}")
     start = 18 + data[0]
     pixels = bytearray(data[start : start + width * height * 4])
     if len(pixels) != width * height * 4:
-        raise ScriptError(f"the auxiliary render {path} is truncated")
+        raise ScriptError(f"the render {path} is truncated")
     pixels[0::4], pixels[2::4] = pixels[2::4], pixels[0::4]
     stride = width * 4
     rows = [pixels[y * stride : (y + 1) * stride] for y in range(height)]
@@ -1419,26 +1509,136 @@ def write_png(path, width, rows, bits=8, level=9):
         handle.write(chunk(b"IEND", b""))
 
 
-def split_auxiliary(rows, width, matid_path, shade_path):
-    """Write the material-ID buffer (red the code's high byte, green its low
-    byte, blue 0) and the shade buffer (`R = G = B`) from the render's rows."""
-    zero = bytes(width)
-    ids, shades = [], []
-    for row in rows:
-        alpha = row[3::4]
-        identity = bytearray(width * 4)
-        identity[0::4] = row[0::4]
-        identity[1::4] = row[2::4]
-        identity[2::4] = zero
-        identity[3::4] = alpha
-        shade = bytearray(width * 4)
-        for channel in range(3):
-            shade[channel::4] = row[1::4]
-        shade[3::4] = alpha
-        ids.append(identity)
-        shades.append(shade)
-    write_png(matid_path, width, ids)
-    write_png(shade_path, width, shades)
+def _srgb(value):
+    """The `Standard` transform's sRGB encoding of a linear value in [0, 1]."""
+    if value <= 0.0031308:
+        return 12.92 * value
+    return 1.055 * value ** (1 / 2.4) - 0.055
+
+
+def shade_byte(value):
+    """The 8-bit shade the `Standard` transform gives the linear `value`:
+    `floor(255 · sRGB(v) + ½)`, `v` clamped to [0, 1] (0.25 gives 137)."""
+    return math.floor(255 * _srgb(min(max(value, 0.0), 1.0)) + 0.5)
+
+
+def material_code(value, codes):
+    """The material-ID code an AOV `value` holds: an integer of `codes`, the
+    model's codes and the background's, exactly. Anything else is refused."""
+    if not math.isfinite(value) or value != int(value) or int(value) not in codes:
+        raise ScriptError(f"the render's material-ID AOV holds {value!r}, no code")
+    return int(value)
+
+
+def coverage(alpha, width, where):
+    """Each row of the render's float `alpha` as bytes, 255 where the pixel
+    shows a surface and 0 where it shows none. Every material is opaque, so
+    a surface's alpha is exactly 1; any other value is refused."""
+    for value in set(alpha):
+        if value not in (0.0, 1.0):
+            index = alpha.index(value)
+            raise ScriptError(
+                f"{where}: the render's alpha at pixel "
+                f"{(index % width, index // width)} is {value!r}, not a whole "
+                "opaque surface or none"
+            )
+    # 0.0 and 1.0 differ in their 32-bit floats' high byte: 0x00 and 0x3F.
+    data = array("f", alpha)
+    if sys.byteorder != "little":
+        data.byteswap()
+    covered = data.tobytes()[3::4].translate(_COVERED)
+    stride = width
+    return [covered[y : y + stride] for y in range(0, len(covered), stride)]
+
+
+_COVERED = bytes(255 if byte == 0x3F else 0 for byte in range(256))
+
+
+def _masked(data, mask):
+    """`data` with every byte where `mask`, of 0s and 255s, is 0 set to 0."""
+    size = len(data)
+    kept = int.from_bytes(data, "little") & int.from_bytes(mask, "little")
+    return kept.to_bytes(size, "little")
+
+
+def _per_channel(covered):
+    """Per-pixel coverage bytes repeated for each of the 4 channels."""
+    mask = bytearray(4 * len(covered))
+    for channel in range(4):
+        mask[channel::4] = covered
+    return bytes(mask)
+
+
+def _split(data, stride):
+    return [bytearray(data[y : y + stride]) for y in range(0, len(data), stride)]
+
+
+def _first_difference(found, expected):
+    return next(
+        x for x, (a, b) in enumerate(zip(found, expected, strict=True)) if a != b
+    )
+
+
+def colour_rows(rows, covered, where):
+    """The colour buffer's rows: the render's 8-bit straight sRGB `rows`
+    where `covered` shows a surface, and `(0, 0, 0, 0)` elsewhere."""
+    for y, (row, hit) in enumerate(zip(rows, covered, strict=True)):
+        if row[3::4] != hit:
+            x = _first_difference(row[3::4], hit)
+            raise ScriptError(
+                f"{where}: the colour at pixel {(x, y)} has 8-bit alpha "
+                f"{row[4 * x + 3]}, but the render's alpha there is "
+                f"{1.0 if hit[x] else 0.0}"
+            )
+    width = len(rows[0]) if rows else 0
+    present = b"".join(covered)
+    return _split(_masked(b"".join(rows), _per_channel(present)), width)
+
+
+def id_and_shade_rows(ids, shades, covered, width, codes, where):
+    """The material-ID rows (red the code's high byte, green its low byte,
+    blue 0, alpha 255) and the shade rows (`R = G = B`, alpha 255) from the
+    render's float AOVs `ids` and `shades`, where `covered` shows a surface,
+    and `(0, 0, 0, 0)` elsewhere. A surface must hold one of `codes`, and no
+    surface the background's code."""
+    code = {value: material_code(value, codes | {ID_BACKGROUND}) for value in set(ids)}
+    present = b"".join(covered)
+    if len(code) <= 256:
+        # Few codes: give each a byte, and translate it to each channel.
+        values = list(code)
+        index = {value: i for i, value in enumerate(values)}
+        pixels = bytes(map(index.__getitem__, ids))
+
+        def channel(of):
+            table = bytes(of(code[value]) for value in values)
+            return pixels.translate(table + bytes(256 - len(table)))
+
+    else:
+
+        def channel(of):
+            table = {value: of(found) for value, found in code.items()}
+            return bytes(map(table.__getitem__, ids))
+
+    holds = channel(lambda found: 0 if found == ID_BACKGROUND else 255)
+    if holds != present:
+        index = _first_difference(holds, present)
+        x, y = index % width, index // width
+        raise ScriptError(
+            f"{where}: the material ID at pixel {(x, y)} is "
+            f"{code[ids[index]]}, but the colour there shows "
+            f"{'a' if present[index] else 'no'} surface"
+        )
+    identity = bytearray(4 * len(present))
+    identity[0::4] = channel(lambda found: found >> 8)
+    identity[1::4] = channel(lambda found: found & 0xFF)
+    identity[3::4] = present
+    byte = {value: shade_byte(value) for value in set(shades)}
+    shade = _masked(bytes(map(byte.__getitem__, shades)), present)
+    level = bytearray(4 * len(present))
+    for index in range(3):
+        level[index::4] = shade
+    level[3::4] = present
+    return _split(identity, 4 * width), _split(level, 4 * width)
 
 
 # The normal and depth buffers (lighting sheet design D-2, D-10, D-11): each
@@ -1462,12 +1662,32 @@ def _rows(pixels, width, height):
     return [pixels[y * stride : (y + 1) * stride] for y in range(height)]
 
 
-def write_normal(path, width, height, x, y, z, where):
+# Coverage bytes 0 and 255 as 0 and 1.
+_UNIT = bytes([0] + [1] * 255)
+
+
+def _check_coverage(name, holds, surface, width, where):
+    """Refuse a buffer whose surfaces `holds`, one byte per pixel, 1 for a
+    surface and 0 for none, are not exactly the colour's, `surface`, its
+    rows of 0 and 255."""
+    expected = b"".join(surface).translate(_UNIT)
+    if holds != expected:
+        index = _first_difference(holds, expected)
+        raise ScriptError(
+            f"{where}: the {name} at pixel {(index % width, index // width)} "
+            f"shows {'a' if holds[index] else 'no'} surface, but the colour "
+            f"there shows {'a' if expected[index] else 'no'} surface"
+        )
+
+
+def write_normal(path, width, height, x, y, z, where, surface):
     """The normal buffer from the AOV's camera-space components. Cycles'
     camera looks along −Z, so the design's normal (+Z toward the viewer) is
     `(x, y, −z)`; each component n is stored as floor((n + 1) / 2 · 65535 +
-    ½). A pixel the AOV left at (0, 0, 0) holds no surface."""
-    covered = [bool(a or b or c) for a, b, c in zip(x, y, z, strict=True)]
+    ½). A pixel the AOV left at (0, 0, 0) holds no surface, and the pixels
+    holding one must be exactly the colour's, `surface`."""
+    covered = list(map(any, zip(x, y, z, strict=True)))
+    _check_coverage("normal", bytes(covered), surface, width, where)
     try:
         channels = [
             _samples(
@@ -1494,12 +1714,14 @@ def write_normal(path, width, height, x, y, z, where):
     write_png(path, width, _rows(pixels, width, height), bits=16, level=WIDE_LEVEL)
 
 
-def write_depth(path, width, height, view_z, ground_view_z, where):
+def write_depth(path, width, height, view_z, ground_view_z, where, surface):
     """The depth buffer from the AOV's view depth: each covered pixel's depth
     toward the viewer from the ground point, `ground_view_z − view_z`, in
     meters, stored as the big-endian bits of a 32-bit float in red (high
     half) and green (low half), blue 0. A pixel the AOV left at 0 holds no
-    surface; the camera's near plane is in front of every surface."""
+    surface, since the camera's near plane is in front of every surface, and
+    the pixels holding one must be exactly the colour's, `surface`."""
+    _check_coverage("depth", bytes(map(bool, view_z)), surface, width, where)
     depths = array("f", (ground_view_z - value if value else 0.0 for value in view_z))
     if not all(map(math.isfinite, depths)):
         index = next(i for i, value in enumerate(depths) if not math.isfinite(value))
@@ -1547,8 +1769,8 @@ def place_camera(camera, settings, rotation_deg, reach):
     return the ground point's camera depth.
 
     Turning the subject by a about the vertical axis through the ground
-    point is the same image as turning the camera by −a around it; the
-    studio light is fixed to the camera, so the lighting is the same too.
+    point is the same image as turning the camera by −a around it, since
+    the colour is flat and unlit.
     The camera sits in direction (0, sin p, cos p) from the ground point
     and looks back at it, with screen right +X and screen up
     (0, cos p, −sin p).
@@ -1646,13 +1868,14 @@ def render_frames(job, document, statics):
     scene.camera = camera
     configure_render(scene, settings)
     codes, table = material_codes(document)
-    auxiliary = Auxiliary(scene, objects, codes, settings["shade"])
+    surfaces = Surfaces(scene, objects, codes, settings["shade"], document)
+    known = {entry["id"] for entry in table}
     width, height, _, _ = frame_size(settings)
     for name in BUFFERS:
         os.makedirs(os.path.join(job["output_dir"], name), exist_ok=False)
-    # The auxiliary render's intermediate files live in the phase directory,
-    # so they share the command workspace's lifetime: a temporary workspace
-    # is deleted whatever happens to Blender, and a retained one keeps them.
+    # The render's intermediate files live in the phase directory, so they
+    # share the command workspace's lifetime: a temporary workspace is
+    # deleted whatever happens to Blender, and a retained one keeps them.
     scratch = os.path.join(job["output_dir"], SCRATCH)
     os.mkdir(scratch)
 
@@ -1660,33 +1883,35 @@ def render_frames(job, document, statics):
     for ordinal, frame in enumerate(job["frames"]):
         ordinals.setdefault(frame["address"]["clip"], []).append((ordinal, frame))
     paths = {}
-    for clip in job["clips"]:
-        reset(statics)
-        if clip["animation_index"] is not None:
-            activate(clip["animation_index"])
-        requested = ordinals.get(clip["name"], [])
-        times = sorted({frame["address"]["time_s"] for _, frame in requested})
-        check_weights(objects, document, clip, times, fps)
-        for ordinal, frame in requested:
-            depsgraph = evaluate(scene, fps, frame["address"]["time_s"])
-            rotation = (frame["angle_deg"] % 360 + yaw % 360) % 360
-            ground_view_z = place_camera(
-                camera, settings, rotation, reach(objects, depsgraph, ground)
-            )
-            relative = {name: f"{name}/{ordinal:06d}.png" for name in BUFFERS}
-            scene.render.filepath = os.path.join(job["output_dir"], relative["color"])
-            bpy.ops.render.render(write_still=True)
-            render_auxiliary(
-                scene,
-                auxiliary,
-                scratch,
-                (width, height),
-                job,
-                relative,
-                ground_view_z,
-                f"frame {ordinal}",
-            )
-            paths[ordinal] = relative
+    surfaces.apply()
+    try:
+        for clip in job["clips"]:
+            reset(statics)
+            if clip["animation_index"] is not None:
+                activate(clip["animation_index"])
+            requested = ordinals.get(clip["name"], [])
+            times = sorted({frame["address"]["time_s"] for _, frame in requested})
+            check_weights(objects, document, clip, times, fps)
+            for ordinal, frame in requested:
+                depsgraph = evaluate(scene, fps, frame["address"]["time_s"])
+                rotation = (frame["angle_deg"] % 360 + yaw % 360) % 360
+                ground_view_z = place_camera(
+                    camera, settings, rotation, reach(objects, depsgraph, ground)
+                )
+                relative = {name: f"{name}/{ordinal:06d}.png" for name in BUFFERS}
+                render_frame(
+                    scene,
+                    scratch,
+                    (width, height),
+                    job,
+                    relative,
+                    known,
+                    ground_view_z,
+                    f"frame {ordinal}",
+                )
+                paths[ordinal] = relative
+    finally:
+        surfaces.restore()
     os.rmdir(scratch)
     return (
         [
@@ -1696,44 +1921,55 @@ def render_frames(job, document, statics):
         {
             "blender": ".".join(map(str, bpy.app.version)),
             "renderer": RENDERER,
-            "studio_light": scene.display.shading.studio_light,
+            "color": dict(COLOR),
             "shade": dict(SHADE),
         },
         table,
     )
 
 
-def render_auxiliary(
-    scene, auxiliary, scratch, size, job, relative, ground_view_z, where
-):
-    """The frame's material-ID, shade, normal and depth buffers, from one
-    Cycles render: the TGA it writes, and its AOVs saved as an OpenEXR."""
+def render_frame(scene, scratch, size, job, relative, codes, ground_view_z, where):
+    """The frame's colour, material-ID, shade, normal and depth buffers, from
+    one Cycles render: the 8-bit TGA it writes through the `Standard`
+    transform, and its alpha and AOVs saved as an OpenEXR."""
     width, height = size
-    target = os.path.join(scratch, "auxiliary.tga")
-    exr = os.path.join(scratch, "auxiliary.exr")
-    auxiliary.apply(target)
-    try:
-        bpy.ops.render.render(write_still=True)
-        save_exr(scene, exr)
-    finally:
-        auxiliary.restore()
+    target = os.path.join(scratch, "capture.tga")
+    exr = os.path.join(scratch, "capture.exr")
+    scene.render.filepath = target
+    bpy.ops.render.render(write_still=True)
+    save_exr(scene, exr)
     rows = read_targa(target, width, height)
     os.remove(target)
-    output = job["output_dir"]
-    split_auxiliary(
-        rows,
-        width,
-        os.path.join(output, relative["matid"]),
-        os.path.join(output, relative["shade"]),
-    )
-    del rows
     layer = bpy.context.view_layer.name
-    names = [f"{layer}.normal.{axis}" for axis in "RGB"] + [f"{layer}.depth.X"]
+    names = (
+        [f"{layer}.Combined.A", f"{layer}.matid.X", f"{layer}.shade.X"]
+        + [f"{layer}.normal.{axis}" for axis in "RGB"]
+        + [f"{layer}.depth.X"]
+    )
     channels = read_exr(exr, width, height, names)
     os.remove(exr)
-    x, y, z, view_z = (channels[name] for name in names)
+    alpha, ids, shades, x, y, z, view_z = (channels[name] for name in names)
+    output = job["output_dir"]
+    covered = coverage(alpha, width, where)
+    write_png(
+        os.path.join(output, relative["color"]),
+        width,
+        colour_rows(rows, covered, where),
+    )
+    del rows
+    id_rows, shade_rows = id_and_shade_rows(ids, shades, covered, width, codes, where)
+    write_png(os.path.join(output, relative["matid"]), width, id_rows)
+    write_png(os.path.join(output, relative["shade"]), width, shade_rows)
+    del id_rows, shade_rows
     write_normal(
-        os.path.join(output, relative["normal"]), width, height, x, y, z, where
+        os.path.join(output, relative["normal"]),
+        width,
+        height,
+        x,
+        y,
+        z,
+        where,
+        covered,
     )
     write_depth(
         os.path.join(output, relative["depth"]),
@@ -1742,6 +1978,7 @@ def render_auxiliary(
         view_z,
         ground_view_z,
         where,
+        covered,
     )
 
 

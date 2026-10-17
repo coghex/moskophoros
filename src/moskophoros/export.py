@@ -1,4 +1,4 @@
-"""The sheet PNG, its normal and depth maps, its `moskophoros.sheet/11` JSON
+"""The sheet PNG, its normal and depth maps, its `moskophoros.sheet/12` JSON
 and the animated previews, flat and lit, following design §Export.
 
 `encode` lays the reduced frames out on the sheet and its maps, describes
@@ -30,7 +30,7 @@ import moskophoros
 from moskophoros import imageops, sampling, views
 from moskophoros.capture.backend import settings_document
 
-SCHEMA = "moskophoros.sheet/11"
+SCHEMA = "moskophoros.sheet/12"
 # The global formula of generated ramps, in its recorded order, at the
 # shipped defaults (material styling design D-30, D-33).
 DEFAULT_RAMP = MappingProxyType(
@@ -126,13 +126,11 @@ class Preview:
 
 def generator(backend):
     """The sheet's `generator`: this tool and its libraries, and the Blender
-    version, renderer and studio light of the colour, and the shade technique
-    and its fixed parameters, that a render result's `backend` reports. The
-    shade's capture values are settings, recorded in `settings.shade`."""
+    version, the renderer, the colour's technique and the shade's technique
+    with their fixed parameters, that a render result's `backend` reports.
+    The shade's capture values are settings, recorded in `settings.shade`."""
     missing = [
-        key
-        for key in ("blender", "renderer", "studio_light", "shade")
-        if key not in backend
+        key for key in ("blender", "renderer", "color", "shade") if key not in backend
     ]
     if missing:
         raise ValueError(f"the render provenance lacks {', '.join(missing)}")
@@ -144,7 +142,7 @@ def generator(backend):
         "pillow": PIL.__version__,
         "blender": backend["blender"],
         "renderer": backend["renderer"],
-        "studio_light": backend["studio_light"],
+        "color": dict(backend["color"]),
         "shade": dict(backend["shade"]),
     }
 

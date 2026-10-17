@@ -97,7 +97,7 @@ ROOT_MOTION_MODES = ("error", "keep")
 # The values --reduce accepts; the first is the default.
 REDUCTIONS = ("plain", "mode")
 # The only sheet schema `--settings-from` loads (settings design D-24).
-SHEET_SCHEMA = "moskophoros.sheet/11"
+SHEET_SCHEMA = "moskophoros.sheet/12"
 _MAX_DIGITS = 4300
 _VIEW_FIELDS = ("view", "pitch", "directions", "start_angle")
 _REPEATABLE = frozenset({"--clip", "--once", "--config"})
