@@ -1264,6 +1264,42 @@ styling MAT-7 and lighting LIT-6 were.
 - **Out of scope:** any alpha from materials.
 - **Open questions:** None.
 
+*ALPHA-1's implementation notes* (recorded by ALPHA-1, #114, 2026-10-17;
+`docs/design.md` §Capture, *Capture job and result contract* and §Export
+hold the contract). They record choices the decisions left to the slice:
+
+- **One shader replacement per phase.** With no second render to alternate
+  with, the capture shaders, the four AOVs (`matid`, `shade`, `normal`,
+  `depth`) and the material-less stand-in are applied once before the first
+  frame and restored when the phase ends (`blender_script.Surfaces`). The
+  render settings are set once (`configure_render`).
+- **Colour from the TGA.** Each frame's colour is the render's 8-bit TGA,
+  written by Blender through the `Standard` transform with dither 0, so the
+  encoding is Blender's; the script masks it to the coverage and writes the
+  PNG itself. The shade's byte is computed by the script as
+  `floor(255 · sRGB(v) + ½)` (0.25 gives 137, as before).
+- **Coverage.** The OpenEXR's `Combined` alpha decides it. In this slice it
+  must be exactly 0 or 1 everywhere, and the TGA's alpha, the material-ID
+  AOV and the normal and depth AOVs must agree with it pixel for pixel, or
+  the frame fails (exit 5). ALPHA-2 relaxes the first rule for cut-outs.
+- **The extraction rule** reads the active Material Output's `Surface`: a
+  Principled BSDF gives the socket feeding `Base Color`; the unlit core,
+  alone or wrapped, the socket feeding its Emission's `Color`. A constant is
+  copied, a chain linked. Only materials a subject surface renders are read,
+  so an unused material of any shape is never refused. A refusal names
+  `glTF material <index>` and its original name.
+- **The `color` record** is named `cycles-flat-emission`, and lists its
+  fields in the order the issue gives them; it sits before `shade` in
+  `backend` and `generator`. `pass_alpha_threshold` is recorded as the exact
+  float `9.313225746154785e-10`.
+- **The scratch directory** is renamed from `auxiliary/` to `scratch/`, and
+  its files to `capture.tga` and `capture.exr`, since there is no auxiliary
+  render any more; its lifetime is unchanged.
+- **The launcher's colour check** is new: a colour alpha of 0 or 255 only,
+  an empty colour pixel `(0, 0, 0, 0)`, and the colour's coverage equal to
+  the material ID's in both directions, checked after the other buffers so
+  their own diagnostics keep their precedence.
+
 ### ALPHA-2. Cut out `MASK` materials
 
 - **Outcome:** a `MASK` material's cut-out texels are holes in the colour and
