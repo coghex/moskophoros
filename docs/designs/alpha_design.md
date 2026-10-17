@@ -1392,6 +1392,39 @@ hold the contract). They record choices the decisions left to the slice:
 - **Out of scope:** translucency.
 - **Open questions:** None.
 
+*ALPHA-3's implementation notes* (recorded by ALPHA-3, #116, 2026-10-17;
+`docs/design.md` §CLI, §Settings files, §Option validation, §Stylize,
+§Export and §Scale and ground point, *Reuse*, hold the contract). They record
+choices the decisions left to the slice:
+
+- **One function decides coverage.** `imageops.block_alpha` is step 1 of the
+  numerical reference, and `reduce_blocks`, `reduce_blocks_mode` and
+  `map_ramps` each call it on the colour's alpha in place of their own 0.5
+  cut. Their colour, vote and band rules are unchanged and still weight
+  each sample by its colour alpha, which for a binary capture is the
+  reference's equal surface weight.
+- **An 8-bit alpha as a composite alpha.** A sample is a surface where its
+  alpha is above 0, and its `aᵢ` is `257 · alpha`, so 255 is 65535. Captures
+  are binary until ALPHA-4, so this is exactly the reference's `aᵢ`; it also
+  gives the image functions, which take any RGBA, D-4's "mean alpha of the
+  surfaces" under `hard` for partly transparent input.
+- **Where `edges` lives.** `EDGES` is defined once in `imageops`, and the
+  settings table, the option and the reused-sheet check take it from there.
+  It sits after `materials` in the table and `defaults.yaml`, and after
+  `reduce` in `settings.style`. The image and stylize functions default to
+  `hard`; the command always passes the value in force, and the sheet
+  record has no default.
+- **Blending is export's.** `export.blend_over_background` gives D-13's
+  rounding in exact integers, `floor((2x + 255) / 510)` for
+  `x = c·α + 128·(255 − α)`. The 256-colour reduction still gives its
+  reserved grey entry to wholly transparent pixels; a partly transparent
+  pixel's blend is quantized with the other colours. Opaque previews, flat
+  and lit, are pinned by digests computed at master `4ee6a76`.
+- **Maps.** The normal map's alpha is the colour's alpha, and every check
+  and use that took alpha 255 as covered takes alpha above 0: the maps'
+  reduction, the map writers, depth overflow and lighting, which keeps the
+  pixel's alpha.
+
 ### ALPHA-4. Capture and composite translucent layers
 
 - **Outcome:** a `BLEND` surface is see-through: its front layer is captured
