@@ -1331,6 +1331,36 @@ hold the contract). They record choices the decisions left to the slice:
 - **Out of scope:** partial alpha, `BLEND`.
 - **Open questions:** None.
 
+*ALPHA-2's implementation notes* (recorded by ALPHA-2, #115, 2026-10-17;
+`docs/design.md` §Capture, *Capture job and result contract* and §Exit codes
+hold the contract). They record choices the decisions left to the slice:
+
+- **Which alpha reaches the mix.** The extraction rule returns each
+  material's alpha socket (a Principled BSDF's `Alpha`, an unlit wrapper's
+  factor, or none for the bare unlit core), and only a material whose glTF
+  `alphaMode` is `MASK` uses it; every other material's mix takes a constant
+  1, so `BLEND` stays opaque until ALPHA-4.
+- **One graph, one switch.** Each material holds the main surface, the
+  count surface and spike 3's `group` switch: a shared node group,
+  `moskophoros.count`, whose one value feeds `Mix(S, main, count)` and
+  multiplies the gate, so a single product `gate · (1 − S)` gates every AOV,
+  the hit AOV and the occlusion distance. At `S = 0` every factor is exactly
+  1 or the gate, so an opaque model's buffers are the same bytes as
+  ALPHA-1's.
+- **The hit AOV** is the gated value itself. With binary alpha, coverage is
+  still read from the `Combined` alpha, which must be exactly 0 or 1, and
+  the hits must equal it pixel for pixel; ALPHA-3 moves presence to the hits
+  when alpha becomes partial.
+- **The count render** is rendered without writing a still and saved to
+  `scratch/count.exr`; its message names the input path, the clip, the
+  direction, the frame's ordinal and time, the first pixel at the limit and
+  the limit itself.
+- **Occlusion noise.** Each transparent bounce advances Cycles' random
+  sequence, so one-sample occlusion noise at convex edges can differ when
+  holes are stacked in front of a surface; an open flat surface's shade is
+  unaffected. This is part of the occlusion approximation (D-7), not of the
+  gate.
+
 ### ALPHA-3. Carry 8-bit alpha, the `edges` setting and preview blending
 
 - **Outcome:** sheets carry 8-bit alpha under the `hard` and `soft` rules,
