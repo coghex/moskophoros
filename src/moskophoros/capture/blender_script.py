@@ -39,7 +39,6 @@ writing no result.
 import hashlib
 import json
 import math
-import operator
 import os
 import re
 import struct
@@ -1543,11 +1542,35 @@ def coverage(alpha, width, where):
                 f"{(index % width, index // width)} is {value!r}, not a whole "
                 "opaque surface or none"
             )
-    byte = {0.0: 0, 1.0: 255}
-    return [
-        bytes(map(byte.__getitem__, alpha[y : y + width]))
-        for y in range(0, len(alpha), width)
-    ]
+    # 0.0 and 1.0 differ in their 32-bit floats' high byte: 0x00 and 0x3F.
+    data = array("f", alpha)
+    if sys.byteorder != "little":
+        data.byteswap()
+    covered = data.tobytes()[3::4].translate(_COVERED)
+    stride = width
+    return [covered[y : y + stride] for y in range(0, len(covered), stride)]
+
+
+_COVERED = bytes(255 if byte == 0x3F else 0 for byte in range(256))
+
+
+def _masked(data, mask):
+    """`data` with every byte where `mask`, of 0s and 255s, is 0 set to 0."""
+    size = len(data)
+    kept = int.from_bytes(data, "little") & int.from_bytes(mask, "little")
+    return kept.to_bytes(size, "little")
+
+
+def _per_channel(covered):
+    """Per-pixel coverage bytes repeated for each of the 4 channels."""
+    mask = bytearray(4 * len(covered))
+    for channel in range(4):
+        mask[channel::4] = covered
+    return bytes(mask)
+
+
+def _split(data, stride):
+    return [bytearray(data[y : y + stride]) for y in range(0, len(data), stride)]
 
 
 def _first_difference(found, expected):
@@ -1567,10 +1590,9 @@ def colour_rows(rows, covered, where):
                 f"{row[4 * x + 3]}, but the render's alpha there is "
                 f"{1.0 if hit[x] else 0.0}"
             )
-        # Coverage is 0 or 255, so it masks each channel exactly.
-        for channel in range(3):
-            row[channel::4] = bytes(map(operator.and_, row[channel::4], hit))
-    return rows
+    width = len(rows[0]) if rows else 0
+    present = b"".join(covered)
+    return _split(_masked(b"".join(rows), _per_channel(present)), width)
 
 
 def id_and_shade_rows(ids, shades, covered, width, codes, where):
@@ -1580,36 +1602,43 @@ def id_and_shade_rows(ids, shades, covered, width, codes, where):
     and `(0, 0, 0, 0)` elsewhere. A surface must hold one of `codes`, and no
     surface the background's code."""
     code = {value: material_code(value, codes | {ID_BACKGROUND}) for value in set(ids)}
-    high = {value: found >> 8 for value, found in code.items()}
-    low = {value: found & 0xFF for value, found in code.items()}
-    present = {
-        value: 0 if found == ID_BACKGROUND else 255 for value, found in code.items()
-    }
+    present = b"".join(covered)
+    if len(code) <= 256:
+        # Few codes: give each a byte, and translate it to each channel.
+        values = list(code)
+        index = {value: i for i, value in enumerate(values)}
+        pixels = bytes(map(index.__getitem__, ids))
+
+        def channel(of):
+            table = bytes(of(code[value]) for value in values)
+            return pixels.translate(table + bytes(256 - len(table)))
+
+    else:
+
+        def channel(of):
+            table = {value: of(found) for value, found in code.items()}
+            return bytes(map(table.__getitem__, ids))
+
+    holds = channel(lambda found: 0 if found == ID_BACKGROUND else 255)
+    if holds != present:
+        index = _first_difference(holds, present)
+        x, y = index % width, index // width
+        raise ScriptError(
+            f"{where}: the material ID at pixel {(x, y)} is "
+            f"{code[ids[index]]}, but the colour there shows "
+            f"{'a' if present[index] else 'no'} surface"
+        )
+    identity = bytearray(4 * len(present))
+    identity[0::4] = channel(lambda found: found >> 8)
+    identity[1::4] = channel(lambda found: found & 0xFF)
+    identity[3::4] = present
     byte = {value: shade_byte(value) for value in set(shades)}
-    id_rows, shade_rows = [], []
-    for y, hit in enumerate(covered):
-        span = slice(y * width, (y + 1) * width)
-        line = ids[span]
-        holds = bytes(map(present.__getitem__, line))
-        if holds != hit:
-            x = _first_difference(holds, hit)
-            raise ScriptError(
-                f"{where}: the material ID at pixel {(x, y)} is "
-                f"{code[line[x]]}, but the colour there shows "
-                f"{'a' if hit[x] else 'no'} surface"
-            )
-        identity = bytearray(width * 4)
-        identity[0::4] = bytes(map(high.__getitem__, line))
-        identity[1::4] = bytes(map(low.__getitem__, line))
-        identity[3::4] = hit
-        shade = bytes(map(operator.and_, map(byte.__getitem__, shades[span]), hit))
-        level = bytearray(width * 4)
-        for channel in range(3):
-            level[channel::4] = shade
-        level[3::4] = hit
-        id_rows.append(identity)
-        shade_rows.append(level)
-    return id_rows, shade_rows
+    shade = _masked(bytes(map(byte.__getitem__, shades)), present)
+    level = bytearray(4 * len(present))
+    for index in range(3):
+        level[index::4] = shade
+    level[3::4] = present
+    return _split(identity, 4 * width), _split(level, 4 * width)
 
 
 # The normal and depth buffers (lighting sheet design D-2, D-10, D-11): each
@@ -1633,11 +1662,15 @@ def _rows(pixels, width, height):
     return [pixels[y * stride : (y + 1) * stride] for y in range(height)]
 
 
-def _check_coverage(name, found, surface, width, where):
-    """Refuse a buffer whose surfaces `found`, one flag per pixel, are not
-    exactly those the colour shows in `surface`, its rows of 0 and 255."""
-    expected = b"".join(surface)
-    holds = bytes(255 if hit else 0 for hit in found)
+# Coverage bytes 0 and 255 as 0 and 1.
+_UNIT = bytes([0] + [1] * 255)
+
+
+def _check_coverage(name, holds, surface, width, where):
+    """Refuse a buffer whose surfaces `holds`, one byte per pixel, 1 for a
+    surface and 0 for none, are not exactly the colour's, `surface`, its
+    rows of 0 and 255."""
+    expected = b"".join(surface).translate(_UNIT)
     if holds != expected:
         index = _first_difference(holds, expected)
         raise ScriptError(
@@ -1653,8 +1686,8 @@ def write_normal(path, width, height, x, y, z, where, surface):
     `(x, y, −z)`; each component n is stored as floor((n + 1) / 2 · 65535 +
     ½). A pixel the AOV left at (0, 0, 0) holds no surface, and the pixels
     holding one must be exactly the colour's, `surface`."""
-    covered = [bool(a or b or c) for a, b, c in zip(x, y, z, strict=True)]
-    _check_coverage("normal", covered, surface, width, where)
+    covered = list(map(any, zip(x, y, z, strict=True)))
+    _check_coverage("normal", bytes(covered), surface, width, where)
     try:
         channels = [
             _samples(
@@ -1688,7 +1721,7 @@ def write_depth(path, width, height, view_z, ground_view_z, where, surface):
     half) and green (low half), blue 0. A pixel the AOV left at 0 holds no
     surface, since the camera's near plane is in front of every surface, and
     the pixels holding one must be exactly the colour's, `surface`."""
-    _check_coverage("depth", view_z, surface, width, where)
+    _check_coverage("depth", bytes(map(bool, view_z)), surface, width, where)
     depths = array("f", (ground_view_z - value if value else 0.0 for value in view_z))
     if not all(map(math.isfinite, depths)):
         index = next(i for i, value in enumerate(depths) if not math.isfinite(value))

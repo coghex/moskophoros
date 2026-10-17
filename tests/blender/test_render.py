@@ -12,6 +12,7 @@ import io
 import math
 import struct
 
+import numpy as np
 import pytest
 from glb_writer import GlbWriter
 from PIL import Image
@@ -323,11 +324,14 @@ def test_edge_pixels_are_wholly_covered_or_empty(found, tmp_path):
     model.scene([model.node("plate", mesh=mesh)], default=True)
     result, _ = render(found, model.write(tmp_path, "plate"), tmp_path)
     (image,) = images(result).values()
-    colours = set(image.getdata())
-    assert colours == {(255, 0, 0, 255), (0, 0, 0, 0)}
+    colour = np.asarray(image)
+    assert {tuple(int(v) for v in p) for p in colour.reshape(-1, 4)} == {
+        (255, 0, 0, 255),
+        (0, 0, 0, 0),
+    }
     (buffers,) = result.buffers.values()
     with Image.open(buffers["matid"]) as ids:
-        assert [p[3] for p in ids.getdata()] == [p[3] for p in image.getdata()]
+        np.testing.assert_array_equal(np.asarray(ids)[..., 3], colour[..., 3])
 
 
 # Clips, repeatability and the result

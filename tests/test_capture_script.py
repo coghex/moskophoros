@@ -143,3 +143,21 @@ def test_the_colour_rows_mask_empty_pixels_and_follow_the_alpha(script):
         script.colour_rows(
             [bytearray([9, 9, 9, 0, 1, 2, 3, 255])], [bytes([0, 0])], "frame 0"
         )
+
+
+def test_a_frame_of_more_than_256_codes(script):
+    # More distinct codes than a byte can index takes the slower path.
+    codes = set(range(1, 301))
+    ids = array("f", [float(code) for code in range(1, 301)] + [0.0] * 4)
+    shades = array("f", [0.25] * 300 + [0.0] * 4)
+    covered = [bytes([255] * 300 + [0] * 4)]
+    (identity,), (level,) = script.id_and_shade_rows(
+        ids, shades, covered, 304, codes, "f"
+    )
+    assert [(identity[4 * i], identity[4 * i + 1]) for i in (0, 255, 299)] == [
+        (0, 1),
+        (1, 0),
+        (1, 44),
+    ]
+    assert identity[4 * 300 :] == bytes(16)
+    assert level[0:4] == bytes([137, 137, 137, 255]) and level[4 * 300 :] == bytes(16)
