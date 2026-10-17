@@ -237,6 +237,54 @@ feel free to overwrite them".
 - Alignment stays a hard rule: the colour, material ID, shade and every map
   agree pixel for pixel.
 
+### D-6. Two layers, with blending required
+
+Decided by the owner (Q-10, option B). Relayed on 2026-10-17 by the owner's assistant laz to the moskophoros manager, which recorded it (owner message Sentinel_89d25b4bec048191ad74761c24fd93fc, delivery key owner-alpha-q10-q12-20261017-Sentinel_89d25, cmux message 3f7199ab-16e1-4cc4-8af6-73bdf50451c5). The owner asked that the decisions be passed to the manager as an attributed message.
+
+- **Two layers, not one.** Translucency is composited, never dropped: the
+  owner requires blending, and it is not an optional setting.
+- **What it covers:** both the colour and the resulting alpha, for
+  - a translucent surface over an opaque one;
+  - two translucent layers, one in front of the other, such as two panes of
+    glass.
+
+  The two-layer description in Q-10 B (a translucent front layer over the
+  ramped opaque surface) must be extended to cover the second case.
+- **Combining alphas.** The owner asked whether combining the layers' alphas
+  is correct. The assistant's technical clarification, not a further owner
+  decision, is ordinary front-over-back compositing in linear colour:
+  - `a_out = a_front + a_back·(1 − a_front)`;
+  - premultiplied colour `c_out = c_front + c_back·(1 − a_front)`, each `c`
+    already multiplied by its alpha; straight colour is `c_out / a_out` when
+    `a_out` is not 0.
+  - Two panes of alpha 0.5 give 0.75, and anything over an opaque surface
+    gives alpha 1.
+- **Not requested:** physically accurate refraction.
+- **Still open:** which surface the normal and depth maps describe under
+  translucency (Q-5), and how a stack of more than one translucent layer is
+  represented and styled. When two translucent layers each have a material
+  ramp, Q-10 B's "combined into one front layer" would have to say whose
+  identity and ramp the combined layer takes, or ramp each layer before
+  combining. Neither is decided here.
+
+### D-7. Occlusion: start from today's approximation, judge a baseline
+
+Decided by the owner (Q-12). Relayed on 2026-10-17 by the owner's assistant laz to the moskophoros manager, which recorded it (owner message Sentinel_89d25b4bec048191ad74761c24fd93fc, delivery key owner-alpha-q10-q12-20261017-Sentinel_89d25, cmux message 3f7199ab-16e1-4cc4-8af6-73bdf50451c5). The owner asked that the decisions be passed to the manager as an attributed message.
+
+The owner: "we start with the approximation, then examine the output, no need
+to investigate until we have a baseline anyways."
+
+- **The assistant's interpretation, already given to the owner** (recorded as
+  the assistant's reading, not a separately quoted owner choice):
+  - keep the current approximation at first, in which every surface occludes
+    as if solid in the shade's ambient occlusion (material styling D-25);
+  - then judge the baseline output.
+  - This does not mean taking translucent materials out of the occlusion.
+- No further investigation of occlusion through holes or translucency (the
+  further spike Q-12 mentions) until a baseline exists. Spike 1's gated
+  occlusion distance is a cost measure with identical output, and does not
+  conflict with this.
+
 ## Open questions
 
 ### Q-1. Scope: what does "alpha" cover?
@@ -344,6 +392,8 @@ existing sheet relies on it.
 
 ### Q-10. Translucency over a material with a ramp
 
+**Resolved by D-6** (two layers, blending required). Normal and depth under translucency (Q-5), and stacks of translucent layers, stay open.
+
 Raised by spike 1. A material ramp *replaces* a pixel's colour with palette
 colours chosen by the shade (material styling). A single composited colour
 cannot be both ramped and seen through. Consider translucent cloth over a
@@ -373,6 +423,28 @@ translucency.
 
 ### Q-11. The colour's lighting: flat, or studio-lit?
 
+**Owner leaning A (flat colour), not yet a decision.** Relayed on 2026-10-17 by the owner's assistant laz to the moskophoros manager, which recorded it (owner message Sentinel_89d25b4bec048191ad74761c24fd93fc, delivery key owner-alpha-q10-q12-20261017-Sentinel_89d25, cmux message 3f7199ab-16e1-4cc4-8af6-73bdf50451c5). The owner asked that the decisions be passed to the manager as an attributed message. The owner leans
+"flat base colour" and said: "sprite colors should be straight from the color
+palette, there shouldnt be any shading on them, the shading just shifts up and
+down the color ramp in the render". The owner also said the question was not
+really clear.
+
+To confirm with the owner, without reopening settled scope:
+
+- **The capture versus the ramp.** Q-11 is about the colour that capture
+  records, the ordinary look's base colour. Option A makes it flat and unlit.
+  Moving along a ramp's palette entries by the shade is material styling,
+  and it is unchanged by any option here. The owner's description matches A
+  for materials with a ramp.
+- **Materials without a ramp.** The ordinary look (no library, or a material
+  without a ramp) has no ramp to shift along. Under A it shows the material's
+  flat colour with no shading at all. Lighting design D-23 (owner,
+  2026-10-13) kept Workbench's studio light for exactly this look, so
+  choosing A replaces D-23. The owner should confirm both.
+- **Not implied:** quantising blended colours to the palette. The owner's
+  "straight from the color palette" is not recorded as a new requirement for
+  translucent composites (D-6).
+
 Raised by spike 1. Lighting design D-23 (owner, 2026-10-13) keeps the
 ordinary look's Workbench studio light. Workbench cannot render alpha, and
 the Cycles colour is the material's flat, unlit colour. For the body that is
@@ -391,6 +463,8 @@ Options:
 Ramped materials are unaffected, since their colour comes from the ramp.
 
 ### Q-12. Do cutouts and translucent surfaces occlude the shade?
+
+**Resolved by D-7** (today's approximation first, then judge a baseline).
 
 Raised by spike 1. The shade's ambient occlusion (material styling D-25)
 treats every surface as solid.
