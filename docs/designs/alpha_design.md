@@ -15,13 +15,15 @@ transparency. help me implement alpha". It lifts #75's deferral for design.
 It benefits the owner producing game art, and any project using the tool
 (V-1).
 
-Design state: `exploring`
+Design state: `ready for issue processing`
 
 Reset to `exploring` on 2026-10-17 for Codex review 1 (5 blocking, 3 should
 fix), then marked ready again the same day under the owner's delegation
 (request moskophoros-20261017-1): every finding is fixed and no owner
 decision changed; see *Review 1*. Reset again the same day for Codex
-rereview 2 (1 blocking, 3 should fix, 1 minor); see *Review 2*.
+rereview 2 (1 blocking, 3 should fix, 1 minor), and marked ready again under
+the same delegation once every finding was fixed with no owner decision
+changed; see *Review 2*.
 
 Status legend: `[ ]` unprocessed · `[#N]` linked to issue N · `[no-issue]`
 reviewed and deliberately not tracked separately · `[deferred]` blocked on a
@@ -209,9 +211,13 @@ bundled kernel source, then confirmed by experiment.
     factor, `LINEAR`-filtered sweeps, vertex alpha, `MASK` cutoffs. There
     were 0 anomalies. The review's counterexample (a 5e-7 front) now gives
     the front's ID, hit 1, its depth and a unit normal.
-- **Detecting an exhausted stack (A-3).** With both limits at `L`, the
+- **Detecting an exhausted stack (A-3).** *Superseded by spike 3 (Review 2,
+  B-1):* the in-render marker below is attenuated by the layers in front of
+  it and can accept a damaged frame; capture uses spike 3's count render
+  instead. Spike 2's finding, as recorded: with both limits at `L`, the
   colour is wrong exactly when a camera path crosses `L + 1` or more
-  surfaces that still have a transparent closure. This was proven both
+  surfaces that still have a transparent closure. (Spike 3 corrects this:
+  wrong colour implies truncation, not the reverse.) This was proven both
   ending at an opaque surface and at the background, at `L = 64` (90 of 90
   cases) and `L = 8` (42 of 42).
   - **In the one render:** every shading point at transparent depth ≥ `L`
@@ -223,6 +229,53 @@ bundled kernel source, then confirmed by experiment.
     Cycles' sample clamping off, as the factory default has it.
   - A separate count render is also exact (`error iff count ≥ L + 1`, about
     5 % of the main render's time), but is not needed.
+
+### Capture spike 3 (Review 2: B-1, B-4)
+
+Run on 2026-10-17 with Blender 5.2.2, on generated fixtures and the review's
+own. The report, scripts, fixtures, results and every command are in
+`~/.local/share/moskophoros-acceptance/alpha-design/spike-3/` (`REPORT.md`,
+`commands.log`).
+
+- **The count render.** After the main render, every material switches to a
+  count shader: a shading point that still has a transparent closure
+  (Cycles' own test, as in spike 2) becomes `Add(Transparent white,
+  Emission white 1)`, any other `Emission` of strength 0. No occlusion, no
+  AOVs (their outputs disconnected, or Cycles evaluates the occlusion
+  anyway: 1.18 s instead of 0.024 s). Same camera, sampling and bounce
+  limits, both 64. Its red channel counts exactly the transparent-closure
+  surfaces each path crosses, capped at 65, independent of colour
+  throughput.
+- **The rule:** a frame is truncated, and refused, when any pixel of the
+  count render has red ≥ 65.
+  - It agreed with structural truncation in 137 of 137 cases: the review's
+    white alpha-0.67 stacks of 64 and 65; white stacks at alpha 0.05 to
+    0.95; spike 2's 90 mixed stacks; a visible translucent front over 63,
+    64 and 65 holes; holes and unlit stacks; all ending at an opaque surface
+    and at the background. No valid stack of 64 was refused. The
+    near-opaque counterexample counts 0.
+  - It refuses some truncated frames whose colour is still right to 1e-6:
+    13 of 137, where the throughput Cycles dropped was between 6.3e-7 and
+    5e-84. It never accepts a wrong frame. Exit 5 therefore means "a camera
+    path crossed more than 64 surfaces that still let light through", not
+    "the colour is wrong".
+  - Switching back restores the main render bit for bit, and keeping the
+    count nodes in each material changes the main render neither in time
+    nor in bytes. The fastest switch is one shared node-group value
+    (0.8 ms per round trip).
+  - Reading a render from memory returns nothing in background mode, so the
+    count is read back from its EXR.
+- **Cost of the complete proposed capture** (main render, count render,
+  switching, reading and checking, writing every buffer), against today's
+  production capture (Workbench colour plus the auxiliary render), per
+  frame, median of frames 2–5, median of three interleaved rounds:
+  1.19–1.22× on the ordinary model at 1024², 1.10–1.21× on stacked
+  cutouts at 384². The count adds about 0.10 s per frame at 1024², half of
+  it saving the count's EXR. The machine was shared and loaded (load
+  average 14–16); the spike's own buffer writer is slower than
+  production's.
+- **Not tested:** limits other than 64 and 8, real assets deeper than 64
+  layers, GPU, animation, a count-only view layer.
 - **Unlit and material-less inputs (A-8).** The importer builds two
   material shapes, and one extraction rule covers both:
   - a Principled BSDF: colour from `Base Color`, alpha from `Alpha`;
@@ -287,19 +340,42 @@ auxiliary render.
   - How the front layer's own colour and alpha are separated from the back
     layer is the one capture step not yet proven. Gated AOVs for the
     front-most and the first opaque surface are exact (spike 2). ALPHA-4
-    settles the separation by a feasibility spike first. A second render
-    is acceptable. If the capture would then cost more than twice today's
-    per frame on an ordinary model, or no exact separation is found, that
-    slice stops and reports to the owner before going further.
+    settles the separation by a feasibility spike first; a further render
+    is acceptable. The spike must meet the **correctness gate** (the front
+    and back buffers of the transport table, matching the numerical
+    reference's pinned cases and spike 2's mixed stacks) and the **cost
+    gate** below. If either fails, implementation stops after the spike
+    and reports to the owner, who decides; a failed gate never authorises
+    an approximation or dropping a required pass.
+  - **Cost gate (Review 2, B-4).** The complete capture per frame (every
+    render, the count render, shader switches, reading and checking,
+    writing every buffer; Blender start-up, import and one-off node
+    building excluded) must be at most 2× the baseline.
+    - **Baseline:** the production capture at `0a69fba` (Workbench colour
+      plus the auxiliary render), as spike 3's `q6_timing3.py today`
+      reproduces it.
+    - **Fixture and settings:** spike 1's `fixtures/alpha.glb` (sha256
+      `c0b25307e9f790824cbda35891282e83dec5a6c4183788dde51454c3963213a1`)
+      at a 1024² supersampled render, 5 frames of one pose, the capture
+      settings of this design.
+    - **Aggregation:** the median of frames 2–5, then the median of three
+      rounds that interleave the baseline and the candidate in the same
+      session on the same machine, with the load average reported.
+    - Spike 3 measured the capture without front separation at 1.19–1.22×,
+      which leaves the separation about 0.8× of the baseline.
 - **Material ID and shade** move to float AOVs, gated. Every alpha mode has
   an identity, so a `BLEND` material can take a ramp (D-15).
 - **Occlusion** stays as today (D-7), with its distance gated, which keeps
   stacked cutouts cheap.
-- **An exhausted stack fails loudly** by spike 2's in-render marker: a frame
-  with any Combined RGB channel below −1 is a backend error (exit 5) naming
-  the input, clip, direction, frame and the limit 64, and nothing is
-  published. This covers stacks behind a visible front layer and stacks
-  ending at the background alike.
+- **An exhausted stack fails loudly** by spike 3's count render, after the
+  main render of each frame: a frame where any pixel's count is 65 or more
+  is a backend error (exit 5) naming the input, clip, direction, frame and
+  the limit 64, and nothing is published. It means a camera path crossed
+  more than 64 surfaces that still let light through. It covers stacks
+  behind a visible front layer and stacks ending at the background alike,
+  whatever their alphas, and is conservative: it can refuse a frame whose
+  lost light is below 8-bit precision, never accept a damaged one. The
+  main render carries no marker.
 - **Written from pixels** by the production PNG writer, as the auxiliary
   buffers are, so no render-time text reaches the output.
 
@@ -1175,7 +1251,7 @@ changes, in its own pull request, since tests read that document.
   - the importer's alpha chain for `MASK` (D-3), with its cutoff, Principled
     and unlit;
   - spike 2's surface gate (A-2) and the gated occlusion distance;
-  - the in-render exhaustion marker and its exit 5 (A-3).
+  - the count render, its switch and its exit 5 (A-3, B-1).
   - Output alpha stays binary, by today's coverage rule. `BLEND` is still
     captured opaque.
 - **Phase:** 2.
@@ -1262,10 +1338,10 @@ changes, in its own pull request, since tests read that document.
   - with a palette every colour is a palette colour and alpha is
     unsnapped;
   - a missing or corrupt front buffer fails with exit 5;
-  - per-frame cost reported against ALPHA-1's.
+  - the cost gate of *The pipeline with alpha*, measured and reported.
 - **Out of scope:** ramps on translucent materials.
-- **Open questions:** None. If separating the front layer fails or costs more
-  than twice today's capture, stop and report to the owner.
+- **Open questions:** None. If the feasibility spike fails the correctness
+  or the cost gate, implementation stops and reports to the owner.
 
 ### ALPHA-5. Give translucent materials identities and ramps
 
@@ -1321,7 +1397,7 @@ owner decision changed.
 |---|---|---|
 | A-1 | blocking | **Fixed.** Both transparent bounce limits are pinned at 64; spike 2 proves exact composites through mixed stacks and unchanged cost. Settings in *The pipeline with alpha*; tests in ALPHA-1 and ALPHA-4. |
 | A-2 | blocking | **Fixed** without an owner decision. Spike 2's gate repeats Cycles' own transparency arithmetic, so it selects exactly the surface where Cycles stops (0 anomalies over 9 fixtures; the review's 5e-7 case now correct). No epsilon is chosen: the only surfaces treated as holes are those with `α ≤ 2^-25`, which Cycles itself renders with no coverage, so this is the alpha "as Blender imports it" (D-3). Recorded under *Precision limits*; tests in ALPHA-2 and ALPHA-4. |
-| A-3 | blocking | **Fixed.** Spike 2's in-render marker detects exhaustion exactly, behind a visible front layer and ending at the background, with no second render; exit 5 with the diagnostic and nothing published. Tests in ALPHA-2. |
+| A-3 | blocking | **Fixed,** then corrected by Review 2 (B-1): spike 2's in-render marker proved unreliable, and spike 3's count render replaces it. Exit 5 with the diagnostic and nothing published. Tests in ALPHA-2 (holes) and ALPHA-4 (translucent fronts). |
 | A-4 | blocking | **Fixed.** Preview blending (D-13) moves into ALPHA-3, which first produces partial alpha; ALPHA-6 is merged and marked `[no-issue]`. Whole-command acceptance with default previews and with a light. |
 | A-5 | blocking | **Fixed** by honouring settings D-24: the older-sheet promise is removed, `edges` is required in the new schema, and the previous schema is refused. |
 | A-6 | should fix | **Fixed.** *Stylize: numerical reference*: one coverage decision, per-layer weights carried per sample, the linear composite, rounding, palette snapping and pinned cases, including the review's 0.75 case and a front-only 0.4 block. |
@@ -1330,5 +1406,24 @@ owner decision changed.
 
 Remaining risk, stated plainly: separating the front layer from the back
 (ALPHA-4) is not yet proven. ALPHA-4 starts with a feasibility spike, and
-stops and reports to the owner if it fails or costs more than twice
-today's capture.
+stops and reports to the owner if it fails its correctness or cost gate
+(Review 2 makes both gates measurable).
+
+## Review 2
+
+Codex rereview 2 by mosk-reviewer-53, against `0a69fba`:
+`~/.local/share/moskophoros-acceptance/alpha-design/review-codex-2.md`
+(sha256 `875e7fa49424f6310852c39b67e2c6003d2280728533f482e2ae6318965f62e`),
+with its probes in `review-2/` beside it. It found A-1, A-2, A-4, A-5, A-7
+and A-8 resolved, A-3 and A-6 partly resolved (through B-1 and B-2), and
+confirmed that A-2's `α ≤ 2^-25` floor is Cycles' own arithmetic, needing no
+owner decision. Every new finding was verified against the probes; all are
+fixed, and no owner decision changed.
+
+| Id | Severity | Disposition |
+|---|---|---|
+| B-1 | blocking | **Fixed.** Reproduced by spike 3: the marker accepts 65 white layers at alpha 0.67 with the colour darkened to 0.847. Spike 3's count render replaces it, independent of colour throughput: 137 of 137 cases agree with truncation, the 64/65 pair included, with no valid stack refused and no damaged frame accepted. Exit 5 is now defined as truncation, which is stricter than "the colour is wrong" (13 harmless truncations are refused), so the fail-loudly contract is kept, not weakened. Cost counted in the capture budget (1.19–1.22× today). Tests in ALPHA-2 and ALPHA-4. |
+| B-2 | should fix | **Fixed.** `plain` maps each layer's mean to the palette before compositing, as D-14 says; the review's black-and-white case is pinned (white, not black). |
+| B-3 | should fix | **Fixed.** ALPHA-2 keeps the pure-hole 64/65 cases; the visible translucent-front exhaustion cases move to ALPHA-4; the front-ramp pinned cases move to ALPHA-5. |
+| B-4 | should fix | **Fixed.** The cost gate names its baseline (production capture at `0a69fba`), the frozen fixture and hash, the timing boundary over the complete capture, and the aggregation. A failed correctness or cost gate stops implementation after the spike pending the owner. |
+| B-5 | minor | **Fixed.** The job is invariant under `edges` and the style values D-36 leaves out; its per-material capture overrides stay. |
