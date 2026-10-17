@@ -760,6 +760,14 @@ the recommendation: "all 3 recommendations are sound, once again, i approve".
   translucent pixels.
 - Rejected: blending in linear colour, which is closer to the render but
   further from how viewers and engines show the sheet.
+- **Rounding of the blend** (recorded by the moskophoros manager on
+  2026-10-17, answering the issue processor's question; it applies D-13 with
+  this design's half-up convention and decides nothing new): each 8-bit
+  channel is `floor((c·α + 128·(255 − α)) / 255 + ½)`, with `c` and `α` the
+  pixel's 8-bit sRGB channel and alpha and 128 the grey. It is exact at
+  `α` 0 and 255, so opaque previews are unchanged, and it is pinned with a
+  test vector in ALPHA-3. Rejected: whatever an imaging library's own
+  integer approximation gives, which can differ by one level.
 
 ### D-14. With a palette, the composite's RGB snaps; alpha stays smooth
 
