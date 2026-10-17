@@ -1166,16 +1166,22 @@ def test_an_unusable_blender_is_a_backend_error(setup, capsys):
     assert setup.listing() == earlier
 
 
-def test_a_stack_too_deep_to_render_is_a_backend_error_publishing_nothing(
-    setup, capsys
-):
-    # The script's own refusal (alpha design ALPHA-2), as Blender reports it.
-    message = (
+@pytest.mark.parametrize(
+    "message",
+    [
         "moskophoros: error: /models/hero.glb: clip 'attack', direction 2, "
         "frame 9 (t = 0.25 s): a camera path at pixel (3, 4) crossed more than "
         "64 surfaces that still let light through, which the capture cannot "
-        "render (the limit is 64)"
-    )
+        "render (the limit is 64)",
+        "moskophoros: error: frame 9: the surface gate's hit at pixel (3, 4) is "
+        "0.5, not exactly 0 or 1",
+    ],
+    ids=["a stack too deep", "a hit other than 0 or 1"],
+)
+def test_the_script_s_alpha_refusals_are_backend_errors_publishing_nothing(
+    setup, capsys, message
+):
+    # The script's own refusals (alpha design ALPHA-2), as Blender reports them.
     earlier = earlier_outputs(setup, *EARLIER)
     setup.configure(render={"fail": message})
     status, _, err = run(capsys, setup.argv())

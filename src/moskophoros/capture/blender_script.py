@@ -1662,14 +1662,13 @@ def coverage(alpha, width, where):
     shows a surface and 0 where it shows none. A surface is opaque or a
     `MASK` material's whole texel, so its alpha is exactly 1, and a hole's
     0; any other value is refused."""
-    for value in set(alpha):
-        if value not in (0.0, 1.0):
-            index = _first_other(alpha)
-            raise ScriptError(
-                f"{where}: the render's alpha at pixel "
-                f"{(index % width, index // width)} is {value!r}, not a whole "
-                "opaque surface or none"
-            )
+    if not set(alpha) <= {0.0, 1.0}:
+        index = _first_other(alpha)
+        raise ScriptError(
+            f"{where}: the render's alpha at pixel "
+            f"{(index % width, index // width)} is {alpha[index]!r}, not a whole "
+            "opaque surface or none"
+        )
     # 0.0 and 1.0 differ in their 32-bit floats' high byte: 0x00 and 0x3F.
     data = array("f", alpha)
     if sys.byteorder != "little":
@@ -1692,14 +1691,13 @@ def check_hits(hit, covered, width, where):
     pixel, or whose hits are not exactly the colour's surfaces, `covered`:
     the surface gate selects each surface exactly once (alpha design
     spike 2)."""
-    for value in set(hit):
-        if value not in (0.0, 1.0):
-            index = _first_other(hit)
-            raise ScriptError(
-                f"{where}: the surface gate's hit at pixel "
-                f"{(index % width, index // width)} is {value!r}, not exactly 0 "
-                "or 1"
-            )
+    if not set(hit) <= {0.0, 1.0}:
+        index = _first_other(hit)
+        raise ScriptError(
+            f"{where}: the surface gate's hit at pixel "
+            f"{(index % width, index // width)} is {hit[index]!r}, not exactly 0 "
+            "or 1"
+        )
     _check_coverage("surface gate", bytes(map(bool, hit)), covered, width, where)
 
 

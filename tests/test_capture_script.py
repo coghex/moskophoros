@@ -181,6 +181,21 @@ def test_a_hit_other_than_0_or_1_is_refused(script, value):
         script.check_hits(hits, [bytes([0, 255]), bytes([255, 255])], 2, "frame 3")
 
 
+def test_a_refusal_names_the_first_pixel_s_own_value(script):
+    values = array("f", [1.0, 0.25, 0.0, 0.75])
+    with pytest.raises(script.ScriptError) as hit:
+        script.check_hits(values, [bytes([255, 255]), bytes([0, 255])], 2, "frame 3")
+    assert str(hit.value) == (
+        "frame 3: the surface gate's hit at pixel (1, 0) is 0.25, not exactly 0 or 1"
+    )
+    with pytest.raises(script.ScriptError) as alpha:
+        script.coverage(values, 2, "frame 3")
+    assert str(alpha.value) == (
+        "frame 3: the render's alpha at pixel (1, 0) is 0.25, not a whole opaque "
+        "surface or none"
+    )
+
+
 def test_hits_off_the_colour_s_surfaces_are_refused(script):
     with pytest.raises(
         script.ScriptError,
