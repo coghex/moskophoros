@@ -80,9 +80,10 @@ def mapped(look, shade, lib, shade_range=(0, 255), index=0):
     return entry(run(look, uniform(shade, index), library=lib, shade_range=shade_range))
 
 
-def entry(pixels):
-    """The palette index of a mapped single pixel, checking alpha 255."""
-    assert pixels.shape == (1, 1, 4) and pixels[0, 0, 3] == 255
+def entry(pixels, alpha=255):
+    """The palette index of a mapped single pixel, checking its alpha: 255,
+    or the block's mean alpha where its samples are partly transparent."""
+    assert pixels.shape == (1, 1, 4) and pixels[0, 0, 3] == alpha
     return COLORS.index(tuple(int(c) for c in pixels[0, 0, :3]))
 
 
@@ -252,9 +253,10 @@ def test_mode_ties_at_equal_distance_go_to_the_smaller_palette_index():
 def test_materials_sharing_a_name_pool_their_votes(look, by_mode):
     names = Identities(("steel", "cloth", "steel"))
     lib = library(entries={"steel": {"ramp": [1]}, "cloth": {"ramp": [2]}})
-    # Steel's 200 + 200 beats cloth's 255; unpooled, cloth would win.
+    # Steel's 200 + 200 beats cloth's 255; unpooled, cloth would win. The
+    # alpha is the four surfaces' mean, 910 / 4 = 227.5, half up.
     one = frame([200, 200, 255, 255], [0, 2, 1, BACKGROUND], [0] * 4)
-    assert entry(run(look, one, library=lib, identities=names)) == 1
+    assert entry(run(look, one, library=lib, identities=names), 228) == 1
 
 
 @pytest.mark.parametrize(("look", "by_mode"), BOTH)
@@ -286,9 +288,9 @@ def test_a_tie_does_not_depend_on_pixel_order(look, by_mode):
 @pytest.mark.parametrize(("look", "by_mode"), BOTH)
 def test_votes_are_weighted_by_colour_alpha(look, by_mode):
     lib = library(entries={"steel": {"ramp": [1]}, "cloth": {"ramp": [2]}})
-    # One pixel of alpha 255 outvotes two of alpha 120.
+    # One pixel of alpha 255 outvotes two of alpha 120. Alpha 750 / 4 = 187.5.
     one = frame([120, 120, 255, 255], [0, 0, 1, BACKGROUND], [0] * 4)
-    assert entry(run(look, one, library=lib)) == 2
+    assert entry(run(look, one, library=lib), 188) == 2
 
 
 @pytest.mark.parametrize(("look", "by_mode"), BOTH)
@@ -362,11 +364,12 @@ def test_plain_weights_the_winners_shades_by_colour_alpha():
     lib = library(ramps={"r": [1, 2]}, default="r")
     # Steel is the first two pixels; background fills the rest of the block.
     # Dark at alpha 255 and bright at 90: mean 255·90/345 = 66.5, band 0.
+    # Either way the block's alpha is 855 / 4 = 213.75.
     one = frame([255, 90, 255, 255], [0, 0, BACKGROUND, BACKGROUND], [0, 255, 255, 255])
-    assert entry(run(stylize.plain, one, library=lib)) == 1
+    assert entry(run(stylize.plain, one, library=lib), 214) == 1
     # Dark at alpha 90 and bright at 255: mean 255·255/345 = 188.5, band 1.
     two = frame([90, 255, 255, 255], [0, 0, BACKGROUND, BACKGROUND], [0, 255, 255, 255])
-    assert entry(run(stylize.plain, two, library=lib)) == 2
+    assert entry(run(stylize.plain, two, library=lib), 214) == 2
 
 
 def test_mode_and_plain_ignore_a_transparent_pixels_shade():
@@ -603,7 +606,8 @@ def reference(
                 for y in range(factor)
                 for x in range(factor)
             ]
-            if 2 * sum(a for a, _, _ in cells) < 255 * factor * factor:
+            # Under hard edges a block shows when half its samples do.
+            if 2 * sum(1 for a, _, _ in cells if a) < factor * factor:
                 continue
             votes = {}
             for a, i, _ in cells:
@@ -705,7 +709,8 @@ def test_random_blocks_match_an_independent_reference(look, by_mode):
         for (r, c), index in reference(
             pixels, identity, shade, factor, names, lib, lo, hi, by_mode
         ).items():
-            want[r, c] = (*COLORS[index], 255)
+            # A ramp entry keeps the block's alpha, the ordinary look's.
+            want[r, c] = (*COLORS[index], want[r, c, 3])
         np.testing.assert_array_equal(result, want, err_msg=f"trial {trial}")
 
 

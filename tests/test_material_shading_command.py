@@ -356,7 +356,12 @@ def test_a_malformed_inline_override_is_an_error_whatever_overrides_the_library(
 ):
     record = json.loads(json.dumps(GOOD_RECORD))
     record["materials"]["steel"]["shade"] = shade
-    style = {"reduce": "plain", "palette": PALETTE_RECORD, "materials": record}
+    style = {
+        "reduce": "plain",
+        "edges": "hard",
+        "palette": PALETTE_RECORD,
+        "materials": record,
+    }
     sheet = write_sheet(tmp_path, edited({"style": style}))
     options = [
         str(library_file(tmp_path, library_with()))

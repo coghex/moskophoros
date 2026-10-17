@@ -1,4 +1,7 @@
+import hashlib
 import io
+import math
+from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
@@ -334,13 +337,152 @@ def test_a_missing_frame_is_rejected():
         export.previews(frames, subject="hero", settings=settings, selected_clips=clips)
 
 
-def test_partial_alpha_is_rejected():
-    with pytest.raises(ValueError, match="alpha other than 0 or 255"):
-        _previews(
-            _settings(1, (1, 1)),
-            (_clip("walk"),),
-            lambda *_: _solid((0, 0, 0, 128), (1, 1)),
+# Blending over the grey (alpha design D-13)
+
+
+def _blended(color, alpha):
+    """D-13's rounding, worked out with exact fractions."""
+    return tuple(
+        math.floor(Fraction(c * alpha + 128 * (255 - alpha), 255) + Fraction(1, 2))
+        for c in color
+    )
+
+
+def test_the_blend_matches_d13s_vectors():
+    pixels = np.array(
+        [[(255, 0, 64, 191), (200, 200, 200, 100), (9, 250, 77, 0), (9, 250, 77, 255)]],
+        dtype=np.uint8,
+    )
+    assert export.blend_over_background(pixels).tolist() == [
+        [[223, 32, 80], [156, 156, 156], [128, 128, 128], [9, 250, 77]]
+    ]
+
+
+def test_the_blend_is_exact_for_every_channel_and_alpha():
+    channel, alpha = np.meshgrid(np.arange(256), np.arange(256), indexing="ij")
+    pixels = np.stack([channel, channel, channel, alpha], axis=-1).astype(np.uint8)
+    blended = export.blend_over_background(pixels)[..., 0]
+    expected = [[_blended((c,), a)[0] for a in range(256)] for c in range(256)]
+    assert blended.tolist() == expected
+    # Exact at 0 and 255: the grey, and the colour itself.
+    assert (blended[:, 0] == 128).all()
+    assert (blended[:, 255] == np.arange(256)).all()
+
+
+def test_a_partial_pixel_previews_as_the_blend_over_the_grey():
+    frame = np.zeros((2, 3, 4), dtype=np.uint8)
+    frame[0, 0] = (255, 0, 64, 191)
+    frame[0, 1] = (200, 200, 200, 100)
+    frame[1, 2] = (12, 34, 56, 255)
+    (preview,) = _previews(_settings(1, (3, 2)), (_clip("walk"),), lambda *_: frame)
+    assert preview.warnings == ()
+    for rgb, _ in _decode(preview.gif)[0]:
+        expected = np.empty((2, 3, 3), dtype=np.uint8)
+        expected[...] = GREY
+        expected[0, 0] = (223, 32, 80)
+        expected[0, 1] = (156, 156, 156)
+        expected[1, 2] = (12, 34, 56)
+        assert np.array_equal(rgb[::4, ::4], expected)
+
+
+def test_partial_pixels_keep_exact_blends_within_256_colours():
+    # 200 opaque colours and 50 partial pixels of one colour, each at its own
+    # alpha: 251 colours with the grey, kept exactly.
+    colors = _distinct(200)
+    frame = _palette_frame(colors, 6, (16, 16))
+    flat = frame.reshape(-1, 4)
+    flat[206:256] = [(250, 20, 90, 3 * i + 1) for i in range(50)]
+    (preview,) = _previews(_settings(1, (16, 16)), (_clip("walk"),), lambda *_: frame)
+    assert preview.warnings == ()
+    for rgb, _ in _decode(preview.gif)[0]:
+        expected = export.blend_over_background(frame)
+        assert np.array_equal(rgb[::4, ::4], expected)
+
+
+def test_a_paletted_frame_with_partial_pixels_may_exceed_256_colours_and_warns():
+    # Eight palette colours, opaque, and their blends at 40 alphas each: a
+    # paletted sheet's frame keeps exact colours only without partial pixels.
+    palette = [
+        (255 * (i & 1), 255 * (i >> 1 & 1), 255 * (i >> 2 & 1)) for i in range(8)
+    ]
+    cell = (20, 20)
+    flat = np.zeros((400, 4), dtype=np.uint8)
+    for i, color in enumerate(palette):
+        flat[50 * i : 50 * i + 10] = (*color, 255)
+        flat[50 * i + 10 : 50 * i + 50] = [(*color, 5 * k + 3) for k in range(40)]
+    frame = flat.reshape(20, 20, 4)
+    assert (
+        len(np.unique(export.blend_over_background(frame).reshape(-1, 3), axis=0)) > 256
+    )
+    (preview,) = _previews(_settings(1, cell), (_clip("walk"),), lambda *_: frame)
+    assert preview.warnings == (
+        "clip 'walk''s preview has frames with more than 256 colors, reduced to "
+        "256 without dithering",
+    )
+    for rgb, _ in _decode(preview.gif)[0]:
+        assert len(np.unique(rgb.reshape(-1, 3), axis=0)) <= 256
+
+
+# Opaque previews are the bytes they were before blending: digests of
+# `_opaque_previews` computed at master 4ee6a76, which refused partial alpha.
+OPAQUE_FLAT = [
+    "f9bb62b622ece8ea94026f02b89bc5d55f44d98b206226e8c76977a4a4e4a9cb",
+    "c18e0ec2f1eab4c38777dd96e69c593cd348ebe6ea6a21a085be3927d981d69a",
+]
+OPAQUE_LIT = [
+    "824eb0c8b36378b83ce23c42587c8f036c076b0982db958c741a38c18f8c5e58",
+    "e41017ac6c4a1b22e3b3f7e795203d0af3885aafcff138d0e2ffe73f03ea521a",
+]
+
+
+def _opaque_frames():
+    """Opaque frames of two clips and two directions: colours varying by
+    position, a transparent border, and maps for lighting."""
+    settings = _settings(2, (5, 4))
+    clips = (_clip("walk"), _clip("jump", 0.0, 0.5, one_shot=True, index=1))
+    view = views.View(settings.pitch, settings.directions, settings.start_angle)
+    frames = []
+    for requested in sampling.frames("hero", clips, view, settings.fps):
+        address = requested.address
+        rows, columns = np.mgrid[0:4, 0:5]
+        pixels = np.zeros((4, 5, 4), dtype=np.uint8)
+        pixels[..., 0] = 30 * columns + 40 * address.direction
+        pixels[..., 1] = 50 * rows + 20 * requested.index
+        pixels[..., 2] = 200 - 15 * columns
+        pixels[..., 3] = 255
+        pixels[0] = 0
+        normals = np.zeros((4, 5, 3))
+        normals[..., 0] = (columns - 2) / 4
+        normals[..., 2] = np.sqrt(1 - normals[..., 0] ** 2)
+        normals[0] = 0
+        depths = np.where(pixels[..., 3] > 0, 0.5 * columns - rows, 0.0)
+        frames.append(
+            ImageFrame(
+                address,
+                pixels,
+                buffers={sampling.NORMAL_MAP: normals, sampling.DEPTH_MAP: depths},
+            )
         )
+    return frames, settings, clips
+
+
+def _opaque_previews():
+    frames, settings, clips = _opaque_frames()
+    flat = export.previews(
+        frames, subject="hero", settings=settings, selected_clips=clips
+    )
+    light = export.Light((-3.0, 4.0, 6.0), 1.2, 0.25)
+    lit = export.lit_previews(
+        frames, subject="hero", settings=settings, selected_clips=clips, light=light
+    )
+    digest = lambda preview: hashlib.sha256(preview.gif).hexdigest()  # noqa: E731
+    return [digest(p) for p in flat], [digest(p) for p in lit]
+
+
+def test_opaque_previews_are_byte_identical_to_before_blending():
+    flat, lit = _opaque_previews()
+    assert flat == OPAQUE_FLAT
+    assert lit == OPAQUE_LIT
 
 
 # Filenames

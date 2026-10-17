@@ -1,4 +1,4 @@
-"""The sheet PNG, its normal and depth maps, its `moskophoros.sheet/12` JSON
+"""The sheet PNG, its normal and depth maps, its `moskophoros.sheet/13` JSON
 and the animated previews, flat and lit, following design §Export.
 
 `encode` lays the reduced frames out on the sheet and its maps, describes
@@ -30,7 +30,7 @@ import moskophoros
 from moskophoros import imageops, sampling, views
 from moskophoros.capture.backend import settings_document
 
-SCHEMA = "moskophoros.sheet/12"
+SCHEMA = "moskophoros.sheet/13"
 # The global formula of generated ramps, in its recorded order, at the
 # shipped defaults (material styling design D-30, D-33).
 DEFAULT_RAMP = MappingProxyType(
@@ -259,9 +259,10 @@ def encode(
     light, recorded in `settings.light`.
 
     The normal map is laid out as the sheet is: each pixel the colour covers
-    (alpha 255) holds its normal encoded by `imageops.encode_normal`, with
-    alpha 255, and every other pixel is `(0, 0, 0, 0)` (lighting sheet design
-    D-17). The depth map, a 16-bit greyscale PNG laid out the same way, holds
+    (alpha above 0) holds its normal encoded by `imageops.encode_normal`,
+    unblended, with the colour's alpha, and every other pixel is
+    `(0, 0, 0, 0)` (lighting sheet design D-17; alpha design D-11). The depth
+    map, a 16-bit greyscale PNG laid out the same way, holds
     `32768 + floor(16 · depth + ½)` for each covered pixel's depth in sheet
     pixels, and 0, "no surface", everywhere else (D-10).
 
@@ -312,13 +313,14 @@ def encode(
         x, y = frame.index * width, row * height
         image[y : y + height, x : x + width] = pixels[address]
         if normals:
-            covered = pixels[address][..., 3] == 255
+            alpha = pixels[address][..., 3]
+            covered = alpha > 0
             cell = np.zeros((height, width, 4), dtype=np.uint8)
             cell[covered, :3] = imageops.encode_normal(normal_maps[address][covered])
-            cell[covered, 3] = 255
+            cell[covered, 3] = alpha[covered]
             normal_image[y : y + height, x : x + width] = cell
         if depth:
-            covered = pixels[address][..., 3] == 255
+            covered = pixels[address][..., 3] > 0
             codes = np.full((height, width), NO_SURFACE, dtype=np.uint16)
             codes[covered] = encode_depth(depth_maps[address][covered])
             depth_image[y : y + height, x : x + width] = codes
@@ -422,7 +424,7 @@ def _check_depths(requested, pixels, depth_maps, ppm):
     depth map cannot hold (lighting sheet design D-21), in request order."""
     overflowing = []
     for frame in requested:
-        covered = pixels[frame.address][..., 3] == 255
+        covered = pixels[frame.address][..., 3] > 0
         depths = depth_maps[frame.address][covered]
         if depths.size and (np.abs(depths) > DEPTH_LIMIT).any():
             overflowing.append(
@@ -509,12 +511,14 @@ def _json(description):
 def previews(frames, *, subject, settings, selected_clips, lit=False):
     """Each selected clip's animated GIF preview, in sheet order.
 
-    `frames` are the plain frames `encode` takes, with alpha 0 or 255. GIF
-    frame `k` shows sample `k` of every direction side by side in index
-    order, enlarged `PREVIEW_SCALE` times, with transparent pixels on a solid
-    `PREVIEW_BACKGROUND`. A frame keeps its exact colors when it has at most
-    256 of them; otherwise it is reduced to 256 without dithering and the
-    preview warns. Each frame lasts the clip's frame duration in whole
+    `frames` are the plain frames `encode` takes. GIF frame `k` shows sample
+    `k` of every direction side by side in index order, enlarged
+    `PREVIEW_SCALE` times, each pixel blended over a solid
+    `PREVIEW_BACKGROUND` by `blend_over_background`, so a transparent pixel
+    is the background and an opaque one keeps its colour. A frame keeps its
+    exact colors when it has at most 256 of them, partly transparent pixels'
+    blends included; otherwise it is reduced to 256 without dithering and
+    the preview warns, even when the sheet is paletted (alpha design D-13). Each frame lasts the clip's frame duration in whole
     centiseconds, rounded half up and at least 20 ms; a one-shot clip holds
     its last frame 500 ms longer. The GIF loops forever. With `lit`, the
     frames are lit ones (`lit_previews`) and the warning says so.
@@ -556,9 +560,6 @@ def previews(frames, *, subject, settings, selected_clips, lit=False):
         subject, selected_clips, view, settings.fps, settings.frames
     )
     pixels = _pixels_by_address(frames, requested, (height, width, 4))
-    for address, array in pixels.items():
-        if not np.isin(array[..., 3], (0, 255)).all():
-            raise ValueError(f"the frame at {address} has alpha other than 0 or 255")
 
     result = []
     for name, times, delays in plans:
@@ -577,8 +578,7 @@ def previews(frames, *, subject, settings, selected_clips, lit=False):
                 axis=1,
             )
             transparent = row[..., 3] == 0
-            rgb = row[..., :3].copy()
-            rgb[transparent] = PREVIEW_BACKGROUND
+            rgb = blend_over_background(row)
             indices, palette, frame_reduced = _palette_frame(rgb, transparent)
             reduced |= frame_reduced
             indices = indices.repeat(PREVIEW_SCALE, axis=0).repeat(
@@ -596,17 +596,33 @@ def previews(frames, *, subject, settings, selected_clips, lit=False):
     return tuple(result)
 
 
+def blend_over_background(pixels):
+    """RGBA `pixels` blended over the solid `PREVIEW_BACKGROUND`, in 8-bit
+    sRGB straight alpha, as an image viewer shows a PNG (alpha design D-13):
+    each channel is `floor((c · α + g · (255 − α)) / 255 + ½)`, with `c` the
+    pixel's channel, `α` its alpha and `g` the background's channel, in exact
+    integers. It is exact at `α` 0 and 255: a transparent pixel is the
+    background and an opaque one keeps its colour. Returns a new `uint8`
+    array of the RGB channels."""
+    pixels = np.asarray(pixels)
+    alpha = pixels[..., 3:4].astype(np.int64)
+    rgb = pixels[..., :3].astype(np.int64)
+    grey = np.asarray(PREVIEW_BACKGROUND, dtype=np.int64)
+    # floor(x / 255 + ½) is floor((2x + 255) / 510).
+    return ((2 * (rgb * alpha + grey * (255 - alpha)) + 255) // 510).astype(np.uint8)
+
+
 def lit_previews(frames, *, subject, settings, selected_clips, light):
     """Each selected clip's preview lit by `light`, a `Light` with a
     position, in sheet order, as `previews` makes the flat ones (lighting
     sheet design D-4, D-13, D-14, D-22).
 
-    Each covered pixel is lit from the frame's normal and depth **as
-    encoded**, `imageops.encode_normal` and `encode_depth`, whether or not
-    the map files are written, by `imageops.light_pixels` at the cell's
-    ground pixel; the lit frames then become GIFs exactly as the flat
-    previews do, a 256-colour reduction warning naming the clip's lit
-    preview. Raises `DepthOverflow` when a covered pixel's depth lies outside
+    Each covered pixel, alpha above 0, is lit from the frame's normal and
+    depth **as encoded**, `imageops.encode_normal` and `encode_depth`,
+    whether or not the map files are written, by `imageops.light_pixels` at
+    the cell's ground pixel, keeping its alpha; the lit frames are then
+    blended and become GIFs exactly as the flat previews do, a 256-colour
+    reduction warning naming the clip's lit preview (alpha design D-13). Raises `DepthOverflow` when a covered pixel's depth lies outside
     `±DEPTH_LIMIT` (D-21, D-24), `UsageError` as `previews` does, and
     `ValueError` for wrong frames or a light with no position.
     """
@@ -630,7 +646,7 @@ def lit_previews(frames, *, subject, settings, selected_clips, light):
     lit = []
     for frame in frames:
         address = frame.address
-        covered = pixels[address][..., 3] == 255
+        covered = pixels[address][..., 3] > 0
         normal_bytes = np.zeros((height, width, 3), dtype=np.uint8)
         normal_bytes[covered] = imageops.encode_normal(normals[address][covered])
         codes = np.zeros((height, width), dtype=np.uint16)
@@ -731,7 +747,7 @@ def _palette_frame(rgb, transparent):
 
     At most 256 distinct colors are kept exactly. Otherwise the colors are
     reduced to 255 by median cut without dithering, and the last entry is
-    the exact background, which every transparent pixel keeps.
+    the exact background, which every wholly transparent pixel keeps.
     """
     packed = (
         rgb[..., 0].astype(np.uint32) << 16

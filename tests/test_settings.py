@@ -40,6 +40,7 @@ def test_the_schema_holds_this_slices_settings():
         "frames",
         "palette",
         "materials",
+        "edges",
         "previews",
         "normals",
         "depth",
@@ -71,6 +72,8 @@ def test_the_defaults_file_and_the_schema_table_agree():
         "frames": "auto",
         "palette": None,
         "materials": None,
+        # Hard edges by default (alpha design D-4, D-9).
+        "edges": "hard",
         "previews": True,
         "normals": True,
         "depth": False,
@@ -152,6 +155,9 @@ def test_comments_and_the_order_of_keys_do_not_matter():
         ("fps: 0.5", 0.5),
         ("fps: 1e2", 100.0),
         ("previews: true", True),
+        ("edges: hard", "hard"),
+        ("edges: soft", "soft"),
+        ("edges: 'soft'", "soft"),
         ("palette: null", None),
         ("palette: ~", None),
         ("materials: null", None),
@@ -201,6 +207,11 @@ def test_each_settings_values(text, expected):
         ("normals: yes", "normals: expected true or false, got 'yes'"),
         ("normals: 1", "normals: expected true or false, got 1"),
         ("normals: null", "normals: expected true or false, got null"),
+        ("edges: fuzzy", "edges: expected hard or soft, got 'fuzzy'"),
+        ("edges: Hard", "edges: expected hard or soft, got 'Hard'"),
+        ("edges: null", "edges: expected hard or soft, got null"),
+        ("edges: true", "edges: expected hard or soft, got true"),
+        ("edges: [hard]", "edges: expected hard or soft, got a list"),
     ],
 )
 def test_a_wrong_type_or_out_of_range_value_names_key_and_line(text, problem):

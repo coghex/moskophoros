@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 from shading import DEFAULT_RANGE, DEFAULT_SHADE
 
-from moskophoros import cli, export, fit, gltf, ramps, sampling, views
+from moskophoros import cli, export, fit, gltf, ramps, sampling, stylize, views
 from moskophoros.capture.backend import Settings, Shade, Source
 
 USAGE_LINE = "usage: moskophoros [options] <infile.glb> <outfile.png>"
@@ -50,6 +50,7 @@ SETTINGS = {
     "ramp": {"lightness_step": 0.09, "hue_shift_deg": -35.0, "chroma_fade": 0.6},
     "style": {
         "reduce": "plain",
+        "edges": "soft",
         "palette": None,
         "materials": None,
     },
@@ -85,6 +86,7 @@ REUSED = {
     "once": ("attack",),
     "clip_frames": {"walk": 8, "attack": None},
     "reduce": "plain",
+    "edges": "soft",
     "shade_range": (120, 188),
     "ao_distance": 1.2,
     "ao_samples": 32,
@@ -95,7 +97,7 @@ REUSED = {
 
 def write_sheet(tmp_path, settings=None, name="old.json", **document):
     path = tmp_path / name
-    contents = {"schema": "moskophoros.sheet/12"} | document
+    contents = {"schema": "moskophoros.sheet/13"} | document
     contents["settings"] = copy.deepcopy(SETTINGS if settings is None else settings)
     path.write_text(json.dumps(contents, ensure_ascii=False), encoding="utf-8")
     return path
@@ -422,7 +424,7 @@ def test_previews_must_be_a_boolean(tmp_path, capsys, value):
 def test_a_document_with_only_schema_and_settings_is_enough(tmp_path):
     path = tmp_path / "minimal.json"
     path.write_text(
-        json.dumps({"schema": "moskophoros.sheet/12", "settings": SETTINGS})
+        json.dumps({"schema": "moskophoros.sheet/13", "settings": SETTINGS})
     )
     assert values(reuse(path)) == REUSED
 
@@ -491,7 +493,7 @@ def test_a_deeply_nested_file_is_rejected(tmp_path, capsys):
     ("text", "key"),
     [
         (
-            '{"schema": "moskophoros.sheet/12", "schema": "moskophoros.sheet/12"}',
+            '{"schema": "moskophoros.sheet/13", "schema": "moskophoros.sheet/13"}',
             "schema",
         ),
         ('{"settings": {"fps": 12, "fps": 12}}', "fps"),
@@ -506,11 +508,11 @@ def test_a_repeated_key_anywhere_is_rejected(tmp_path, capsys, text, key):
     assert rejected(capsys, path) == f"repeats the key {key!r}"
 
 
-NOT_A_SHEET = "is not a moskophoros.sheet/12 document"
+NOT_A_SHEET = "is not a moskophoros.sheet/13 document"
 
 
 def older(schema):
-    return f"is a {schema} sheet; only moskophoros.sheet/12 sheets load, so generate it again"
+    return f"is a {schema} sheet; only moskophoros.sheet/13 sheets load, so generate it again"
 
 
 @pytest.mark.parametrize(
@@ -524,7 +526,8 @@ def older(schema):
         ({"schema": "moskophoros.sheet/6"}, older("moskophoros.sheet/6")),
         ({"schema": "moskophoros.sheet/5"}, older("moskophoros.sheet/5")),
         ({"schema": "moskophoros.sheet/4"}, older("moskophoros.sheet/4")),
-        ({"schema": "moskophoros.sheet/13"}, older("moskophoros.sheet/13")),
+        ({"schema": "moskophoros.sheet/14"}, older("moskophoros.sheet/14")),
+        ({"schema": "moskophoros.sheet/12"}, older("moskophoros.sheet/12")),
         ({"schema": "moskophoros.sheet/11"}, older("moskophoros.sheet/11")),
         ({"schema": "moskophoros.sheet/10"}, older("moskophoros.sheet/10")),
         ({"schema": "moskophoros.sheet/9"}, older("moskophoros.sheet/9")),
@@ -536,17 +539,17 @@ def older(schema):
         ),
         ({"schema": 1}, f"{NOT_A_SHEET}: schema is 1"),
         (
-            {"schema": ["moskophoros.sheet/12"]},
-            f'{NOT_A_SHEET}: schema is ["moskophoros.sheet/12"]',
+            {"schema": ["moskophoros.sheet/13"]},
+            f'{NOT_A_SHEET}: schema is ["moskophoros.sheet/13"]',
         ),
         ({"schema": None}, f"{NOT_A_SHEET}: schema is null"),
-        ({"schema": "moskophoros.sheet/12"}, "settings: missing"),
+        ({"schema": "moskophoros.sheet/13"}, "settings: missing"),
         (
-            {"schema": "moskophoros.sheet/12", "settings": None},
+            {"schema": "moskophoros.sheet/13", "settings": None},
             "settings: must be set, got null",
         ),
         (
-            {"schema": "moskophoros.sheet/12", "settings": []},
+            {"schema": "moskophoros.sheet/13", "settings": []},
             "settings: expected an object, got []",
         ),
     ],
@@ -600,6 +603,7 @@ REUSED_FIELDS = [
     "ramp.chroma_fade",
     "style",
     "style.reduce",
+    "style.edges",
     "style.palette",
     "style.materials",
     "clips",
@@ -628,6 +632,9 @@ def test_a_missing_field_is_rejected(tmp_path, capsys, field):
             "expected 'topdown' or 'side' or 'iso' or 'iso-true' or 'custom', "
             'got "ISO"',
         ),
+        ("style.edges", "fuzzy", "expected 'hard' or 'soft', got \"fuzzy\""),
+        ("style.edges", "HARD", "expected 'hard' or 'soft', got \"HARD\""),
+        ("style.edges", True, "expected 'hard' or 'soft', got true"),
         ("view.pitch_deg", 90.5, "must be from 0 to 90, got '90.5'"),
         ("view.pitch_deg", -0.1, "must be from 0 to 90, got '-0.1'"),
         ("view.pitch_deg", "30", 'expected a number, got "30"'),
@@ -806,7 +813,31 @@ def test_a_long_value_is_shown_cut_short(tmp_path, capsys):
 def test_a_mode_sheet_reuses_mode(tmp_path):
     options = reuse(write_sheet(tmp_path, edited({"style.reduce": "mode"})))
     assert values(options) == REUSED | {"reduce": "mode"}
-    assert cli.style_record(options) == PLAIN | {"reduce": "mode"}
+    assert cli.style_record(options) == PLAIN | {"reduce": "mode", "edges": "soft"}
+
+
+@pytest.mark.parametrize("edges", ["hard", "soft"])
+def test_the_reused_edges_is_reloaded(tmp_path, edges):
+    options = reuse(write_sheet(tmp_path, edited({"style.edges": edges})))
+    assert options.edges == edges
+    assert cli.style_record(options)["edges"] == edges
+
+
+@pytest.mark.parametrize(("sheet", "explicit"), [("soft", "hard"), ("hard", "soft")])
+def test_an_explicit_edges_overrides_the_reused_one(tmp_path, sheet, explicit):
+    path = write_sheet(tmp_path, edited({"style.edges": sheet}))
+    options = reuse(path, "--edges", explicit)
+    assert values(options) == REUSED | {"edges": explicit}
+    assert cli.style_record(options)["edges"] == explicit
+
+
+@pytest.mark.parametrize(("sheet", "configured"), [("soft", "hard"), ("hard", "soft")])
+def test_a_config_files_edges_overrides_the_reused_one(tmp_path, sheet, configured):
+    path = write_sheet(tmp_path, edited({"style.edges": sheet}))
+    config = tmp_path / "look.yaml"
+    config.write_text(f"edges: {configured}\n")
+    options = reuse(path, "--config", str(config))
+    assert values(options) == REUSED | {"edges": configured}
 
 
 @pytest.mark.parametrize(("sheet", "explicit"), [("mode", "plain"), ("plain", "mode")])
@@ -819,6 +850,7 @@ def test_an_explicit_reduce_overrides_the_reused_one(tmp_path, sheet, explicit):
 @pytest.mark.parametrize(
     "schema",
     [
+        "moskophoros.sheet/12",
         "moskophoros.sheet/11",
         "moskophoros.sheet/10",
         "moskophoros.sheet/9",
@@ -950,6 +982,7 @@ ORIGINALS = {
 
 PLAIN = {
     "reduce": "plain",
+    "edges": "hard",
     "palette": None,
     "materials": None,
 }
@@ -1265,6 +1298,162 @@ def test_a_reused_mode_sheet_round_trips_and_differs_from_plain(tmp_path):
     assert json.loads(again.json)["settings"]["style"] == mode
     assert plain["settings"]["style"] == PLAIN
     assert plain["fingerprint"] != json.loads(original.json)["fingerprint"]
+
+
+# Reproduction through stylize, under either edges rule (settings design D-16;
+# alpha design D-9): the reloaded `edges` reduces the supersampled frames
+# again, partly covered blocks included.
+
+STYLED = Settings(
+    view="custom",
+    pitch=30.0,
+    directions=2,
+    start_angle=0.0,
+    model_yaw=0.0,
+    fps=4.0,
+    supersample=4,
+    ppm=10.0,
+    cell=(6, 5),
+    ground=(0.0, 0.0, 0.0),
+    ground_px=(3, 4),
+    root_motion="error",
+    shade=DEFAULT_SHADE,
+)
+STYLED_LIGHT = export.Light((-20.0, 30.0, 40.0), 1.5, 0.2)
+
+
+def _supersampled(address, settings):
+    """A disc whose rim crosses supersampled blocks, its colour, normal and
+    depth varying across it and by direction and time."""
+    size, (width, height) = settings.supersample, settings.cell
+    rows, columns = np.mgrid[0 : height * size, 0 : width * size]
+    dx = columns + 0.5 - width * size / 2
+    dy = rows + 0.5 - height * size / 2
+    radius = 2.1 * size + address.direction + 4 * address.time_s
+    inside = dx**2 + dy**2 < radius**2
+    pixels = np.zeros((height * size, width * size, 4), dtype=np.uint8)
+    pixels[..., 0] = 40 + 7 * columns
+    pixels[..., 1] = 200 - 5 * rows
+    pixels[..., 2] = 90 + 60 * address.direction
+    pixels[..., 3] = 255
+    pixels[~inside] = 0
+    normals = np.zeros((*inside.shape, 3), dtype=np.float32)
+    lateral = np.stack((dx, -dy), axis=-1) / (2 * radius)
+    normals[..., :2] = lateral
+    normals[..., 2] = np.sqrt(1 - (lateral**2).sum(axis=-1))
+    normals[~inside] = 0
+    depths = np.where(inside, 0.05 * dx - 0.02 * dy, np.nan).astype(np.float32)
+    return sampling.ImageFrame(
+        address, pixels, buffers={sampling.NORMAL: normals, sampling.DEPTH: depths}
+    )
+
+
+def _styled(resolved):
+    """The sheet, maps and previews, flat and lit, that `resolved` gives
+    from `_supersampled` frames, reduced by its style."""
+    settings = replace(cli.capture_settings(resolved), shade=DEFAULT_SHADE)
+    selected = gltf.select_clips(SUBJECT, resolved.clip or (), resolved.once)
+    view = views.View(
+        settings.pitch, settings.directions, settings.start_angle, settings.model_yaw
+    )
+    captured = [
+        _supersampled(requested.address, settings)
+        for requested in sampling.frames("hero", selected, view, settings.fps)
+    ]
+    reduce = {"plain": stylize.plain, "mode": stylize.mode}[resolved.reduce]
+    frames = reduce(
+        captured,
+        settings.supersample,
+        pixels_per_meter=settings.ppm,
+        edges=resolved.edges,
+    )
+    light = export.Light(
+        resolved.light, resolved.light_intensity, resolved.light_ambient
+    )
+    sheet = export.encode(
+        frames,
+        generator=GENERATOR,
+        source=SOURCE,
+        subject="hero",
+        settings=settings,
+        style=cli.style_record(resolved),
+        previews=resolved.previews,
+        normals=resolved.normals,
+        depth=resolved.depth,
+        light=light,
+        ramp=cli._formula(resolved),
+        shade_range=resolved.shade_range,
+        selected_clips=selected,
+        image_path=Path("hero.png"),
+    )
+    flat = export.previews(
+        frames, subject="hero", settings=settings, selected_clips=selected
+    )
+    lit = export.lit_previews(
+        frames, subject="hero", settings=settings, selected_clips=selected, light=light
+    )
+    alphas = {int(a) for frame in frames for a in np.unique(frame.pixels[..., 3])}
+    return SimpleNamespace(
+        **vars(sheet),
+        flat=tuple(preview.gif for preview in flat),
+        lit=tuple(preview.gif for preview in lit),
+        alphas=alphas,
+    )
+
+
+def _styling_options(*options):
+    view = ("--pitch", "30", "--directions", "2", "--start-angle", "0", "--fps", "4")
+    scale = ("--supersample", "4", "--ppm", "10", "--cell", "6x5")
+    light = ("--light", "-20,30,40", "--light-intensity", "1.5", "--light-ambient")
+    return [*view, *scale, "--ground-px", "3,4", *light, "0.2", "--depth", *options]
+
+
+@pytest.mark.parametrize("reduce", cli.REDUCTIONS)
+@pytest.mark.parametrize("edges", ["hard", "soft"])
+def test_a_sheet_reproduces_itself_through_stylize_under_either_edges(
+    tmp_path, edges, reduce
+):
+    argv = [*_styling_options("--edges", edges, "--reduce", reduce)]
+    original = _styled(
+        cli.resolve_settings(
+            cli.parse_args(["--no-user-config", *argv, "in.glb", "out.png"])
+        )
+    )
+    document = json.loads(original.json)
+    assert document["settings"]["style"]["edges"] == edges
+    if edges == "soft":
+        # The disc's rim reduces to partial alpha, which the sheet carries.
+        assert original.alphas - {0, 255}
+    else:
+        assert original.alphas == {0, 255}
+    path = tmp_path / "hero.json"
+    path.write_bytes(original.json)
+
+    again = _styled(reuse(path))
+
+    assert again.png == original.png
+    assert again.json == original.json
+    assert again.normal == original.normal and original.normal is not None
+    assert again.depth == original.depth and original.depth is not None
+    assert again.flat == original.flat and original.flat
+    assert again.lit == original.lit and original.lit
+
+
+def test_reusing_a_soft_sheet_under_hard_edges_changes_its_pixels(tmp_path):
+    argv = [*_styling_options("--edges", "soft")]
+    soft = _styled(
+        cli.resolve_settings(
+            cli.parse_args(["--no-user-config", *argv, "in.glb", "out.png"])
+        )
+    )
+    path = tmp_path / "hero.json"
+    path.write_bytes(soft.json)
+
+    hard = _styled(reuse(path, "--edges", "hard"))
+
+    assert hard.alphas == {0, 255}
+    assert hard.png != soft.png
+    assert json.loads(hard.json)["fingerprint"] != json.loads(soft.json)["fingerprint"]
 
 
 # A generated library (material styling design D-33, D-34)

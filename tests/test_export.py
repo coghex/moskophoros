@@ -53,6 +53,7 @@ POSE = SelectedClip(Clip(2, "pose", 0.25, 0.25, ()), one_shot=False)
 SOURCE = Source(Path("/work/models/héros.glb"), SHA, 0)
 PLAIN = {
     "reduce": "plain",
+    "edges": "hard",
     "palette": None,
     "materials": None,
 }
@@ -90,7 +91,8 @@ CANONICAL = (
     '"root_motion":"error",'
     '"shade":{"ao_distance_m":0.3,"ao_samples":64,"convexity_weight":1.0,'
     '"occlusion_weight":0.25,"range":[84,191]},'
-    '"style":{"materials":null,"palette":null,"reduce":"plain"},"supersample":4,"view":{"directions":2,"pitch_deg":0.0,"preset":"side",'
+    '"style":{"edges":"hard","materials":null,"palette":null,"reduce":"plain"},'
+    '"supersample":4,"view":{"directions":2,"pitch_deg":0.0,"preset":"side",'
     '"projection":"orthographic","start_angle_deg":90.0}},'
     '"source":{"sha256":"' + SHA + '"}}'
 )
@@ -171,7 +173,7 @@ EXPECTED_FRAMES = ",\n".join(
 
 EXPECTED_JSON = (
     """{
-  "schema": "moskophoros.sheet/12",
+  "schema": "moskophoros.sheet/13",
   "generator": {
     "tool": "moskophoros",
     "version": "0.1.0",
@@ -242,6 +244,7 @@ EXPECTED_JSON = (
     },
     "style": {
       "reduce": "plain",
+      "edges": "hard",
       "palette": null,
       "materials": null
     },
@@ -410,6 +413,17 @@ def test_the_fingerprint_covers_the_style_record():
     assert export.fingerprint(GENERATOR, restyled, SHA) != FINGERPRINT
     unstyled = {key: value for key, value in settings.items() if key != "style"}
     assert export.fingerprint(GENERATOR, unstyled, SHA) != FINGERPRINT
+    # The edges rule is inside the fingerprint (alpha design D-9).
+    soft = export.sheet_settings(
+        SIDE, (RUN, STRIKE, POSE), PLAIN | {"edges": "soft"}, shade_range=RANGE
+    )
+    assert soft["style"] == {
+        "reduce": "plain",
+        "edges": "soft",
+        "palette": None,
+        "materials": None,
+    }
+    assert export.fingerprint(GENERATOR, soft, SHA) != FINGERPRINT
 
 
 @pytest.mark.parametrize("normals", [True, False])
@@ -825,4 +839,5 @@ def test_stylized_frames_export_directly():
     ]
     plain = stylize.plain(supersampled, 2)
     image = np.array(Image.open(io.BytesIO(_encode_side(plain, normals=False).png)))
-    assert (image == (200, 200, 200, 255)).all(axis=2)[:, :2].all()
+    # Every supersample is a surface of alpha 200, so the pixel keeps it.
+    assert (image == (200, 200, 200, 200)).all(axis=2)[:, :2].all()
