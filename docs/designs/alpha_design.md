@@ -15,12 +15,13 @@ transparency. help me implement alpha". It lifts #75's deferral for design.
 It benefits the owner producing game art, and any project using the tool
 (V-1).
 
-Design state: `ready for issue processing`
+Design state: `exploring`
 
 Reset to `exploring` on 2026-10-17 for Codex review 1 (5 blocking, 3 should
 fix), then marked ready again the same day under the owner's delegation
 (request moskophoros-20261017-1): every finding is fixed and no owner
-decision changed; see *Review 1*.
+decision changed; see *Review 1*. Reset again the same day for Codex
+rereview 2 (1 blocking, 3 should fix, 1 minor); see *Review 2*.
 
 Status legend: `[ ]` unprocessed · `[#N]` linked to issue N · `[no-issue]`
 reviewed and deliberately not tracked separately · `[deferred]` blocked on a
@@ -319,9 +320,10 @@ produces partial alpha (ALPHA-3).
 - Only the current sheet schema loads (settings design D-24): sheets of the
   previous schema are refused by `--settings-from`, as every bump does.
   Nothing defaults a missing `edges`.
-- The capture job does not change with `edges` or any other style value
-  (settings design D-36): the job's hash is the same under `hard` and
-  `soft`.
+- The capture job does not change with `edges`, nor with the style values
+  settings design D-36 leaves out of it; it still carries each material's
+  own capture overrides, as D-36 says. The job's hash is the same under
+  `hard` and `soft`.
 - Which slice bumps which schema is in the transport table below.
 
 #### Capture transport and provenance (Review 1, A-7)
@@ -408,7 +410,9 @@ is absent from the pixel. Samples where a layer is absent cast no vote and
 add nothing to its sums.
 
 - Ordinary look, `plain`: the weighted mean of the layer's 8-bit sRGB
-  values, rounded half up.
+  values, rounded half up. With a palette, that mean then maps to the
+  palette, as `plain` does today (reduce, then map), before compositing
+  (D-14).
 - Ordinary look, `mode`: the weighted vote, with today's tie rules against
   the weighted mean.
 - With a palette, `mode` maps the layer's samples before voting, as today.
@@ -451,7 +455,8 @@ said; colours given are what the composite must use):
 | front `f = 0.5` over back on the same two samples, two empty | `hard` 255, `soft` 128; colour the composite of the two |
 | `f` of `[0.001, 0.001]` front only, two back only | four surfaces, alpha 128 (0.5005); not 255 |
 | one surface sample of four | `hard` transparent; `soft` its alpha ÷ 4 |
-| ramped front over ramped back | each layer its own ramp colour, composited, then snapped |
+| ramped front over ramped back (ALPHA-5) | each layer its own ramp colour, composited, then snapped |
+| `plain`, palette black and white; front `(0, 0, 0)` with weight 32768, back `(100, 100, 100)` with transmitted weight 32767 | the back maps to white first; the composite is 188; the final snap gives white `(255, 255, 255)`, not black |
 | `mode`, two front colours tied | today's tie rule against the weighted mean |
 
 ## Decisions
@@ -1185,9 +1190,9 @@ changes, in its own pull request, since tests read that document.
   - every gated hit is exactly 0 or 1;
   - 64 holes over a body or over the background render correctly; 65 fail
     with exit 5 naming the input, clip, direction, frame and limit, and
-    publish nothing; so does a front surface followed by 65 holes (the
-    review's mixed stack);
-  - a correct frame is unchanged by the marker;
+    publish nothing (the translucent-front cases belong to ALPHA-4, where
+    `BLEND` becomes see-through);
+  - no valid stack is refused;
   - stacked-cutout cost reported.
 - **Out of scope:** partial alpha, `BLEND`.
 - **Open questions:** None.
@@ -1244,7 +1249,11 @@ changes, in its own pull request, since tests read that document.
   - spike 2's mixed stacks (a)–(d) match front-over-back;
   - a 0.4 quad over a body matches the formula; over the background its
     alpha is 0.4; two panes of 0.5 give 0.75;
-  - every pinned case of the numerical reference;
+  - every pinned case of the numerical reference that needs no ramp on the
+    front layer (the front-ramp cases are ALPHA-5's);
+  - a visible translucent front followed by 65 holes, ending at an opaque
+    surface and at the background, fails with exit 5; the same with 64
+    renders correctly (Review 1 A-3, Review 2 B-1);
   - tiny alpha (5e-7) is a surface; alpha at the hole floor (1e-9) is not;
     vertex alpha and texture × factor alpha render;
   - presence survives transport: the `[0.001, 0.001, 1, 1]` block gives
@@ -1269,9 +1278,10 @@ changes, in its own pull request, since tests read that document.
 - **Depends on:** ALPHA-4.
 - **Ordering:** critical path.
 - **Relevant decisions:** D-6, D-12, D-14, D-15.
-- **Acceptance signals:** a ramped translucent quad over a ramped body shows
-  both ramps, composited then snapped; a name shared by opaque and `BLEND`
-  materials pools as one; the `mode` tie case.
+- **Acceptance signals:** the numerical reference's front-ramp cases; a
+  ramped translucent quad over a ramped body shows both ramps, composited
+  then snapped; a name shared by opaque and `BLEND` materials pools as one;
+  the `mode` tie case on the front layer.
 - **Out of scope:** keeping translucent layers separately (D-12).
 - **Open questions:** None.
 
