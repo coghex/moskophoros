@@ -805,6 +805,17 @@ with D-1, D-6 and D-12 ("a translucent material can have a ramp too"):
   for a library mapping a name used only by `BLEND` materials goes.
 - Until the alpha slices land, D-26 and the no-identity rule describe current
   behaviour. The note is recorded in `material_styling_design.md`.
+- **A `BLEND` entry's own shade** (recorded by the moskophoros manager on
+  2026-10-17, answering the issue processor's question; it reads "like any
+  other material" and decides nothing new): a `BLEND` material whose entry
+  gives its own shade values is treated exactly as an opaque ramped
+  material. Its own capture values (`ao_distance` and the weights) reach the
+  capture job as per-material overrides (settings design D-36), its own range
+  applies in stylize, and the override warnings apply to it. `docs/design.md`
+  §Material libraries' rule that a `BLEND` material takes the global values
+  belonged to D-26's no-identity class and goes with it, in ALPHA-5. A
+  `BLEND` material taking the library's default ramp takes the global values
+  and the library's range, as any material does.
 
 ### D-16. The slicing is the designer's
 
