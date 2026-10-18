@@ -549,3 +549,76 @@ materials:
     assert parsed.ramps["chrome"] == Generated("#8c939c", 5, None, -35.0, 0.6)
     assert parsed.shade.range == (190, 225)
     assert yaml.safe_load(text)["schema"] == materials.SCHEMA
+
+
+# Translucent materials use generated ramps and the library's range as any
+# other (alpha design D-15).
+
+GLASS = part(3, "glass", "BLEND")
+
+
+def test_a_blend_material_s_own_generated_ramp_warns_over_an_explicit_global():
+    document = library(
+        default=None,
+        materials={
+            "glass": {"ramp": {"base": "#7a3b2e", "bands": 2, "hue_shift_deg": -35}}
+        },
+    )
+    parsed = materials.generate(
+        validate_library(document, COLORS, source="l"), COLORS, B
+    )
+    assert materials.ramp_warnings([GLASS], parsed, {"hue_shift_deg": -20.0}) == [
+        'material "glass"\'s own ramp keeps its own hue_shift_deg, -35.0, from the '
+        "material library; the global -20.0 applies to generated ramps without "
+        "their own"
+    ]
+
+
+def test_a_default_generated_ramp_taken_only_by_blend_materials_warns_once():
+    document = library(
+        ramps={"chrome": {"base": "#8c939c", "bands": 2, "chroma_fade": 0.6}},
+        default="chrome",
+        materials={},
+    )
+    parsed = materials.generate(
+        validate_library(document, COLORS, source="l"), COLORS, B
+    )
+    expected = [
+        'ramp "chrome" keeps its own chroma_fade, 0.6, from the material library; '
+        "the global 0.3 applies to generated ramps without their own"
+    ]
+    assert materials.ramp_warnings([GLASS], parsed, {"chroma_fade": 0.3}) == expected
+    # Taken by an opaque and a translucent material, it warns once.
+    both = [part(0, "steel"), GLASS]
+    assert materials.ramp_warnings(both, parsed, {"chroma_fade": 0.3}) == expected
+
+
+@pytest.mark.parametrize(
+    "materials_",
+    [{}, {"glass": {"uses": "metal"}}],
+    ids=["by the default ramp", "by its entry"],
+)
+def test_the_library_range_taken_only_by_blend_materials_warns(materials_):
+    document = library(shade={"range": [190, 225]}, materials=materials_)
+    parsed = validate_library(document, COLORS, source="l")
+    assert materials.library_shade_warnings([GLASS], parsed, {"range": (84, 191)}) == [
+        "the material library gives shade.range [190, 225] to its materials "
+        "without their own; the global [84, 191] does not reach them"
+    ]
+    assert stylize._own_range(parsed, "glass") == (190, 225)
+
+
+def test_a_blend_material_taking_the_default_ramp_takes_the_global_capture_values():
+    parsed = validate_library(
+        library(shade={"range": [190, 225]}, materials={}), COLORS, source="l"
+    )
+    values = {"ao_distance_m": 0.3, "occlusion_weight": 0.25, "convexity_weight": 1.0}
+    assert materials.capture_overrides([GLASS], parsed, values) == []
+
+
+def test_a_blend_entry_s_own_range_applies_in_stylize():
+    document = library(
+        materials={"glass": {"uses": "metal", "shade": {"range": [10, 20]}}}
+    )
+    parsed = validate_library(document, COLORS, source="l")
+    assert stylize._own_range(parsed, "glass") == (10, 20)
