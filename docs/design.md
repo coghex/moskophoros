@@ -1960,14 +1960,13 @@ D-18), before capture starts:
 
 - each named model material with no library entry, naming it and whether it
   took the default ramp or the ordinary look, a translucent `BLEND` material
-  as any other (alpha design D-15); a material of an alpha mode glTF does not
-  define takes the ordinary look whatever the default, so a name used only by
-  such materials says that, and a name shared with materials of glTF's
-  alpha modes adds that its other parts take the ordinary look
+  as any other (alpha design D-15); a name used only by materials whose alpha
+  mode glTF does not define takes the ordinary look whatever the default, and
+  its warning names that alpha mode (the manager's note under D-15)
 - one warning counting the parts with no material name, from the glTF
   primitives of the selected scene: an unnamed material, or a primitive without
   one
-- each library entry whose name is used only by materials of an alpha mode
+- each library entry whose name is used only by materials whose alpha mode
   glTF does not define
 - for each global shading value an option or a `--config` file set, each
   material of the model taking its entry's ramp that keeps its own value

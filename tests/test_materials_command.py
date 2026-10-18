@@ -1079,14 +1079,16 @@ def test_an_alpha_mode_gltf_does_not_define_takes_the_ordinary_look_and_is_named
         COLORS,
         source="t",
     )
+    # The wordings the manager recorded under alpha design D-15. A name also
+    # used by a material of a glTF alpha mode is named with the ramp that one
+    # takes.
     assert materials.warnings(records, library) == [
-        'material "odd" has no entry in the material library; its alpha mode is '
-        "not one glTF defines, so it takes the ordinary look",
+        'material "odd" has no entry in the material library; its alpha mode '
+        '"SOMETHING" is not one glTF defines, so it takes the ordinary look',
         'material "both" has no entry in the material library and takes the '
-        'default ramp "r"; its parts of an alpha mode glTF does not define take '
-        "the ordinary look",
+        'default ramp "r"',
         'material "veil" has no entry in the material library and takes the '
         'default ramp "r"',
-        'the library entry "mapped" names only materials of an alpha mode glTF '
+        'the library entry "mapped" names only materials whose alpha mode glTF '
         "does not define, which take the ordinary look",
     ]

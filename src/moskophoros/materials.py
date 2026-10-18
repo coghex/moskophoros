@@ -296,10 +296,12 @@ def warnings(records, library):
     `records` are the model's `gltf.PrimitiveMaterial`s. Each distinct named
     material the library has no entry for is named once, saying whether it
     took the default ramp or the ordinary look (D-9, D-17), a translucent
-    `BLEND` material as any other (alpha design D-15); a material of an alpha
-    mode glTF does not define takes the ordinary look whatever the default.
+    `BLEND` material as any other (alpha design D-15); a material whose only
+    alpha modes glTF does not define takes the ordinary look whatever the
+    default, its warning naming the alpha mode of its lowest material index
+    (the manager's note under D-15).
     One further warning counts the parts with no name (unnamed or missing
-    materials, D-18), and each library entry used only by materials of an
+    materials, D-18), and each library entry used only by materials whose
     alpha mode glTF does not define is named. Entries and ramps the model
     never uses are silent (D-15).
     """
@@ -310,10 +312,13 @@ def warnings(records, library):
             unnamed += 1
             continue
         entry = parts.setdefault(
-            record.name, {"index": record.material_index, "ramp": False, "other": False}
+            record.name, {"index": record.material_index, "ramp": False, "other": None}
         )
         entry["index"] = min(entry["index"], record.material_index)
-        entry["ramp" if record.alpha_mode in RAMP_ALPHA_MODES else "other"] = True
+        if record.alpha_mode in RAMP_ALPHA_MODES:
+            entry["ramp"] = True
+        elif entry["other"] is None or record.material_index < entry["other"][0]:
+            entry["other"] = (record.material_index, record.alpha_mode)
     messages = []
     fallback = (
         "the default ramp " + _name(library.default)
@@ -328,13 +333,8 @@ def warnings(records, library):
         head = f"material {_name(name)} has no entry in the material library"
         if not used["ramp"]:
             messages.append(
-                f"{head}; its alpha mode is not one glTF defines, so it takes the "
-                "ordinary look"
-            )
-        elif used["other"]:
-            messages.append(
-                f"{head} and takes {fallback}; its parts of an alpha mode glTF "
-                "does not define take the ordinary look"
+                f"{head}; its alpha mode {_shown(used['other'][1])} is not one glTF "
+                "defines, so it takes the ordinary look"
             )
         else:
             messages.append(f"{head} and takes {fallback}")
@@ -348,7 +348,7 @@ def warnings(records, library):
         used = parts.get(name)
         if used is not None and not used["ramp"]:
             messages.append(
-                f"the library entry {_name(name)} names only materials of an alpha "
+                f"the library entry {_name(name)} names only materials whose alpha "
                 "mode glTF does not define, which take the ordinary look"
             )
     return messages
