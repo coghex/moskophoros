@@ -25,7 +25,7 @@ from moskophoros import fit, imageops, sampling, views
 INTERNAL_ERROR = 1
 BACKEND_ERROR = 5
 JOB_SCHEMA = "moskophoros.capture-job/1"
-RESULT_SCHEMA = "moskophoros.capture-result/2"
+RESULT_SCHEMA = "moskophoros.capture-result/3"
 MODES = ("measure", "render")
 CUSTOM_VIEW = "custom"
 MAX_CELL = 4096
@@ -67,8 +67,12 @@ COLOR_FIELDS = {
 # more (settings design D-42).
 MAX_AO_SAMPLES = 128
 # Every render frame's buffers beside its colour, each at
-# <name>/NNNNNN.png with the colour's ordinal.
-AUXILIARY_BUFFERS = ("matid", "shade", "normal", "depth")
+# <name>/NNNNNN.png with the colour's ordinal: the back layer's material ID
+# and shade, the front-most surface's normal and depth, and the front
+# layer's colour, alpha, material ID and shade (alpha design D-6, D-11,
+# D-12, Capture transport and provenance).
+FRONT_BUFFERS = ("front_color", "front_alpha", "front_matid", "front_shade")
+AUXILIARY_BUFFERS = ("matid", "shade", "normal", "depth", *FRONT_BUFFERS)
 # The normal and depth buffers (lighting sheet design D-2, D-10, D-11): 16-bit
 # RGBA PNGs, every row unfiltered, with no chunk but IHDR, IDAT and IEND.
 # Alpha is SURFACE where the render hit a surface, and every sample is 0
@@ -78,7 +82,10 @@ AUXILIARY_BUFFERS = ("matid", "shade", "normal", "depth")
 # toward the viewer from the ground point's camera depth, is a 32-bit float
 # whose big-endian bits are red (the high half) and green (the low half),
 # with blue 0.
-WIDE_BUFFERS = ("normal", "depth")
+# The front alpha buffer has the same form: red is the front layer's alpha
+# `f` as `q = floor(65535 · f + ½)`, green and blue 0, alpha SURFACE where the
+# front layer is present.
+WIDE_BUFFERS = ("normal", "depth", "front_alpha")
 SURFACE = 0xFFFF
 # How far a surface's normal may be from unit length: the 16-bit encoding
 # moves it by at most 2.7·10⁻⁵.
@@ -661,33 +668,50 @@ def _materials(entries):
 
 
 def _auxiliary(paths, materials, where):
-    """Check a frame's colour, material-ID and shade buffers against each
-    other and against the material table (design §Capture job and result
-    contract)."""
-    ids, shade = _pixels(paths["matid"]), _pixels(paths["shade"])
+    """Check a frame's buffers against each other and against the material
+    table (design §Capture job and result contract): each layer's colour,
+    material ID and shade on exactly the same pixels, the front alpha exactly
+    where the front colour is, and the normal and depth exactly where either
+    layer is."""
+    ids = _layer(paths, "", materials, where)
+    front_ids = _layer(paths, "front_", materials, where)
+    _front_alpha(paths["front_alpha"], front_ids, where)
+    covered = (ids[..., 3] == 255) | (front_ids[..., 3] == 255)
+    for name in ("normal", "depth"):
+        _surfaces(name, paths[name], covered, ids, front_ids, where)
+    for prefix, layer_ids in (("", ids), ("front_", front_ids)):
+        _colour(paths, prefix, layer_ids, where)
+
+
+def _layer(paths, prefix, materials, where):
+    """Check one layer's material-ID and shade buffers, the back's (`prefix`
+    "") or the front's ("front_"); return its material-ID pixels."""
+    label = prefix.replace("_", " ")
+    ids = _pixels(paths[f"{prefix}matid"])
+    shade = _pixels(paths[f"{prefix}shade"])
     problems = (
         (
             ~np.isin(ids[..., 3], (0, 255))
             | ((ids[..., 3] == 0) & ids[..., :3].any(axis=-1))
             | ((ids[..., 3] == 255) & (ids[..., 2] != 0))
             | ((ids[..., 3] == 255) & ~ids[..., :2].any(axis=-1)),
-            "material-ID pixel {} is {}, not an encoded value",
+            label + "material-ID pixel {} is {}, not an encoded value",
             ids,
         ),
         (
             (shade[..., 0] != shade[..., 1]) | (shade[..., 1] != shade[..., 2]),
-            "shade pixel {} is {}, whose red, green and blue differ",
+            label + "shade pixel {} is {}, whose red, green and blue differ",
             shade,
         ),
         (
             ~np.isin(shade[..., 3], (0, 255)),
-            "shade pixel {} is {}, whose alpha is neither 0 nor 255",
+            label + "shade pixel {} is {}, whose alpha is neither 0 nor 255",
             shade,
         ),
         (
             ((ids[..., 3] == 0) & shade.any(axis=-1))
             | ((ids[..., 3] == 255) & (shade[..., 3] != 255)),
-            "shade pixel {} is {}, but the material-ID pixel there is {}",
+            label + "shade pixel {} is {}, but the material-ID pixel there is {}",
             shade,
         ),
     )
@@ -696,35 +720,81 @@ def _auxiliary(paths, materials, where):
     used = np.unique(codes[ids[..., 3] == 255])
     unknown = [int(code) for code in used if int(code) not in materials]
     if unknown:
-        raise _Invalid(f"{where}: material-ID code {unknown[0]} is not in the table")
-    covered = ids[..., 3] == 255
-    for name in WIDE_BUFFERS:
-        _surfaces(name, paths[name], covered, ids, where)
-    # The colour covers exactly the surfaces the other buffers hold.
-    color = _pixels(paths["color"])
+        raise _Invalid(
+            f"{where}: {label}material-ID code {unknown[0]} is not in the table"
+        )
+    return ids
+
+
+def _colour(paths, prefix, ids, where):
+    """Check one layer's colour buffer: it covers exactly the surfaces the
+    layer's material ID holds."""
+    label = prefix.replace("_", " ")
+    colour_name = label + "colour"
+    color = _pixels(paths[f"{prefix}color"])
     problems = (
         (
             ~np.isin(color[..., 3], (0, 255)),
-            "colour pixel {} is {}, whose alpha is neither 0 nor 255",
+            colour_name + " pixel {} is {}, whose alpha is neither 0 nor 255",
             color,
         ),
         (
             (color[..., 3] == 0) & color.any(axis=-1),
-            "colour pixel {} is {}, no surface, but not (0, 0, 0, 0)",
+            colour_name + " pixel {} is {}, no surface, but not (0, 0, 0, 0)",
             color,
         ),
         (
             (color[..., 3] == 255) & (ids[..., 3] != 255),
-            "colour pixel {} is {}, a surface, but the material-ID pixel there is {}",
+            colour_name
+            + f" pixel {{}} is {{}}, a surface, but the {label}material-ID pixel there is {{}}",
             color,
         ),
         (
             (color[..., 3] == 0) & (ids[..., 3] != 0),
-            "colour pixel {} is {}, no surface, but the material-ID pixel there is {}",
+            colour_name
+            + f" pixel {{}} is {{}}, no surface, but the {label}material-ID pixel there is {{}}",
             color,
         ),
     )
     _refuse_first(problems, ids, where)
+
+
+def _front_alpha(path, front_ids, where):
+    """Check a frame's front alpha buffer: its encoding, and its coverage
+    against the front layer's material ID."""
+    try:
+        samples = read_wide_png(path)
+    except ValueError as error:
+        raise _Invalid(f"{where} front_alpha buffer {error}") from None
+    alpha = samples[..., 3]
+    surface = alpha == SURFACE
+    present = front_ids[..., 3] == 255
+    problems = (
+        (
+            ~np.isin(alpha, (0, SURFACE))
+            | (~surface & samples.any(axis=-1))
+            | (surface & samples[..., 1:3].any(axis=-1)),
+            "is {}, not an encoded value",
+        ),
+        (
+            surface & ~present,
+            "is {}, a surface, but the front material-ID pixel there is {}",
+        ),
+        (
+            ~surface & present,
+            "is {}, no surface, but the front material-ID pixel there is {}",
+        ),
+    )
+    for wrong, message in problems:
+        if wrong.any():
+            y, x = (int(i) for i in np.argwhere(wrong)[0])
+            raise _Invalid(
+                f"{where}: front_alpha pixel {(x, y)} "
+                + message.format(
+                    tuple(int(v) for v in samples[y, x]),
+                    tuple(int(v) for v in front_ids[y, x]),
+                )
+            )
 
 
 def _refuse_first(problems, ids, where):
@@ -740,9 +810,11 @@ def _refuse_first(problems, ids, where):
             )
 
 
-def _surfaces(name, path, covered, ids, where):
+def _surfaces(name, path, covered, ids, front_ids, where):
     """Check a frame's normal or depth buffer: its encoding, its coverage
-    against the material ID's, and its values."""
+    against the layers', and its values. It describes the front-most surface
+    that is not a hole, so it holds a surface exactly where either layer
+    does (alpha design D-11)."""
     try:
         samples = read_wide_png(path)
     except ValueError as error:
@@ -764,11 +836,13 @@ def _surfaces(name, path, covered, ids, where):
         ),
         (
             surface & ~covered,
-            "is {}, a surface, but the material-ID pixel there is {}",
+            "is {}, a surface, but neither layer shows one there (material-ID "
+            "pixels {} and front {})",
         ),
         (
             ~surface & covered,
-            "is {}, no surface, but the material-ID pixel there is {}",
+            "is {}, no surface, but a layer shows one there (material-ID "
+            "pixels {} and front {})",
         ),
         (bad, "is {}, " + problem),
     )
@@ -780,6 +854,7 @@ def _surfaces(name, path, covered, ids, where):
                 + message.format(
                     tuple(int(v) for v in samples[y, x]),
                     tuple(int(v) for v in ids[y, x]),
+                    tuple(int(v) for v in front_ids[y, x]),
                 )
             )
 
@@ -945,6 +1020,28 @@ def decode_frame(paths, lookup):
         )
     shade = imageops.load_png(paths["shade"])[..., 0].copy()
     return identity, shade
+
+
+def decode_front(paths, lookup):
+    """A frame's front arrays (design §Frames into stylize) from its
+    validated front buffers in `paths`: the front colour's pixels, the front
+    alpha `q` as `uint16` (0 where the layer is absent), the layer's presence
+    as `bool`, and its identity (`int32`, through `lookup`) and shade
+    (`uint8`) arrays."""
+    pixels = imageops.load_png(paths["front_color"])
+    present = pixels[..., 3] == 255
+    try:
+        samples = read_wide_png(paths["front_alpha"])
+    except ValueError as error:
+        raise BackendError(
+            f"the render result is invalid: {paths['front_alpha']} {error}"
+        ) from None
+    alpha = samples[..., 0].copy()
+    del samples
+    identity, shade = decode_frame(
+        {"matid": paths["front_matid"], "shade": paths["front_shade"]}, lookup
+    )
+    return pixels, alpha, present, identity, shade
 
 
 def decode_normal_depth(paths):

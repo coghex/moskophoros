@@ -17,10 +17,11 @@ from moskophoros.capture import backend, blender
 
 pytestmark = pytest.mark.blender
 
-# What the scratch holds when the fault strikes, just after the main
-# render's OpenEXR is saved; the count render's OpenEXR comes after it.
+# What the scratch holds when the fault strikes, just after the back
+# render's OpenEXR is saved; the front render's TGA and OpenEXR and the count
+# render's OpenEXR come after it.
 INTERMEDIATES = {"capture.tga", "capture.exr"}
-EVERY_INTERMEDIATE = INTERMEDIATES | {"count.exr"}
+EVERY_INTERMEDIATE = INTERMEDIATES | {"front.tga", "front.exr", "count.exr"}
 
 # Runs the real script with its own temporary files under `child_temp`.
 # `fault` is "none", "raise" (fail right after the OpenEXR is saved) or
@@ -148,6 +149,10 @@ def test_a_successful_run_leaves_no_intermediates(tmp_path, monkeypatch, capsys,
     assert sorted(p.name for p in (work / "render").iterdir()) == [
         "color",
         "depth",
+        "front_alpha",
+        "front_color",
+        "front_matid",
+        "front_shade",
         "job.json",
         "matid",
         "normal",

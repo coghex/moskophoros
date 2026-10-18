@@ -1,10 +1,10 @@
 """One flat, unlit Cycles render gives every buffer (alpha design ALPHA-1,
 D-5, D-8; design §Capture): each surface's flat material colour, through
 the importer's colour chain, with the material ID, shade, normal and depth
-on exactly the same pixels; material codes round trip; every material is
-captured opaque but for `MASK` cut-outs (material styling design D-26,
-alpha design D-1); and a material graph the capture cannot read fails the
-command, naming the material."""
+on exactly the same pixels; material codes round trip; an opaque material
+covers its whole face, a `MASK` material cuts out and a `BLEND` material is
+the front layer (alpha design D-1, D-6, D-12); and a material graph the
+capture cannot read fails the command, naming the material."""
 
 import math
 
@@ -86,7 +86,7 @@ def row(found, path, tmp_path, workspace="work"):
 
 def loaded(result, name, ordinal=0):
     path = list(result.buffers.values())[ordinal][name]
-    if name in ("normal", "depth"):
+    if name in ("normal", "depth", "front_alpha"):
         return backend.read_wide_png(path).astype(np.int64)
     with Image.open(path) as image:
         return np.asarray(image).astype(np.int64)
@@ -101,8 +101,8 @@ TEAL = (0.05, 0.6, 0.45, 1.0)
 def looks(directory):
     """The row: a Principled constant colour, a Principled texture times a
     non-white factor, the same two unlit, an unlit `BLEND` material of alpha
-    0 and an unlit `MASK` checker (both wrapped in an alpha chain by the
-    importer), a Principled `BLEND` material of alpha 0, and a primitive
+    0.5 and an unlit `MASK` checker (both wrapped in an alpha chain by the
+    importer), a Principled `BLEND` material of alpha 0.5, and a primitive
     without a material."""
     model = Model()
     texture = model.texture((4, 4), lambda x, y: TEXEL)
@@ -112,7 +112,7 @@ def looks(directory):
         model.material("unlit", TEAL, unlit=True),
         model.material("unlit textured", FACTOR, texture=texture, unlit=True),
         model.material(
-            "unlit veil", (0.3, 0.2, 0.9, 0.0), alpha_mode="BLEND", unlit=True
+            "unlit veil", (0.3, 0.2, 0.9, 0.5), alpha_mode="BLEND", unlit=True
         ),
         model.material(
             "unlit leaf",
@@ -122,7 +122,7 @@ def looks(directory):
             texture=model.texture((8, 8), checker),
             unlit=True,
         ),
-        model.material("glass", (0.9, 0.9, 0.2, 0.0), alpha_mode="BLEND"),
+        model.material("glass", (0.9, 0.9, 0.2, 0.5), alpha_mode="BLEND"),
     ]
     for index, material in enumerate(materials):
         model.primitive(slot(index), material, texcoords=QUAD_UV)
@@ -139,7 +139,13 @@ def expected(factor, texel=(255, 255, 255, 255)):
 
 def test_each_material_renders_its_flat_colour(found, tmp_path):
     result, _ = row(found, looks(tmp_path), tmp_path)
-    colour = loaded(result, "color")
+    # The BLEND materials, 4 and 6, are the front layer: their flat colour
+    # is the front colour, with nothing behind them.
+    colour = np.where(
+        loaded(result, "front_color")[..., 3:] == 255,
+        loaded(result, "front_color"),
+        loaded(result, "color"),
+    )
     ids = loaded(result, "matid")
     wanted = {
         0: expected(RED),
@@ -174,33 +180,48 @@ def test_each_material_renders_its_flat_colour(found, tmp_path):
     leaf_ids = slot_pixels(ids, 5)
     assert ((leaf_ids[:, 3] == 255) == (leaf[:, 3] == 255)).all()
     assert {(int(r) << 8 | int(g)) for r, g, b, a in leaf_ids if a} == {6}
+    # Each BLEND material shows only in the front layer, at alpha 0.5.
+    back, alpha = loaded(result, "color"), loaded(result, "front_alpha")
+    for index in (4, 6):
+        assert (slot_pixels(back, index) == 0).all(), index
+        assert {tuple(p) for p in slot_pixels(alpha, index)} == {
+            (32768, 0, 0, 65535)
+        }, index
 
 
-def test_every_material_but_mask_is_opaque_and_every_buffer_covers_it(found, tmp_path):
-    # BLEND stays opaque until ALPHA-4, alpha 0 included.
+def test_every_opaque_material_covers_its_face_and_every_buffer_covers_it(
+    found, tmp_path
+):
     result, _ = row(found, looks(tmp_path), tmp_path)
     colour = loaded(result, "color")
-    for index in (0, 1, 2, 3, 4, 6, 7):
+    for index in (0, 1, 2, 3, 7):
         assert (slot_pixels(colour, index)[:, 3] == 255).all(), index
     aligned(result)
 
 
 def aligned(result):
-    """Every buffer of every frame present on exactly the colour's pixels,
-    and the colour wholly present or wholly empty."""
+    """Every frame's layers aligned: each layer's colour, material ID and
+    shade (and the front's alpha) present on exactly its colour's pixels,
+    each colour wholly present or wholly empty, and the normal and depth
+    present exactly where either layer is."""
     for ordinal in range(len(result.buffers)):
-        colour = loaded(result, "color", ordinal)
-        present = colour[..., 3] == 255
-        assert ((colour[..., 3] == 0) | present).all()
-        assert (colour[~present] == 0).all()
-        for name in ("matid", "shade"):
-            other = loaded(result, name, ordinal)
-            assert ((other[..., 3] == 255) == present).all(), name
-            assert (other[~present] == 0).all(), name
+        either = None
+        for prefix in ("", "front_"):
+            colour = loaded(result, f"{prefix}color", ordinal)
+            present = colour[..., 3] == 255
+            assert ((colour[..., 3] == 0) | present).all(), prefix
+            assert (colour[~present] == 0).all(), prefix
+            names = ["matid", "shade"] + (["alpha"] if prefix else [])
+            for name in names:
+                other = loaded(result, prefix + name, ordinal)
+                full = 65535 if name == "alpha" else 255
+                assert ((other[..., 3] == full) == present).all(), prefix + name
+                assert (other[~present] == 0).all(), prefix + name
+            either = present if either is None else either | present
         for name in ("normal", "depth"):
             other = loaded(result, name, ordinal)
-            assert ((other[..., 3] == 65535) == present).all(), name
-            assert (other[~present] == 0).all(), name
+            assert ((other[..., 3] == 65535) == either).all(), name
+            assert (other[~either] == 0).all(), name
 
 
 @pytest.mark.parametrize("fixture", [edges, form, appearance, vertex_colours])

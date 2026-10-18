@@ -333,8 +333,13 @@ def test_normal_and_depth_coverage_is_the_material_id_s(
         supersample=supersample,
     )
     for paths in result.buffers.values():
-        with Image.open(paths["matid"]) as image:
-            covered = np.asarray(image)[..., 3] == 255
+        # The front-most surface that is not a hole: either layer's (alpha
+        # design D-11).
+        covered = None
+        for name in ("matid", "front_matid"):
+            with Image.open(paths[name]) as image:
+                present = np.asarray(image)[..., 3] == 255
+            covered = present if covered is None else covered | present
         assert covered.any() and not covered.all()
         for name in ("normal", "depth"):
             samples = backend.read_wide_png(paths[name])
@@ -496,18 +501,21 @@ def test_the_capture_shaders_are_restored_and_save_exr_keeps_the_settings(
     ]
     assert completed.returncode == 0 and lines, completed.stdout + completed.stderr
     probed = json.loads(lines[0].removeprefix("PROBE "))
-    # While it runs: the five AOVs, the stand-in and the count switch; after
-    # it, nothing, and saving the OpenEXR leaves the render's own image
-    # settings as they were.
+    # While it runs: the eight AOVs, the stand-in and the switch; after it,
+    # nothing, and saving the OpenEXR leaves the render's own image settings
+    # as they were.
     assert probed["during"]["aovs"] == [
         ["matid", "VALUE"],
         ["shade", "VALUE"],
         ["normal", "COLOR"],
         ["depth", "VALUE"],
         ["hit", "VALUE"],
+        ["front_matid", "VALUE"],
+        ["front_shade", "VALUE"],
+        ["front_hit", "VALUE"],
     ]
     assert "moskophoros.no-material" in probed["during"]["materials"]
-    assert probed["during"]["groups"] == ["moskophoros.count"]
+    assert probed["during"]["groups"] == ["moskophoros.switch"]
     assert probed["before"]["render"][0] == "CYCLES"
     assert probed["after"] == probed["before"]
     assert probed["before"]["aovs"] == []

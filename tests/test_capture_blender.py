@@ -19,7 +19,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from capture_buffers import write_depth, write_normal
+from capture_buffers import FRONT_BUFFERS, write_depth, write_front, write_normal
 from PIL import Image
 from shading import DEFAULT_SHADE
 
@@ -266,7 +266,7 @@ def make_job(tmp_path, mode="measure"):
 def measure_result(job):
     return json.dumps(
         {
-            "schema": "moskophoros.capture-result/2",
+            "schema": "moskophoros.capture-result/3",
             "mode": "measure",
             "job_sha256": job_sha256(job),
             "source_sha256": job["source"]["sha256"],
@@ -341,14 +341,14 @@ COLOR = {
 }
 RENDER_BUFFERS = {
     name: f"{name}/000000.png"
-    for name in ("color", "matid", "shade", "normal", "depth")
+    for name in ("color", "matid", "shade", "normal", "depth", *FRONT_BUFFERS)
 }
 
 
 def copy_buffers(tmp_path, color):
-    """Fake-capture code writing the one frame's buffers: `color`, and a
+    """Fake-capture code writing the one frame's buffers: `color`, a
     material-ID, shade, normal and depth buffer showing "no material" shaded
-    137, facing the viewer at depth 0."""
+    137, facing the viewer at depth 0, and no front layer."""
     sources = {"color": color}
     for name, pixel in (("matid", (255, 255, 0, 255)), ("shade", (137,) * 3 + (255,))):
         sources[name] = tmp_path / f"{name}.png"
@@ -356,6 +356,9 @@ def copy_buffers(tmp_path, color):
     covered = np.ones((6, 8), dtype=bool)
     sources["normal"] = write_normal(tmp_path / "normal.png", covered)
     sources["depth"] = write_depth(tmp_path / "depth.png", covered)
+    front = tmp_path / "front"
+    for name, path in write_front(front, 0, (8, 6)).items():
+        sources[name] = front / path
     return "import shutil\n" + "".join(
         f"pathlib.Path({name!r}).mkdir()\n"
         f"shutil.copy({str(sources[name])!r}, {RENDER_BUFFERS[name]!r})\n"
@@ -370,7 +373,7 @@ def test_a_render_phase(tmp_path):
     Image.new("RGBA", (8, 6), (255, 255, 255, 255)).save(color)
     result_text = json.dumps(
         {
-            "schema": "moskophoros.capture-result/2",
+            "schema": "moskophoros.capture-result/3",
             "mode": "render",
             "job_sha256": job_sha256(job),
             "source_sha256": job["source"]["sha256"],
@@ -589,7 +592,7 @@ def test_an_undecodable_buffer_is_a_backend_error_with_diagnostics(tmp_path):
     raw_png(color, 8, 6, 8, 6, 4, [(b"iCCP", b"")])
     result_text = json.dumps(
         {
-            "schema": "moskophoros.capture-result/2",
+            "schema": "moskophoros.capture-result/3",
             "mode": "render",
             "job_sha256": job_sha256(job),
             "source_sha256": job["source"]["sha256"],

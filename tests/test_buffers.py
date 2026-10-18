@@ -15,6 +15,11 @@ from moskophoros.sampling import (
     BACKGROUND,
     DEPTH,
     DEPTH_MAP,
+    FRONT_ALPHA,
+    FRONT_COLOR,
+    FRONT_IDENTITY,
+    FRONT_PRESENT,
+    FRONT_SHADE,
     IDENTITY,
     NORMAL,
     NORMAL_MAP,
@@ -172,7 +177,18 @@ def test_an_extra_capture_buffer_reaches_stylize_intact(setup, capsys, monkeypat
     assert run(capsys, setup.argv("--work-dir", str(work))) == (0, "", "")
     assert len(seen) == (4 + 3) * 8
     for i, (pixels, named) in enumerate(seen):
-        assert set(named) == {"extra", IDENTITY, SHADE, NORMAL, DEPTH}
+        assert set(named) == {
+            "extra",
+            IDENTITY,
+            SHADE,
+            NORMAL,
+            DEPTH,
+            FRONT_COLOR,
+            FRONT_ALPHA,
+            FRONT_PRESENT,
+            FRONT_IDENTITY,
+            FRONT_SHADE,
+        }
         with Image.open(work / "render" / "extra" / f"{i:06d}.png") as image:
             np.testing.assert_array_equal(named["extra"], np.asarray(image))
         with Image.open(work / "render" / "color" / f"{i:06d}.png") as image:
@@ -236,6 +252,13 @@ def test_the_command_loads_frames_lazily_and_releases_each_before_the_next(
         held[frame] += [weakref.ref(normal), weakref.ref(depth)]
         return normal, depth
 
+    def decode_front(paths, lookup):
+        # And the decoded front arrays.
+        arrays = real_decode_front(paths, lookup)
+        frame = int(Path(paths["front_alpha"]).stem)
+        held[frame] += [weakref.ref(array) for array in arrays]
+        return arrays
+
     def reduce_blocks(pixels, factor, edges):
         events.append("reduce")
         return real_reduce(pixels, factor, edges)
@@ -253,6 +276,8 @@ def test_the_command_loads_frames_lazily_and_releases_each_before_the_next(
     real_passthrough = cleanup.passthrough
     real_decode = backend.decode_frame
     real_decode_normal_depth = backend.decode_normal_depth
+    real_decode_front = backend.decode_front
+    monkeypatch.setattr(backend, "decode_front", decode_front)
     monkeypatch.setattr(imageops, "load_png", load)
     monkeypatch.setattr(backend, "decode_frame", decode_frame)
     monkeypatch.setattr(backend, "decode_normal_depth", decode_normal_depth)
@@ -265,6 +290,7 @@ def test_the_command_loads_frames_lazily_and_releases_each_before_the_next(
     loads = [
         *(("load", name) for name in ("color", "matid", "shade")),
         ("decode", "normal", "depth"),
+        *(("load", name) for name in ("front_color", "front_matid", "front_shade")),
         ("load", "extra"),
     ]
     assert events == [*loads, "reduce"] * frames

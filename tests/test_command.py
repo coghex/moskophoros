@@ -57,7 +57,7 @@ canonical = json.dumps(
     job, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
 ).encode("ascii")
 result = {{
-    "schema": "moskophoros.capture-result/2",
+    "schema": "moskophoros.capture-result/3",
     "mode": mode,
     "job_sha256": hashlib.sha256(canonical).hexdigest(),
     "source_sha256": job["source"]["sha256"],
@@ -112,7 +112,7 @@ else:
     buffers = [{{"color": f"color/{{i:06d}}.png"}} for i in range(len(job["frames"]))]
     sys.path.insert(0, {tests!r})
     import numpy
-    from capture_buffers import write_depth, write_normal
+    from capture_buffers import write_depth, write_front, write_normal
     # Every buffer covers exactly the colour's surfaces, as a capture's do.
     coverage = [
         numpy.asarray(Image.open(f"color/{{i:06d}}.png"))[..., 3] == 255
@@ -155,6 +155,17 @@ else:
         write_depth(pathlib.Path(f"depth/{{i:06d}}.png"), covered, depth)
         named["normal"] = f"normal/{{i:06d}}.png"
         named["depth"] = f"depth/{{i:06d}}.png"
+        front = config.get("front")
+        if front is None:
+            named.update(write_front(pathlib.Path("."), i, size))
+        else:
+            # A front layer over every surface of the back.
+            named.update(
+                write_front(
+                    pathlib.Path("."), i, size, covered, tuple(front["colour"]),
+                    front["q"], code=front.get("code", 65535),
+                )
+            )
     result["materials"] = config.get(
         "materials", [{{"id": 65535, "material": None}}]
     )
@@ -439,7 +450,9 @@ def test_each_captured_frame_is_reduced_before_the_next_is_loaded(
     monkeypatch.setattr(imageops, "reduce_blocks", reduce)
     assert run(capsys, setup.argv())[0] == 0
     # Each frame's colour, material-ID and shade buffers, then its reduction.
-    assert events == ["load", "load", "load", "reduce"] * ((4 + 3) * 8)
+    # Each frame's colour, material ID and shade, then its front colour,
+    # material ID and shade.
+    assert events == (["load"] * 6 + ["reduce"]) * ((4 + 3) * 8)
 
 
 def test_two_runs_give_identical_outputs(setup, capsys, tmp_path):
@@ -613,7 +626,9 @@ def test_mode_reduces_each_captured_frame_before_the_next_is_loaded(
     setup.configure(pixels="speckled")
     assert run(capsys, speckled_argv(setup, "--reduce", "mode"))[0] == 0
     # Each frame's colour, material-ID and shade buffers, then its reduction.
-    assert events == ["load", "load", "load", "reduce"] * ((4 + 3) * 8)
+    # Each frame's colour, material ID and shade, then its front colour,
+    # material ID and shade.
+    assert events == (["load"] * 6 + ["reduce"]) * ((4 + 3) * 8)
 
 
 def test_settings_reuse_with_an_explicit_override(setup, capsys):
@@ -1297,3 +1312,45 @@ def test_the_capture_jobs_are_the_same_under_hard_and_soft_edges(setup, capsys):
     assert jobs[0] == jobs[1]
     digests = [hashlib.sha256(job["render"]).hexdigest() for job in jobs]
     assert digests[0] == digests[1]
+
+
+# A front layer (alpha design D-6, D-12)
+
+
+def _srgb_linear(byte):
+    c = byte / 255
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def _encoded(linear):
+    s = 12.92 * linear if linear <= 0.0031308 else 1.055 * linear ** (1 / 2.4) - 0.055
+    return min(255, int(np.floor(255 * s + 0.5)))
+
+
+def test_a_front_layer_composites_over_the_back_in_the_sheet(setup, capsys):
+    setup.configure(front={"colour": [255, 0, 0], "q": 26214})
+    work = setup.tmp_path / "work"
+    assert run(capsys, setup.argv("--work-dir", str(work))) == (0, "", "")
+    description = json.loads(setup.json.read_text())
+    with Image.open(setup.png) as image:
+        sheet = np.asarray(image)
+    for frame in description["frames"][:3]:
+        ordinal = next(
+            i
+            for i, record in enumerate(
+                json.loads((work / "render" / "result.json").read_text())["frames"]
+            )
+            if record["address"]["clip"] == frame["clip"]
+            and record["address"]["direction"] == frame["direction"]
+            and record["address"]["time_s"] == frame["time_s"]
+        )
+        back = (37 * ordinal % 256, 91 * ordinal % 256, 128)
+        expected = tuple(
+            _encoded((26214 * _srgb_linear(f) + 39321 * _srgb_linear(b)) / 65535)
+            for f, b in zip((255, 0, 0), back, strict=True)
+        )
+        # The cell's bottom-right corner shows the back, with the front over it.
+        x, y = frame["x"] + frame["w"] - 1, frame["y"] + frame["h"] - 1
+        assert tuple(int(v) for v in sheet[y, x]) == (*expected, 255)
+        # Its top-left quarter shows nothing in either layer.
+        assert tuple(int(v) for v in sheet[frame["y"], frame["x"]]) == (0, 0, 0, 0)

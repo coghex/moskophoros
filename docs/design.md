@@ -791,7 +791,8 @@ further named buffers of the same height and width (`ImageFrame.buffers`).
 The command loads every buffer the capture result names for a frame: `color`
 becomes the frame's pixels; `matid` and `shade` are decoded into the
 identity and shade arrays below, `normal` and `depth` into the normal and
-depth arrays; and any other buffer is carried under its own name as an
+depth arrays, and the front buffers into the front arrays; and any other
+buffer is carried under its own name as an
 8-bit RGBA array. The colour reduction reads only the colour, unless it is
 given a material library, which also reads the identity and shade arrays
 (see [Material ramps](#material-ramps)). Independently of that choice, both
@@ -813,6 +814,16 @@ depth, with this interface:
   `int32`, shape `(height, width)`, each value an index into the identity
   list or `sampling.BACKGROUND` (−1), which is never an index. Under `shade`
   (`sampling.SHADE`), a **shade array**: `uint8`, shape `(height, width)`.
+- Per frame, the **front layer** (alpha design D-6, D-12): under
+  `front_color` (`sampling.FRONT_COLOR`), its straight colour as an 8-bit
+  RGBA array, alpha 255 where it is present; under `front_alpha`
+  (`sampling.FRONT_ALPHA`), its alpha `q` as `uint16`, shape
+  `(height, width)`, 0 where it is absent; under `front_present`
+  (`sampling.FRONT_PRESENT`), its presence as `bool`, from the front
+  colour's alpha and never from `q`; and under `front_identity` and
+  `front_shade` (`sampling.FRONT_IDENTITY`, `sampling.FRONT_SHADE`), the
+  front-most translucent surface's identity (`int32`) and shade (`uint8`),
+  decoded as the back's are. The frame's pixels are the back layer.
 - Per frame, under `normal` (`sampling.NORMAL`), a **normal array**:
   `float32`, shape `(height, width, 3)`, the unit normal of the surface each
   pixel sampled, in the frame's camera space (+X screen right, +Y screen up,
@@ -820,7 +831,8 @@ depth, with this interface:
   `depth` (`sampling.DEPTH`), a **depth array**: `float32`, shape
   `(height, width)`, that surface's depth in meters toward the viewer from
   the ground point's camera depth, any finite value, and NaN where no
-  surface was hit. Both decode the [capture's](#capture) buffers exactly:
+  surface was hit. Both describe the front-most surface that is not a hole,
+  the front layer's where it is present (alpha design D-11). Both decode the [capture's](#capture) buffers exactly:
   the depth is the buffer's 32-bit float, and each normal component
   `2 · v / 65535 − 1` of its 16-bit value `v`.
 - The command decodes and validates both arrays; stylize never does. It
@@ -856,9 +868,11 @@ The CLI calls Blender twice, each time as a separate process:
    sample's bounds (L, R, U, D). It renders nothing. The CLI then checks root
    motion and resolves scale, cell and ground pixel.
 2. **Render.** Renders every frame at supersampled size `(W·s) × (H·s)`, with
-   the ground point projected to `(gx·s, gy·s)`: its colour, material-ID,
-   shade, normal and depth buffers, all from one flat, unlit Cycles render
-   (below).
+   the ground point projected to `(gx·s, gy·s)`: the back layer's colour,
+   material-ID and shade buffers, the front layer's colour, alpha,
+   material-ID and shade buffers, and the front-most surface's normal and
+   depth, from flat, unlit Cycles renders of one shared camera sample per
+   pixel (below).
 
 The job JSON carries all settings, sample times and the output directory.
 Blender writes a manifest JSON listing each frame's address and file.
@@ -877,10 +891,10 @@ it animates, and resets every pose to rest. Nothing from a previously sampled
 clip may carry into the next one. This implements the rule in
 [Clips and sampling](#clips-and-sampling).
 
-**Render settings** (alpha design ALPHA-1, *The pipeline with alpha*,
-D-8). One Cycles render per frame gives every buffer from **one shared
-camera sample per pixel**, so each buffer describes exactly the surface the
-colour shows and no pixel blends two surfaces. Workbench is not used.
+**Render settings** (alpha design ALPHA-1, ALPHA-4, *The pipeline with
+alpha*, D-8). The renders of a frame give every buffer from **one shared
+camera sample per pixel**, so each buffer describes exactly the surfaces of
+its layer at that sample. Workbench is not used.
 
 - Cycles on the CPU, 1 sample per pixel, adaptive sampling off, seed 0 (not
   animated), pixel filter Box of width 0.01 px (the sample sits at the pixel
@@ -893,32 +907,67 @@ colour shows and no pixel blends two surfaces. Workbench is not used.
 - These parameters are recorded in the result's and the sheet's `color`
   record (below).
 
-**Capture output:** five PNGs per frame, whether or not a material library
+**Capture output:** nine PNGs per frame, whether or not a material library
 is used, a light is placed or a map is written (material styling D-13;
-lighting sheet design D-12): the colour, the material-ID buffer and the shade
-buffer, each 8-bit RGBA, and the normal and depth buffers, each 16-bit RGBA
-(below). Each is written from pixels by the script's own PNG writer, with no
+lighting sheet design D-12; alpha design, *Capture transport and
+provenance*): the back layer's colour, material-ID buffer and shade buffer,
+each 8-bit RGBA; the normal and depth buffers, each 16-bit RGBA; and the
+front layer's colour, material-ID and shade buffers, 8-bit RGBA, and its
+alpha buffer, 16-bit RGBA (below). Each is written from pixels by the script's own PNG writer, with no
 chunk but IHDR, IDAT and IEND, so no date or render-time text reaches a
 buffer and identical frames are identical files; every `use_stamp_*` render
 setting is off besides. The manifest format lists buffers by name, so further
 buffers can be added without changing it.
 
-- *Coverage:* the one sample at each pixel centre decides whether the pixel
-  shows a surface: every buffer covers exactly the same pixels, and is
-  `(0, 0, 0, 0)` wherever none is shown. The colour's alpha is therefore 255
-  or 0, never fractional: this replaces Workbench's antialiased coverage
-  (alpha design D-5).
+- *Two layers* (alpha design D-6, D-12): at each sample, the **back layer**
+  is the first opaque surface, and the **front layer** every translucent
+  surface in front of it, combined by front-over-back compositing in linear
+  colour into one straight colour and one alpha, with the front-most
+  translucent surface's identity and shade. A cut-out hole is no surface at
+  all. Either layer may be absent.
+- *Coverage:* the one sample at each pixel centre decides whether each layer
+  is present there: each layer's buffers cover exactly the same pixels, and
+  are `(0, 0, 0, 0)` wherever it is absent. Each colour's alpha is
+  therefore 255 or 0, never fractional: this replaces Workbench's
+  antialiased coverage (alpha design D-5). Presence always comes from
+  Blender's float data, the gated hits, and never from a quantized colour or
+  alpha, so a front layer of tiny alpha is still present.
 - *Colour:* each surface's **flat, unlit** material colour (alpha design
   D-8): no studio light, shading or shadow. It is straight 8-bit sRGB through
   Blender's `Standard` transform with dither 0, as the render's TGA holds it,
   where the render's float alpha shows a surface.
 
-**Surfaces** (alpha design spikes 1 to 3, A-8). Every rendered surface's
-shader is replaced, for the whole render phase, by
-`Mix(alpha, Transparent, Emission(colour))`, which also writes the surface's
-material-ID code, shade, normal, depth and a hit flag to five AOVs; the
+**Surfaces** (alpha design spikes 1 to 4, A-8). Every rendered surface's
+shader is replaced, for the whole render phase, by one graph holding its
+three renders' shaders, switched by a shared node group of two values,
+`count` and `front` (alpha design spike 3's `group` switch), which Cycles
+folds into each material. Each writes the surface's material-ID code,
+shade, normal, depth and a hit flag, and the front layer's code, shade and
+hit, to eight AOVs, each gated to the render it belongs to; the
 replacements are removed and the original shaders restored when the phase
 ends.
+
+- *The back render* (both values 0): an opaque surface is
+  `Mix(alpha, Transparent, Emission(colour))`, `alpha` 1 or a `MASK`
+  material's chain; a `BLEND` surface is a pure `Transparent`, a hole. It
+  gives the back colour, material ID, shade and hit.
+- *The front render* (`front` 1), run only when the model renders a `BLEND`
+  material: a `BLEND` surface is `Mix(alpha, Transparent, Emission(colour))`
+  with its alpha chain, and an opaque surface `Mix(alpha, Transparent,
+  Holdout)`, which stops the path and holds out its share. Its float alpha
+  is then exactly the front layer's `f = 1 − Π(1 − αₖ)` over a body or the
+  background alike, and its TGA, through the `Standard` transform as the
+  back colour's, the front layer's straight colour, since Blender writes
+  8-bit images un-premultiplied (alpha design spike 4). Its gated AOVs are
+  the front-most translucent surface's `front_matid`, `front_shade` and
+  `front_hit`; an opaque surface writes no front AOV but stops the pass.
+  It runs with both transparent bounce limits one above 64: Cycles shades
+  the surface a path ends at after its last transparent bounce without
+  closures, so a holdout there would hold nothing out, and the count render
+  (below) refuses any path that crosses more than 64 surfaces that let light
+  through, so the path always reaches its opaque surface. A model without a
+  `BLEND` material renders no front render, and its front buffers are
+  empty.
 
 - *Colour extraction,* from the shader the glTF importer built:
   - a Principled BSDF: the colour feeding its `Base Color` (a constant, or
@@ -934,18 +983,25 @@ ends.
   alpha is at least the cutoff. It is the extraction rule's: a Principled
   BSDF's `Alpha`, or the factor of the `Mix` wrapping the unlit core. A
   cut-out texel is a **hole**: no surface in any buffer, showing the surface
-  behind it in all of them, or nothing. The tool adds no transparency rule
-  of its own. Every other material is captured opaque, `BLEND` included,
-  alpha 0 too (alpha 1; translucency is ALPHA-4), so the colour's alpha
-  stays 0 or 255.
+  behind it in all of them, or nothing. A `BLEND` material's alpha (alpha
+  design ALPHA-4, D-1, D-3) is the importer's chain, taken by the same
+  rule: the factor, the texture alpha, their product, or the vertex
+  colour's alpha, which the importer stores in 8 bits. It is translucent,
+  and a `BLEND` surface Cycles leaves no surface (α ≤ 2^-25, below) is a
+  hole. The tool adds no transparency rule of its own. An `OPAQUE`
+  material is captured opaque whatever its alpha.
 - *The surface gate* (alpha design spike 2): every AOV is multiplied by a
   gate computed, in Math nodes, in the order Cycles computes the mix's
   transparency: `sat = clamp(α)`, `t = 1 − sat`, `v = 1 − t`,
   `g = 1 − (v < T)`, with `T` the view layer's `pass_alpha_threshold`.
   Cycles stops its passes exactly where `v > 0`, which is where `g = 1`, so
   the surface it selects writes each AOV exactly once and a hole writes
-  none. The hit AOV is `g` itself; a hit other than exactly 0 or 1, or hits
-  not exactly on the colour's surfaces, is a backend error (exit 5).
+  none. The hit AOV is `g` itself, and the front hit likewise in the front
+  render; a hit other than exactly 0 or 1, back hits not exactly on the
+  back colour's surfaces, or a front render whose float alpha is above 0
+  anywhere but on its hits, is a backend error (exit 5). By Cycles' own
+  arithmetic, a surface is a hole exactly when `α ≤ 2^-25`, and a surface
+  of `α` above about `1 − 10⁻⁵` is opaque to it (alpha design spike 2).
 - *Gated occlusion distance:* the shade's occlusion distance is multiplied
   by the same gate, so a hole runs no occlusion and stacked cut-outs do not
   re-run it on every layer crossed. Occlusion otherwise keeps its
@@ -1012,24 +1068,32 @@ render gives both, from the same camera sample as the colour, material ID
 and shade, through two more AOVs that every replacement shader, the
 stand-in's included, writes beside its emission: Geometry *Normal* through a
 Vector Transform (normal, world to camera) to a colour AOV `normal`, and
-Camera Data *View Z Depth* to a value AOV `depth`. The five view-layer AOVs
+Camera Data *View Z Depth* to a value AOV `depth`. Each render writes them
+for its own surfaces, so they are taken from the front render where the
+front layer is present, and from the back render elsewhere: the front-most
+surface that is not a hole (alpha design D-11). The eight view-layer AOVs
 are added for the render phase and removed after it.
 
-After each frame's render, its colour is written as an 8-bit TGA through the
-`Standard` transform, and its result also saved, every pass and AOV, as an
-uncompressed multilayer OpenEXR of 32-bit floats (the image settings' media
-type set to multilayer before the format, and every image setting restored),
-which the script reads with the standard library and removes. The float
-alpha of the OpenEXR's `Combined` pass decides coverage, exactly 0 or 1 at
-every pixel; the TGA's alpha, the gated hits and every AOV must hold a
-surface exactly where it does, or the frame is a backend error (exit 5).
+After each frame's back and front renders, each one's colour is written as
+an 8-bit TGA through the `Standard` transform, and its result also saved,
+every pass and AOV, as an uncompressed multilayer OpenEXR of 32-bit floats
+(the image settings' media type set to multilayer before the format, and
+every image setting restored), which the script reads with the standard
+library and removes. The float alpha of the back render's `Combined` pass
+decides the back layer's coverage, exactly 0 or 1 at every pixel; its TGA's
+alpha, the gated hits and every back AOV must hold a surface exactly where
+it does, or the frame is a backend error (exit 5). The front render's float
+alpha is the front layer's `f`, stored as `q = floor(65535 · f + ½)`.
 
 **The count render** (alpha design spike 3, Review 2 B-1). After each
-frame's main render, one shared node-group value switches every surface to
-a count shader: a shading point that still has a transparent closure, by
+frame's back and front renders, the shared switch turns every surface to a
+count shader: a shading point that still has a transparent closure, by
 Cycles' own test (its transparent weight, averaged over the channels, at
 least 10⁻⁵), becomes `Add(Transparent white, Emission white 1)`, and any
-other point an `Emission` of strength 0. The switch also zeroes every AOV
+other point an `Emission` of strength 0. A `BLEND` surface always counts,
+whatever its alpha, since the back render crosses it as a hole: so the
+count covers what both renders cross, a visible translucent front
+included. The switch also zeroes every AOV
 and the occlusion distance, so the count render runs no occlusion and
 writes no AOV. It uses the same camera, sampling and both transparent
 bounce limits, 64, and is read back from its own OpenEXR, since background
@@ -1043,10 +1107,24 @@ Cycles stopped it before its end; it covers stacks ending at an opaque
 surface and at the background alike, whatever their alphas. It is
 conservative: it can refuse a frame whose lost light is below 8-bit
 precision, and never accepts a damaged one. The switch back restores the
-main render exactly, and the main render carries no marker, so the count
-changes no buffer.
+back render exactly, and no render carries a marker, so the count changes
+no buffer.
 
-All three files go to the script's
+**Front buffers** (alpha design, *Capture transport and provenance*), at
+`front_color/`, `front_alpha/`, `front_matid/` and `front_shade/` with the
+colour's ordinal:
+
+- `front_color`: the front layer's straight colour, encoded as `color`,
+  alpha 255 where the front layer is present;
+- `front_alpha`: a 16-bit RGBA PNG in the form of `normal`: red is
+  `q = floor(65535 · f + ½)`, green and blue 0, alpha 65535 where the front
+  layer is present. A present front layer may have `q` 0, a surface of
+  alpha 0, and a deep combined stack may round to 65535;
+- `front_matid` and `front_shade`: as `matid` and `shade`, for the
+  front-most translucent surface. They are captured here and used from
+  ALPHA-5.
+
+Every file goes to the script's
 scratch directory, `scratch/` inside the render phase directory: the script
 creates it before the first frame and removes it after the last, and
 otherwise the workspace's lifetime governs it ([ownership and failure
@@ -1076,7 +1154,7 @@ Blender never leaves it outside the workspace.
 - *Coverage:* each buffer marks a pixel as a surface where its AOV holds a
   value: a unit normal is never `(0, 0, 0)`, and a view depth is never 0,
   since the camera's near plane is in front of every surface. That is
-  exactly where the render hit a surface, the material ID's coverage.
+  exactly where either layer is present.
 - *Encoding:* each buffer is a 16-bit RGBA PNG at the supersampled size,
   `normal/000000.png` and `depth/000000.png` with the colour's ordinal, every
   row unfiltered and no chunk but IHDR, IDAT and IEND. Alpha is 65535 on a
@@ -1087,8 +1165,7 @@ Blender never leaves it outside the workspace.
   green (the low half), with blue 0. A covered depth of exactly 0 is
   therefore `(0, 0, 0, 65535)`, distinct from no surface.
 
-Blender writes the material-ID, shade, normal and depth PNGs itself from the
-render's pixels, with nothing but those pixels in them, since Cycles adds
+Blender writes every buffer's PNG itself from the renders' pixels, with nothing but those pixels in them, since Cycles adds
 render-time text to the files it saves, the OpenEXR's included; identical
 frames are identical files.
 
@@ -1149,7 +1226,7 @@ never interprets human-readable stdout as a manifest.
 
 | Field | Meaning |
 |---|---|
-| `schema` | Exactly `moskophoros.capture-result/2`, for measure and render results alike (`/1` recorded Workbench's renderer and studio light; alpha design ALPHA-1). |
+| `schema` | Exactly `moskophoros.capture-result/3`, for measure and render results alike (`/2` had no front buffers, alpha design ALPHA-4; `/1` recorded Workbench's renderer and studio light, ALPHA-1). |
 | `mode` | Must match the submitted job. |
 | `job_sha256` | Hash of the submitted job encoded as canonical JSON with sorted keys, compact separators, ASCII escapes and non-finite numbers forbidden. This binds a result to its complete request, not just its source. |
 | `source_sha256` | Must match the job's source digest. |
@@ -1158,7 +1235,7 @@ never interprets human-readable stdout as a manifest.
 | `frames[].bounds_m` | Measure only: finite, nonnegative `L`, `R`, `U`, `D` as defined by the product design. |
 | `frames[].height_m` | Measure only: evaluated subject height along the glTF vertical axis, for the accepted unit warning. |
 | `roots` | Measure only: one entry per requested clip/root pair, with `clip`, `node_index`, `node_name` and nonnegative finite `travel_m`. Include zero travel. Evaluate the clip endpoints, even when the loop's render samples omit its endpoint. |
-| `frames[].buffers` | Render only: map from buffer name to relative file path. `color`, `matid`, `shade`, `normal` and `depth` are mandatory; extra named buffers can be described without changing the frame structure. |
+| `frames[].buffers` | Render only: map from buffer name to relative file path. `color`, `matid`, `shade`, `normal`, `depth`, `front_color`, `front_alpha`, `front_matid` and `front_shade` are mandatory; extra named buffers can be described without changing the frame structure. |
 | `materials` | Render only: the asset's material table, one entry per material-ID code used, each `{"id": code, "material": index}` mapping a code to a glTF material index, or to `null` for "no material". Background (0) is never in it. |
 
 Every result frame includes its full `address`. Sample indices and angles
@@ -1167,9 +1244,9 @@ Measure mode writes no color buffers. Render mode writes no new fitting or
 root-motion verdict: the caller has already accepted the measurement.
 
 The color path is `color/000000.png`, with a six-digit ordinal in
-request order; the ordinal can grow beyond six digits. The material-ID,
-shade, normal and depth paths are `matid/000000.png`, `shade/000000.png`,
-`normal/000000.png` and `depth/000000.png` alike. Clip and subject names
+request order; the ordinal can grow beyond six digits. Every other buffer's
+path is `<name>/000000.png` alike, such as `matid/000000.png` and
+`front_alpha/000000.png`. Clip and subject names
 never become capture filenames. Each file is the accepted high-resolution
 color buffer. The launcher validates that referenced files exist, remain
 within the phase directory, have the required dimensions and decode in the
@@ -1194,15 +1271,22 @@ The launcher also rejects, as a backend error (exit 5):
   than 0 or 255;
 - a pixel where the two disagree: a background ID must have shade
   `(0, 0, 0, 0)`, and every other ID shade alpha 255;
-- a normal or depth buffer that is missing or at another path, or a file
-  that is not a 16-bit RGBA PNG of the supersampled size in the
+- each of these for the front layer too, between `front_color`,
+  `front_matid` and `front_shade`, each named "front";
+- a front alpha buffer that is missing, at another path or not a 16-bit
+  RGBA PNG in the capture's encoding; a front alpha pixel that is not an
+  encoded value (alpha other than 0 or 65535, green or blue other than 0,
+  or no surface other than `(0, 0, 0, 0)`); or one present where the front
+  material ID is not, or absent where it is;
+- a normal, depth or other front buffer that is missing or at another
+  path, or a normal or depth file that is not a 16-bit RGBA PNG of the supersampled size in the
   [capture's encoding](#capture) (non-interlaced, every row unfiltered, no
   chunk but IHDR, IDAT and IEND);
 - a normal or depth pixel that is not exactly an encoded value: alpha other
   than 0 or 65535, or no surface other than `(0, 0, 0, 0)`;
-- a normal or depth pixel whose coverage differs from the material ID's, in
-  either direction: a surface where the ID is background, or none where it
-  is not;
+- a normal or depth pixel whose coverage differs from the layers', in
+  either direction: a surface where neither layer is present, or none where
+  either is;
 - a surface's normal that is not a finite vector of unit length within
   `10⁻³` (the encoding moves it by at most 2.7 · 10⁻⁵; a normal pointing
   away from the viewer is accepted, since silhouettes produce them);
@@ -1327,10 +1411,11 @@ reductions, the palette and the material ramps then only choose the colour;
 none applies a coverage cut of its own, and the pixel keeps this alpha
 whatever its colour, a palette never snapping it.
 
-- A supersample is a **surface sample** where its alpha is above 0. Its
-  composite alpha `aᵢ` is in units of 1/65535: its 8-bit alpha times 257,
-  so an opaque surface is 65535. Captures are binary until translucency
-  (ALPHA-4), so today `aᵢ` is 65535 on a surface and 0 elsewhere.
+- A supersample is a **surface sample** where either layer is present
+  ([Two layers](#two-layers), below): the back colour's alpha is above 0,
+  or the front layer is present, a front of alpha 0 included. Its composite
+  alpha `aᵢ` is in units of 1/65535: on a frame without a front layer, its
+  8-bit alpha times 257, so an opaque surface is 65535.
 - For a block of `n = s²` samples with `m` surface samples and
   `S = Σ aᵢ`, in exact integers:
   - **`hard`** (the default): the pixel exists when `2m ≥ n`, at least half
@@ -1370,6 +1455,51 @@ can fall to the tie-break; that is accepted, and the owner judges the look
 (vision V-12). Future style passes replace or extend these (vision,
 Long-term direction).
 
+#### Two layers
+
+A frame whose front layer is present somewhere ([Frames into
+stylize](#frames-into-stylize)) is reduced by the numerical reference's
+steps 1 to 4 (alpha design, *Stylize: numerical reference*; D-6, D-12,
+D-14; `stylize.layered`). A frame without one is reduced exactly as above,
+and so is a block with no front sample in a frame with one.
+
+1. **Weights,** per supersample, in units of 1/65535
+   (`imageops.layer_weights`): the front's `uᵢ = qᵢ` where it is present,
+   and the back's transmitted weight `tᵢ = bᵢ · (65535 − uᵢ)`, where `bᵢ`
+   is 1 on a back surface (exactly `floor(257 · alpha · (65535 − uᵢ) /
+   65535)` for the back colour's 8-bit alpha). The composite alpha is
+   `aᵢ = uᵢ + tᵢ`, and coverage and the alpha byte are decided from it as
+   above (`imageops.composite_alpha`). A front layer whose `q` is 0 is a
+   surface with alpha 0: presence never comes from the quantized alpha.
+2. **Each layer's colour,** with its own weights in place of colour alpha
+   (`imageops.reduce_weighted`): `W_f = Σ uᵢ`, `W_b = Σ tᵢ`. A layer of
+   weight 0 is absent from the pixel; a sample where a layer is absent casts
+   no vote and adds nothing to its sums.
+   - `plain` takes the weighted mean of the layer's 8-bit sRGB values,
+     rounded half up; with a palette, that mean then maps to it, before
+     compositing (D-14).
+   - `mode` takes the weighted vote, with the tie rules above against the
+     weighted mean; with a palette, the layer's samples map first.
+   - The back layer keeps its material's ramp where it has one, its votes
+     and bands weighted by `tᵢ` (`imageops.map_ramps` with `weights`). The
+     front layer keeps the ordinary look; its ramps are ALPHA-5's.
+3. **Composite** in linear colour, `float64`, through the fixed 256-entry
+   sRGB-to-linear table palette mapping uses (`imageops.composite`):
+   `C = (W_f · lin(F̄) + W_b · lin(B̄)) / (W_f + W_b)`, encoded to 8-bit sRGB
+   with the standard transfer function, rounded half up. A pixel with one
+   weighted layer keeps that layer's colour unchanged, with no round trip.
+   The weights carry each layer's share where it is, so a block whose front
+   and back cover different samples weighs each by where it is: two front
+   samples at 0.5 and two back samples give alpha 191 and `(1 · F + 2 · B) /
+   3` in linear, not 0.625.
+4. **Palette** (D-14): with a palette, a composited colour maps to the
+   nearest palette colour by `imageops.map_palette` (OKLab, the earlier
+   entry on a tie); a one-layer pixel already holds one. Alpha is step 1's,
+   never snapped. For example, with a black-and-white palette, a black front
+   of weight 32768 over a back of `(100, 100, 100)` with transmitted weight
+   32767 maps the back to white first, composites to 188 and snaps to white,
+   not black.
+
 #### Normal and depth maps
 
 Every frame's normals and depths are reduced to its reduced colour's pixels,
@@ -1387,8 +1517,11 @@ kept pixel with none.
   above 0, a partly transparent pixel included, under either edges rule and
   either reduction, with or without a palette or a library (alpha design
   D-11). A transparent colour pixel has no surface in the maps, whatever its
-  block holds. The map surface of a sample is the surface it shows, and
-  normal and depth reduce over those samples as below, unchanged.
+  block holds. The map surface of a sample is the front layer's where it is
+  present, otherwise the back's, the front-most surface the capture's
+  normal and depth describe, and normal and depth reduce over those samples
+  as below, unchanged; the normal's direction is never blended, and the lit
+  preview lights the front-most surface's direction.
 - *Normal:* a covered pixel's normal is the sum of the unit normals of every
   surface sample in its `s×s` block, renormalised to unit length, whatever
   material each sample shows, and whatever the reduction, palette or library.

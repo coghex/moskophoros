@@ -151,10 +151,17 @@ def block_alpha(alpha, factor, edges):
 
 def _alpha_bytes(alpha, edges):
     """`block_alpha` for alphas given as one row of `s²` values per block."""
+    return _coverage(257 * alpha, alpha > 0, edges)
+
+
+def _coverage(composite, surfaces, edges):
+    """Each block's alpha byte from its samples' composite alphas `aᵢ`, in
+    units of 1/65535, and where they are `surfaces`, both given as one row
+    of `s²` values per block (numerical reference step 1)."""
     _check_edges(edges)
-    n = alpha.shape[1]
-    surfaces = (alpha > 0).sum(axis=1)
-    total = 257 * alpha.sum(axis=1)
+    n = composite.shape[1]
+    surfaces = surfaces.sum(axis=1)
+    total = composite.sum(axis=1)
     if edges == "hard":
         exists = 2 * surfaces >= n
         denominator = _UNIT * surfaces
@@ -223,10 +230,26 @@ def reduce_blocks_mode(pixels, factor, edges=EDGES[0]):
     # One row of s² pixels for each block, the blocks in raster order.
     flat = blocks.transpose(0, 2, 1, 3, 4).reshape(count, factor * factor, 4)
     rgb, alpha = flat[..., :3], flat[..., 3]
+    result = np.zeros((count, 4), dtype=np.uint8)
+    result[:, :3] = _vote(rgb, alpha)
+    alphas = _alpha_bytes(alpha, edges)
+    result[:, 3] = alphas
+    result[alphas == 0] = 0
+    return result.reshape(rows, columns, 4)
+
+
+def _vote(rgb, weight):
+    """Each block's most voted colour, as `uint8` RGB of shape `(blocks, 3)`,
+    from `rgb` and `weight`, one row of `s²` samples per block: each sample
+    votes for its exact RGB with its weight, so a weight of 0 casts no vote.
+    A tie goes to the tied colour nearest the block's weighted mean RGB by
+    squared distance, compared exactly against the mean as a fraction, then
+    to the smallest packed `0xRRGGBB`. A block of no vote is black."""
+    count = len(rgb)
+    alpha = weight
     alpha_sum = alpha.sum(axis=1)
     weighted = (rgb * alpha[..., np.newaxis]).sum(axis=1)
-    result = np.zeros((count, 4), dtype=np.uint8)
-
+    result = np.zeros((count, 3), dtype=np.uint8)
     voting = alpha > 0
     if voting.any():
         # Each vote is keyed by its block and packed colour; equal keys are
@@ -253,12 +276,105 @@ def reduce_blocks_mode(pixels, factor, edges=EDGES[0]):
         # By block, then most votes, nearest the mean, smallest packed value.
         ranked = np.lexsort((colour, distance, -votes, owner))
         first = ranked[np.flatnonzero(np.diff(owner[ranked], prepend=-1))]
-        result[owner[first], :3] = channels[first]
+        result[owner[first]] = channels[first]
+    return result
 
-    alphas = _alpha_bytes(alpha, edges)
-    result[:, 3] = alphas
-    result[alphas == 0] = 0
-    return result.reshape(rows, columns, 4)
+
+# The two layers of a supersample (alpha design D-6, D-12, Stylize: numerical
+# reference): a back layer, the first opaque surface, and a front layer, the
+# translucent surfaces in front of it combined. Weights are in units of
+# 1/65535.
+OPAQUE = 65535
+
+
+def layer_weights(back_alpha, front_alpha, front_present):
+    """Each supersample's front weight `uᵢ = qᵢ` where the front layer is
+    present (0 elsewhere) and the back's transmitted weight
+    `tᵢ = bᵢ · (65535 − uᵢ)`, as `int64` arrays of the inputs' shape.
+
+    `back_alpha` is the back colour's 8-bit alpha, so `bᵢ` is
+    `257 · alpha / 65535`: 1 on a captured surface, whose alpha is 255, and
+    the 8-bit alpha's share otherwise, as `block_alpha` takes it; `tᵢ` is
+    `floor(257 · alpha · (65535 − uᵢ) / 65535)`, exact for both.
+    `front_alpha` is the front layer's `q`, `front_present` where it is."""
+    u = np.where(front_present, front_alpha, 0).astype(np.int64)
+    t = (257 * np.asarray(back_alpha, dtype=np.int64) * (OPAQUE - u)) // OPAQUE
+    return u, t
+
+
+def composite_alpha(composite, surfaces, factor, edges):
+    """Each `s×s` block's alpha byte from its samples' composite alphas
+    `aᵢ = uᵢ + tᵢ` (`layer_weights`) and where a layer is present,
+    `surfaces`, both `(H·s)×(W·s)`: `block_alpha`'s rules with `aᵢ` in
+    place of `257 · alpha`. A front layer whose `q` is 0 is a surface of
+    alpha 0. Returns a new `H×W` `uint8` array."""
+    composite = np.asarray(composite, dtype=np.int64)
+    factor = _check_factor(composite.shape, factor)
+    height, width = composite.shape
+    return _coverage(
+        _by_block(composite, factor), _by_block(surfaces, factor) > 0, edges
+    ).reshape(height // factor, width // factor)
+
+
+def reduce_weighted(rgb, weight, factor, *, by_mode):
+    """One layer reduced by `s×s` blocks with its own weights (numerical
+    reference step 2): `(colour, total)`, the block's `uint8` RGB, shape
+    `(H, W, 3)`, and its total weight `W`, `int64` of shape `(H, W)`.
+
+    `rgb` is an `(H·s)×(W·s)×3` array of 8-bit sRGB, and `weight` the
+    samples' integer weights; a sample of weight 0 adds nothing and casts no
+    vote. Plain (`by_mode` false) takes the weighted mean `Σ(wᵢ·cᵢ) / Σwᵢ`,
+    rounded half up; mode the weighted vote with `reduce_blocks_mode`'s tie
+    rules against the weighted mean. A block of total weight 0 is black."""
+    rgb = np.asarray(rgb)
+    weight = np.asarray(weight, dtype=np.int64)
+    factor = _check_factor(weight.shape, factor)
+    height, width = weight.shape
+    rows, columns = height // factor, width // factor
+    w = _by_block(weight, factor)
+    flat = np.stack([_by_block(rgb[..., c], factor) for c in range(3)], axis=-1)
+    total = w.sum(axis=1)
+    if by_mode:
+        colour = _vote(flat, w)
+    else:
+        weighted = (flat * w[..., np.newaxis]).sum(axis=1)
+        divisor = np.where(total > 0, total, 1)[..., np.newaxis]
+        colour = np.where(
+            total[..., np.newaxis] > 0, (2 * weighted + divisor) // (2 * divisor), 0
+        ).astype(np.uint8)
+    return colour.reshape(rows, columns, 3), total.reshape(rows, columns)
+
+
+def composite(front, front_weight, back, back_weight):
+    """Each pixel's front layer over its back (numerical reference step 3):
+    `C = (W_f · lin(F) + W_b · lin(B)) / (W_f + W_b)` in linear colour,
+    `float64`, through the fixed 256-entry sRGB table, encoded to 8-bit sRGB
+    with the standard transfer function, rounded half up. A pixel with one
+    weighted layer keeps that layer's colour unchanged, and one with none is
+    black. `front` and `back` are `uint8` RGB arrays of shape `(H, W, 3)`,
+    and the weights `(H, W)`."""
+    front, back = np.asarray(front), np.asarray(back)
+    front_weight = np.asarray(front_weight, dtype=np.int64)
+    back_weight = np.asarray(back_weight, dtype=np.int64)
+    result = np.where(
+        (front_weight > 0)[..., np.newaxis],
+        front,
+        np.where((back_weight > 0)[..., np.newaxis], back, 0),
+    ).astype(np.uint8)
+    both = (front_weight > 0) & (back_weight > 0)
+    if both.any():
+        wf = front_weight[both].astype(np.float64)[:, np.newaxis]
+        wb = back_weight[both].astype(np.float64)[:, np.newaxis]
+        linear = (wf * _SRGB_LINEAR[front[both]] + wb * _SRGB_LINEAR[back[both]]) / (
+            wf + wb
+        )
+        encoded = np.where(
+            linear <= 0.0031308,
+            12.92 * linear,
+            1.055 * np.power(linear, 1 / 2.4) - 0.055,
+        )
+        result[both] = np.minimum(255, np.floor(255 * encoded + 0.5)).astype(np.uint8)
+    return result
 
 
 # A block's normals cancel when their sum is shorter than this (lighting
@@ -453,6 +569,7 @@ def map_ramps(
     pool=None,
     ranges=None,
     edges=EDGES[0],
+    weights=None,
 ):
     """Give each block of a supersampled frame its winning material's ramp
     entry, following design §Stylize (Material ramps).
@@ -479,6 +596,12 @@ def map_ramps(
 
     Coverage, identity votes, shade sums, bands and `by_mode` tie comparisons
     are exact integer arithmetic. Nothing is changed in place.
+
+    With `weights`, an integer array of the image's height and width, each
+    pixel votes and weighs its shade with its weight instead of its colour
+    alpha: a layer's own weights (numerical reference step 2). Every block
+    of some weight may then take an entry, with alpha 255, whatever
+    `edges`: its coverage is the caller's.
 
     Raises `TypeError` and `ValueError` for malformed arguments, an unknown
     `edges` included, as `reduce_blocks` does.
@@ -526,7 +649,15 @@ def map_ramps(
 
     rows, columns = height // factor, width // factor
     count = rows * columns
-    alpha = _by_block(pixels[..., 3], factor)
+    if weights is None:
+        alpha = _by_block(pixels[..., 3], factor)
+    else:
+        weights = np.asarray(weights)
+        if weights.shape != (height, width):
+            raise ValueError(
+                f"weights must have shape {(height, width)}, not {weights.shape}"
+            )
+        alpha = _by_block(weights, factor)
     ident = _by_block(identity, factor)
     shades = _by_block(shade, factor)
     result = np.zeros((count, 4), dtype=np.uint8)
@@ -534,7 +665,10 @@ def map_ramps(
 
     # Identity: each pixel with an identity votes with its colour alpha.
     voting = (alpha > 0) & (ident >= 0)
-    alphas = _alpha_bytes(alpha, edges)
+    if weights is None:
+        alphas = _alpha_bytes(alpha, edges)
+    else:
+        alphas = np.where(alpha.sum(axis=1) > 0, 255, 0).astype(np.uint8)
     covered = alphas > 0
     if voting.any():
         block = np.broadcast_to(np.arange(count)[:, np.newaxis], ident.shape)

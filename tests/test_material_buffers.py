@@ -6,7 +6,7 @@ import json
 
 import numpy as np
 import pytest
-from capture_buffers import write_depth, write_normal
+from capture_buffers import png16, write_depth, write_front, write_normal
 from glb_writer import GlbWriter
 from PIL import Image
 from test_capture_backend import encode, render_document, render_job
@@ -303,6 +303,29 @@ def test_decoding_gives_int32_identities_and_uint8_shade(tmp_path):
     assert identity.dtype == np.int32 and shading.dtype == np.uint8
     assert identity.tolist() == [[0, 1, 2], [BACKGROUND] * 3]
     assert shading.tolist() == [[90, 90, 90], [0, 0, 0]]
+
+
+def test_decoding_the_front_gives_its_alpha_presence_identity_and_shade(tmp_path):
+    records = (record(0, "steel"), record(1, "glass", "BLEND"))
+    lookup = backend.material_lookup(result_with({1: 0, 2: 1}), subject(records, 2))
+    paths = write_front(
+        tmp_path, 0, (3, 2), [[True, True, False], [False] * 3], (9, 8, 7), 0, code=2
+    )
+    # A second pixel of another alpha.
+    samples = np.zeros((2, 3, 4), dtype=np.uint16)
+    samples[0, 0] = (26214, 0, 0, 0xFFFF)
+    samples[0, 1] = (0, 0, 0, 0xFFFF)
+    png16(tmp_path / paths["front_alpha"], samples)
+    named = {name: tmp_path / path for name, path in paths.items()}
+    colour, alpha, present, identity, shade = backend.decode_front(named, lookup)
+    assert colour[0, 0].tolist() == [9, 8, 7, 255]
+    assert (alpha.dtype, alpha.tolist()) == (np.uint16, [[26214, 0, 0], [0, 0, 0]])
+    # A front of q 0 is present: presence never comes from the alpha.
+    assert present.tolist() == [[True, True, False], [False] * 3]
+    assert identity.dtype == np.int32 and shade.dtype == np.uint8
+    # A BLEND material is the no-identity class until ALPHA-5.
+    assert identity.tolist() == [[1, 1, BACKGROUND], [BACKGROUND] * 3]
+    assert shade.tolist() == [[137, 137, 0], [0, 0, 0]]
 
 
 def test_decoding_refuses_a_code_outside_the_table(tmp_path):

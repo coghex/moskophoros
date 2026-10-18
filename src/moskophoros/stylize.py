@@ -16,6 +16,14 @@ under the `edges` rule (`imageops.block_alpha`; alpha design D-4, D-9): the
 reductions and the material step reuse their colour, vote and band rules and
 keep that alpha, whatever the palette or library.
 
+A frame whose front layer is present somewhere (`FRONT_PRESENT`; alpha
+design D-6, D-12, D-14) is reduced by the numerical reference's steps 1 to
+4 (`layered`): each supersample's front weight and the back's transmitted
+weight decide the alpha, each layer is reduced with its own weights, the
+front is composited over the back in linear colour, and with a palette the
+composite's colour snaps to it. A frame without one is reduced exactly as
+above.
+
 Independently of the colour reduction, a frame carrying both normal and
 depth buffers (`NORMAL`, `DEPTH`) has them reduced to its reduced colour's
 pixels, with exactly the colour's coverage, alpha above 0, whatever the
@@ -32,6 +40,9 @@ from moskophoros import imageops, materials
 from moskophoros.sampling import (
     DEPTH,
     DEPTH_MAP,
+    FRONT_ALPHA,
+    FRONT_COLOR,
+    FRONT_PRESENT,
     IDENTITY,
     NORMAL,
     NORMAL_MAP,
@@ -65,11 +76,14 @@ def plain(
     )
     result = []
     for frame in frames:
-        pixels = imageops.reduce_blocks(frame.pixels, factor, edges)
-        if palette is not None:
-            pixels = imageops.map_palette(pixels, palette)
-        if materials is not None:
-            pixels = materials(frame, pixels)
+        if _has_front(frame):
+            pixels = layered(frame, factor, palette, materials, edges, by_mode=False)
+        else:
+            pixels = imageops.reduce_blocks(frame.pixels, factor, edges)
+            if palette is not None:
+                pixels = imageops.map_palette(pixels, palette)
+            if materials is not None:
+                pixels = materials(frame, pixels)
         named = maps(frame, pixels, factor, pixels_per_meter)
         result.append(ImageFrame(frame.address, pixels, frame.metadata, named))
         # Release the capture before asking its iterator for the next array.
@@ -103,16 +117,85 @@ def mode(
     )
     result = []
     for frame in frames:
-        pixels = frame.pixels
-        if palette is not None:
-            pixels = imageops.map_palette(pixels, palette)
-        pixels = imageops.reduce_blocks_mode(pixels, factor, edges)
-        if materials is not None:
-            pixels = materials(frame, pixels)
+        if _has_front(frame):
+            pixels = layered(frame, factor, palette, materials, edges, by_mode=True)
+        else:
+            pixels = frame.pixels
+            if palette is not None:
+                pixels = imageops.map_palette(pixels, palette)
+            pixels = imageops.reduce_blocks_mode(pixels, factor, edges)
+            if materials is not None:
+                pixels = materials(frame, pixels)
         named = maps(frame, pixels, factor, pixels_per_meter)
         result.append(ImageFrame(frame.address, pixels, frame.metadata, named))
         del frame
     return tuple(result)
+
+
+def _has_front(frame):
+    present = frame.buffers.get(FRONT_PRESENT)
+    return present is not None and bool(present.any())
+
+
+def layered(frame, factor, palette, materials, edges, *, by_mode):
+    """The reduced colour of a frame with a front layer, by the numerical
+    reference's steps 1 to 4 (alpha design, *Stylize: numerical reference*).
+
+    1. Each supersample's front weight `uᵢ` and back transmitted weight `tᵢ`
+       (`imageops.layer_weights`) give its composite alpha `aᵢ = uᵢ + tᵢ`; a
+       sample is a surface where either layer is present. The block's alpha
+       byte is decided from them under `edges` (`imageops.composite_alpha`).
+    2. Each layer is reduced with its own weights in place of colour alpha
+       (`imageops.reduce_weighted`): `plain` takes the weighted mean, which a
+       palette then maps; `mode` the weighted vote, a palette mapping the
+       samples first. The back layer takes its material's ramp where it has
+       one (`materials`, with the back's weights); the front layer keeps the
+       ordinary look.
+    3. The front is composited over the back in linear colour with the
+       layers' total weights (`imageops.composite`); a pixel with one
+       weighted layer keeps that layer's colour.
+    4. With a palette, a composited colour maps to the nearest palette
+       colour; a one-layer pixel already holds one. Alpha is step 1's, never
+       snapped.
+
+    A pixel whose alpha is 0 is `(0, 0, 0, 0)`."""
+    back = frame.pixels
+    front = frame.buffers[FRONT_COLOR]
+    u, t = imageops.layer_weights(
+        back[..., 3], frame.buffers[FRONT_ALPHA], frame.buffers[FRONT_PRESENT]
+    )
+    surfaces = (back[..., 3] > 0) | frame.buffers[FRONT_PRESENT]
+    alpha = imageops.composite_alpha(u + t, surfaces, factor, edges)
+    if by_mode and palette is not None:
+        back = imageops.map_palette(back, palette)
+        front = imageops.map_palette(front, palette)
+    back_rgb, back_weight = imageops.reduce_weighted(
+        back[..., :3], t, factor, by_mode=by_mode
+    )
+    front_rgb, front_weight = imageops.reduce_weighted(
+        front[..., :3], u, factor, by_mode=by_mode
+    )
+    if not by_mode and palette is not None:
+        back_rgb = _mapped(back_rgb, palette)
+        front_rgb = _mapped(front_rgb, palette)
+    if materials is not None:
+        ordinary = np.dstack([back_rgb, np.full(back_rgb.shape[:2], 255, np.uint8)])
+        back_rgb = materials(frame, ordinary, weights=t)[..., :3]
+    colour = imageops.composite(front_rgb, front_weight, back_rgb, back_weight)
+    if palette is not None:
+        both = (front_weight > 0) & (back_weight > 0)
+        colour[both] = _mapped(colour[both][np.newaxis], palette)[0]
+    pixels = np.zeros((*alpha.shape, 4), dtype=np.uint8)
+    kept = alpha > 0
+    pixels[kept, :3] = colour[kept]
+    pixels[kept, 3] = alpha[kept]
+    return pixels
+
+
+def _mapped(rgb, palette):
+    """`uint8` RGB of shape `(H, W, 3)` mapped to the palette."""
+    opaque = np.dstack([rgb, np.full(rgb.shape[:2], 255, np.uint8)])
+    return imageops.map_palette(opaque, palette)[..., :3]
 
 
 def maps(frame, pixels, factor, pixels_per_meter):
@@ -177,8 +260,10 @@ def _materials(factor, palette, identities, library, shade_range, *, by_mode, ed
     """The per-frame material step for `library`, or `None` without one.
 
     The step takes a frame and its reduced ordinary look and returns the look
-    with each block that took a ramp entry replaced; it keeps no reference to
-    the frame, so the frame's buffers are free once it returns.
+    with each block that took a ramp entry replaced; with `weights`, the
+    back layer's own (`layered`), they replace colour alpha in the votes and
+    bands. It keeps no reference to the frame, so the frame's buffers are
+    free once it returns.
     """
     if library is None:
         return None
@@ -203,7 +288,7 @@ def _materials(factor, palette, identities, library, shade_range, *, by_mode, ed
         for index, name in enumerate(names)
     ) + (None,)
 
-    def step(frame, ordinary):
+    def step(frame, ordinary, weights=None):
         for name in (IDENTITY, SHADE):
             if name not in frame.buffers:
                 raise ValueError(
@@ -222,6 +307,7 @@ def _materials(factor, palette, identities, library, shade_range, *, by_mode, ed
             pool=pooled,
             ranges=ranges,
             edges=edges,
+            weights=weights,
         )
         ordinary[mapped] = ramped[mapped]
         return ordinary

@@ -27,6 +27,12 @@ IDENTITY = "identity"
 SHADE = "shade"
 NORMAL = "normal"
 DEPTH = "depth"
+# The names of a frame's front-layer arrays (alpha design D-6, D-12).
+FRONT_COLOR = "front_color"
+FRONT_ALPHA = "front_alpha"
+FRONT_PRESENT = "front_present"
+FRONT_IDENTITY = "front_identity"
+FRONT_SHADE = "front_shade"
 # The names of a reduced frame's normal and depth maps.
 NORMAL_MAP = "normal_map"
 DEPTH_MAP = "depth_map"
@@ -99,9 +105,19 @@ class ImageFrame:
     `(0, 0, 0)` where no surface was hit; under `DEPTH`, a `float32` array
     of shape `(height, width)` holds that surface's depth in meters, positive
     toward the viewer from the ground point's camera depth, or NaN where no
-    surface was hit. The command decodes and validates them; stylize trusts
-    them. A buffer under any other name is a capture buffer as loaded, an
-    image like `pixels`.
+    surface was hit; both describe the front-most surface that is not a hole.
+
+    `pixels` is the back layer, the first opaque surface. The front layer,
+    every translucent surface in front of it combined, comes under
+    `FRONT_COLOR`, an image like `pixels` of its straight colour, alpha 255
+    where it is present; `FRONT_ALPHA`, a `uint16` array of shape
+    `(height, width)` of its alpha `q` in units of 1/65535, 0 where it is
+    absent; `FRONT_PRESENT`, a `bool` array of where it is present, a front
+    whose `q` is 0 included; and `FRONT_IDENTITY` and `FRONT_SHADE`, as
+    `IDENTITY` and `SHADE` are, for its front-most translucent surface. A
+    frame without them has no front layer. The command decodes and
+    validates them; stylize trusts them. A buffer under any other name is a
+    capture buffer as loaded, an image like `pixels`.
 
     A reduced frame, from stylize to cleanup and export, carries its maps:
     under `NORMAL_MAP`, a `float64` array of shape `(height, width, 3)`, the
