@@ -1544,6 +1544,33 @@ feasibility spike and the choices the decisions left to the slice:
 - **Out of scope:** keeping translucent layers separately (D-12).
 - **Open questions:** None.
 
+*ALPHA-5's implementation notes* (recorded by ALPHA-5, #118, 2026-10-18;
+`docs/design.md` *Frames into stylize*, §Stylize, *Two layers* and *Mapping
+a block*, and §Material libraries hold the contract). They record choices
+the decisions left to the slice:
+
+- **One list of alpha modes.** `materials.RAMP_ALPHA_MODES` is glTF's three,
+  `OPAQUE`, `MASK` and `BLEND`. The identity list (`capture/backend.py`) and
+  every library filter read it, so a translucent material takes an identity,
+  its entry's ramp, own capture values and own range, the default ramp and
+  every warning exactly where an opaque one does. The capture script already
+  used each material's own values by code, so its `front_shade` needed no
+  change.
+- **The front layer's ramp is the back's step with the front's arrays.** The
+  material step takes `front=True` and votes on the front identity array
+  with the front weights `uᵢ`, banding from `front_shade`. One code path
+  gives both layers D-23's tie order and the band rules.
+- **An alpha mode glTF does not define** follows the manager's note under
+  D-15. Its two warnings keep their places, reworded, and the warning names
+  the mode of the name's lowest-indexed such material. A name shared with a
+  material of glTF's modes is named with the ramp that material takes. The
+  old suffix about its other parts had only the `BLEND` wording, and goes
+  with it.
+- **Opaque models are unchanged.** A test pins a model without `BLEND`
+  materials, with the palette alone and with a library: its sheets and
+  warnings are master `908cd52`'s, digests computed by running the same
+  test against that package.
+
 ### ALPHA-6. Blend translucent pixels in the previews
 
 Merged into ALPHA-3 (Review 1, A-4): previews are on by default and refuse
