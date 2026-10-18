@@ -1467,6 +1467,54 @@ choices the decisions left to the slice:
 - **Open questions:** None. If the feasibility spike fails the correctness
   or the cost gate, implementation stops and reports to the owner.
 
+*ALPHA-4's implementation notes* (recorded by ALPHA-4, #117, 2026-10-17;
+`docs/design.md` §Capture, *Capture job and result contract*, *Frames into
+stylize* and §Stylize, *Two layers*, hold the contract). They record the
+feasibility spike and the choices the decisions left to the slice:
+
+- **The spike** is `alpha-design/spike-4/` (`REPORT.md`), beside spikes 1
+  to 3. Both gates passed.
+  - Correctness: stacks (a)–(d) and every per-sample state of the pinned
+    cases give the front `q`, front and back colours and codes exactly. The
+    composite from the 8-bit buffers is within one level of front-over-back.
+  - Cost: 1.73× the baseline. The median of frames 2–5 then of three
+    interleaved rounds was 2.029 s against spike 3's unchanged `today`
+    1.174 s, per round 1.79×, 1.32× and 1.73×. It ran without
+    whole-machine quiet at the owner's direction ("i do have empty cores,
+    so you should take the test and just trust the timing"), with the
+    1-minute load rising from 3.86 to 20.33.
+- **The separation is a further render.**
+  - The back render shows every `BLEND` surface as a hole.
+  - The front render holds out every opaque surface. Its float alpha is
+    then the front layer's alpha, and its 8-bit TGA, which Blender writes
+    un-premultiplied, the front's straight colour, "encoded as `color`".
+  - One shared node group of two values switches the three renders.
+  - A model without a `BLEND` material renders no front render, so an
+    opaque model's buffers are master's, byte for byte.
+- **The front render runs with both bounce limits at 65.** Cycles shades a
+  path's last surface after its 64th transparent bounce without closures,
+  so a holdout there holds nothing out. The spike's boundary fixtures missed
+  this; the production test of a front, 63 holes and a body found it. The
+  count render bounds every accepted path, so this changes no other frame.
+  The recorded `color` limits stay the back and count renders' 64.
+- **The count render counts every `BLEND` surface,** whatever its alpha,
+  since the back render crosses it as a hole. A `BLEND` layer Cycles treats
+  as opaque (α > 1 − 10⁻⁵) in front of 64 more surfaces is refused, which
+  the conservative rule allows.
+- **Presence is the gated front hit.** The script requires the front
+  render's float alpha to be above 0 exactly there. Below about 10⁻⁵,
+  Cycles' coverage `1 − fl(1 − α)` differs from the emitted α, so a tiny
+  front's straight colour can be off by a few levels. Such a layer's `q` is
+  0, a surface of no weight.
+- **Back weights from an 8-bit alpha:**
+  `tᵢ = floor(257 · alpha · (65535 − uᵢ) / 65535)`. It is exact for a
+  capture's 0 or 255 and for a sample without a front, so image functions
+  given any RGBA keep ALPHA-3's rule.
+- **Blocks without a front sample reduce as before.** The layered path
+  applies only to frames with a front layer, and a block without a front
+  sample reduces exactly as ALPHA-3 did.
+- **Front identities decode to the no-identity class** until ALPHA-5.
+
 ### ALPHA-5. Give translucent materials identities and ramps
 
 - **Outcome:** a `BLEND` material can take a ramp, by its entry or the
