@@ -816,6 +816,17 @@ with D-1, D-6 and D-12 ("a translucent material can have a ramp too"):
   belonged to D-26's no-identity class and goes with it, in ALPHA-5. A
   `BLEND` material taking the library's default ramp takes the global values
   and the library's range, as any material does.
+- **An alpha mode glTF does not define** (recorded by the moskophoros manager
+  on 2026-10-17, answering ALPHA-5's solver; it keeps today's behaviour and
+  decides nothing new): such a named material stays in the no-identity class
+  and is captured opaque, as now. Today the two library warnings that cover it
+  use the `BLEND` wording that ALPHA-5 removes. Both stay for this case only,
+  in the same places in the warning order, reworded without `BLEND`: "material
+  X has no entry in the material library; its alpha mode Y is not one glTF
+  defines, so it takes the ordinary look", and "the library entry X names only
+  materials whose alpha mode glTF does not define, which take the ordinary
+  look". The material is still named in a warning rather than dropped
+  silently.
 
 ### D-16. The slicing is the designer's
 
