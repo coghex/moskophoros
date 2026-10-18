@@ -48,9 +48,10 @@ ORDINARY = "ordinary"
 MAX_RAMP = 256
 # A library file's name ends in one of these, in any case (settings D-11).
 SUFFIXES = (".yaml", ".yml")
-# The glTF alpha modes whose materials can take a ramp; any other (`BLEND`) is
-# translucent and always takes the ordinary look.
-RAMP_ALPHA_MODES = ("OPAQUE", "MASK")
+# The glTF alpha modes, whose materials have an identity and can take a ramp,
+# translucent `BLEND` ones included (alpha design D-15); a material of any
+# other alpha mode takes the ordinary look.
+RAMP_ALPHA_MODES = ("OPAQUE", "MASK", "BLEND")
 _FIELDS = ("schema", "ramps", "default", "shade", "materials")
 _REQUIRED = ("schema", "ramps", "materials")
 
@@ -294,11 +295,15 @@ def warnings(records, library):
 
     `records` are the model's `gltf.PrimitiveMaterial`s. Each distinct named
     material the library has no entry for is named once, saying whether it
-    took the default ramp or the ordinary look (D-9, D-17); a translucent
-    material takes the ordinary look whatever the default. One further
-    warning counts the parts with no name (unnamed or missing materials,
-    D-18), and each library entry used only by translucent materials is named.
-    Entries and ramps the model never uses are silent (D-15).
+    took the default ramp or the ordinary look (D-9, D-17), a translucent
+    `BLEND` material as any other (alpha design D-15); a material whose only
+    alpha modes glTF does not define takes the ordinary look whatever the
+    default, its warning naming the alpha mode of its lowest material index
+    (the manager's note under D-15).
+    One further warning counts the parts with no name (unnamed or missing
+    materials, D-18), and each library entry used only by materials whose
+    alpha mode glTF does not define is named. Entries and ramps the model
+    never uses are silent (D-15).
     """
     parts = {}
     unnamed = 0
@@ -307,10 +312,13 @@ def warnings(records, library):
             unnamed += 1
             continue
         entry = parts.setdefault(
-            record.name, {"index": record.material_index, "ramp": False, "other": False}
+            record.name, {"index": record.material_index, "ramp": False, "other": None}
         )
         entry["index"] = min(entry["index"], record.material_index)
-        entry["ramp" if record.alpha_mode in RAMP_ALPHA_MODES else "other"] = True
+        if record.alpha_mode in RAMP_ALPHA_MODES:
+            entry["ramp"] = True
+        elif entry["other"] is None or record.material_index < entry["other"][0]:
+            entry["other"] = (record.material_index, record.alpha_mode)
     messages = []
     fallback = (
         "the default ramp " + _name(library.default)
@@ -325,12 +333,8 @@ def warnings(records, library):
         head = f"material {_name(name)} has no entry in the material library"
         if not used["ramp"]:
             messages.append(
-                f"{head}; it is translucent (BLEND) and takes the ordinary look"
-            )
-        elif used["other"]:
-            messages.append(
-                f"{head} and takes {fallback}; its translucent (BLEND) parts take "
-                "the ordinary look"
+                f"{head}; its alpha mode {_shown(used['other'][1])} is not one glTF "
+                "defines, so it takes the ordinary look"
             )
         else:
             messages.append(f"{head} and takes {fallback}")
@@ -344,16 +348,16 @@ def warnings(records, library):
         used = parts.get(name)
         if used is not None and not used["ramp"]:
             messages.append(
-                f"the library entry {_name(name)} names only translucent (BLEND) "
-                "materials, which take the ordinary look"
+                f"the library entry {_name(name)} names only materials whose alpha "
+                "mode glTF does not define, which take the ordinary look"
             )
     return messages
 
 
 def _ramped(records, library):
     """Each glTF material of the model that takes its library entry's ramp,
-    with its entry, in material order: a named, non-translucent material
-    whose entry gives a ramp or uses one."""
+    with its entry, in material order: a named material of a glTF alpha mode,
+    translucent ones included, whose entry gives a ramp or uses one."""
     taken = {}
     for record in records:
         if record.material_index is None or record.name is None:
@@ -375,8 +379,9 @@ def capture_overrides(records, library, globals_):
     `records` are the model's `gltf.PrimitiveMaterial`s, and `globals_` maps
     each capture value's name to the global value in force. A material's own
     value wins; one it does not give is the global. Materials sharing a name
-    share their entry; a translucent material, one taking the default ramp or
-    the ordinary look, and one with no entry take the global values.
+    share their entry, translucent ones as any other (alpha design D-15); one
+    taking the default ramp or the ordinary look, and one with no entry, take
+    the global values.
     """
     overrides = []
     for index, _, entry in _ramped(records, library):
@@ -432,8 +437,8 @@ def override_warnings(records, library, explicit):
 def _in_use(records, library):
     """The ramps the model's materials take, as `(label, ramp, own range)`
     in material order, each ramp once: a material's own ramp, a named ramp
-    an entry uses, and the default ramp a named, non-translucent material
-    without an entry takes. `own range` is whether every material taking it
+    an entry uses, and the default ramp a named material of a glTF alpha
+    mode without an entry takes. `own range` is whether every material taking it
     gives its own shade range."""
     used = {}
     for index, name, entry in _ramped(records, library):

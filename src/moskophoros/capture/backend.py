@@ -21,6 +21,7 @@ import numpy as np
 from PIL import Image
 
 from moskophoros import fit, imageops, sampling, views
+from moskophoros.materials import RAMP_ALPHA_MODES
 
 INTERNAL_ERROR = 1
 BACKEND_ERROR = 5
@@ -958,9 +959,11 @@ def identities(primitive_materials):
     """The asset's identity list from its `gltf.PrimitiveMaterial` records,
     and {glTF material index: identity index} for every material they use.
 
-    The list holds each distinct name of an `OPAQUE` or `MASK` material, in
-    order of its lowest material index; a `BLEND` material (or any other
-    alpha mode), an unnamed one and a missing one are the no-identity class.
+    The list holds each distinct name of an `OPAQUE`, `MASK` or `BLEND`
+    material, in order of its lowest material index, so a name used by
+    opaque and translucent materials is one identity (alpha design D-15); a
+    material of an alpha mode glTF does not define, an unnamed one and a
+    missing one are the no-identity class.
     """
     eligible = sorted(
         {
@@ -968,7 +971,7 @@ def identities(primitive_materials):
             for record in primitive_materials
             if record.material_index is not None
             and record.name is not None
-            and record.alpha_mode in ("OPAQUE", "MASK")
+            and record.alpha_mode in RAMP_ALPHA_MODES
         }
     )
     names = []

@@ -239,17 +239,17 @@ def test_the_identity_list_follows_lowest_material_index_and_eligibility():
         record(1, "steel"),
         record(None, None),  # a primitive without a material
         record(3, "steel"),  # a duplicate name pools into one identity
-        record(5, "glass", "BLEND"),
+        record(5, "glass", "BLEND"),  # a translucent material has an identity
         record(6, None),  # an unnamed material
         record(2, "leaf", "MASK"),
-        record(7, "steel", "BLEND"),  # BLEND, though its name is eligible
-        record(8, "odd", "SOMETHING"),
+        record(7, "steel", "BLEND"),  # pools by name with the opaque steel
+        record(8, "odd", "SOMETHING"),  # an alpha mode glTF does not define
         record(1, "steel", primitive=1),
     )
     listed, indices = backend.identities(records)
-    assert listed == Identities(("steel", "leaf", "cloth"))
-    assert indices == {1: 0, 2: 1, 3: 0, 4: 2, 5: 3, 6: 3, 7: 3, 8: 3}
-    assert listed.no_identity == 3
+    assert listed == Identities(("steel", "leaf", "cloth", "glass"))
+    assert indices == {1: 0, 2: 1, 3: 0, 4: 2, 5: 3, 6: 4, 7: 0, 8: 4}
+    assert listed.no_identity == 4
 
 
 def subject(records, count):
@@ -265,12 +265,12 @@ def test_the_table_joins_codes_to_identities():
     records += (record(3, "glass", "BLEND"), record(None, None))
     table = {1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 65535: None}
     lookup = backend.material_lookup(result_with(table), subject(records, 5))
-    assert lookup.identities == Identities(("steel", "cloth"))
+    assert lookup.identities == Identities(("steel", "cloth", "glass"))
     codes = lookup.codes
     assert codes.dtype == np.int32 and codes.shape == (65536,)
     assert codes[0] == BACKGROUND
     # Material 4 is in the model but no primitive of the subject uses it.
-    assert [int(codes[c]) for c in (1, 2, 3, 4, 5, 65535)] == [0, 1, 0, 2, 2, 2]
+    assert [int(codes[c]) for c in (1, 2, 3, 4, 5, 65535)] == [0, 1, 0, 2, 3, 3]
     assert codes[6] == backend.UNKNOWN_CODE
 
 

@@ -72,14 +72,21 @@ def test_the_job_carries_each_overriding_materials_capture_values(setup, capsys)
     for mode in ("measure", "render"):
         shade = job_shade(work, mode)
         # Steel is glTF material 0. Cloth overrides only the range, which acts
-        # in stylize; glass is translucent and takes the ordinary look.
+        # in stylize. Glass, translucent, overrides its occlusion weight as
+        # any material does (alpha design D-15).
         assert shade["materials"] == [
             {
                 "material": 0,
                 "ao_distance_m": 1.5,
                 "occlusion_weight": 0.25,
                 "convexity_weight": 0.5,
-            }
+            },
+            {
+                "material": 2,
+                "ao_distance_m": 0.3,
+                "occlusion_weight": 0.9,
+                "convexity_weight": 1.0,
+            },
         ]
         assert shade["ao_distance_m"] == 0.3 and shade["convexity_weight"] == 1.0
 
@@ -118,14 +125,21 @@ def test_a_materials_own_value_beats_a_global_from_every_layer(setup, capsys, la
         run_in(setup, capsys, work, *options)
     shade = job_shade(work)
     assert (shade["convexity_weight"], shade["occlusion_weight"]) == (0.0, 0.7)
-    # Steel keeps its convexity weight and takes the global occlusion weight.
+    # Steel keeps its convexity weight and takes the global occlusion weight;
+    # glass keeps its occlusion weight and takes the global convexity weight.
     assert shade["materials"] == [
         {
             "material": 0,
             "ao_distance_m": 1.5,
             "occlusion_weight": 0.7,
             "convexity_weight": 0.5,
-        }
+        },
+        {
+            "material": 2,
+            "ao_distance_m": 0.3,
+            "occlusion_weight": 0.9,
+            "convexity_weight": 0.0,
+        },
     ]
 
 

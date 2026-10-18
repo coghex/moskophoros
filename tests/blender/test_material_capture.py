@@ -180,7 +180,16 @@ def test_identities_decode_duplicate_unnamed_missing_and_blend_materials(
     result, _ = front(found, path, tmp_path, 1)
     subject = gltf.read_glb(path)
     lookup = backend.material_lookup(result, subject)
-    assert lookup.identities.names == ("steel", "cloth", "wire", "leaf", "bark")
+    # The translucent glass has an identity, after bark by material index
+    # (alpha design D-15).
+    assert lookup.identities.names == (
+        "steel",
+        "cloth",
+        "wire",
+        "leaf",
+        "bark",
+        "glass",
+    )
     identity, shade = backend.decode_frame(list(result.buffers.values())[0], lookup)
     none = lookup.identities.no_identity
     expected = {
@@ -196,12 +205,12 @@ def test_identities_decode_duplicate_unnamed_missing_and_blend_materials(
     for point, value in expected.items():
         assert identity[at(*point, 1)] == value, point
     assert identity[0, 0] == BACKGROUND and shade[0, 0] == 0
-    # The BLEND glass is the front layer's, in the no-identity class until
-    # ALPHA-5.
+    # The BLEND glass is the front layer's, with its own identity.
     _, _, present, front_identity, _ = backend.decode_front(
         list(result.buffers.values())[0], lookup
     )
-    assert present[at(-0.5, -0.5, 1)] and front_identity[at(-0.5, -0.5, 1)] == none
+    glass = lookup.identities.names.index("glass")
+    assert present[at(-0.5, -0.5, 1)] and front_identity[at(-0.5, -0.5, 1)] == glass
     assert (front_identity[~present] == BACKGROUND).all()
 
 

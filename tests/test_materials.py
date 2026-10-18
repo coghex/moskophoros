@@ -813,9 +813,13 @@ def test_a_materials_own_capture_values_beat_the_globals():
     ]
 
 
-def test_a_translucent_material_keeps_the_globals():
+def test_a_translucent_material_takes_its_own_values_as_any_other():
+    # Alpha design D-15: a BLEND material's entry works as an opaque one's.
     records = [record(0, "Rock", "BLEND"), record(1, "Grey", "MASK")]
-    assert capture_overrides(records, SHADED, GLOBALS) == [(1, 0.3, 0.25, 0.5)]
+    assert capture_overrides(records, SHADED, GLOBALS) == [
+        (0, 1.2, 0.0, 1.0),
+        (1, 0.3, 0.25, 0.5),
+    ]
 
 
 def test_a_range_alone_overrides_no_capture_value():
@@ -852,6 +856,14 @@ def test_an_override_warns_only_for_an_explicit_global():
     assert override_warnings(records, SHADED, {}) == []
 
 
-def test_unused_and_translucent_overrides_warn_nothing():
-    records = [record(0, "Rock", "BLEND"), record(1, "Plain")]
+def test_unused_overrides_warn_nothing():
+    records = [record(1, "Plain")]
     assert override_warnings(records, SHADED, {"range": (84, 191)}) == []
+
+
+def test_a_translucent_material_s_override_warns_as_any_other():
+    records = [record(0, "Rock", "BLEND"), record(1, "Plain")]
+    assert override_warnings(records, SHADED, {"range": (84, 191)}) == [
+        'material "Rock" keeps its own shade.range, [10, 20], from the material '
+        "library; the global [84, 191] applies to materials without their own"
+    ]

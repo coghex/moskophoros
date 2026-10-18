@@ -42,7 +42,9 @@ from moskophoros.sampling import (
     DEPTH_MAP,
     FRONT_ALPHA,
     FRONT_COLOR,
+    FRONT_IDENTITY,
     FRONT_PRESENT,
+    FRONT_SHADE,
     IDENTITY,
     NORMAL,
     NORMAL_MAP,
@@ -148,9 +150,10 @@ def layered(frame, factor, palette, materials, edges, *, by_mode):
     2. Each layer is reduced with its own weights in place of colour alpha
        (`imageops.reduce_weighted`): `plain` takes the weighted mean, which a
        palette then maps; `mode` the weighted vote, a palette mapping the
-       samples first. The back layer takes its material's ramp where it has
-       one (`materials`, with the back's weights); the front layer keeps the
-       ordinary look.
+       samples first. Each layer takes its winning material's ramp where it
+       has one (`materials`, with the layer's own weights, identities and
+       shades); the front layer's identity and shade are its front-most
+       material's.
     3. The front is composited over the back in linear colour with the
        layers' total weights (`imageops.composite`); a pixel with one
        weighted layer keeps that layer's colour.
@@ -179,8 +182,14 @@ def layered(frame, factor, palette, materials, edges, *, by_mode):
         back_rgb = _mapped(back_rgb, palette)
         front_rgb = _mapped(front_rgb, palette)
     if materials is not None:
-        ordinary = np.dstack([back_rgb, np.full(back_rgb.shape[:2], 255, np.uint8)])
-        back_rgb = materials(frame, ordinary, weights=t)[..., :3]
+        # Each layer takes the ramp of its winning material, the front layer
+        # by its front-most material's identity and shade, so a rear pane's
+        # ramp is not applied (D-12, D-15).
+        opaque = np.full(back_rgb.shape[:2], 255, np.uint8)
+        back_rgb = materials(frame, np.dstack([back_rgb, opaque]), weights=t)[..., :3]
+        front_rgb = materials(
+            frame, np.dstack([front_rgb, opaque]), weights=u, front=True
+        )[..., :3]
     colour = imageops.composite(front_rgb, front_weight, back_rgb, back_weight)
     if palette is not None:
         both = (front_weight > 0) & (back_weight > 0)
@@ -260,9 +269,10 @@ def _materials(factor, palette, identities, library, shade_range, *, by_mode, ed
     """The per-frame material step for `library`, or `None` without one.
 
     The step takes a frame and its reduced ordinary look and returns the look
-    with each block that took a ramp entry replaced; with `weights`, the
-    back layer's own (`layered`), they replace colour alpha in the votes and
-    bands. It keeps no reference to the frame, so the frame's buffers are
+    with each block that took a ramp entry replaced; with `weights`, a
+    layer's own (`layered`), they replace colour alpha in the votes and
+    bands, and with `front` the front layer's identity and shade arrays are
+    voted and banded instead of the frame's. It keeps no reference to the frame, so the frame's buffers are
     free once it returns.
     """
     if library is None:
@@ -288,16 +298,17 @@ def _materials(factor, palette, identities, library, shade_range, *, by_mode, ed
         for index, name in enumerate(names)
     ) + (None,)
 
-    def step(frame, ordinary, weights=None):
-        for name in (IDENTITY, SHADE):
+    def step(frame, ordinary, weights=None, front=False):
+        names = (FRONT_IDENTITY, FRONT_SHADE) if front else (IDENTITY, SHADE)
+        for name in names:
             if name not in frame.buffers:
                 raise ValueError(
                     f"{frame.address}: a material library needs the {name} buffer"
                 )
         ramped, mapped = imageops.map_ramps(
-            frame.pixels,
-            frame.buffers[IDENTITY],
-            frame.buffers[SHADE],
+            frame.buffers[FRONT_COLOR] if front else frame.pixels,
+            frame.buffers[names[0]],
+            frame.buffers[names[1]],
             factor,
             ramps,
             palette,

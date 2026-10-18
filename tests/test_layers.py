@@ -272,3 +272,103 @@ def test_a_block_without_a_front_in_a_frame_with_one_is_reduced_as_before(look):
         (b,) = look([with_front], 2, edges=edges)
         np.testing.assert_array_equal(a.pixels[1:], b.pixels[1:])
         np.testing.assert_array_equal(a.pixels[0, 1:], b.pixels[0, 1:])
+
+
+# The front layer's ramp (alpha design D-12, D-15; numerical reference step 2)
+
+GREYS = tuple((i * 30, i * 30, i * 30) for i in range(8))
+
+
+def ramped_frame(samples):
+    """A 2×2 frame from per-sample `(front identity, front shade, q, back
+    identity or None)`: the back steel or nothing, the front at alpha `q`."""
+    back = np.zeros((2, 2, 4), np.uint8)
+    front = np.zeros((2, 2, 4), np.uint8)
+    alpha = np.zeros((2, 2), np.uint16)
+    present = np.zeros((2, 2), bool)
+    identity = np.full((2, 2), BACKGROUND, np.int32)
+    shade = np.zeros((2, 2), np.uint8)
+    front_identity = np.full((2, 2), BACKGROUND, np.int32)
+    front_shade = np.zeros((2, 2), np.uint8)
+    for index, (f_id, f_shade, front_q, back_id) in enumerate(samples):
+        y, x = divmod(index, 2)
+        if back_id is not None:
+            back[y, x] = (90, 90, 90, 255)
+            identity[y, x], shade[y, x] = back_id, 137
+        if f_id is not None:
+            front[y, x] = (0, 200, 40, 255)
+            alpha[y, x], present[y, x] = front_q, True
+            front_identity[y, x], front_shade[y, x] = f_id, f_shade
+    buffers = {
+        FRONT_COLOR: front,
+        FRONT_ALPHA: alpha,
+        FRONT_PRESENT: present,
+        FRONT_IDENTITY: front_identity,
+        FRONT_SHADE: front_shade,
+        IDENTITY: identity,
+        SHADE: shade,
+    }
+    return ImageFrame(FrameAddress("s", "default", "walk", 0, 0.0), back, {}, buffers)
+
+
+def ramped(look, samples, entries, names=("steel", "glass", "veil")):
+    document = {
+        "schema": materials.SCHEMA,
+        "ramps": {"metal": [5], "clear": [2], "two": [1, 3]},
+        "materials": entries,
+    }
+    library = materials.validate_library(document, GREYS, source="test")
+    (reduced,) = look(
+        [ramped_frame(samples)],
+        2,
+        palette=GREYS,
+        identities=Identities(names),
+        library=library,
+        shade_range=(0, 255),
+    )
+    return tuple(int(v) for v in reduced.pixels[0, 0])
+
+
+@pytest.mark.parametrize("look", LOOKS)
+def test_a_ramped_front_over_a_ramped_back_composites_both_ramps_then_snaps(look):
+    entries = {"steel": {"uses": "metal"}, "glass": {"uses": "clear"}}
+    got = ramped(look, [(1, 137, q(0.4), 0)] * 4, entries)
+    # The front is glass's ramp colour, the back steel's, composited in
+    # linear, then snapped.
+    expected = snapped(over(GREYS[2], q(0.4), GREYS[5], 65535 - q(0.4)), GREYS)
+    assert got == (*expected, 255)
+    assert expected not in (GREYS[2], GREYS[5])
+
+
+@pytest.mark.parametrize("look", LOOKS)
+def test_a_front_without_a_ramp_keeps_its_ordinary_look_over_a_ramped_back(look):
+    entries = {"steel": {"uses": "metal"}, "glass": "ordinary"}
+    got = ramped(look, [(1, 137, q(0.4), 0)] * 4, entries)
+    front = snapped((0, 200, 40), GREYS)
+    expected = snapped(over(front, q(0.4), GREYS[5], 65535 - q(0.4)), GREYS)
+    assert got == (*expected, 255)
+
+
+@pytest.mark.parametrize("look", LOOKS)
+def test_the_front_identity_tie_goes_to_the_lowest_index(look):
+    # Glass (1) and veil (2) tie at equal front weight; glass, the lower
+    # index, wins under both reductions (material styling D-23).
+    entries = {"glass": {"uses": "clear"}, "veil": {"uses": "metal"}}
+    # A front alone at q 40000 has alpha 255 · 40000 / 65535 = 155.6.
+    samples = [(1, 137, 40000, None)] * 2 + [(2, 137, 40000, None)] * 2
+    assert ramped(look, samples, entries) == (*GREYS[2], 156)
+    samples = [(2, 137, 40000, None)] * 2 + [(1, 137, 40000, None)] * 2
+    assert ramped(look, samples, entries) == (*GREYS[2], 156)
+
+
+def test_mode_s_front_band_tie_goes_to_the_band_nearest_the_weighted_shade():
+    # One identity, ramp [1, 3] over 0–255: shades 0 and 255 tie at equal
+    # front weight, between entries 1 and 3. The weighted mean shade 127.5
+    # is nearer band 0's centre, 64, than band 1's, 192: entry 1.
+    entries = {"glass": {"uses": "two"}}
+    # A front alone at q 30000 has alpha 255 · 30000 / 65535 = 116.7.
+    samples = [(1, 0, 30000, None)] * 2 + [(1, 255, 30000, None)] * 2
+    assert ramped(stylize.mode, samples, entries) == (*GREYS[1], 117)
+    # Shades 10 and 255 give a mean of 132.5, nearer 192: entry 3.
+    samples = [(1, 10, 30000, None)] * 2 + [(1, 255, 30000, None)] * 2
+    assert ramped(stylize.mode, samples, entries) == (*GREYS[3], 117)

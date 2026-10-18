@@ -805,8 +805,10 @@ Four buffer names are reserved, for material identity, shade, normal and
 depth, with this interface:
 
 - Per asset, an **identity list** (`sampling.Identities`): each distinct name
-  of an eligible (`OPAQUE` or `MASK`) material, in a fixed order (by its
-  lowest glTF material index), then the no-identity class. Index `i` names
+  of an eligible (`OPAQUE`, `MASK` or `BLEND`) material, in a fixed order (by
+  its lowest glTF material index), then the no-identity class. A translucent
+  `BLEND` material has an identity like any other, and a name used by opaque
+  and translucent materials is one identity (alpha design D-15). Index `i` names
   the `i`th material name; the last index, `Identities.no_identity`, which
   equals the number of names, is the no-identity class. Stylize receives the
   list through its `identities` argument.
@@ -839,11 +841,13 @@ depth, with this interface:
   joins the render result's material table
   ([result format](#result-format)) with the glTF material identities
   ([Input contract](#input-contract)): the identity list holds each distinct
-  name of an `OPAQUE` or `MASK` material that a primitive of the selected
-  scene uses, by lowest material index. A pixel of background (alpha 0)
-  decodes to `BACKGROUND`; a pixel showing a `BLEND` material (or any other
-  alpha mode), an unnamed material or a primitive without one decodes to
-  the no-identity class. The shade array is the shade buffer's red channel.
+  name of an `OPAQUE`, `MASK` or `BLEND` material that a primitive of the
+  selected scene uses, by lowest material index. A pixel of background
+  (alpha 0) decodes to `BACKGROUND`; a pixel showing a material of an alpha
+  mode glTF does not define, an unnamed material or a primitive without one
+  decodes to the no-identity class. The front identity and shade arrays
+  decode the same way, and stylize uses them to ramp the front layer
+  ([Two layers](#two-layers)). The shade array is the shade buffer's red channel.
   A table entry naming a material the model does not have is a backend
   error (exit 5), like any invalid capture result. The normal and depth
   arrays are the command's to decode too.
@@ -1034,9 +1038,10 @@ come from float AOVs, `matid` and `shade`, of the same render.
   `occlusion_weight` or `convexity_weight` has its replacement shader use
   them, and the global values for the others; AO samples are global only
   (settings design D-9, D-36). An importer's copy of a glTF material takes
-  that material's values, and a surface without a material, a translucent
-  one and one taking the ordinary look take the global values; so does a
-  material taking the default ramp. A library's own `shade` gives a range
+  that material's values, and a surface without a material and one taking
+  the ordinary look take the global values; so does a material taking the
+  default ramp. A translucent `BLEND` material's entry works exactly as an
+  opaque one's: its own values reach its front shade (alpha design D-15). A library's own `shade` gives a range
   only, which acts in stylize, so it never reaches capture, and the capture
   job is the same whatever the default ramp, the ranges and the generated
   ramps (material styling design D-36). No light,
@@ -1121,8 +1126,7 @@ colour's ordinal:
   layer is present. A present front layer may have `q` 0, a surface of
   alpha 0, and a deep combined stack may round to 65535;
 - `front_matid` and `front_shade`: as `matid` and `shade`, for the
-  front-most translucent surface. They are captured here and used from
-  ALPHA-5.
+  front-most translucent surface, which ramp the front layer in stylize.
 
 Every file goes to the script's
 scratch directory, `scratch/` inside the render phase directory: the script
@@ -1480,9 +1484,15 @@ and so is a block with no front sample in a frame with one.
      compositing (D-14).
    - `mode` takes the weighted vote, with the tie rules above against the
      weighted mean; with a palette, the layer's samples map first.
-   - The back layer keeps its material's ramp where it has one, its votes
-     and bands weighted by `tᵢ` (`imageops.map_ramps` with `weights`). The
-     front layer keeps the ordinary look; its ramps are ALPHA-5's.
+   - Each layer takes its winning material's ramp where it has one, by the
+     rules of [Material ramps](#material-ramps) with its own weights in
+     place of colour alpha (`imageops.map_ramps` with `weights`): the back
+     layer from the back's identity and shade arrays and `tᵢ`, the front
+     layer from the front identity and shade arrays, its front-most
+     material's, and `uᵢ` (alpha design D-12, D-15). So a combined front is
+     ramped by its front-most material, and a rear pane's ramp is never
+     applied; a front whose winner takes no ramp keeps the ordinary look, in
+     which every pane's own colour survives.
 3. **Composite** in linear colour, `float64`, through the fixed 256-entry
    sRGB-to-linear table palette mapping uses (`imageops.composite`):
    `C = (W_f · lin(F̄) + W_b · lin(B̄)) / (W_f + W_b)`, encoded to 8-bit sRGB
@@ -1706,8 +1716,10 @@ materials:
   global only; any other key is an unknown field. The `"ordinary"` form, named
   ramps and the default carry none. A material's own value beats the global
   one from any layer; a value it does not give is the global in force. A
-  material with no entry, taking the default ramp or the ordinary look, or
-  translucent (`BLEND`), takes the global values. Materials sharing a name
+  material with no entry, or taking the default ramp or the ordinary look,
+  takes the global values; a translucent (`BLEND`) material's entry works as
+  any other's, its own values reaching its front shade and its own range
+  its front layer's bands (alpha design D-15). Materials sharing a name
   share their entry and its values. The values live only in the library, so
   they never merge across settings layers (D-22). A material's **shade
   range** is the first given of: its entry's own `range`, the library's
@@ -1863,11 +1875,17 @@ the frame carried both normal and depth, and none when it carried neither
 **Resolution.** `stylize.resolve(library, name)` gives the ramp a material
 name takes: its own entry (its `ramp`, or the ramp it `uses`; `"ordinary"`
 gives none), then the library's default ramp, then none, which is the
-ordinary look. The no-identity class (unnamed, missing and `BLEND`
-materials) always takes the ordinary look.
+ordinary look. The no-identity class (unnamed and missing materials, and
+those of an alpha mode glTF does not define) always takes the ordinary look.
+A translucent `BLEND` material resolves as any other (alpha design D-15).
 
 **Mapping a block.** For each `s×s` block, every weight is the colour
-buffer's alpha, as in the reductions above:
+buffer's alpha, as in the reductions above. A frame with a front layer maps
+each layer apart, with that layer's own weights, identity and shade in place
+of the colour alpha and the frame's arrays ([Two layers](#two-layers)): the
+front layer votes on the front identities with `uᵢ` and takes its band from
+the winner's front shade, by the same integer rules and tie order (material
+styling D-23):
 
 1. **Coverage and alpha** are decided exactly as above, by the edges rule,
    from the colour buffer's alpha. Transparent blocks stay `(0, 0, 0, 0)`; a
@@ -1941,22 +1959,23 @@ warnings on stderr, each once (owner decisions 2026-10-07, D-3, D-9, D-17 and
 D-18), before capture starts:
 
 - each named model material with no library entry, naming it and whether it
-  took the default ramp or the ordinary look; a `BLEND` material takes the
-  ordinary look whatever the default, so a name used only by `BLEND`
-  materials says that, and a name shared with opaque materials adds that its
-  `BLEND` parts take the ordinary look
+  took the default ramp or the ordinary look, a translucent `BLEND` material
+  as any other (alpha design D-15); a name used only by materials whose alpha
+  mode glTF does not define takes the ordinary look whatever the default, and
+  its warning names that alpha mode (the manager's note under D-15)
 - one warning counting the parts with no material name, from the glTF
   primitives of the selected scene: an unnamed material, or a primitive without
   one
-- each library entry whose name is used only by `BLEND` materials
+- each library entry whose name is used only by materials whose alpha mode
+  glTF does not define
 - for each global shading value an option or a `--config` file set, each
   material of the model taking its entry's ramp that keeps its own value
   instead, naming the material, the value and the global one, once per
   material and value, by material then in the order `ao_distance_m`,
   `occlusion_weight`, `convexity_weight`, `range` (owner decision 2026-10-11,
   settings design D-23). A global from the shipped defaults, the user file or
-  a loaded sheet warns nothing, nor does an entry the model never uses or a
-  translucent material's
+  a loaded sheet warns nothing, nor does an entry the model never uses; a
+  translucent material's warns as any other's
 - an explicit global `shade.range` that the library's own range beats for a
   material in use, once, naming the library's value (material styling design
   D-35)
