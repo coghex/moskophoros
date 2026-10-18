@@ -19,6 +19,7 @@ from test_command import PLAIN_STYLE, Setup, run
 from test_reuse import edited, write_sheet
 
 from moskophoros import cli, materials, stylize
+from moskophoros.capture import backend
 from moskophoros.gltf import PrimitiveMaterial
 
 # Eight colours, so every ramp index below is valid.
@@ -1014,26 +1015,24 @@ def test_the_buffers_change_no_sheet_or_preview_without_a_library(
     ]
 
 
-# A model without BLEND materials (alpha design D-15; requirement 7): the
-# sheet and warnings are those before translucent materials took identities,
-# pinned as master 908cd52 gave them.
+# A model without BLEND materials (alpha design D-15; requirement 7): its
+# sheet and warnings are the same bytes whether or not BLEND is among the
+# alpha modes that take identities and ramps, as before this slice. Compared
+# within one run, so neither the platform's zlib nor its floating point
+# enters.
 
 OPAQUE_MATERIALS = [
     {"name": "steel"},
     {"name": "cloth"},
     {"name": "leaf", "alphaMode": "MASK"},
 ]
-OPAQUE_DIGESTS = {
-    "palette only": "3b2b4725d67e39cb714f6cd6f4732c586c579a89991c2cf46420842b5d0c85b1",
-    "library": "e16a320360cfd0b5ada11dba58463ae5241a382b23eae0ae4df3801e08627d64",
-}
 
 
 def opaque_outputs(setup, capsys):
-    """The digests of an opaque model's sheet and warnings, with the palette
-    alone and with the library, its default ramp taken by cloth."""
-    named_hero(setup, OPAQUE_MATERIALS)
-    found = {}
+    """An opaque model's sheets and warnings for each material code, with
+    the palette alone and with the library, its default ramp taken by
+    cloth."""
+    found = []
     for code in (1, 2, 3):
         configure_code(setup, code)
         status, _, err = run(
@@ -1041,21 +1040,23 @@ def opaque_outputs(setup, capsys):
             setup.argv("--palette", str(palette_file(setup.tmp_path)), "--no-preview"),
         )
         assert status == 0, err
-        found.setdefault("palette only", []).append(setup.png.read_bytes())
+        found.append((setup.png.read_bytes(), err))
         err = run_with_library(
             setup, capsys, "--no-preview", library=library_with(default="cloth")
         )
-        found.setdefault("library", []).append(
-            setup.png.read_bytes() + "\n".join(warnings_of(err)).encode()
-        )
-    return {
-        name: hashlib.sha256(b"".join(parts)).hexdigest()
-        for name, parts in found.items()
-    }
+        found.append((setup.png.read_bytes(), warnings_of(err)))
+    return found
 
 
-def test_an_opaque_model_s_output_is_unchanged(setup, capsys):
-    assert opaque_outputs(setup, capsys) == OPAQUE_DIGESTS
+def test_an_opaque_model_s_output_is_unchanged(setup, capsys, monkeypatch):
+    named_hero(setup, OPAQUE_MATERIALS)
+    now = opaque_outputs(setup, capsys)
+    # The alpha modes before this slice: BLEND neither had an identity nor
+    # took a ramp.
+    monkeypatch.setattr(materials, "RAMP_ALPHA_MODES", ("OPAQUE", "MASK"))
+    monkeypatch.setattr(backend, "RAMP_ALPHA_MODES", ("OPAQUE", "MASK"))
+    assert opaque_outputs(setup, capsys) == now
+    assert any(warnings for _, warnings in now[1::2])
 
 
 def test_an_alpha_mode_gltf_does_not_define_takes_the_ordinary_look_and_is_named():
