@@ -51,7 +51,7 @@ from array import array
 import bpy
 
 JOB_SCHEMA = "moskophoros.capture-job/1"
-RESULT_SCHEMA = "moskophoros.capture-result/2"
+RESULT_SCHEMA = "moskophoros.capture-result/3"
 NODE_NAME = "moskophoros.node.{}"
 ANIMATION_NAME = "moskophoros.animation.{}"
 # Not ending in digits: Blender would read those as its own ".001" suffix
@@ -1080,27 +1080,45 @@ MAX_AO_SAMPLES = 128
 NO_MATERIAL = "moskophoros.no-material"
 # glTF's default material, which a primitive without one takes: white.
 NO_MATERIAL_COLOR = (1.0, 1.0, 1.0, 1.0)
-# Every render frame's buffers, each at <name>/NNNNNN.png.
-BUFFERS = ("color", "matid", "shade", "normal", "depth")
+# Every render frame's buffers, each at <name>/NNNNNN.png: the back layer's
+# colour, material ID and shade, the front-most surface's normal and depth,
+# and the front layer's colour, alpha, material ID and shade (alpha design,
+# Capture transport and provenance).
+BUFFERS = (
+    "color",
+    "matid",
+    "shade",
+    "normal",
+    "depth",
+    "front_color",
+    "front_alpha",
+    "front_matid",
+    "front_shade",
+)
 # The render phase's directory for the render's TGA and OpenEXR, removed
 # once every frame is done.
 SCRATCH = "scratch"
-# The view-layer AOVs the render adds: the material-ID code and the linear
+# The view-layer AOVs the renders add: the material-ID code and the linear
 # shade, values; the camera-space shading normal, a colour (lighting sheet
-# design D-11); and the camera depth, a value.
+# design D-11); the camera depth, a value; the gated hit; and the front
+# layer's material-ID code, shade and hit.
 AOVS = (
     ("matid", "VALUE"),
     ("shade", "VALUE"),
     ("normal", "COLOR"),
     ("depth", "VALUE"),
     ("hit", "VALUE"),
+    ("front_matid", "VALUE"),
+    ("front_shade", "VALUE"),
+    ("front_hit", "VALUE"),
 )
 # The surface gate's threshold, the view layer's `pass_alpha_threshold`.
 GATE_THRESHOLD = COLOR["pass_alpha_threshold"]
 # Cycles drops a closure whose weight is below this (CLOSURE_WEIGHT_CUTOFF).
 CLOSURE_CUTOFF = 1e-5
-# The shared node group whose value switches every surface to the count.
-SWITCH = "moskophoros.count"
+# The shared node group whose two values switch every surface between the
+# back, front and count renders.
+SWITCH = "moskophoros.switch"
 # A camera path may cross this many surfaces that still let light through:
 # both transparent bounce limits (alpha design spike 3).
 LAYER_LIMIT = COLOR["transparent_max_bounces"]
@@ -1219,25 +1237,28 @@ class Surfaces:
         self.aovs = []
         self.stand_in = None
         self.switch = None
+        self.translucent = False
 
     def make_switch(self):
-        """The shared node group whose one value, 0 or 1, switches every
-        surface between the main and the count render."""
+        """The shared node group whose two values, each 0 or 1, switch every
+        surface between the back, front and count renders."""
         self.switch = bpy.data.node_groups.new(SWITCH, "ShaderNodeTree")
-        self.switch.interface.new_socket(
-            "count", in_out="OUTPUT", socket_type="NodeSocketFloat"
-        )
-        value = self.switch.nodes.new("ShaderNodeValue")
-        value.outputs[0].default_value = 0.0
         output = self.switch.nodes.new("NodeGroupOutput")
-        self.switch.links.new(value.outputs[0], output.inputs[0])
+        for index, name in enumerate(("count", "front")):
+            self.switch.interface.new_socket(
+                name, in_out="OUTPUT", socket_type="NodeSocketFloat"
+            )
+            value = self.switch.nodes.new("ShaderNodeValue")
+            value.name = name
+            value.outputs[0].default_value = 0.0
+            self.switch.links.new(value.outputs[0], output.inputs[index])
 
-    def count(self, counting):
-        """Switch every surface to the count render's shader, or back: one
-        shared value, which Cycles folds into each material (alpha design
-        spike 3)."""
-        node = next(n for n in self.switch.nodes if n.bl_idname == "ShaderNodeValue")
-        node.outputs[0].default_value = 1.0 if counting else 0.0
+    def mode(self, name):
+        """Switch every surface to the `back`, `front` or `count` render's
+        shader: two shared values, which Cycles folds into each material."""
+        values = {"back": (0.0, 0.0), "front": (0.0, 1.0), "count": (1.0, 0.0)}[name]
+        for key, value in zip(("count", "front"), values, strict=True):
+            self.switch.nodes[key].outputs[0].default_value = value
 
     def apply(self):
         rendered = {
@@ -1260,12 +1281,20 @@ class Surfaces:
             index = int(match.group(1))
             where = _shown_material(self.document, index)
             colour, alpha = surface_sockets(material, where)
-            # Only a MASK material's alpha reaches the capture: it cuts out
-            # (alpha design D-1, D-3). Every other material is captured
-            # opaque, BLEND included, until ALPHA-4.
+            # A MASK material's alpha cuts out, and a BLEND material's is
+            # translucent (alpha design D-1, D-3); an OPAQUE material is
+            # opaque whatever its alpha.
             mode = self.document["materials"][index].get("alphaMode", "OPAQUE")
+            translucent = mode == "BLEND"
+            self.translucent |= translucent
             materials.append(
-                (material, self.codes[index], colour, alpha if mode == "MASK" else None)
+                (
+                    material,
+                    self.codes[index],
+                    colour,
+                    alpha if mode in ("MASK", "BLEND") else None,
+                    translucent,
+                )
             )
         layer = bpy.context.view_layer
         for name, kind in AOVS:
@@ -1276,9 +1305,9 @@ class Surfaces:
         self.make_switch()
         self.stand_in = bpy.data.materials.new(NO_MATERIAL)
         self.stand_in.use_nodes = True
-        materials.append((self.stand_in, NO_MATERIAL_ID, None, None))
-        for material, code, colour, alpha in materials:
-            self._inject(material, code, colour, alpha)
+        materials.append((self.stand_in, NO_MATERIAL_ID, None, None, False))
+        for material, code, colour, alpha, translucent in materials:
+            self._inject(material, code, colour, alpha, translucent)
         for obj in self.objects:
             if obj.type != "MESH":
                 continue
@@ -1290,7 +1319,7 @@ class Surfaces:
                     self.slots.append(slot)
                     slot.material = self.stand_in
 
-    def _inject(self, material, code, colour, alpha):
+    def _inject(self, material, code, colour, alpha, translucent):
         tree = material.node_tree
         outputs = [n for n in tree.nodes if n.bl_idname == "ShaderNodeOutputMaterial"]
         added = []
@@ -1352,10 +1381,25 @@ class Surfaces:
             opacity = source(alpha, "value")
         transparent = node("ShaderNodeBsdfTransparent")
         transparent.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)
-        surface = node("ShaderNodeMixShader")
-        tree.links.new(opacity, surface.inputs["Fac"])
-        tree.links.new(transparent.outputs[0], surface.inputs[1])
-        tree.links.new(emission.outputs[0], surface.inputs[2])
+        shown = node("ShaderNodeMixShader")
+        tree.links.new(opacity, shown.inputs["Fac"])
+        tree.links.new(transparent.outputs[0], shown.inputs[1])
+        tree.links.new(emission.outputs[0], shown.inputs[2])
+        # The two layers (alpha design D-6, D-12): the back render shows the
+        # opaque surfaces with every translucent one a hole; the front render
+        # shows the translucent surfaces, each opaque one held out, so its
+        # alpha is the front layer's and its colour the front's alone.
+        if translucent:
+            back_surface = transparent.outputs[0]
+            front_surface = shown.outputs[0]
+        else:
+            back_surface = shown.outputs[0]
+            holdout = node("ShaderNodeHoldout")
+            held = node("ShaderNodeMixShader")
+            tree.links.new(opacity, held.inputs["Fac"])
+            tree.links.new(transparent.outputs[0], held.inputs[1])
+            tree.links.new(holdout.outputs[0], held.inputs[2])
+            front_surface = held.outputs[0]
         # The surface gate (alpha design spike 2), in the order Cycles computes
         # the Mix shader's transparency: Cycles stops its passes exactly where
         # the opacity v > 0, which is where g = 1, so the surface it selects
@@ -1371,6 +1415,9 @@ class Surfaces:
             "MULTIPLY", math("ADD", math("ADD", through, through), through), 1 / 3
         )
         closure = math("SUBTRACT", 1.0, math("LESS_THAN", average, CLOSURE_CUTOFF))
+        if translucent:
+            # The back render crosses every translucent surface, as a hole.
+            closure = math("ADD", 1.0, 0.0)
         let_through = node("ShaderNodeBsdfTransparent")
         let_through.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)
         one_more = node("ShaderNodeEmission")
@@ -1386,16 +1433,29 @@ class Surfaces:
         tree.links.new(math("SUBTRACT", 1.0, closure), counted.inputs["Fac"])
         tree.links.new(crossed.outputs[0], counted.inputs[1])
         tree.links.new(stopped.outputs[0], counted.inputs[2])
-        # One shared switch: 0 for the main render, 1 for the count render,
-        # which also zeroes every AOV and the occlusion distance.
+        # One shared switch of two values: back, front or count, the count
+        # also zeroing every AOV and the occlusion distance.
         switch = node("ShaderNodeGroup")
         switch.node_tree = self.switch
+        layered = node("ShaderNodeMixShader")
+        tree.links.new(switch.outputs["front"], layered.inputs["Fac"])
+        tree.links.new(back_surface, layered.inputs[1])
+        tree.links.new(front_surface, layered.inputs[2])
         chosen = node("ShaderNodeMixShader")
-        tree.links.new(switch.outputs[0], chosen.inputs["Fac"])
-        tree.links.new(surface.outputs[0], chosen.inputs[1])
+        tree.links.new(switch.outputs["count"], chosen.inputs["Fac"])
+        tree.links.new(layered.outputs[0], chosen.inputs[1])
         tree.links.new(counted.outputs[0], chosen.inputs[2])
         tree.links.new(chosen.outputs[0], output.inputs["Surface"])
-        kept = math("MULTIPLY", gate, math("SUBTRACT", 1.0, switch.outputs[0]))
+        rendering = math("SUBTRACT", 1.0, switch.outputs["count"])
+        front_on = math("MULTIPLY", switch.outputs["front"], rendering)
+        back_on = math("SUBTRACT", rendering, front_on)
+        if translucent:
+            back_kept = math("MULTIPLY", 0.0, back_on)
+            front_kept = math("MULTIPLY", gate, front_on)
+        else:
+            back_kept = math("MULTIPLY", gate, back_on)
+            front_kept = math("MULTIPLY", 0.0, front_on)
+        kept = math("ADD", back_kept, front_kept)
 
         def aov(name, value):
             written = node("ShaderNodeOutputAOV")
@@ -1412,10 +1472,18 @@ class Surfaces:
         # A glTF material's code is its index plus 1, exact in a float.
         identity = node("ShaderNodeValue")
         identity.outputs[0].default_value = float(code)
-        aov("matid", identity.outputs[0])
-        hit = node("ShaderNodeOutputAOV")
-        hit.aov_name = "hit"
-        tree.links.new(kept, hit.inputs["Value"])
+
+        def gated(name, value, by):
+            written = node("ShaderNodeOutputAOV")
+            written.aov_name = name
+            tree.links.new(math("MULTIPLY", value, by), written.inputs["Value"])
+
+        gated("matid", identity.outputs[0], back_kept)
+        gated("front_matid", identity.outputs[0], front_kept)
+        for name, by in (("hit", back_kept), ("front_hit", front_kept)):
+            hit = node("ShaderNodeOutputAOV")
+            hit.aov_name = name
+            tree.links.new(by, hit.inputs["Value"])
         # The shade (material styling design D-9); the stand-in for surfaces
         # without a material takes the global values. The occlusion distance
         # is gated too, so a hole runs no occlusion (alpha design D-7).
@@ -1446,7 +1514,8 @@ class Surfaces:
         shade.inputs[1].default_value = values["convexity_weight"]
         tree.links.new(convexity.outputs[0], shade.inputs[0])
         tree.links.new(occlusion.outputs[0], shade.inputs[2])
-        aov("shade", shade.outputs[0])
+        gated("shade", shade.outputs[0], back_kept)
+        gated("front_shade", shade.outputs[0], front_kept)
         # The shading normal, the model's interpolated vertex normal, in the
         # camera's space; no material property reaches it (D-2, D-16).
         geometry = node("ShaderNodeNewGeometry")
@@ -2008,9 +2077,8 @@ def reach(objects, depsgraph, ground):
 
 
 def render_frames(job, document, statics):
-    """Render every requested frame to color/NNNNNN.png, and its material-ID,
-    shade, normal and depth buffers to matid/, shade/, normal/ and depth/,
-    in request order."""
+    """Render every requested frame to color/NNNNNN.png, and its other
+    buffers (`BUFFERS`) to their directories, in request order."""
     scene = bpy.context.scene
     fps = scene.render.fps / scene.render.fps_base
     settings = job["settings"]
@@ -2099,26 +2167,46 @@ def render_frames(job, document, statics):
 def render_frame(
     scene, surfaces, scratch, size, job, relative, codes, ground_view_z, where, place
 ):
-    """The frame's colour, material-ID, shade, normal and depth buffers, from
-    one Cycles render: the 8-bit TGA it writes through the `Standard`
-    transform, and its alpha and AOVs saved as an OpenEXR. A count render
-    after it refuses a frame too deep to render (`check_count`)."""
+    """The frame's back and front buffers: the back render's colour (its
+    8-bit TGA through the `Standard` transform), material ID and shade; the
+    front render's straight colour (its TGA), 16-bit alpha, material ID and
+    shade; and the front-most surface's normal and depth. A count render
+    after them refuses a frame too deep to render (`check_count`)."""
     width, height = size
+    layer = bpy.context.view_layer.name
     target = os.path.join(scratch, "capture.tga")
     exr = os.path.join(scratch, "capture.exr")
-    scene.render.filepath = target
-    bpy.ops.render.render(write_still=True)
-    save_exr(scene, exr)
-    layer = bpy.context.view_layer.name
-    # Background mode keeps no render in memory, so the count is read back
-    # from its own OpenEXR; the switch back restores the main render exactly.
+    front_target = os.path.join(scratch, "front.tga")
+    front_exr = os.path.join(scratch, "front.exr")
     count = os.path.join(scratch, "count.exr")
-    surfaces.count(True)
     try:
+        surfaces.mode("back")
+        scene.render.filepath = target
+        bpy.ops.render.render(write_still=True)
+        save_exr(scene, exr)
+        if surfaces.translucent:
+            surfaces.mode("front")
+            scene.render.filepath = front_target
+            # One transparent bounce more than the limit. Cycles shades the
+            # surface a path ends at after its last bounce without closures,
+            # so a holdout there would hold nothing out; the count render
+            # refuses any path crossing more than LAYER_LIMIT surfaces that
+            # let light through, so here the path always reaches the opaque
+            # surface it ends at, and holds it out.
+            limits = (LAYER_LIMIT + 1, LAYER_LIMIT + 1)
+            cycles = scene.cycles
+            cycles.min_transparent_bounces, cycles.transparent_max_bounces = limits
+            try:
+                bpy.ops.render.render(write_still=True)
+            finally:
+                cycles.min_transparent_bounces = COLOR["min_transparent_bounces"]
+                cycles.transparent_max_bounces = COLOR["transparent_max_bounces"]
+            save_exr(scene, front_exr)
+        surfaces.mode("count")
         bpy.ops.render.render(write_still=False)
         save_exr(scene, count)
     finally:
-        surfaces.count(False)
+        surfaces.mode("back")
     red = f"{layer}.Combined.R"
     check_count(read_exr(count, width, height, [red])[red], width, place)
     os.remove(count)
@@ -2132,6 +2220,7 @@ def render_frame(
     channels = read_exr(exr, width, height, names)
     os.remove(exr)
     alpha, ids, shades, x, y, z, view_z, hit = (channels[name] for name in names)
+    del channels
     output = job["output_dir"]
     covered = coverage(alpha, width, where)
     check_hits(hit, covered, width, where)
@@ -2144,7 +2233,58 @@ def render_frame(
     id_rows, shade_rows = id_and_shade_rows(ids, shades, covered, width, codes, where)
     write_png(os.path.join(output, relative["matid"]), width, id_rows)
     write_png(os.path.join(output, relative["shade"]), width, shade_rows)
-    del id_rows, shade_rows
+    del id_rows, shade_rows, ids, shades
+    if surfaces.translucent:
+        front_rows = read_targa(front_target, width, height)
+        os.remove(front_target)
+        names = (
+            [f"{layer}.Combined.A", f"{layer}.front_matid.X", f"{layer}.front_shade.X"]
+            + [f"{layer}.normal.{axis}" for axis in "RGB"]
+            + [f"{layer}.depth.X", f"{layer}.front_hit.X"]
+        )
+        channels = read_exr(front_exr, width, height, names)
+        os.remove(front_exr)
+        f_alpha, f_ids, f_shades, fx, fy, fz, f_view_z, f_hit = (
+            channels[name] for name in names
+        )
+        del channels
+        front = front_presence(f_hit, f_alpha, width, where)
+        write_png(
+            os.path.join(output, relative["front_color"]),
+            width,
+            front_colour_rows(front_rows, front, width),
+        )
+        del front_rows
+        write_front_alpha(
+            os.path.join(output, relative["front_alpha"]), width, height, f_alpha, front
+        )
+        id_rows, shade_rows = id_and_shade_rows(
+            f_ids, f_shades, front, width, codes, where
+        )
+        write_png(os.path.join(output, relative["front_matid"]), width, id_rows)
+        write_png(os.path.join(output, relative["front_shade"]), width, shade_rows)
+        del id_rows, shade_rows, f_ids, f_shades
+        # The maps describe the front-most surface (alpha design D-11).
+        x, y, z, view_z = (
+            frontmost(f, b, front)
+            for f, b in ((fx, x), (fy, y), (fz, z), (f_view_z, view_z))
+        )
+        surface = [
+            bytes(a | b for a, b in zip(back_row, front_row, strict=True))
+            for back_row, front_row in zip(covered, front, strict=True)
+        ]
+    else:
+        nothing = [bytes(4 * width)] * height
+        for name in ("front_color", "front_matid", "front_shade"):
+            write_png(os.path.join(output, relative[name]), width, nothing)
+        write_png(
+            os.path.join(output, relative["front_alpha"]),
+            width,
+            [bytes(8 * width)] * height,
+            bits=16,
+            level=WIDE_LEVEL,
+        )
+        surface = covered
     write_normal(
         os.path.join(output, relative["normal"]),
         width,
@@ -2153,7 +2293,7 @@ def render_frame(
         y,
         z,
         where,
-        covered,
+        surface,
     )
     write_depth(
         os.path.join(output, relative["depth"]),
@@ -2162,8 +2302,79 @@ def render_frame(
         view_z,
         ground_view_z,
         where,
-        covered,
+        surface,
     )
+
+
+def front_presence(hit, alpha, width, where):
+    """The front layer's rows of 255 where the gated front hit is 1 and 0
+    where it is 0: its presence, from Blender's float data. A hit must be
+    exactly 0 or 1, and the front render's alpha must be above 0 exactly
+    where it is 1."""
+    if not set(hit) <= {0.0, 1.0}:
+        index = _first_other(hit)
+        raise ScriptError(
+            f"{where}: the front gate's hit at pixel "
+            f"{(index % width, index // width)} is {hit[index]!r}, not exactly 0 "
+            "or 1"
+        )
+    present = bytes(map(bool, hit))
+    shown = bytes(value > 0.0 for value in alpha)
+    if present != shown:
+        index = _first_difference(present, shown)
+        raise ScriptError(
+            f"{where}: the front layer at pixel {(index % width, index // width)} "
+            f"has alpha {alpha[index]!r} but hit {hit[index]!r}"
+        )
+    rows = present.translate(_FULL)
+    return [rows[y : y + width] for y in range(0, len(rows), width)]
+
+
+_FULL = bytes([0] + [255] * 255)
+
+
+def front_colour_rows(rows, front, width):
+    """The front colour's rows: the front render's straight 8-bit sRGB where
+    the front layer is present, with alpha 255, and `(0, 0, 0, 0)`
+    elsewhere."""
+    present = b"".join(front)
+    pixels = bytearray(_masked(b"".join(rows), _per_channel(present)))
+    pixels[3::4] = present
+    return _split(pixels, 4 * width)
+
+
+def write_front_alpha(path, width, height, alpha, front):
+    """The front alpha buffer: R the front layer's alpha `f` as
+    `q = floor(65535 · f + ½)`, G = B = 0 and alpha 65535 where the front
+    layer is present, and 0 everywhere else."""
+    present = b"".join(front)
+    q = _samples(
+        math.floor(65535 * value + 0.5) if shown else 0
+        for value, shown in zip(alpha, present, strict=True)
+    )
+    covered = _samples(COVERED if shown else 0 for shown in present)
+    pixels = bytearray(width * height * 8)
+    pixels[0::8] = q[0::2]
+    pixels[1::8] = q[1::2]
+    pixels[6::8] = covered[0::2]
+    pixels[7::8] = covered[1::2]
+    write_png(path, width, _rows(pixels, width, height), bits=16, level=WIDE_LEVEL)
+
+
+def frontmost(front_values, back_values, front):
+    """The front render's float values where the front layer is present, else
+    the back render's."""
+    mask = _per_channel(b"".join(front))
+    size = len(mask)
+    taken = int.from_bytes(front_values.tobytes(), "little") & int.from_bytes(
+        mask, "little"
+    )
+    kept = int.from_bytes(back_values.tobytes(), "little") & ~int.from_bytes(
+        mask, "little"
+    )
+    merged = array("f")
+    merged.frombytes((taken | kept).to_bytes(size, "little"))
+    return merged
 
 
 def main(argv):

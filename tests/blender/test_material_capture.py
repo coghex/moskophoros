@@ -47,9 +47,10 @@ def pixels(path):
         return np.asarray(image.convert("RGBA")).astype(np.int64)
 
 
-def codes(result, ordinal=0):
-    """Frame `ordinal`'s material-ID codes, 0 for background."""
-    ids = pixels(list(result.buffers.values())[ordinal]["matid"])
+def codes(result, name="matid", ordinal=0):
+    """Frame `ordinal`'s material-ID codes in buffer `name`, 0 for
+    background."""
+    ids = pixels(list(result.buffers.values())[ordinal][name])
     return np.where(ids[..., 3] == 255, ids[..., 0] << 8 | ids[..., 1], 0)
 
 
@@ -93,11 +94,13 @@ def test_the_material_id_buffer_is_exact_and_its_table_maps_the_gltf_materials(
         CUT_TEXEL: code["behind"],
         (0.55, 1.6): code["occluder"],
         (0.2, 1.2): code["occluded"],
-        (-0.5, -0.5): code["glass"],
+        # The BLEND glass is the front layer, with nothing behind it.
+        (-0.5, -0.5): 0,
         (0.5, -0.5): backend.NO_MATERIAL_ID,
     }
     for point, value in expected.items():
         assert image[at(*point, supersample)] == value, point
+    assert codes(result, "front_matid")[at(-0.5, -0.5, supersample)] == code["glass"]
     used = set(np.unique(image).tolist())
     # Every code is a table entry or background; the unused material never
     # shows, and the surface behind the MASK material shows through its holes.
@@ -187,12 +190,19 @@ def test_identities_decode_duplicate_unnamed_missing_and_blend_materials(
         KEPT_TEXEL: 3,  # leaf (MASK)
         CUT_TEXEL: 4,  # bark, through the leaf's hole
         (0.2, 1.2): none,  # unnamed
-        (-0.5, -0.5): none,  # BLEND
+        (-0.5, -0.5): BACKGROUND,  # nothing behind the BLEND glass
         (0.5, -0.5): none,  # no material
     }
     for point, value in expected.items():
         assert identity[at(*point, 1)] == value, point
     assert identity[0, 0] == BACKGROUND and shade[0, 0] == 0
+    # The BLEND glass is the front layer's, in the no-identity class until
+    # ALPHA-5.
+    _, _, present, front_identity, _ = backend.decode_front(
+        list(result.buffers.values())[0], lookup
+    )
+    assert present[at(-0.5, -0.5, 1)] and front_identity[at(-0.5, -0.5, 1)] == none
+    assert (front_identity[~present] == BACKGROUND).all()
 
 
 def test_repeat_renders_are_byte_identical(found, tmp_path):
@@ -346,7 +356,7 @@ material = bpy.data.materials.new("probe")
 material.use_nodes = True
 surfaces = script.Surfaces(bpy.context.scene, [], {}, json.loads(shade), {})
 surfaces.make_switch()
-surfaces._inject(material, int(code), None, None)
+surfaces._inject(material, int(code), None, None, False)
 nodes = material.node_tree.nodes
 labelled = {node.label: node for node in nodes if node.label.startswith("moskophoros.")}
 distance = labelled["moskophoros.ao_distance_m"]

@@ -220,8 +220,14 @@ ZERO = (quantised(0.0),) * 3
         (samples("depth", at_corner((0, 1, 0, 0))), "not an encoded value"),
         # Coverage that differs from the material ID's: no surface where it
         # has one ...
-        (samples("normal", at_corner((0, 0, 0, 0))), "no surface, but the material-ID"),
-        (samples("depth", at_corner((0, 0, 0, 0))), "no surface, but the material-ID"),
+        (
+            samples("normal", at_corner((0, 0, 0, 0))),
+            "no surface, but a layer shows one there",
+        ),
+        (
+            samples("depth", at_corner((0, 0, 0, 0))),
+            "no surface, but a layer shows one there",
+        ),
         # ... and a surface where it has none.
         (matid_background_corner, "normal pixel \\(0, 0\\) is .*, a surface, but"),
         (

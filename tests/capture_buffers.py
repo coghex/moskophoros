@@ -83,3 +83,39 @@ def write_depth(path, covered, depth=0.0):
     covered = np.asarray(covered, dtype=bool)
     depths = np.broadcast_to(np.asarray(depth, dtype=np.float64), covered.shape)
     return png16(path, depth_samples(depths, covered))
+
+
+# The front layer's buffers (alpha design, Capture transport and provenance).
+FRONT_BUFFERS = ("front_color", "front_alpha", "front_matid", "front_shade")
+
+
+def write_front(
+    directory, ordinal, size, present=None, colour=(0, 0, 0), q=0, code=1, shade=137
+):
+    """Frame `ordinal`'s front buffers under `directory`, `size` (width,
+    height): the front layer in `colour` at alpha `q`, material-ID `code` and
+    `shade` wherever `present`, a `(height, width)` bool array, and nowhere
+    by default. Returns {name: relative path}."""
+    from PIL import Image
+
+    width, height = size
+    present = (
+        np.zeros((height, width), dtype=bool)
+        if present is None
+        else np.asarray(present, dtype=bool)
+    )
+    paths = {name: f"{name}/{ordinal:06d}.png" for name in FRONT_BUFFERS}
+    for name, value in (
+        ("front_color", (*colour, 255)),
+        ("front_matid", (code >> 8, code & 255, 0, 255)),
+        ("front_shade", (shade, shade, shade, 255)),
+    ):
+        pixels = np.zeros((height, width, 4), dtype=np.uint8)
+        pixels[present] = value
+        path = directory / paths[name]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(pixels, "RGBA").save(path)
+    samples = np.zeros((height, width, 4), dtype=np.uint16)
+    samples[present] = (q, 0, 0, SURFACE)
+    png16(directory / paths["front_alpha"], samples)
+    return paths

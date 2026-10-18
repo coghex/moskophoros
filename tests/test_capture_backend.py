@@ -9,7 +9,13 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from capture_buffers import write_depth, write_normal
+from capture_buffers import (
+    FRONT_BUFFERS,
+    png16,
+    write_depth,
+    write_front,
+    write_normal,
+)
 from PIL import Image
 from shading import DEFAULT_SHADE
 
@@ -406,7 +412,7 @@ def test_a_malformed_job_is_an_internal_error(change, message):
 
 def measure_document(job):
     return {
-        "schema": "moskophoros.capture-result/2",
+        "schema": "moskophoros.capture-result/3",
         "mode": "measure",
         "job_sha256": independent_sha256(job),
         "source_sha256": SHA,
@@ -627,9 +633,10 @@ def render_document(job, phase_dir):
         covered = np.ones((6, 8), dtype=bool)
         write_normal(phase_dir / paths["normal"], covered)
         write_depth(phase_dir / paths["depth"], covered, 0.5)
+        paths |= write_front(phase_dir, ordinal, (8, 6))
         records.append({"address": dict(frame["address"]), "buffers": paths})
     return {
-        "schema": "moskophoros.capture-result/2",
+        "schema": "moskophoros.capture-result/3",
         "mode": "render",
         "job_sha256": independent_sha256(job),
         "source_sha256": SHA,
@@ -662,6 +669,19 @@ def _clear(phase_dir, ordinal, pixel):
         write(phase_dir / f"{name}/{ordinal:06d}.png", *args)
 
 
+# The front layer at one pixel.
+FRONT_PIXEL = np.zeros((6, 8), dtype=bool)
+FRONT_PIXEL[2, 3] = True
+
+
+def write_front_alpha(phase_dir, ordinal, present, sample=(0, 0, 0, 0)):
+    """Frame `ordinal`'s front alpha buffer, `sample` wherever `present`."""
+    samples = np.zeros((6, 8, 4), dtype=np.uint16)
+    if present is not None:
+        samples[present] = sample
+    png16(phase_dir / f"front_alpha/{ordinal:06d}.png", samples)
+
+
 def _parent(phase_dir, relative):
     (phase_dir / relative).parent.mkdir(parents=True, exist_ok=True)
     return relative
@@ -679,7 +699,10 @@ def test_a_valid_render_result(tmp_path):
     assert result.measurements is None and result.roots is None
     root = tmp_path.resolve()
     assert list(result.buffers.values()) == [
-        {name: root / f"{name}/{ordinal:06d}.png" for name in BUFFER_NAMES}
+        {
+            name: root / f"{name}/{ordinal:06d}.png"
+            for name in (*BUFFER_NAMES, *FRONT_BUFFERS)
+        }
         for ordinal in range(6)
     ]
     assert result.materials == {1: 0, 65535: None}
@@ -834,6 +857,53 @@ RENDER_REJECTIONS = {
         lambda d, p: d["frames"][0]["buffers"].update(extra="extra/000000.png"),
         "extra buffer 'extra/000000.png' does not exist",
     ),
+    # The front layer (alpha design, Capture transport and provenance).
+    "no front alpha buffer": (
+        lambda d, p: d["frames"][0]["buffers"].pop("front_alpha"),
+        "frame 0 has no front_alpha buffer",
+    ),
+    "an 8-bit front alpha": (
+        lambda d, p: Image.new("RGBA", (8, 6)).save(p / "front_alpha/000000.png"),
+        r"front_alpha buffer 'front_alpha/000000.png' is not 16-bit RGBA",
+    ),
+    "a front alpha where no front colour is": (
+        lambda d, p: (
+            write_front(p, 1, (8, 6), FRONT_PIXEL, (10, 20, 30), 26214),
+            png16(p / "front_alpha/000001.png", np.zeros((6, 8, 4), np.uint16)),
+        ),
+        r"front_alpha pixel \(3, 2\) is \(0, 0, 0, 0\), no surface, but the "
+        r"front material-ID pixel there is \(0, 1, 0, 255\)",
+    ),
+    "a front colour over no front material ID": (
+        lambda d, p: (
+            write_front(p, 2, (8, 6), FRONT_PIXEL, (10, 20, 30), 26214),
+            _paint(p / "front_matid/000002.png", (3, 2), (0, 0, 0, 0)),
+            _paint(p / "front_shade/000002.png", (3, 2), (0, 0, 0, 0)),
+            write_front_alpha(p, 2, None),
+        ),
+        r"front colour pixel \(3, 2\) is \(10, 20, 30, 255\), a surface, but the "
+        r"front material-ID pixel there is \(0, 0, 0, 0\)",
+    ),
+    "a front material-ID code not in the table": (
+        lambda d, p: write_front(p, 0, (8, 6), FRONT_PIXEL, (1, 2, 3), 9, code=7),
+        "frame 0: front material-ID code 7 is not in the table",
+    ),
+    "a front alpha with green": (
+        lambda d, p: (
+            write_front(p, 0, (8, 6), FRONT_PIXEL, (1, 2, 3), 9),
+            write_front_alpha(p, 0, FRONT_PIXEL, (9, 1, 0, 65535)),
+        ),
+        r"front_alpha pixel \(3, 2\) is \(9, 1, 0, 65535\), not an encoded value",
+    ),
+    "a front-only pixel the normal leaves empty": (
+        lambda d, p: (
+            _clear(p, 3, (3, 2)),
+            write_front(p, 3, (8, 6), FRONT_PIXEL, (1, 2, 3), 9),
+        ),
+        r"frame 3: normal pixel \(3, 2\) is \(0, 0, 0, 0\), no surface, but a "
+        r"layer shows one there \(material-ID pixels \(0, 0, 0, 0\) and front "
+        r"\(0, 1, 0, 255\)\)",
+    ),
 }
 
 
@@ -847,6 +917,22 @@ def test_a_render_result_is_rejected(tmp_path, name):
     with pytest.raises(BackendError, match=message) as raised:
         validate_result(job, phase_dir, encode(document))
     assert raised.value.exit_code == 5
+
+
+def test_a_front_layer_over_and_beside_the_back_is_accepted(tmp_path):
+    # Frame 4 shows a front layer at one pixel over the back, and frame 5 a
+    # front alone where its back is cleared.
+    phase_dir = tmp_path / "render"
+    job = render_job(str(phase_dir))
+    document = render_document(job, phase_dir)
+    write_front(phase_dir, 4, (8, 6), FRONT_PIXEL, (10, 20, 30), 26214)
+    _clear(phase_dir, 5, (3, 2))
+    covered = np.ones((6, 8), dtype=bool)
+    write_normal(phase_dir / "normal/000005.png", covered)
+    write_depth(phase_dir / "depth/000005.png", covered, 0.5)
+    write_front(phase_dir, 5, (8, 6), FRONT_PIXEL, (10, 20, 30), 0)
+    result = validate_result(job, phase_dir, encode(document))
+    assert len(result.buffers) == 6
 
 
 def test_a_hand_written_8_bit_rgba_png_is_accepted(tmp_path):
@@ -871,7 +957,7 @@ def test_a_valid_extra_buffer_is_accepted(tmp_path):
     document["frames"][0]["buffers"]["extra"] = "extra/000000.png"
     result = validate_result(job, tmp_path, encode(document))
     first = next(iter(result.buffers.values()))
-    assert set(first) == {*BUFFER_NAMES, "extra"}
+    assert set(first) == {*BUFFER_NAMES, *FRONT_BUFFERS, "extra"}
 
 
 def test_pillow_s_size_guard_does_not_refuse_an_expected_size(tmp_path, monkeypatch):
