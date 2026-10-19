@@ -17,6 +17,7 @@ from test_materials_command import (
     named_hero,
     palette_file,
 )
+from test_settings_command import project_file
 
 from moskophoros import materials, ramps
 
@@ -437,7 +438,7 @@ def test_reloading_reproduces_the_sheet_without_regenerating(setup, capsys, coun
     assert counted == []
 
 
-@pytest.mark.parametrize("how", ["option", "config"])
+@pytest.mark.parametrize("how", ["option", "project"])
 def test_an_explicit_change_regenerates_only_the_ramps_it_reaches(
     setup, capsys, counted, tmp_path, how
 ):
@@ -446,9 +447,8 @@ def test_an_explicit_change_regenerates_only_the_ramps_it_reaches(
     if how == "option":
         extra = ["--ramp-hue-shift", "-20"]
     else:
-        path = tmp_path / "hue.yaml"
-        path.write_text("ramp: {hue_shift_deg: -20}\n")
-        extra = ["--config", str(path)]
+        project_file("ramp: {hue_shift_deg: -20}\n", "hue")
+        extra = ["--project", "hue"]
     ok(capsys, reload(setup, sheet, *extra))
     # gold takes the global; cloth's own -35 shadows it, so it is kept.
     assert counted == ["#ca9337"]
@@ -475,6 +475,20 @@ def test_a_material_s_own_ramp_regenerates_when_its_inputs_change(
     counted.clear()
     ok(capsys, reload(setup, sheet, "--ramp-fade", "0.5"))
     assert sorted(counted) == ["#7a3b2e", "#ca9337"]
+
+
+def test_a_config_file_never_regenerates_a_loaded_sheet_s_ramps(
+    setup, capsys, counted, tmp_path
+):
+    sheet = sheet_from_a_run(setup, capsys)
+    counted.clear()
+    path = tmp_path / "hue.yaml"
+    path.write_text("ramp: {hue_shift_deg: -20, chroma_fade: 0.6}\n")
+    arguments = reload(setup, sheet)
+    arguments.remove("--no-user-config")
+    ok(capsys, ["--config", str(path), *arguments])
+    assert counted == []
+    assert recorded(setup)["settings"]["ramp"]["hue_shift_deg"] == -12.0
 
 
 def test_the_user_file_never_regenerates_a_loaded_sheet_s_ramps(setup, capsys, counted):

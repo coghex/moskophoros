@@ -9,6 +9,7 @@ import pytest
 from material_models import GREY, Model, cube, quad_xy
 from PIL import Image
 from shading import DEFAULT_RANGE
+from test_settings_command import project_file
 
 from moskophoros import cli, stylize
 from moskophoros.capture import backend, blender
@@ -183,13 +184,12 @@ def test_a_materials_own_values_are_used_recorded_and_reproduced(
 
 
 @pytest.mark.parametrize("look", ["plain", "mode"])
-def test_shading_values_from_a_config_are_used_recorded_and_reproduced(
+def test_shading_values_from_a_project_are_used_recorded_and_reproduced(
     capsys, found, inputs, tmp_path, look
 ):
     palette, library = inputs
     model = subject_a(tmp_path)
-    config = tmp_path / "look.yaml"
-    config.write_text(SHADE_CONFIG)
+    config = project_file(SHADE_CONFIG)
     base = ["--no-user-config", "--reduce", look, "--palette", str(palette)]
     base += ["--materials", str(library)]
     default, shaded, again = (
@@ -199,7 +199,7 @@ def test_shading_values_from_a_config_are_used_recorded_and_reproduced(
         directory.mkdir()
     assert run(capsys, found, model, default / "a.png", *base)[0] == 0
     status, _, err = run(
-        capsys, found, model, shaded / "a.png", *base, "--config", str(config)
+        capsys, found, model, shaded / "a.png", *base, "--project", "look"
     )
     assert status == 0, err
 

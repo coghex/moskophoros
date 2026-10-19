@@ -550,21 +550,25 @@ def test_bad_light_values_in_a_file_name_the_file_key_and_line(
     assert "line 2" in err
 
 
-def resolved(tmp_path, *args, user=None):
+def resolved(tmp_path, *args, user=None, project=None):
     environ = {"XDG_CONFIG_HOME": str(tmp_path / "xdg")}
     if user is not None:
         path = tmp_path / "xdg" / "moskophoros" / "config.yaml"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(user)
+    if project is not None:
+        path = tmp_path / "xdg" / "moskophoros" / "projects" / "look.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(project)
+        args = (*args, "--project", "look")
     return cli.resolve_settings(cli.parse_args([*args, "in.glb", "out.png"]), environ)
 
 
 def test_light_merges_key_by_key_and_position_replaces_whole(tmp_path):
     a = tmp_path / "a.yaml"
     a.write_text("light:\n  position: [1, 2, 3]\n  intensity: 2.0\n")
-    b = tmp_path / "b.yaml"
-    b.write_text("light:\n  ambient: 0.5\n  position: [4, 5, 6]\n")
-    options = resolved(tmp_path, "--config", str(a), "--config", str(b))
+    b = "light:\n  ambient: 0.5\n  position: [4, 5, 6]\n"
+    options = resolved(tmp_path, "--config", str(a), project=b)
     assert (options.light, options.light_intensity, options.light_ambient) == (
         (4.0, 5.0, 6.0),
         2.0,
@@ -583,11 +587,8 @@ def test_no_light_drops_a_configured_or_reused_light(tmp_path):
     config.write_text("light:\n  position: [1, 2, 3]\n")
     assert resolved(tmp_path, "--config", str(config), "--no-light").light is None
     assert resolved(tmp_path, "--config", str(config)).light == (1.0, 2.0, 3.0)
-    off = tmp_path / "off.yaml"
-    off.write_text("light:\n  position: null\n")
-    assert (
-        resolved(tmp_path, "--config", str(config), "--config", str(off)).light is None
-    )
+    off = "light:\n  position: null\n"
+    assert resolved(tmp_path, "--config", str(config), project=off).light is None
     sheet = write_sheet(tmp_path)
     reused = cli.resolve_settings(
         cli.parse_args(

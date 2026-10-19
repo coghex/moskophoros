@@ -139,11 +139,14 @@ clips:
 The cell, fps, frame count, palette, library, edges, previews, normal and
 depth maps, light, shading and generated-ramp values can also come from YAML
 settings
-files. `~/.config/moskophoros/config.yaml` (or
-`$XDG_CONFIG_HOME/moskophoros/config.yaml`) holds your own defaults, and
-`--config look.yaml`, repeatable, applies a file as if its values were given
-as options; command-line options still win. Paths in a file are relative to
-it, and `~` is your home directory:
+files, all sharing one format. The global file,
+`~/.config/moskophoros/config.yaml` (or
+`$XDG_CONFIG_HOME/moskophoros/config.yaml`), holds your own defaults;
+`--config other.yaml` uses another file as the global file instead. A
+project, `--project look`, reads `projects/look.yaml` in the same folder and
+applies only what it lists, as if its values were given as options;
+command-line options still win. Paths in a file are relative to it, and `~`
+is your home directory:
 
 ```yaml
 cell: 48x48        # or auto
@@ -167,8 +170,8 @@ ramp:              # generated ramps: setting C, the high-contrast one
   chroma_fade: 0.6
 ```
 
-Your own file never changes a sheet loaded with `--settings-from`, while a
-`--config` file does. `--no-user-config` skips your file. See
+The global file never changes a sheet loaded with `--settings-from`, while a
+project does. `--no-user-config` uses no global file. See
 [docs/design.md](docs/design.md#settings-files).
 
 `moskophoros --help` lists every option.

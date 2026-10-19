@@ -21,6 +21,7 @@ from test_materials_command import (
     warnings_of,
 )
 from test_reuse import edited, write_sheet
+from test_settings_command import project_file
 
 from moskophoros import cli
 
@@ -92,13 +93,18 @@ def test_the_job_carries_each_overriding_materials_capture_values(setup, capsys)
 
 
 @pytest.mark.parametrize(
-    "layer", ["option", "config", "user", "sheet"], ids=lambda layer: layer
+    "layer",
+    ["option", "project", "config", "user", "sheet"],
+    ids=lambda layer: layer,
 )
 def test_a_materials_own_value_beats_a_global_from_every_layer(setup, capsys, layer):
     work = setup.tmp_path / "work"
     options = []
     if layer == "option":
         options = ["--convexity-weight", "0", "--occlusion-weight", "0.7"]
+    elif layer == "project":
+        project_file("shade: {convexity_weight: 0, occlusion_weight: 0.7}\n")
+        options = ["--project", "look"]
     elif layer == "config":
         path = setup.tmp_path / "look.yaml"
         path.write_text("shade: {convexity_weight: 0, occlusion_weight: 0.7}\n")
@@ -207,14 +213,13 @@ def overriding_warnings(err):
     return [line for line in warnings_of(err) if "keeps its own" in line]
 
 
-@pytest.mark.parametrize("how", ["option", "config"])
+@pytest.mark.parametrize("how", ["option", "project"])
 def test_an_explicit_global_a_material_overrides_warns(setup, capsys, how):
     if how == "option":
         options = ["--convexity-weight", "0", "--shade-range", "84,191"]
     else:
-        path = setup.tmp_path / "look.yaml"
-        path.write_text("shade: {convexity_weight: 0, range: [84, 191]}\n")
-        options = ["--config", str(path)]
+        project_file("shade: {convexity_weight: 0, range: [84, 191]}\n")
+        options = ["--project", "look"]
     err = run_in(setup, capsys, setup.tmp_path / "work", *options)
     assert overriding_warnings(err) == [
         'material "steel" keeps its own shade.convexity_weight, 0.5, from the '
@@ -226,13 +231,17 @@ def test_an_explicit_global_a_material_overrides_warns(setup, capsys, how):
     ]
 
 
-@pytest.mark.parametrize("layer", ["defaults", "user", "sheet"])
-def test_a_global_from_the_defaults_the_user_file_or_a_sheet_warns_nothing(
+@pytest.mark.parametrize("layer", ["defaults", "user", "config", "sheet"])
+def test_a_global_from_the_defaults_the_global_file_or_a_sheet_warns_nothing(
     setup, capsys, layer
 ):
     work = setup.tmp_path / "work"
     if layer == "defaults":
         err = run_in(setup, capsys, work)
+    elif layer == "config":
+        path = setup.tmp_path / "look.yaml"
+        path.write_text("shade: {convexity_weight: 0, range: [84, 191]}\n")
+        err = run_in(setup, capsys, work, "--config", str(path))
     elif layer == "user":
         path = Path(os.environ["XDG_CONFIG_HOME"], "moskophoros", "config.yaml")
         path.parent.mkdir(parents=True)

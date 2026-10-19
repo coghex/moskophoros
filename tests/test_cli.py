@@ -158,7 +158,7 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
             *["--light", "-20,30,40", "--light-intensity", "2"],
             *["--light-ambient", "0.5"],
             *["--ramp-step", "0.09", "--ramp-hue-shift", "-35", "--ramp-fade", "0.6"],
-            *["--config", "a.yaml", "--config", "b.yaml", "--no-user-config"],
+            *["--config", "a.yaml", "--project", "look"],
             *["--work-dir", "work", "--blender", "/opt/blender", "--any-blender"],
             *POSITIONALS,
         ]
@@ -176,6 +176,8 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         "no_materials",
         "origins",
         "clip_frames",
+        # It cannot accompany --config; recorded as explicit below.
+        "no_user_config",
     }
     assert options == cli.Options(
         infile=Path("in.glb"),
@@ -202,8 +204,8 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         blender=Path("/opt/blender"),
         any_blender=True,
         explicit=options.explicit,
-        configs=(Path("a.yaml"), Path("b.yaml")),
-        no_user_config=True,
+        config=Path("a.yaml"),
+        project="look",
         ao_distance=1.2,
         ao_samples=128,
         occlusion_weight=0.5,
@@ -219,6 +221,11 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         ramp_hue_shift=-35.0,
         ramp_fade=0.6,
     )
+
+
+def test_no_user_config_is_recorded_as_explicit():
+    options = parse("--no-user-config")
+    assert (options.explicit, options.no_user_config) == ({"no_user_config"}, True)
 
 
 # Ranges
@@ -565,8 +572,9 @@ DESIGN_OPTIONS = {
     "--ppm N": "auto",
     "--cell WxH": "reused by --settings-from, else fitted to the model with --ppm, "
     "else 64x64",
-    "--config FILE": "none",
+    "--config FILE": "the user file",
     "--no-user-config": "off",
+    "--project NAME": "none",
     "--preview": "on",
     "--frames N": "auto",
     "--ground X,Y,Z": "0,0,0",
