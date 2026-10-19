@@ -178,6 +178,8 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         "clip_frames",
         # It cannot accompany --config; recorded as explicit below.
         "no_user_config",
+        # The preset --view names, recorded as `view`.
+        "preset",
     }
     assert options == cli.Options(
         infile=Path("in.glb"),
@@ -220,6 +222,7 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         ramp_step=0.09,
         ramp_hue_shift=-35.0,
         ramp_fade=0.6,
+        preset="side",
     )
 
 
@@ -433,7 +436,26 @@ def test_ground_px_takes_two_whole_numbers_0_or_greater(capsys, value):
     error = usage_error(capsys, ["--ground-px", value, *POSITIONALS])
     assert error == (
         "argument --ground-px: expected X,Y, two whole numbers 0 or greater, "
-        f"got {value!r}"
+        f"or auto, got {value!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("option", "field"), [("--ppm", "ppm"), ("--ground-px", "ground_px")]
+)
+def test_auto_is_an_explicit_automatic_value(option, field):
+    """`--ppm auto` and `--ground-px auto` fit automatically, as the
+    defaults do, but are given: they drop a reused or configured value
+    (projects and camera design D-16)."""
+    options = parse(option, "auto")
+    assert getattr(options, field) is None
+    assert options.explicit == {field}
+
+
+@pytest.mark.parametrize("value", ["Auto", "AUTO", "auto,0", ""])
+def test_ppm_takes_auto_only_as_written(capsys, value):
+    assert usage_error(capsys, ["--ppm", value, *POSITIONALS]).startswith(
+        "argument --ppm: expected a number"
     )
 
 

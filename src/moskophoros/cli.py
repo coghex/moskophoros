@@ -93,13 +93,14 @@ PRESETS = MappingProxyType(
 DEFAULT_VIEW = "iso"
 # The resolved view name once --pitch, --directions or --start-angle is given.
 CUSTOM_VIEW = "custom"
-ROOT_MOTION_MODES = ("error", "keep")
+ROOT_MOTION_MODES = layered.ROOT_MOTION_MODES
 # The values --reduce accepts; the first is the default.
-REDUCTIONS = ("plain", "mode")
+REDUCTIONS = layered.REDUCTIONS
 # The only sheet schema `--settings-from` loads (settings design D-24).
 SHEET_SCHEMA = "moskophoros.sheet/13"
 _MAX_DIGITS = 4300
-_VIEW_FIELDS = ("view", "pitch", "directions", "start_angle")
+# The view's values a preset gives, which an override replaces.
+_VIEW_VALUES = ("pitch", "directions", "start_angle")
 _REPEATABLE = frozenset({"--clip", "--once"})
 # The `Options` field of each file setting whose name differs, which is also
 # its option's name in `explicit`.
@@ -161,9 +162,10 @@ class Options:
     `resolve_settings` has run, it also holds the fields a project file set,
     which act as explicit options. `view` is the resolved preset name,
     or `custom` when an explicit pitch, direction count or start angle
-    overrides the preset. `clip` is None when every clip is selected; `ppm`,
-    `cell` and `ground_px` are None when automatic. `origins` names the
-    settings file that set a palette or library, for its errors.
+    overrides the preset; `preset` is the preset `--view` names, or the
+    default. `clip` is None when every clip is selected; `ppm`, `cell` and
+    `ground_px` are None when automatic. `origins` names the settings file
+    that set a palette, a library or the Blender executable, for its errors.
     """
 
     infile: Path
@@ -229,6 +231,7 @@ class Options:
     ramp_step: float = layered.DEFAULTS["ramp.lightness_step"]
     ramp_hue_shift: float = layered.DEFAULTS["ramp.hue_shift_deg"]
     ramp_fade: float = layered.DEFAULTS["ramp.chroma_fade"]
+    preset: str = DEFAULT_VIEW
 
 
 class UsageError(SystemExit):
@@ -339,6 +342,7 @@ def parse_args(argv: Sequence[str]) -> Options:
         ramp_step=args.ramp_step,
         ramp_hue_shift=args.ramp_hue_shift,
         ramp_fade=args.ramp_fade,
+        preset=args.view,
     )
 
 
@@ -399,17 +403,19 @@ def resolve_settings(options: Options, environ=None) -> Options:
     D-11). Every file is read and checked before any value is used. A project
     value acts as its explicit option would, including against a loaded
     sheet. The global file and the defaults are only defaults: a loaded sheet
-    records every setting they hold, so they apply only without one.
-    `environ` locates the user file and the project files; it is
-    `os.environ` by default. Only the palette and library that survive the
-    merge are read.
+    records every setting they hold, so they apply only without one, except
+    the app settings, which no sheet records. The view resolves layer by
+    layer (`_resolve_view`). `environ` locates the user file and the project
+    files; it is `os.environ` by default. Only the palette and library that
+    survive the merge are read.
     """
     environ = os.environ if environ is None else environ
     defaults, global_, projects = _read_layers(options, environ)
+    command_line_view = _command_line_view(options)
     options = _apply_layer(
         options, layered.merge(*(values for _, values in projects)), projects
     )
-    reused_colors = None
+    reused = reused_colors = None
     clip_layers = [] if global_ is None else [global_[1].get("clips", {})]
     if options.settings_from is not None:
         reused = read_settings(options.settings_from)
@@ -417,8 +423,15 @@ def resolve_settings(options: Options, environ=None) -> Options:
         if reused.palette is not None:
             reused_colors = reused.palette.colors
         clip_layers.append(reused.clip_frames)
+        options = _apply_defaults(options, defaults, global_, layered.APP_SETTINGS)
     else:
         options = _apply_defaults(options, defaults, global_)
+    view_layers = [("the shipped defaults", defaults)]
+    if global_ is not None:
+        view_layers.append(global_)
+    if reused is not None:
+        view_layers = [("--settings-from", reused)]
+    options = _resolve_view(options, [*view_layers, *projects, command_line_view])
     # Each clip's own frame count merges by clip name, the loaded sheet's
     # included, a higher layer's null clearing a lower one's count; per-clip
     # values come from files and the sheet only (settings design D-17, D-39).
@@ -473,7 +486,7 @@ def _apply_layer(options, values, sources, mark=True):
     changes = {}
     origins = dict(options.origins)
     for name, value in values.items():
-        if name == "clips":
+        if name == "clips" or name in layered.VIEW_SETTINGS:
             continue
         if name not in _PATH_FIELDS:
             field = _SETTING_FIELDS.get(name, name)
@@ -481,16 +494,14 @@ def _apply_layer(options, values, sources, mark=True):
                 changes[field] = value
                 if mark:
                     explicit.add(field)
+                if layered.SCHEMA[name].path and value is not None:
+                    origins[name] = _where(sources, name)
             continue
         path_field, none_field = _PATH_FIELDS[name]
         if explicit & {name, none_field}:
             continue
         if value is not None or mark:
-            label, layer = next(
-                (label, layer) for label, layer in reversed(sources) if name in layer
-            )
-            line, column = layer.where[name]
-            origins[name] = f"{label}: {name} (line {line}, column {column})"
+            origins[name] = _where(sources, name)
         changes[path_field] = value
         changes[none_field] = mark and value is None
         if mark:
@@ -505,14 +516,84 @@ def _apply_layer(options, values, sources, mark=True):
     )
 
 
-def _apply_defaults(options, defaults, global_):
-    """Without a loaded sheet, the global file's settings, then the shipped
-    defaults, for what neither the command line nor a project file set."""
+def _where(sources, name):
+    """The settings file, key and line of the highest of `sources` that sets
+    `name`, as errors name it."""
+    label, layer = next(
+        (label, layer) for label, layer in reversed(sources) if name in layer
+    )
+    line, column = layer.where[name]
+    return f"{label}: {name} (line {line}, column {column})"
+
+
+def _apply_defaults(options, defaults, global_, names=None):
+    """The global file's settings, then the shipped defaults, for what
+    neither the command line nor a project file set: all of them without a
+    loaded sheet, or only `names`, the app settings, with one."""
     sources = [("the shipped defaults", defaults)]
     if global_ is not None:
         sources.append(global_)
     merged = layered.merge(*(values for _, values in sources))
+    if names is not None:
+        merged = layered.Layer({name: merged[name] for name in names if name in merged})
     return _apply_layer(options, merged, sources, mark=False)
+
+
+def _command_line_view(options):
+    """The command line's view settings as a layer: `--view`, then
+    `--pitch`, `--directions` and `--start-angle`, each only when given."""
+    values = {"view": options.preset} if "view" in options.explicit else {}
+    values |= {
+        name: getattr(options, name)
+        for name in _VIEW_VALUES
+        if name in options.explicit
+    }
+    return ("the command line", layered.Layer(values))
+
+
+def _resolve_view(options, layers):
+    """Resolve the view through `layers`, `(label, values)` from the weakest
+    (projects and camera design D-16, *How they resolve*).
+
+    The view is a preset marker and three values, the pitch, the direction
+    count and the start angle, each the preset's or an override. A loaded
+    sheet, given as its `ReusedSettings`, is a snapshot: its recorded marker,
+    `custom` included, and its values, each counted as the preset's. Within a
+    layer, a `view` applies first and sets every value to its preset's; then
+    a non-null value is an override, and a `null` resets that value to the
+    preset's. A `null` while the marker is `custom` has no preset to reset to,
+    a usage error naming the file and key, unless the same layer gives a
+    `view`. The resolved marker is the preset's name when no value is an
+    override, else `custom`.
+    """
+    preset, values, overrides = None, {}, set()
+    for label, layer in layers:
+        if isinstance(layer, ReusedSettings):
+            preset = layer.view
+            values = {name: getattr(layer, name) for name in _VIEW_VALUES}
+            overrides.clear()
+            continue
+        if "view" in layer:
+            preset = layer["view"]
+            values = {name: getattr(PRESETS[preset], name) for name in _VIEW_VALUES}
+            overrides.clear()
+        for name in _VIEW_VALUES:
+            if name not in layer:
+                continue
+            if layer[name] is not None:
+                values[name] = layer[name]
+                overrides.add(name)
+                continue
+            if preset == CUSTOM_VIEW:
+                line, column = layer.where[name]
+                _build_parser()[0].error(
+                    f"{label}: {name} (line {line}, column {column}): null takes "
+                    "the view's preset value, but the loaded sheet's view is "
+                    "custom, with no preset; give a view in the same file"
+                )
+            values[name] = getattr(PRESETS[preset], name)
+            overrides.discard(name)
+    return replace(options, view=CUSTOM_VIEW if overrides else preset, **values)
 
 
 _UNREADABLE = (OSError, ValueError, RuntimeError)
@@ -749,11 +830,10 @@ def apply_settings(options: Options, reused: ReusedSettings) -> Options:
     """Merge `reused` into `options`; an explicit option wins over its
     reused value.
 
-    An explicit `--view` resolves the view exactly as without reuse.
-    Otherwise the reused view stays, and an explicit `--pitch`,
-    `--directions` or `--start-angle` replaces its value and makes the preset
-    `custom`. An explicit `--clip` replaces the reused clip selection and its
-    one-shot marks, and `--once` then comes from the command line. Without
+    The view is left as it is: `_resolve_view` lays the reused view under
+    the project's and the command line's. An explicit `--clip` replaces the
+    reused clip selection and its one-shot marks, and `--once` then comes
+    from the command line. Without
     `--clip`, the reused clips stay, and an explicit `--once` replaces their
     marks: it must name only reused clips, else this is a usage error.
     `explicit` stays as given.
@@ -762,13 +842,9 @@ def apply_settings(options: Options, reused: ReusedSettings) -> Options:
     names = [
         field.name
         for field in fields(ReusedSettings)
-        if field.name not in ("clip", "once", "clip_frames")
+        if field.name not in ("clip", "once", "clip_frames", *layered.VIEW_SETTINGS)
     ]
-    if "view" in explicit:
-        names = [name for name in names if name not in _VIEW_FIELDS]
     values = {name: getattr(reused, name) for name in names if name not in explicit}
-    if "view" not in explicit and explicit & set(_VIEW_FIELDS):
-        values["view"] = CUSTOM_VIEW
     if "clip" not in explicit:
         values["clip"] = reused.clip
         if "once" not in explicit:
@@ -1019,7 +1095,11 @@ def _command(options):
                 ),
             ),
         )
-    found = blender.locate(options.blender, options.any_blender)
+    found = blender.locate(
+        options.blender,
+        options.any_blender,
+        source=_origin(options, "blender", "--blender"),
+    )
 
     with _workspace(options.work_dir) as workspace:
         measured = blender.run_phase(
@@ -1672,12 +1752,20 @@ def _whole(text):
     return int(value)
 
 
+def _ppm(text):
+    """Pixels per meter, or `auto` as None, the automatic scale."""
+    return None if text == layered.AUTO else _positive(text)
+
+
 def _ground_px(text):
+    """`X,Y` as `(X, Y)`, or `auto` as None, the automatic ground pixel."""
+    if text == layered.AUTO:
+        return None
     parts = text.split(",")
     coordinates = [_whole(part) for part in parts]
     if len(parts) != 2 or None in coordinates:
         raise argparse.ArgumentTypeError(
-            f"expected X,Y, two whole numbers 0 or greater, got {text!r}"
+            f"expected X,Y, two whole numbers 0 or greater, or auto, got {text!r}"
         )
     x, y = coordinates
     return x, y
@@ -1797,9 +1885,10 @@ def _build_parser():
     single(
         "--ppm",
         "N",
-        _positive,
+        _ppm,
         None,
-        "pixels per meter, greater than 0 (default: auto)",
+        "pixels per meter, greater than 0, or auto: fitted; auto drops a reused "
+        "or configured value (default: auto)",
     )
     single(
         "--cell",
@@ -1824,7 +1913,8 @@ def _build_parser():
         "X,Y",
         _ground_px,
         None,
-        "cell pixel corner the ground point lands on (default: auto)",
+        "cell pixel corner the ground point lands on, or auto: fitted; auto "
+        "drops a reused or configured value (default: auto)",
     )
     single(
         "--root-motion",
@@ -1968,10 +2058,13 @@ def _build_parser():
         None,
         "use FILE as the global settings file, in place of the user file, "
         "$XDG_CONFIG_HOME/moskophoros/config.yaml, else "
-        "~/.config/moskophoros/config.yaml. A settings file may set cell, fps, "
-        "frames, clips, palette, materials, previews, normals, depth, light, "
-        "shade and ramp. The global file and the shipped defaults give the "
-        "defaults, below any loaded sheet (default: the user file)",
+        "~/.config/moskophoros/config.yaml. A settings file may set the view, "
+        "pitch, directions, start_angle, model_yaw, ppm, cell, ground, "
+        "ground_px, supersample, reduce, root_motion, fps, frames, clips, "
+        "palette, materials, edges, previews, normals, depth, light, shade, "
+        "ramp, and the app settings blender and any_blender. The global file "
+        "and the shipped defaults give the defaults, below any loaded sheet "
+        "(default: the user file)",
     )
     parser.add_argument(
         "--no-user-config",
@@ -2068,7 +2161,7 @@ def _build_parser():
         "PATH",
         _path,
         None,
-        "Blender executable (default: discovered)",
+        "Blender executable; never recorded in a sheet (default: discovered)",
     )
     parser.add_argument(
         "--any-blender",
