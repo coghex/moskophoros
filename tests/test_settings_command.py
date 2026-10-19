@@ -111,9 +111,9 @@ def test_a_missing_user_file_is_not_an_error():
 
 
 def test_a_bad_user_file_is_a_usage_error_naming_it(capsys):
-    path = user_file("fps: 6\nsupersample: 8\n")
+    path = user_file("fps: 6\nfame: 8\n")
     assert refused(capsys) == (
-        f"the user settings {str(path)!r}: supersample: unknown key at line 2, column 1"
+        f"the user settings {str(path)!r}: fame: unknown key at line 2, column 1"
     )
 
 
@@ -317,14 +317,14 @@ def test_a_project_sets_only_what_it_lists(tmp_path):
 
 
 def test_a_project_and_the_global_file_share_one_schema(tmp_path, capsys):
-    text = "fps: 6\nsupersample: 8\n"
+    text = "fps: 6\nfame: 8\n"
     path = project_file(text)
     assert refused(capsys, "--project", "look") == (
-        f"{project_label(path)}: supersample: unknown key at line 2, column 1"
+        f"{project_label(path)}: fame: unknown key at line 2, column 1"
     )
     path = config(tmp_path, text)
     assert refused(capsys, "--config", str(path)) == (
-        f"--config {str(path)!r}: supersample: unknown key at line 2, column 1"
+        f"--config {str(path)!r}: fame: unknown key at line 2, column 1"
     )
 
 
@@ -669,14 +669,14 @@ def bad_settings(kind, tmp_path):
     if kind == "missing-config":
         return ["--config", str(tmp_path / "absent.yaml")]
     if kind == "user-unknown-key":
-        user_file("supersample: 8\n")
+        user_file("fame: 8\n")
         return []
     if kind == "missing-project":
         return ["--project", "absent"]
     if kind == "bad-project-name":
         return ["--project", "../look"]
     if kind == "project-unknown-key":
-        project_file("supersample: 8\n")
+        project_file("fame: 8\n")
         return ["--project", "look"]
     if kind == "project-missing-palette":
         project_file("palette: absent.hex\n")
@@ -687,7 +687,7 @@ def bad_settings(kind, tmp_path):
     if kind == "config-and-no-user-config":
         return ["--config", str(config(tmp_path, "fps: 8\n")), "--no-user-config"]
     texts = {
-        "unknown-key": "view: side\n",
+        "unknown-key": "fame: 8\n",
         "unknown-version": "version: 2\n",
         "wrong-type": "fps: fast\n",
         "out-of-range": "cell: 0x0\n",
@@ -1218,3 +1218,407 @@ def test_a_reloaded_sheet_without_previews_writes_none(setup, capsys):
     assert not setup.walk_gif.exists() and not setup.attack_gif.exists()
     assert run(capsys, reload(setup, sheet, "--preview"))[0] == 0
     assert setup.walk_gif.exists() and setup.attack_gif.exists()
+
+
+# The view, scale and framing, and the app settings (projects and camera
+# design D-4, D-5, D-12, D-16)
+
+VIEW = ("view", "pitch", "directions", "start_angle")
+# Each new setting in a file, and the options that give the same values.
+EQUIVALENTS = [
+    ("view: side\n", ["--view", "side"]),
+    ("view: topdown\npitch: 45\n", ["--view", "topdown", "--pitch", "45"]),
+    ("pitch: 12.5\n", ["--pitch", "12.5"]),
+    ("directions: 4\n", ["--directions", "4"]),
+    ("start_angle: -45\n", ["--start-angle", "-45"]),
+    ("model_yaw: -90\n", ["--model-yaw", "-90"]),
+    ("ppm: 40\n", ["--ppm", "40"]),
+    ("ppm: auto\n", ["--ppm", "auto"]),
+    ("ground: [1, -2, 0.5]\n", ["--ground", "1,-2,0.5"]),
+    ("ground_px: [8, 15]\n", ["--ground-px", "8,15"]),
+    ("ground_px: [8.0, 15]\n", ["--ground-px", "8.0,15"]),
+    ("ground_px: auto\n", ["--ground-px", "auto"]),
+    ("supersample: 4\n", ["--supersample", "4"]),
+    ("reduce: mode\n", ["--reduce", "mode"]),
+    ("root_motion: keep\n", ["--root-motion", "keep"]),
+    ("blender: /opt/blender/blender\n", ["--blender", "/opt/blender/blender"]),
+    ("any_blender: true\n", ["--any-blender"]),
+]
+# What a file and options may differ in once resolved: where values came
+# from, never what they are.
+PROVENANCE = {"explicit", "origins", "preset", "config", "project", "no_user_config"}
+
+
+def comparable(options):
+    return {
+        name: getattr(options, name)
+        for name in cli.Options.__dataclass_fields__
+        if name not in PROVENANCE
+    }
+
+
+@pytest.mark.parametrize("where", ["user", "config", "project"])
+@pytest.mark.parametrize(("text", "option"), EQUIVALENTS)
+def test_each_new_setting_in_a_file_resolves_as_its_option(
+    tmp_path, where, text, option
+):
+    if where == "user":
+        user_file(text)
+        from_file = resolved()
+    elif where == "config":
+        from_file = resolved("--config", str(config(tmp_path, text)))
+    else:
+        project_file(text)
+        from_file = resolved("--project", "look")
+    from_option = resolved("--no-user-config", *option)
+    assert comparable(from_file) == comparable(from_option)
+
+
+@pytest.mark.parametrize("text", ["{}\n", "version: 1\n"])
+def test_an_empty_file_and_the_default_command_resolve_as_today(text):
+    default = resolved()
+    user_file(text)
+    project_file(text)
+    assert comparable(resolved("--project", "look")) == comparable(default)
+    today = cli.parse_args(POSITIONALS)
+    assert comparable(default) == comparable(today)
+    assert (default.view, default.pitch, default.directions, default.start_angle) == (
+        "iso",
+        30.0,
+        8,
+        0.0,
+    )
+
+
+@pytest.mark.parametrize("preset", list(cli.PRESETS))
+@pytest.mark.parametrize("where", ["user", "project"])
+def test_each_preset_from_a_file_resolves_as_today(preset, where):
+    (user_file if where == "user" else project_file)(f"view: {preset}\n")
+    options = resolved(*(["--project", "look"] if where == "project" else []))
+    today = cli.parse_args(["--view", preset, *POSITIONALS])
+    assert [getattr(options, name) for name in VIEW] == [
+        getattr(today, name) for name in VIEW
+    ]
+    assert options.view == preset
+
+
+def test_a_layers_view_replaces_a_lower_layers_values():
+    user_file("pitch: 45\ndirections: 4\nstart_angle: 10\n")
+    project_file("view: side\n")
+    options = resolved("--project", "look")
+    assert [getattr(options, name) for name in VIEW] == ["side", 0.0, 2, 90.0]
+    project_file("pitch: 45\ndirections: 4\nstart_angle: 10\n")
+    options = resolved("--project", "look", "--view", "topdown")
+    assert [getattr(options, name) for name in VIEW] == ["topdown", 90.0, 8, 0.0]
+
+
+def test_a_layers_view_applies_before_its_own_values():
+    user_file("view: topdown\npitch: null\n")
+    options = resolved()
+    assert [getattr(options, name) for name in VIEW] == ["topdown", 90.0, 8, 0.0]
+    # Key order in the file does not matter.
+    user_file("pitch: 45\nview: iso\n")
+    options = resolved()
+    assert [getattr(options, name) for name in VIEW] == ["custom", 45.0, 8, 0.0]
+
+
+def test_a_lower_override_and_a_higher_null_give_the_presets_value():
+    user_file("pitch: 45\ndirections: 4\n")
+    project_file("pitch: null\n")
+    options = resolved("--project", "look")
+    # The higher null clears the pitch only; the direction count stays.
+    assert [getattr(options, name) for name in VIEW] == ["custom", 30.0, 4, 0.0]
+    project_file("pitch: null\ndirections: null\n")
+    options = resolved("--project", "look")
+    assert [getattr(options, name) for name in VIEW] == ["iso", 30.0, 8, 0.0]
+
+
+def test_a_null_takes_the_value_of_the_preset_in_force():
+    user_file("view: side\npitch: 45\n")
+    project_file("pitch: null\n")
+    options = resolved("--project", "look")
+    assert [getattr(options, name) for name in VIEW] == ["side", 0.0, 2, 90.0]
+
+
+def test_an_option_override_over_a_files_view_makes_it_custom():
+    project_file("view: topdown\n")
+    options = resolved("--project", "look", "--directions", "4")
+    assert [getattr(options, name) for name in VIEW] == ["custom", 90.0, 4, 0.0]
+
+
+def custom_sheet(tmp_path):
+    from test_reuse import SETTINGS
+
+    settings = json.loads(json.dumps(SETTINGS))
+    settings["view"] = {
+        "preset": "custom",
+        "projection": "orthographic",
+        "pitch_deg": 20.0,
+        "directions": 4,
+        "start_angle_deg": 45.0,
+    }
+    return write_sheet(tmp_path, settings)
+
+
+def test_a_custom_sheet_with_a_higher_null_is_exit_2_naming_the_key(tmp_path, capsys):
+    sheet = custom_sheet(tmp_path)
+    path = project_file("fps: 8\ndirections: null\n")
+    assert refused(capsys, "--settings-from", str(sheet), "--project", "look") == (
+        f"{project_label(path)}: directions (line 2, column 1): null takes the "
+        "view's preset value, but the loaded sheet's view is custom, with no "
+        "preset; give a view in the same file"
+    )
+
+
+def test_a_custom_sheet_with_a_view_and_a_null_in_one_layer_gives_the_preset(
+    tmp_path,
+):
+    sheet = custom_sheet(tmp_path)
+    project_file("view: iso\ndirections: null\n")
+    options = resolved("--settings-from", str(sheet), "--project", "look")
+    assert [getattr(options, name) for name in VIEW] == ["iso", 30.0, 8, 0.0]
+
+
+def test_a_custom_sheet_keeps_its_marker_and_values_with_nothing_above(tmp_path):
+    sheet = custom_sheet(tmp_path)
+    # The global file sits below the loaded sheet, so its view never applies.
+    user_file("view: topdown\npitch: null\n")
+    options = resolved("--settings-from", str(sheet))
+    assert [getattr(options, name) for name in VIEW] == ["custom", 20.0, 4, 45.0]
+
+
+def test_a_project_value_over_a_sheet_is_an_override(tmp_path):
+    sheet = write_sheet(tmp_path)  # a side sheet
+    project_file("directions: 4\n")
+    options = resolved("--settings-from", str(sheet), "--project", "look")
+    assert [getattr(options, name) for name in VIEW] == ["custom", 0.0, 4, 90.0]
+    project_file("directions: null\n")
+    options = resolved("--settings-from", str(sheet), "--project", "look")
+    assert [getattr(options, name) for name in VIEW] == ["side", 0.0, 2, 90.0]
+
+
+def test_an_iso_sheet_reloads_as_iso_with_its_json_and_fingerprint(setup, capsys):
+    sheet = sheet_from_a_run(setup, capsys)
+    before = sheet.read_bytes()
+    assert json.loads(before)["settings"]["view"]["preset"] == "iso"
+    # A global view sits below the loaded sheet and changes nothing.
+    argv = reload(setup, sheet)
+    argv.remove("--no-user-config")
+    user_file("view: side\npitch: 45\nsupersample: 4\nppm: 3\n")
+    assert run(capsys, argv)[0] == 0
+    assert setup.json.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("given", "field"),
+    [
+        (("--ppm", "auto"), "ppm"),
+        ("ppm: auto\n", "ppm"),
+        (("--ground-px", "auto"), "ground_px"),
+        ("ground_px: auto\n", "ground_px"),
+    ],
+)
+def test_auto_drops_a_reused_value(tmp_path, given, field):
+    sheet = write_sheet(tmp_path)
+    assert getattr(resolved("--settings-from", str(sheet)), field) is not None
+    if isinstance(given, str):
+        project_file(given)
+        given = ("--project", "look")
+    options = resolved("--settings-from", str(sheet), *given)
+    assert getattr(options, field) is None
+    # Everything else stays reused, the cell included.
+    assert options.cell == (48, 40)
+
+
+@pytest.mark.parametrize(
+    ("lower", "higher", "field"),
+    [
+        ("ppm: 40\n", "ppm: auto\n", "ppm"),
+        ("ppm: 40\n", ("--ppm", "auto"), "ppm"),
+        ("ground_px: [3, 4]\n", "ground_px: auto\n", "ground_px"),
+        ("ground_px: [3, 4]\n", ("--ground-px", "auto"), "ground_px"),
+    ],
+)
+def test_auto_drops_a_lower_layers_value(lower, higher, field):
+    user_file(lower)
+    assert getattr(resolved(), field) is not None
+    if isinstance(higher, str):
+        project_file(higher)
+        higher = ("--project", "look")
+    assert getattr(resolved(*higher), field) is None
+
+
+def recorded(setup):
+    return json.loads(setup.json.read_text())["settings"]
+
+
+def test_ppm_auto_over_a_reused_scale_fits_automatically(setup, capsys):
+    assert run(capsys, setup.argv("--no-preview"))[0] == 0
+    fitted = recorded(setup)
+    assert run(capsys, setup.argv("--no-preview", "--ppm", "5"))[0] == 0
+    sheet = setup.tmp_path / "fixed.json"
+    sheet.write_bytes(setup.json.read_bytes())
+    assert recorded(setup)["pixels_per_meter"] == 5.0
+    assert run(capsys, reload(setup, sheet, "--ppm", "auto"))[0] == 0
+    again = recorded(setup)
+    assert again["pixels_per_meter"] == fitted["pixels_per_meter"] != 5.0
+    assert (again["cell"], again["ground_px"]) == (fitted["cell"], fitted["ground_px"])
+
+
+def test_file_auto_values_over_lower_ones_fit_as_the_default_run(setup, capsys):
+    assert run(capsys, setup.argv("--no-preview"))[0] == 0
+    fitted = setup.json.read_bytes()
+    user_file("ppm: 5\nground_px: [3, 3]\n")
+    project_file("ppm: auto\nground_px: auto\n")
+    argv = setup.argv("--no-preview", "--project", "look")
+    assert run(capsys, argv)[0] == 0
+    assert setup.json.read_bytes() == fitted
+
+
+# The app settings: they layer, but no sheet records or loads them
+
+
+def file_argv(setup, *options):
+    """The run's arguments without `--blender`, so a file supplies it."""
+    argv = setup.argv(*options)
+    index = argv.index("--blender")
+    del argv[index : index + 2]
+    return argv
+
+
+def old_blender(setup):
+    """A Blender reporting an unsupported version, which renders as the fake
+    does."""
+    path = setup.tmp_path / "old" / "blender"
+    path.parent.mkdir()
+    path.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "--version" ]; then echo "Blender 4.5.0"; exit 0; fi\n'
+        f'exec "{setup.fake}" "$@"\n'
+    )
+    path.chmod(0o755)
+    return path
+
+
+def test_blender_and_any_blender_from_a_file_take_effect_and_are_never_recorded(
+    setup, capsys
+):
+    assert run(capsys, setup.argv())[0] == 0
+    with_option = setup.listing()
+    old = old_blender(setup)
+    # The path is relative to the project file.
+    path = project_file(f"blender: {os.path.relpath(old, setup.tmp_path)}\n")
+    target = path.parent / os.path.relpath(old, setup.tmp_path)
+    target.parent.mkdir(parents=True)
+    shutil.copy(old, target)
+    status, _, err = run(capsys, file_argv(setup, "--project", "look"))
+    assert status == 5
+    assert "4.5.0" in err and "--any-blender" in err
+    project_file(
+        f"blender: {os.path.relpath(old, setup.tmp_path)}\nany_blender: true\n"
+    )
+    calls = len(setup.calls())
+    assert run(capsys, file_argv(setup, "--project", "look"))[0] == 0
+    assert len(setup.calls()) == calls + 2
+    # Same sheet, maps and previews, so the same JSON and fingerprint.
+    assert setup.listing() == with_option
+    text = setup.json.read_text()
+    assert "any_blender" not in text and str(target) not in text
+
+
+def test_global_app_settings_survive_loading_a_sheet(setup, capsys):
+    sheet = sheet_from_a_run(setup, capsys)
+    before = sheet.read_bytes()
+    old = old_blender(setup)
+    user_file(f"blender: {old}\nany_blender: true\n")
+    argv = file_argv(setup)
+    options = cli.resolve_settings(
+        cli.parse_args(["--settings-from", str(sheet), *argv])
+    )
+    assert (options.blender, options.any_blender) == (old, True)
+    assert run(capsys, ["--settings-from", str(sheet), *argv])[0] == 0
+    assert setup.json.read_bytes() == before
+
+
+def test_a_project_resets_the_global_app_settings(tmp_path):
+    user_file("blender: /opt/blender\nany_blender: true\n")
+    project_file("blender: null\nany_blender: false\n")
+    sheet = write_sheet(tmp_path)
+    for options in (
+        resolved("--project", "look"),
+        resolved("--project", "look", "--settings-from", str(sheet)),
+    ):
+        assert (options.blender, options.any_blender) == (None, False)
+
+
+def test_options_beat_file_app_settings(tmp_path):
+    project_file("blender: /opt/blender\nany_blender: false\n")
+    options = resolved("--project", "look", "--blender", "b", "--any-blender")
+    assert (options.blender, options.any_blender) == (Path("b"), True)
+
+
+def test_a_file_blender_path_expands_a_leading_tilde(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    project_file("blender: ~/bin/blender\n")
+    assert resolved("--project", "look").blender == tmp_path / "bin" / "blender"
+
+
+def test_a_null_blender_discovers_it_as_today(setup, capsys, monkeypatch):
+    user_file(f"blender: {setup.fake}\n")
+    project_file("blender: null\n")
+    monkeypatch.setenv("MOSKOPHOROS_BLENDER", str(setup.tmp_path / "absent"))
+    status, _, err = run(capsys, file_argv(setup, "--project", "look"))
+    assert status == 5
+    assert "$MOSKOPHOROS_BLENDER names" in err
+
+
+def test_an_unusable_file_blender_is_exit_5_naming_the_file(setup, capsys):
+    absent = setup.tmp_path / "absent"
+    path = project_file(f"fps: 4\nblender: {absent}\n")
+    status, _, err = run(capsys, file_argv(setup, "--project", "look"))
+    assert status == 5
+    assert err == (
+        f"moskophoros: error: {project_label(path)}: blender (line 2, column 1) "
+        f"names {str(absent)!r}, which is not an executable file; no other "
+        "Blender is tried\n"
+    )
+
+
+def test_an_overridden_file_blender_is_never_checked(setup, capsys):
+    project_file(f"blender: {setup.tmp_path / 'absent'}\n")
+    assert run(capsys, setup.argv("--project", "look"))[0] == 0
+
+
+@pytest.mark.parametrize("where", ["user", "project"])
+@pytest.mark.parametrize(
+    ("text", "problem"),
+    [
+        ("view: front", "expected topdown, side, iso or iso-true, got 'front'"),
+        ("pitch: 91", "expected a finite number from 0 to 90, or null, got 91"),
+        ("ppm: 0", "expected a finite number greater than 0, or auto, got 0"),
+        (
+            "ground_px: [1.5, 0]",
+            "expected [x, y], two whole numbers 0 or greater, or auto, got [1.5, 0]",
+        ),
+        ("supersample: 17", "expected a whole number from 1 to 16, got 17"),
+        ("blender: 3", "expected a file path or null, got 3"),
+        ("any_blender: 1", "expected true or false, got 1"),
+    ],
+)
+def test_a_bad_new_setting_is_exit_2_naming_file_key_and_line(
+    setup, capsys, monkeypatch, where, text, problem
+):
+    if where == "user":
+        path = user_file(f"fps: 4\n{text}\n")
+        label, argv = f"the user settings {str(path)!r}", []
+    else:
+        path = project_file(f"fps: 4\n{text}\n")
+        label, argv = project_label(path), ["--project", "look"]
+    forbid_blender(monkeypatch)
+    argv = setup.argv(*argv)
+    status, _, err = run(capsys, argv)
+    assert status == 2
+    key = text.split(":")[0]
+    assert err.splitlines()[-1] == (
+        f"moskophoros: error: {label}: {key}: {problem} at line 2, column 1"
+    )

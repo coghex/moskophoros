@@ -36,21 +36,21 @@ moskophoros [options] <infile.glb> <outfile.png>
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--view NAME` | `iso` | Preset: `topdown`, `side`, `iso` or `iso-true`. |
-| `--pitch DEG` | from preset | Camera pitch, 0 to 90 inclusive. |
-| `--directions N` | from preset | Direction count, 1 to 64. |
-| `--start-angle DEG` | from preset | Angle of direction 0. |
-| `--model-yaw DEG` | `0` | Corrects a model that does not face +Z (see [Input contract](#input-contract)). |
+| `--view NAME` | `iso` | Preset: `topdown`, `side`, `iso` or `iso-true`. A [settings file](#settings-files) may set it. |
+| `--pitch DEG` | from preset | Camera pitch, 0 to 90 inclusive. A [settings file](#settings-files) may set it. |
+| `--directions N` | from preset | Direction count, 1 to 64. A [settings file](#settings-files) may set it. |
+| `--start-angle DEG` | from preset | Angle of direction 0. A [settings file](#settings-files) may set it. |
+| `--model-yaw DEG` | `0` | Corrects a model that does not face +Z (see [Input contract](#input-contract)). A [settings file](#settings-files) may set it. |
 | `--clip NAME` | every clip | Repeatable. Selects clips and their order in the sheet. |
 | `--once NAME` | none | Repeatable. Marks a selected clip as one-shot; all others loop. |
 | `--fps N` | `12` | Target sampling rate, greater than 0. A [settings file](#settings-files) may set it. |
-| `--ppm N` | auto | Pixels per meter, greater than 0. |
+| `--ppm N` | auto | Pixels per meter, greater than 0, or `auto`, fitted. `auto` drops a reused or configured value, as `--cell auto` drops a cell (projects and camera design D-16). See [Scale and ground point](#scale-and-ground-point). A [settings file](#settings-files) may set it. |
 | `--cell WxH` | reused by `--settings-from`, else fitted to the model with `--ppm`, else 64×64 | Cell size in pixels, each 1 to 4096, or `auto`, the automatic cell: fitted with the pixels per meter in force, given or reused, else 64×64. `auto` drops a reused or configured cell (owner decision 2026-10-11, settings design D-32). Without a given or reused `--ppm`, the model is scaled to fit the cell. See [Scale and ground point](#scale-and-ground-point). A [settings file](#settings-files) may set it. |
-| `--ground X,Y,Z` | `0,0,0` | Ground point in subject coordinates, meters. |
-| `--ground-px X,Y` | auto | Cell pixel corner the ground point lands on. |
-| `--root-motion MODE` | `error` | `error` or `keep`. See [Root motion](#root-motion). |
-| `--supersample N` | `8` | Capture resolution multiplier, 1 to 16. |
-| `--reduce NAME` | `plain` | How each supersampled block becomes one pixel: `plain`, the alpha-weighted mean, or `mode`, the most common colour. See [Stylize](#stylize). |
+| `--ground X,Y,Z` | `0,0,0` | Ground point in subject coordinates, meters. A [settings file](#settings-files) may set it. |
+| `--ground-px X,Y` | auto | Cell pixel corner the ground point lands on, or `auto`, fitted. `auto` drops a reused or configured value (projects and camera design D-16). A [settings file](#settings-files) may set it. |
+| `--root-motion MODE` | `error` | `error` or `keep`. See [Root motion](#root-motion). A [settings file](#settings-files) may set it. |
+| `--supersample N` | `8` | Capture resolution multiplier, 1 to 16. A [settings file](#settings-files) may set it. |
+| `--reduce NAME` | `plain` | How each supersampled block becomes one pixel: `plain`, the alpha-weighted mean, or `mode`, the most common colour. See [Stylize](#stylize). A [settings file](#settings-files) may set it. |
 | `--edges RULE` | `hard` | How a pixel's alpha comes from its supersampled block: `hard`, a pixel shows when at least half its block shows a surface, at their mean alpha, so outlines stay crisp; or `soft`, its alpha is the block's mean alpha, so outlines and cut-out edges keep the partial alpha reducing the block gives (alpha design D-4, D-9). See [Stylize](#stylize). A [settings file](#settings-files) may set it. |
 | `--palette FILE` | none | Map colours to an ordered `.hex`, `.gpl` or `.png` palette. See [Stylize](#stylize). A [settings file](#settings-files) may set it. |
 | `--no-palette` | off | Use no palette, dropping a reused or configured one; cannot accompany `--palette`. |
@@ -80,8 +80,8 @@ moskophoros [options] <infile.glb> <outfile.png>
 | `--light-intensity I` | `1.0` | How strongly the light lights a surface facing it, finite and 0 or greater. |
 | `--light-ambient A` | `0.3` | How bright a surface facing away from the light is, finite and from 0 to 1. |
 | `--work-dir DIR` | temporary | Keep capture output in `DIR` instead of a deleted temporary directory. |
-| `--blender PATH` | discovered | Blender executable. See [Capture](#capture). |
-| `--any-blender` | off | Allow a Blender version other than the supported one. |
+| `--blender PATH` | discovered | Blender executable. See [Capture](#capture). A [settings file](#settings-files) may set it as the app setting `blender`, which no sheet records or loads. |
+| `--any-blender` | off | Allow a Blender version other than the supported one. A [settings file](#settings-files) may set it as the app setting `any_blender`, which no sheet records or loads; only a file can set it back to `false`. |
 
 Without `--clip`, every clip is selected in the file's animation order:
 ascending animation index (owner decision 2026-10-01).
@@ -139,18 +139,33 @@ requires choosing a new or empty directory (owner decision 2026-09-30).
 
 ### Settings files
 
-The cell, `fps`, the palette, the material library, the edges rule,
-whether previews and the normal and depth maps are written, and the preview
-light are also settings, which YAML settings files may
-set (owner decisions 2026-10-11, settings design D-2, D-5, D-8, D-14, D-17,
-D-22, D-28, D-30 and D-32; lighting sheet design D-18; alpha design D-9). Each is validated exactly as its option is. One schema table
+Everything that shapes the picture is also a setting, which YAML settings
+files may set: the view, the model yaw, the scale, the cell, the ground point
+and ground pixel, supersampling, the reduction, root motion, `fps`, the
+palette, the material library, the edges rule, whether previews and the
+normal and depth maps are written, and the preview light. So are the two app
+settings, the Blender executable and whether another Blender version is
+allowed (owner decisions 2026-10-11, settings design D-2, D-5, D-8, D-14,
+D-17, D-22, D-28, D-30 and D-32; lighting sheet design D-18; alpha design
+D-9; projects and camera design D-4, D-5, D-12 and D-16). Each is validated exactly as its option is. One schema table
 in `settings.py` gives each setting's type, unit, default and validation
 rule, and the packaged `defaults.yaml` gives every setting its shipped
 default; a test keeps the two in agreement.
 
 | Setting | Option | Shipped default | Value |
 |---|---|---|---|
+| `view` | `--view NAME` | `iso` | `topdown`, `side`, `iso` or `iso-true`: a shorthand that sets the next three (see *The view*) |
+| `pitch` | `--pitch DEG` | `null` | a finite number from 0 to 90, or `null`: the view's |
+| `directions` | `--directions N` | `null` | a whole number from 1 to 64, or `null`: the view's |
+| `start_angle` | `--start-angle DEG` | `null` | a finite number of degrees, or `null`: the view's |
+| `model_yaw` | `--model-yaw DEG` | `0` | a finite number of degrees |
+| `ppm` | `--ppm N` | `auto` | a finite number greater than 0, or `auto` |
 | `cell` | `--cell WxH` | `auto` | `WxH`, each side 1 to 4096, or `auto` |
+| `ground` | `--ground X,Y,Z` | `[0, 0, 0]` | `[x, y, z]`, three finite numbers, meters in subject coordinates |
+| `ground_px` | `--ground-px X,Y` | `auto` | `[x, y]`, two whole numbers 0 or greater, or `auto` |
+| `supersample` | `--supersample N` | `8` | a whole number from 1 to 16 |
+| `reduce` | `--reduce NAME` | `plain` | `plain` or `mode` |
+| `root_motion` | `--root-motion MODE` | `error` | `error` or `keep` |
 | `fps` | `--fps N` | `12` | a finite number greater than 0 |
 | `frames` | `--frames N` | `auto` | a whole number 1 or more, or `auto` |
 | `clips.NAME.frames` | none: files only | none | a whole number 1 or more, `auto`, or `null` to take `frames` |
@@ -171,6 +186,15 @@ default; a test keeps the two in agreement.
 | `ramp.lightness_step` | `--ramp-step L` | `0.12` | a finite number from 0 to 1 |
 | `ramp.hue_shift_deg` | `--ramp-hue-shift DEG` | `-12` | a finite number from −180 to 180, degrees |
 | `ramp.chroma_fade` | `--ramp-fade F` | `0.3` | a finite number from 0 to 1 |
+| `blender` | `--blender PATH` | `null` | an executable's path, or `null` to discover Blender as today; an app setting |
+| `any_blender` | `--any-blender` | `false` | `true` or `false`; an app setting |
+
+Values are type-strict: a number is a YAML number, never a string such as
+`"30"` or a boolean, and is finite. `directions`, `supersample` and
+`frames` are YAML integers, never `8.0`. `ground_px` coordinates are whole
+numbers: an integral float such as `3.0` is taken as `3`, as `--ground-px`
+takes it. Whether the ground pixel lies inside the cell stays an
+[overflow](#scale-and-ground-point) question.
 
 The `shade` settings are a nested mapping in a file, and each is a setting of
 its own: they merge key by key across the layers, so a file may set one and
@@ -240,8 +264,46 @@ identical resolved settings give identical bytes.
   loaded sheet's, then the project's.
 - The library is one setting, a path, and replaces whole. It is validated
   against the palette in force, wherever each came from.
-- Every other option, such as the view, `--ppm` or `--supersample`, stays a
-  command-line option and a reused value exactly as before.
+- `auto` for `ppm` or `ground_px` is the automatic value: it clears a
+  reused or lower value and fits, as `cell: auto` does for the cell, and
+  `--ppm auto` and `--ground-px auto` accept it too.
+- `null` for `pitch`, `directions` or `start_angle` takes that value from the
+  view's preset in force (*The view*). `blender: null` discovers Blender as
+  without `--blender`.
+- The app settings, `blender` and `any_blender`, layer like any setting,
+  but no sheet records them, they never reach its fingerprint, and
+  `--settings-from` never loads them. So the global file's app settings
+  apply over a loaded sheet too, and a project's or an option's beat them.
+  `--any-blender` sets `true`; only a file can set `false`.
+- The other options, `--clip`, `--once`, `--settings-from`, `--work-dir`,
+  `--config`, `--no-user-config` and `--project`, are not settings.
+
+**The view.** The view is one state: a preset marker, `topdown`, `side`,
+`iso`, `iso-true` or `custom`, and three values, the pitch, the direction
+count and the start angle, each either the preset's or an override (projects
+and camera design D-16). The layers apply from the weakest up:
+
+1. The shipped defaults set `iso`, with every value the preset's.
+2. A loaded sheet is a snapshot: it sets its recorded marker, `custom`
+   included, and its recorded values, each counted as the preset's. So the
+   global file's view, below it, never applies over it.
+3. In each other layer, a `view` applies first, whatever its place in the
+   file: it sets the preset and every value to the preset's, replacing any
+   lower layer's values. Then a non-null `pitch`, `directions` or
+   `start_angle` is an override, and a `null` resets that value to the
+   preset's. While the marker is `custom`, from a loaded sheet, a `null` has
+   no preset to reset to: it is a usage error naming the file, the key and its
+   line, unless the same layer gives a `view`. The command line is the last
+   layer, `--view` applying before `--pitch`, `--directions` and
+   `--start-angle`.
+4. After the last layer, the recorded marker is the preset's name when every
+   value is the preset's, else `custom`.
+
+So `view: topdown` with `pitch: null` in one layer gives `topdown`;
+`view: iso` with `pitch: 45` gives `custom` with pitch 45; a lower
+`pitch: 45` under a higher `pitch: null` gives the preset's pitch; and an
+`iso` sheet reloaded with nothing above it records `iso`, with its JSON and
+fingerprint unchanged.
 
 **Files.** The global file and a project file share one schema: either may
 set any setting in the table above, and a project file sets only what it
@@ -254,23 +316,40 @@ file by its name and path, as `--project 'look' ('…/projects/look.yaml')`. `ve
 not list, such as a misspelt `fame` or a `shade.ao_radius`, an unknown
 version, a value of the wrong type or out of range, or any YAML error is a usage error
 (exit 2) naming the file, the key and the line. A path inside a settings file
-resolves relative to that file's directory, with a leading `~` expanded;
+resolves relative to that file's directory, with a leading `~` expanded,
+whether a palette, a library or the `blender` executable;
 paths on the command line resolve as before. Every path a settings file
 supplies must be one the file system can name: one holding a NUL character
 or a lone surrogate (from a `\uD800` escape) is refused while the file is
 read. The raw value is checked before `~` is expanded and again after it is
 resolved, and anything the expansion or resolution raises is the same
 error; a `~user` prefix naming no user is left as written. Every participating file is read and checked first, but only the
-palette and library that survive the merge are read, so an overridden path
-need not exist. Any failure to read a palette or library a settings file
+palette and library that survive the merge are read, and only the Blender
+executable that survives is checked, so an overridden path need not exist. Any failure to read a palette or library a settings file
 names, whether missing, a directory, without permission, a name too long or
 a loop of links, is a usage error naming the settings file, the key and its
 line, such as
 `--config 'look.yaml': palette (line 3, column 1) '/art/p.gpl': cannot be read: …`.
+A `blender` setting that names no executable file is a backend error
+(exit 5), as `--blender` is, naming the settings file, the key and its line:
+`--project 'look' ('…/projects/look.yaml'): blender (line 2, column 1) names '/opt/b', which is not an executable file; no other Blender is tried`.
+A failed version probe or a refused Blender version stays a backend error
+too.
 
 ```yaml
 version: 1
+view: iso               # topdown, side, iso or iso-true
+pitch: null             # 0 to 90; null: the view's
+directions: 8           # 1 to 64; null: the view's
+start_angle: null       # degrees; null: the view's
+model_yaw: 0
+ppm: 40                 # or auto
 cell: 48x48             # or auto
+ground: [0, 0, 0]       # meters
+ground_px: auto         # or [x, y], a cell pixel corner
+supersample: 8
+reduce: mode            # or plain
+root_motion: error      # or keep
 fps: 12
 palette: ~/palettes/vince-144.gpl
 materials: robot-library.yaml   # relative to this file
@@ -294,6 +373,8 @@ ramp:                   # generated ramps' formula (setting B is shipped)
   lightness_step: 0.09
   hue_shift_deg: -35
   chroma_fade: 0.6
+blender: /Applications/Blender.app/Contents/MacOS/Blender  # null: discovered
+any_blender: false
 ```
 
 ### Option validation
@@ -302,7 +383,9 @@ Each of these is a usage error (exit 2) unless stated otherwise (owner
 decision 2026-10-01):
 
 - A numeric option given `nan` or `inf`.
-- `--ground-px` coordinates that are not whole numbers 0 or greater. Whether
+- `--ppm` that is not a finite number greater than 0, nor `auto`.
+- `--ground-px` coordinates that are not whole numbers 0 or greater, nor
+  `auto`. Whether
   the point lies inside the cell is an [overflow](#scale-and-ground-point)
   question, not a usage one.
 - The same clip named twice with `--clip`, or twice with `--once`.
@@ -344,7 +427,20 @@ decision 2026-10-01):
 - A bad [settings file](#settings-files), or a missing or unreadable
   `--config` file or project file. These errors name the file, the key and
   the line; a missing project file's error names its path, and nothing is
-  created.
+  created. The view, scale and framing settings and the app settings are
+  refused as their options are: a `view` that is not a preset name; a
+  `pitch` not from 0 to 90, `directions` not a whole number from 1 to 64,
+  or `start_angle` not a finite number, other than `null`; a `model_yaw` not
+  a finite number; a `ppm` not finite and greater than 0, nor `auto`; a
+  `ground` not three finite numbers; a `ground_px` not two whole numbers 0
+  or greater, nor `auto`; a `supersample` not a whole number from 1 to 16; a
+  `reduce` or `root_motion` not one of its values; a `blender` not a path or
+  `null`; an `any_blender` not `true` or `false`. Booleans and numeric
+  strings are never numbers.
+- Over a loaded sheet whose view is `custom`, a project file's `null` for
+  `pitch`, `directions` or `start_angle` without a `view` in the same file,
+  named with the file, the key and its line (projects and camera design
+  D-16).
 - `--config` given more than once, or together with `--no-user-config`;
   `--project` given more than once, or with a name that is not a project
   name (see [Settings files](#settings-files), *Layers*).
@@ -506,8 +602,10 @@ sheet in index order.
 | `iso` | 30° | 8 | 0° |
 | `iso-true` | arctan(1/√2) ≈ 35.264° | 8 | 0° |
 
-Explicit `--pitch`, `--directions` and `--start-angle` override the preset's
-values, and the recorded preset name is then `custom`.
+Explicit `--pitch`, `--directions` and `--start-angle`, or the settings
+`pitch`, `directions` and `start_angle`, override the preset's values, and the
+recorded preset name is then `custom`. How a settings file's `view` and these
+values layer is under [Settings files](#settings-files), *The view*.
 
 The tool renders no ground. Isometric games conventionally run their grid
 axes along screen diagonals: a square cell at 45° to the camera projects at
@@ -689,7 +787,12 @@ settings design D-15, D-16, D-19 and D-28):
 This makes scale, cell and ground pixel fixed. Options given explicitly, and
 project values, override the reused values; the global file, whether the user
 file or a `--config` file, and the shipped defaults never do (projects and
-camera design D-11). An explicit `--reduce` replaces the reused reduction,
+camera design D-11). A project's `ppm`, `ground`, `ground_px`, `model_yaw`,
+`supersample`, `reduce` and `root_motion` replace the reused values as their
+options do; `ppm: auto` or `--ppm auto`, and `ground_px: auto` or
+`--ground-px auto`, drop the reused scale or ground pixel and fit them again
+in the cell in force. The app settings, `blender` and `any_blender`, are
+never recorded or loaded, so the global file's apply over a loaded sheet. An explicit `--reduce` replaces the reused reduction,
 retaining the palette, and an explicit `--edges`, or a project file's
 `edges`, replaces the reused edges rule (alpha design D-9). `--palette FILE` replaces the reused palette;
 `--no-palette` drops it. Reuse applies the recorded ordered colours without
@@ -758,11 +861,16 @@ error even when an override drops or replaces it; a library that is dropped or
 replaced is never checked against another palette. The final library and
 palette are validated before any Blender invocation.
 
-An explicit `--view` replaces the whole reused view: that preset's values
-apply, then any explicit `--pitch`, `--directions` or `--start-angle` on top,
-exactly as without reuse. Without `--view`, the reused view stays, and an
-explicit `--pitch`, `--directions` or `--start-angle` overrides its value and
-makes the preset `custom`.
+The reused view is a snapshot in the view's layers (see
+[Settings files](#settings-files), *The view*). An explicit `--view`, or a
+project's `view`, replaces the whole reused view: that preset's values
+apply, then any `--pitch`, `--directions` or `--start-angle`, or the
+project's `pitch`, `directions` or `start_angle`, on top, exactly as without
+reuse. Without one, the reused view stays, and an explicit or project
+`pitch`, `directions` or `start_angle` overrides its value and makes the
+preset `custom`. A project's `null` resets that value to the reused preset's,
+and over a reused `custom` view is a usage error unless the project gives a
+`view`.
 
 The reused `settings` are checked strictly. Every reused field must be
 present with a value its option would accept, `projection` must be

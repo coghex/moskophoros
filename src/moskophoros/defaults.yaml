@@ -4,6 +4,20 @@
 # ~/.config/moskophoros/config.yaml) or a --config file may set any of them;
 # a key it leaves out falls through to the layer below.
 version: 1
+view: iso        # topdown, side, iso or iso-true; sets the three below
+pitch: null      # camera pitch, 0 to 90; null: the view's
+directions: null # direction count, 1 to 64; null: the view's
+start_angle: null  # angle of direction 0, degrees; null: the view's
+model_yaw: 0     # degrees; corrects a model that does not face +Z
+ppm: auto        # pixels per meter, greater than 0; auto: fitted
+ground: [0, 0, 0]  # the ground point, meters, subject coordinates
+ground_px: auto  # [x, y], the cell pixel corner it lands on; auto: fitted
+supersample: 8   # capture resolution multiplier, 1 to 16
+reduce: plain    # plain: alpha-weighted mean; mode: the most common colour
+root_motion: error  # error or keep
+blender: null    # the Blender executable, relative to the file; null:
+                 # discovered. An app setting: never recorded in a sheet
+any_blender: false  # true: allow another Blender version; an app setting
 cell: auto       # WxH in pixels, each 1 to 4096; auto: fitted with the pixels
                  # per meter in force, else 64x64
 fps: 12          # target sampling rate, greater than 0

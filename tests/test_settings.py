@@ -35,6 +35,19 @@ def refused(data):
 
 def test_the_schema_holds_this_slices_settings():
     assert list(settings.SCHEMA) == [
+        "view",
+        "pitch",
+        "directions",
+        "start_angle",
+        "model_yaw",
+        "ppm",
+        "ground",
+        "ground_px",
+        "supersample",
+        "reduce",
+        "root_motion",
+        "blender",
+        "any_blender",
         "cell",
         "fps",
         "frames",
@@ -67,6 +80,21 @@ def test_the_defaults_file_and_the_schema_table_agree():
     assert list(shipped) == list(settings.SCHEMA)
     assert shipped == dict(settings.DEFAULTS)
     assert shipped == {
+        # The view, scale and framing settings and the app settings
+        # (projects and camera design D-12, D-16): today's option defaults.
+        "view": "iso",
+        "pitch": None,
+        "directions": None,
+        "start_angle": None,
+        "model_yaw": 0.0,
+        "ppm": None,
+        "ground": (0.0, 0.0, 0.0),
+        "ground_px": None,
+        "supersample": 8,
+        "reduce": "plain",
+        "root_motion": "error",
+        "blender": None,
+        "any_blender": False,
         "cell": None,
         "fps": 12.0,
         "frames": "auto",
@@ -228,15 +256,158 @@ def test_an_overlong_integer_fps_is_refused_with_its_line():
     )
 
 
-@pytest.mark.parametrize("key", ["view", "pitch", "Frames", "Cell", "fps ", "Shade"])
+@pytest.mark.parametrize("key", ["View", "fame", "Frames", "Cell", "fps ", "Shade"])
 def test_an_unknown_key_is_refused_naming_it_and_its_line(key):
     text = f"version: 1\nfps: 12\n'{key}': {{a: 1}}\n"
     assert refused(text) == f"{key}: unknown key at line 3, column 1"
 
 
-def test_an_option_that_is_not_a_setting_is_an_unknown_key():
-    text = "fps: 12\nsupersample: 8\n"
-    assert refused(text) == "supersample: unknown key at line 2, column 1"
+@pytest.mark.parametrize("key", ["work_dir", "settings_from", "clip", "once"])
+def test_an_option_that_is_not_a_setting_is_an_unknown_key(key):
+    text = f"fps: 12\n{key}: x\n"
+    assert refused(text) == f"{key}: unknown key at line 2, column 1"
+
+
+# The view, scale and framing, and the app settings (projects and camera
+# design D-4, D-5, D-12, D-16)
+
+
+@pytest.mark.parametrize(
+    ("text", "key", "expected"),
+    [
+        ("view: topdown", "view", "topdown"),
+        ("view: iso-true", "view", "iso-true"),
+        ("pitch: 0", "pitch", 0.0),
+        ("pitch: 90", "pitch", 90.0),
+        ("pitch: 35.5", "pitch", 35.5),
+        ("pitch: null", "pitch", None),
+        ("directions: 1", "directions", 1),
+        ("directions: 64", "directions", 64),
+        ("directions: null", "directions", None),
+        ("start_angle: -720.5", "start_angle", -720.5),
+        ("start_angle: 1e5", "start_angle", 1e5),
+        ("start_angle: null", "start_angle", None),
+        ("model_yaw: -90", "model_yaw", -90.0),
+        ("ppm: 0.001", "ppm", 0.001),
+        ("ppm: 64", "ppm", 64.0),
+        ("ppm: auto", "ppm", None),
+        ("ground: [-1.5, 0, 2e-1]", "ground", (-1.5, 0.0, 0.2)),
+        ("ground_px: [0, 0]", "ground_px", (0, 0)),
+        ("ground_px: [16, 40]", "ground_px", (16, 40)),
+        # An integral float is the whole number, as `--ground-px 3.0,7` is.
+        ("ground_px: [3.0, 7]", "ground_px", (3, 7)),
+        # Whether it lies in the cell is an overflow question.
+        ("ground_px: [100000, 100000]", "ground_px", (100000, 100000)),
+        ("ground_px: auto", "ground_px", None),
+        ("supersample: 1", "supersample", 1),
+        ("supersample: 16", "supersample", 16),
+        ("reduce: mode", "reduce", "mode"),
+        ("root_motion: keep", "root_motion", "keep"),
+        ("blender: null", "blender", None),
+        ("any_blender: true", "any_blender", True),
+        ("any_blender: false", "any_blender", False),
+    ],
+)
+def test_each_view_scale_and_app_setting_takes_its_options_values(text, key, expected):
+    assert layer(f"{text}\n") == {key: expected}
+
+
+def test_the_blender_setting_resolves_against_the_files_directory():
+    assert layer("blender: bin/blender\n", "/settings") == {
+        "blender": Path("/settings/bin/blender")
+    }
+
+
+@pytest.mark.parametrize(
+    ("text", "problem"),
+    [
+        ("view: front", "expected topdown, side, iso or iso-true, got 'front'"),
+        ("view: custom", "expected topdown, side, iso or iso-true, got 'custom'"),
+        ("view: null", "expected topdown, side, iso or iso-true, got null"),
+        ("pitch: 90.001", "expected a finite number from 0 to 90, or null, got 90.001"),
+        ("pitch: -1", "expected a finite number from 0 to 90, or null, got -1"),
+        ("pitch: '30'", "expected a finite number from 0 to 90, or null, got '30'"),
+        ("pitch: true", "expected a finite number from 0 to 90, or null, got true"),
+        ("pitch: 1e400", "expected a finite number from 0 to 90, or null, got inf"),
+        ("directions: 0", "expected a whole number from 1 to 64, or null, got 0"),
+        ("directions: 65", "expected a whole number from 1 to 64, or null, got 65"),
+        ("directions: 8.0", "expected a whole number from 1 to 64, or null, got 8.0"),
+        ("start_angle: 1e400", "expected a finite number of degrees, or null, got inf"),
+        (
+            "start_angle: north",
+            "expected a finite number of degrees, or null, got 'north'",
+        ),
+        ("model_yaw: null", "expected a number of degrees, got null"),
+        ("model_yaw: -1e400", "expected a finite number of degrees, got -inf"),
+        ("ppm: 0", "expected a finite number greater than 0, or auto, got 0"),
+        ("ppm: null", "expected a finite number greater than 0, or auto, got null"),
+        ("ppm: Auto", "expected a finite number greater than 0, or auto, got 'Auto'"),
+        ("ppm: false", "expected a finite number greater than 0, or auto, got false"),
+        ("ground: [1, 2]", "expected [x, y, z], three finite numbers, got [1, 2]"),
+        (
+            "ground: [0, 1e400, 0]",
+            "expected [x, y, z], three finite numbers, got [0, inf, 0]",
+        ),
+        (
+            "ground: [0, true, 0]",
+            "expected [x, y, z], three finite numbers, got [0, true, 0]",
+        ),
+        (
+            "ground: ['0', 0, 0]",
+            "expected [x, y, z], three finite numbers, got ['0', 0, 0]",
+        ),
+        ("ground: null", "expected [x, y, z], three finite numbers, got null"),
+        (
+            "ground_px: [1.5, 0]",
+            "expected [x, y], two whole numbers 0 or greater, or auto, got [1.5, 0]",
+        ),
+        (
+            "ground_px: [-1, 0]",
+            "expected [x, y], two whole numbers 0 or greater, or auto, got [-1, 0]",
+        ),
+        (
+            "ground_px: [0, true]",
+            "expected [x, y], two whole numbers 0 or greater, or auto, got [0, true]",
+        ),
+        (
+            "ground_px: ['3', 7]",
+            "expected [x, y], two whole numbers 0 or greater, or auto, got ['3', 7]",
+        ),
+        (
+            "ground_px: [1e400, 0]",
+            "expected [x, y], two whole numbers 0 or greater, or auto, got [inf, 0]",
+        ),
+        (
+            "ground_px: [1, 2, 3]",
+            "expected [x, y], two whole numbers 0 or greater, or auto, got [1, 2, 3]",
+        ),
+        (
+            "ground_px: null",
+            "expected [x, y], two whole numbers 0 or greater, or auto, got null",
+        ),
+        ("supersample: 0", "expected a whole number from 1 to 16, got 0"),
+        ("supersample: 17", "expected a whole number from 1 to 16, got 17"),
+        ("supersample: 4.0", "expected a whole number from 1 to 16, got 4.0"),
+        ("reduce: median", "expected plain or mode, got 'median'"),
+        ("reduce: Mode", "expected plain or mode, got 'Mode'"),
+        ("root_motion: ignore", "expected error or keep, got 'ignore'"),
+        ("blender: ''", "expected a file path or null, got ''"),
+        ("blender: 3", "expected a file path or null, got 3"),
+        ("any_blender: yes", "expected true or false, got 'yes'"),
+        ("any_blender: null", "expected true or false, got null"),
+    ],
+)
+def test_a_bad_view_scale_or_app_setting_is_refused_naming_key_and_line(text, problem):
+    key = text.split(":")[0]
+    assert refused(f"fps: 12\n{text}\n") == f"{key}: {problem} at line 2, column 1"
+
+
+def test_the_settings_presets_are_the_commands():
+    from moskophoros import cli
+
+    assert tuple(cli.PRESETS) == settings.VIEWS
+    assert cli.REDUCTIONS == settings.REDUCTIONS
+    assert cli.ROOT_MOTION_MODES == settings.ROOT_MOTION_MODES
 
 
 # The shade group (settings design D-3, D-9, D-12, D-22, D-30, D-42)

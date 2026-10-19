@@ -43,18 +43,22 @@ class Blender:
     version: str
 
 
-def find_blender(option=None, environ=None, platform=None, macos_app=MACOS_APP):
-    """Find Blender: `--blender`, `$MOSKOPHOROS_BLENDER`, `blender` on PATH,
-    then the macOS application.
+def find_blender(
+    option=None, environ=None, platform=None, macos_app=MACOS_APP, source="--blender"
+):
+    """Find Blender: `--blender` or the `blender` setting, as `source` names
+    it, `$MOSKOPHOROS_BLENDER`, `blender` on PATH, then the macOS
+    application.
 
     Returns the absolute path and the source that named it. The first
-    source that is set decides: an unusable `--blender` or environment
-    variable is a `BackendError`, and later sources are not tried.
+    source that is set decides: an unusable `--blender`, setting or
+    environment variable is a `BackendError`, and later sources are not
+    tried.
     """
     environ = os.environ if environ is None else environ
     platform = sys.platform if platform is None else platform
     configured = [
-        ("--blender", None if option is None else str(option)),
+        (source, None if option is None else str(option)),
         (f"${ENVIRONMENT_VARIABLE}", environ.get(ENVIRONMENT_VARIABLE) or None),
     ]
     for source, path in configured:
@@ -125,9 +129,11 @@ def check_version(path, any_blender=False):
     return version
 
 
-def locate(option=None, any_blender=False, environ=None, platform=None):
-    """Find Blender and check its version."""
-    path, source = find_blender(option, environ, platform)
+def locate(
+    option=None, any_blender=False, environ=None, platform=None, source="--blender"
+):
+    """Find Blender and check its version; `source` names `option`."""
+    path, source = find_blender(option, environ, platform, source=source)
     return Blender(path, source, check_version(path, any_blender))
 
 

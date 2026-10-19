@@ -303,8 +303,201 @@ def _check_previews(value):
     return value
 
 
+def _one_of(*choices):
+    """A string among `choices`, as the option of the same name accepts."""
+
+    def check(value):
+        if isinstance(value, str) and value in choices:
+            return value
+        listed = ", ".join(choices[:-1]) + f" or {choices[-1]}"
+        raise _Bad(f"expected {listed}, got {_shown(value)}")
+
+    return check
+
+
+def _nullable(check, wanted):
+    """`check`, or `null`: the value from the view in force (projects and
+    camera design D-16). `wanted` describes what `check` accepts."""
+
+    def nullable(value):
+        if value is None:
+            return None
+        try:
+            return check(value)
+        except _Bad:
+            raise _Bad(f"expected {wanted}, or null, got {_shown(value)}") from None
+
+    return nullable
+
+
+def _whole_from(low, high):
+    def check(value):
+        if type(value) is not int or not low <= value <= high:
+            raise _Bad(
+                f"expected a whole number from {low} to {high}, got {_shown(value)}"
+            )
+        return value
+
+    return check
+
+
+def _check_degrees(value):
+    return _finite(value, "of degrees")
+
+
+def _check_ppm(value):
+    """`auto` as None, the automatic scale, or a finite number greater than
+    0."""
+    if value == AUTO:
+        return None
+    try:
+        return _check_fps(value)
+    except _Bad:
+        raise _Bad(
+            f"expected a finite number greater than 0, or {AUTO}, got {_shown(value)}"
+        ) from None
+
+
+def _shown_list(value):
+    if isinstance(value, list):
+        return "[" + ", ".join(map(_shown, value)) + "]"
+    return _shown(value)
+
+
+def _check_ground(value):
+    """The ground point: `[x, y, z]`, three finite numbers, never booleans."""
+    if isinstance(value, list) and len(value) == 3:
+        try:
+            return tuple(_finite(coordinate, "") for coordinate in value)
+        except _Bad:
+            pass
+    raise _Bad(f"expected [x, y, z], three finite numbers, got {_shown_list(value)}")
+
+
+def _check_ground_px(value):
+    """`auto` as None, or `[x, y]`, two whole numbers 0 or greater: integers,
+    or integral finite floats such as `3.0`, made integers; never booleans
+    or strings. Whether it lies in the cell is an overflow question."""
+    if value == AUTO:
+        return None
+    if isinstance(value, list) and len(value) == 2:
+        coordinates = []
+        for coordinate in value:
+            if type(coordinate) is int and coordinate >= 0:
+                coordinates.append(coordinate)
+            elif (
+                type(coordinate) is float
+                and math.isfinite(coordinate)
+                and coordinate.is_integer()
+                and coordinate >= 0
+            ):
+                coordinates.append(int(coordinate))
+            else:
+                break
+        else:
+            return tuple(coordinates)
+    raise _Bad(
+        f"expected [x, y], two whole numbers 0 or greater, or {AUTO}, got "
+        f"{_shown_list(value)}"
+    )
+
+
+# The view's presets, as `--view` names them, and the values `--reduce` and
+# `--root-motion` accept, the default first.
+VIEWS = ("topdown", "side", "iso", "iso-true")
+REDUCTIONS = ("plain", "mode")
+ROOT_MOTION_MODES = ("error", "keep")
+# The view's settings (projects and camera design D-16): a preset, and the
+# values a preset gives, which `null` takes from the preset in force.
+VIEW_SETTINGS = ("view", "pitch", "directions", "start_angle")
+# The app settings: never recorded in a sheet, never loaded from one, and
+# no part of its fingerprint (projects and camera design D-16).
+APP_SETTINGS = ("blender", "any_blender")
+
 SCHEMA = MappingProxyType(
     {
+        "view": Setting(
+            f"the view preset: {', '.join(VIEWS)}; it sets the pitch, the "
+            "direction count and the start angle",
+            None,
+            "iso",
+            _one_of(*VIEWS),
+        ),
+        "pitch": Setting(
+            "the camera pitch, 0 to 90, or null: the view's",
+            "degrees",
+            None,
+            _nullable(_within(0, 90), "a finite number from 0 to 90"),
+        ),
+        "directions": Setting(
+            "the direction count, 1 to 64, or null: the view's",
+            "directions",
+            None,
+            _nullable(_whole_from(1, 64), "a whole number from 1 to 64"),
+        ),
+        "start_angle": Setting(
+            "the angle of direction 0, or null: the view's",
+            "degrees",
+            None,
+            _nullable(_check_degrees, "a finite number of degrees"),
+        ),
+        "model_yaw": Setting(
+            "corrects a model that does not face +Z",
+            "degrees",
+            0,
+            _check_degrees,
+        ),
+        "ppm": Setting(
+            "pixels per meter, greater than 0, or auto: fitted",
+            "pixels per meter",
+            AUTO,
+            _check_ppm,
+        ),
+        "ground": Setting(
+            "the ground point in subject coordinates, [x, y, z]",
+            "meters",
+            [0, 0, 0],
+            _check_ground,
+        ),
+        "ground_px": Setting(
+            "the cell pixel corner the ground point lands on, [x, y], two whole "
+            "numbers 0 or greater, or auto: fitted",
+            "pixels",
+            AUTO,
+            _check_ground_px,
+        ),
+        "supersample": Setting(
+            "the capture resolution multiplier, 1 to 16",
+            None,
+            8,
+            _whole_from(1, 16),
+        ),
+        "reduce": Setting(
+            "how each supersampled block becomes one pixel: plain or mode",
+            None,
+            REDUCTIONS[0],
+            _one_of(*REDUCTIONS),
+        ),
+        "root_motion": Setting(
+            "error or keep",
+            None,
+            ROOT_MOTION_MODES[0],
+            _one_of(*ROOT_MOTION_MODES),
+        ),
+        "blender": Setting(
+            "the Blender executable, or null: discovered; an app setting",
+            None,
+            None,
+            _check_path,
+            path=True,
+        ),
+        "any_blender": Setting(
+            "whether a Blender version other than the supported one is allowed; "
+            "an app setting",
+            None,
+            False,
+            _check_previews,
+        ),
         "cell": Setting(
             "the cell size in pixels, WxH with each side 1 to 4096, or auto: "
             "fitted with the pixels per meter in force, else 64x64",
