@@ -66,8 +66,9 @@ moskophoros [options] <infile.glb> <outfile.png>
 | `--ramp-fade F` | `0.3` | How much chroma a generated ramp loses by its darkest shade, finite, 0 to 1. |
 | `--frames N` | `auto` | How many frames each clip is sampled to, a whole number 1 or more, retimed so every frame lasts `1/fps`; `auto` samples by duration. A clip's own count, set in a [settings file](#settings-files), beats it. See [Clips and sampling](#clips-and-sampling). |
 | `--settings-from FILE` | none | Load every recorded setting of an earlier `moskophoros.sheet/13` sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
-| `--config FILE` | none | Repeatable. Read settings from a YAML file; later files win, and its values act as the options would. See [Settings files](#settings-files). |
-| `--no-user-config` | off | Skip the user settings file. |
+| `--config FILE` | the user file | Use FILE as the global settings file, in place of the user file. Given at most once. Its values are defaults, below a loaded sheet. See [Settings files](#settings-files). |
+| `--no-user-config` | off | Use no global settings file: skip the user file. Cannot accompany `--config`. |
+| `--project NAME` | none | Read the project file `projects/NAME.yaml` in the configuration directory. Given at most once. Its values act as the options would, over the global file and a loaded sheet. See [Settings files](#settings-files). |
 | `--preview` | on | Write the animated previews, also over a sheet or settings file without them; cannot accompany `--no-preview`. |
 | `--no-preview` | off | Skip the animated previews. A [settings file](#settings-files) may set `previews: false` instead. |
 | `--normals` | on | Write the normal map, `<stem>.normal.png`, also over a sheet or settings file without it; cannot accompany `--no-normals`. See [Export](#export). |
@@ -188,21 +189,36 @@ still checked. An unknown key in an entry, or a bad count, is an error
 naming the file, the key path (`clips.Jump.frames`) and the line.
 
 **Layers.** Lowest first, each a partial set of settings; a setting a layer
-leaves out falls through to the layer below:
+leaves out falls through to the layer below (projects and camera design D-9,
+D-11):
 
 1. the shipped defaults, `defaults.yaml` inside the package;
-2. the user file, `$XDG_CONFIG_HOME/moskophoros/config.yaml` when that
-   variable is set and not empty, else `~/.config/moskophoros/config.yaml`.
-   It is optional: a missing user file is not an error. `--no-user-config`
-   skips it, as tests and scripts do;
+2. the global file, the default project:
+   - the user file, `config.yaml` in the configuration directory. It is
+     optional: a missing user file is not an error;
+   - or the one file `--config FILE` names, in its place. It must exist;
+   - or none, with `--no-user-config`, as tests and scripts use;
 3. a loaded sheet, `--settings-from FILE` (see
    [Scale and ground point](#scale-and-ground-point), *Reuse*);
-4. `--config FILE` files, in command-line order, later files winning;
+4. the project file, `--project NAME`: `projects/NAME.yaml` in the
+   configuration directory. It must exist;
 5. the command-line options.
 
+The configuration directory is `$XDG_CONFIG_HOME/moskophoros/` when that
+variable is set and not empty, else `~/.config/moskophoros/`. Neither
+`--config` nor `--no-user-config` moves it, so a project is found in the same
+place whichever global file is used.
+
+A project name is letters, digits, `.`, `_` and `-`, not starting with `.`,
+and given without `.yaml`, so it names a file in `projects/` and nothing
+outside it (projects and camera design D-16). Any other name, such as one
+holding `/` or ending in `.yaml`, is a usage error naming it.
+
 Loading is in memory, for that generation only. The tool never writes the
-user file or any `--config` file. Where each value came from is never
-recorded, so identical resolved settings give identical bytes.
+global file or a project file, and never creates `projects/` or a file in
+it. The sheet records the resolved settings, never the project's name or a
+settings file's name; where each value came from is never recorded, so
+identical resolved settings give identical bytes.
 
 **Merge rules.**
 
@@ -212,21 +228,29 @@ recorded, so identical resolved settings give identical bytes.
   fixed cell. Any layer may set `auto`, and `--cell` accepts it.
 - `null` means none for `palette` and `materials`, as `--no-palette` and
   `--no-materials` do.
-- A `--config` value acts exactly as its explicit option would, including
+- A project value acts exactly as its explicit option would, including
   against a loaded sheet: `cell` behaves like `--cell` after
   `--settings-from`, and a palette or library follows the reuse table under
   *Reuse*. A command-line option still beats it.
-- A value from the user file or the shipped defaults is only a default. A
-  loaded sheet records every one of these settings and sits above both, so
-  they apply only without one.
+- A value from the global file or the shipped defaults is only a default,
+  whether the global file is the user file or a `--config` file. A loaded
+  sheet records every one of these settings and sits above both, so they
+  apply only without one.
+- Per-clip frame counts merge by clip name: the global file's, then the
+  loaded sheet's, then the project's.
 - The library is one setting, a path, and replaces whole. It is validated
   against the palette in force, wherever each came from.
 - Every other option, such as the view, `--ppm` or `--supersample`, stays a
   command-line option and a reused value exactly as before.
 
-**Files.** A user or `--config` file is read through the strict YAML reader
+**Files.** The global file and a project file share one schema: either may
+set any setting in the table above, and a project file sets only what it
+lists. Each is read through the strict YAML reader
 (see [Material libraries](#material-libraries)) and is a mapping of
-settings. `version: 1` is optional at its top. A key the table above does
+settings; an empty mapping, `{}` or `version: 1` alone, sets nothing, while
+an empty file, or one of comments only, is an error. Errors name the global
+file by its path, as `the user settings '…'` or `--config '…'`, and a project
+file by its name and path, as `--project 'look' ('…/projects/look.yaml')`. `version: 1` is optional at its top. A key the table above does
 not list, such as a misspelt `fame` or a `shade.ao_radius`, an unknown
 version, a value of the wrong type or out of range, or any YAML error is a usage error
 (exit 2) naming the file, the key and the line. A path inside a settings file
@@ -318,7 +342,12 @@ decision 2026-10-01):
   `ramp` settings in a settings file and a reused sheet (material styling
   design D-33).
 - A bad [settings file](#settings-files), or a missing or unreadable
-  `--config` file. These errors name the file, the key and the line.
+  `--config` file or project file. These errors name the file, the key and
+  the line; a missing project file's error names its path, and nothing is
+  created.
+- `--config` given more than once, or together with `--no-user-config`;
+  `--project` given more than once, or with a name that is not a project
+  name (see [Settings files](#settings-files), *Layers*).
 - Over a loaded sheet without `--clip`, a `--once` naming a clip outside the
   loaded clip list (owner decision 2026-10-11, settings design D-27).
 - A `--materials` file whose name does not end in `.yaml` or `.yml`, in any
@@ -540,10 +569,10 @@ have one frame, whatever their count (D-25); an authored animation named
 **Warnings** (settings design D-25, D-26, D-41), neither an error nor a
 change to the output:
 
-- When `--frames` or a `--config` file sets the global count, as a count or
+- When `--frames` or a project file sets the global count, as a count or
   `auto`, one warning names every selected clip whose own value, a count or
   `auto`, beats it, even an equal one. Zero-duration and `static` clips are
-  left out. A global from the shipped defaults, the user file or a loaded
+  left out. A global from the shipped defaults, the global file or a loaded
   sheet warns nothing.
 - A selected zero-duration or `static` clip whose own count is above 1 is
   named as keeping one frame.
@@ -658,9 +687,10 @@ settings design D-15, D-16, D-19 and D-28):
 - the clip selection and its one-shot marks, `settings.clips`
 
 This makes scale, cell and ground pixel fixed. Options given explicitly, and
-`--config` values, override the reused values; the user file and the shipped
-defaults never do. An explicit `--reduce` replaces the reused reduction,
-retaining the palette, and an explicit `--edges`, or a `--config` file's
+project values, override the reused values; the global file, whether the user
+file or a `--config` file, and the shipped defaults never do (projects and
+camera design D-11). An explicit `--reduce` replaces the reused reduction,
+retaining the palette, and an explicit `--edges`, or a project file's
 `edges`, replaces the reused edges rule (alpha design D-9). `--palette FILE` replaces the reused palette;
 `--no-palette` drops it. Reuse applies the recorded ordered colours without
 opening the original palette file and keeps its record unchanged. `--preview`
@@ -692,10 +722,11 @@ D-27):
   that `--clip` replaced need not exist.
 
 Each recorded generated ramp keeps its recorded `indices` without being
-generated again. Only when an explicit value, from `--config` or an option,
-changes a reused ramp's effective formula values is that ramp generated again
-from its recorded properties; the user file sits below the loaded sheet, so it
-never changes a loaded sheet's ramps (material styling design D-33). The
+generated again. Only when an explicit value, from a project file or an
+option, changes a reused ramp's effective formula values is that ramp
+generated again from its recorded properties; the global file sits below the
+loaded sheet, so it never changes a loaded sheet's ramps (material styling
+design D-33). The
 global formula reloads from `settings.ramp`.
 
 Only the current sheet schema, `moskophoros.sheet/13`, loads (owner decision
@@ -771,7 +802,7 @@ override, including `--reduce`, `--edges`, `--palette`, `--no-palette`, `--mater
 `--no-materials`, `--clip`, `--once`, `--preview`, `--no-preview`,
 `--normals`, `--no-normals`, `--depth`, `--no-depth`, `--light`,
 `--no-light`, `--light-intensity`, `--light-ambient` and the shading
-options, and `--config` values (owner decisions 2026-10-04,
+options, and project values (owner decisions 2026-10-04,
 2026-10-07, 2026-10-11, 2026-10-12).
 A missing or invalid field, or an unknown field inside `settings`, is a usage
 error naming it. The rest of the sheet is not checked beyond its `schema`
@@ -1848,9 +1879,9 @@ near-grey steel `#8c939c`, `N = 4`, `[111, 133, 135, 137]`; setting C (0.09,
 A generated ramp is then used exactly as a listed ramp of its indices: a
 sheet from it is byte-identical to one from the listed ramp. A ramp's own
 formula value beats the global from any layer; a global given explicitly, by
-an option or a `--config` file, that a generated ramp in use keeps its own
+an option or a project file, that a generated ramp in use keeps its own
 value over is named in a warning, naming the ramp and the value it kept
-(settings design D-23); a value from the shipped defaults, the user file or
+(settings design D-23); a value from the shipped defaults, the global file or
 a loaded sheet warns nothing.
 
 #### Material ramps
@@ -1973,12 +2004,12 @@ D-18), before capture starts:
   one
 - each library entry whose name is used only by materials whose alpha mode
   glTF does not define
-- for each global shading value an option or a `--config` file set, each
+- for each global shading value an option or a project file set, each
   material of the model taking its entry's ramp that keeps its own value
   instead, naming the material, the value and the global one, once per
   material and value, by material then in the order `ao_distance_m`,
   `occlusion_weight`, `convexity_weight`, `range` (owner decision 2026-10-11,
-  settings design D-23). A global from the shipped defaults, the user file or
+  settings design D-23). A global from the shipped defaults, the global file or
   a loaded sheet warns nothing, nor does an entry the model never uses; a
   translucent material's warns as any other's
 - an explicit global `shade.range` that the library's own range beats for a

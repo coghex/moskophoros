@@ -14,6 +14,7 @@ import pytest
 from glb_writer import GlbWriter
 from PIL import Image
 from shading import DEFAULT_RANGE
+from test_settings_command import project_file
 
 from moskophoros import cli
 from moskophoros.capture import backend, blender
@@ -320,8 +321,7 @@ clips:
 
 
 def test_counts_retime_the_sheet_and_its_previews(capsys, found, model, tmp_path):
-    config = tmp_path / "frames.yaml"
-    config.write_text(FRAMES_CONFIG)
+    project_file(FRAMES_CONFIG, "frames")
     out = tmp_path / "out"
     out.mkdir()
     status, _, err = run(
@@ -330,8 +330,8 @@ def test_counts_retime_the_sheet_and_its_previews(capsys, found, model, tmp_path
         model,
         out / "hero.png",
         *SHEET,
-        "--config",
-        str(config),
+        "--project",
+        "frames",
         base=[
             "--supersample",
             "2",
@@ -343,7 +343,7 @@ def test_counts_retime_the_sheet_and_its_previews(capsys, found, model, tmp_path
         ],
     )
     assert status == 0, err
-    # The file's global names attack, which keeps its own (D-41).
+    # The project's global names attack, which keeps its own (D-41).
     assert err == (
         "moskophoros: warning: the global frame count 4 does not reach the clips "
         'with their own: "attack" (3)\n'
@@ -387,8 +387,7 @@ def test_a_counted_sheet_regenerated_from_itself_is_byte_identical(
 ):
     """Settings design D-16 with counts: a global count (walk), a clip's own
     count (attack), a clip's own auto (nod) and a one-frame clip (slide)."""
-    config = tmp_path / "frames.yaml"
-    config.write_text(FRAMES_CONFIG)
+    config = project_file(FRAMES_CONFIG, "frames")
     first, again = tmp_path / "first", tmp_path / "again"
     first.mkdir()
     again.mkdir()
@@ -399,8 +398,8 @@ def test_a_counted_sheet_regenerated_from_itself_is_byte_identical(
         model,
         first / "hero.png",
         *selection,
-        "--config",
-        str(config),
+        "--project",
+        "frames",
         base=[*FAST, "--no-user-config"],
     )
     assert status == 0, err

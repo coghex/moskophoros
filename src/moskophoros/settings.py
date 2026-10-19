@@ -15,11 +15,13 @@ validation rule are kept; the packaged `defaults.yaml` gives every setting
 its shipped default and agrees with it. Everything here is pure except
 `read_file` and `read_defaults`, which read the one file they name. Which
 layers apply, and how they meet a loaded sheet and the command line, is the
-command's business (`cli.resolve_settings`).
+command's business (`cli.resolve_settings`). The global file and a project
+file share this one schema (projects and camera design D-9).
 """
 
 import math
 import os
+import re
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
@@ -31,8 +33,15 @@ from moskophoros.imageops import EDGES
 
 VERSION = 1
 DEFAULTS_FILE = "defaults.yaml"
-# The user file, under `$XDG_CONFIG_HOME` or `~/.config`.
-USER_FILE = Path("moskophoros", "config.yaml")
+# The configuration directory under `$XDG_CONFIG_HOME` or `~/.config`, the
+# user file in it, the default global file, and its folder of project files.
+CONFIG_DIR = "moskophoros"
+USER_FILE = "config.yaml"
+PROJECTS_DIR = "projects"
+# A project name: letters, digits, `.`, `_` and `-`, not starting with `.`,
+# given without `.yaml` (projects and camera design D-16).
+PROJECT_NAME = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9._-]*", re.ASCII)
+PROJECT_SUFFIX = ".yaml"
 AUTO = "auto"
 MAX_CELL_SIDE = 4096
 
@@ -571,15 +580,40 @@ def read_defaults():
     return read_bytes(data, source="the shipped defaults", directory=".")
 
 
-def user_file(environ):
-    """The user file's path under the environment `environ`:
-    `$XDG_CONFIG_HOME/moskophoros/config.yaml` when that is set and not
-    empty, else `~/.config/moskophoros/config.yaml`."""
+def config_dir(environ):
+    """The configuration directory under the environment `environ`:
+    `$XDG_CONFIG_HOME/moskophoros` when that is set and not empty, else
+    `~/.config/moskophoros`."""
     base = environ.get("XDG_CONFIG_HOME")
     if not base:
         home = environ.get("HOME") or os.path.expanduser("~")
         base = os.path.join(home, ".config")
-    return Path(base, USER_FILE)
+    return Path(base, CONFIG_DIR)
+
+
+def user_file(environ):
+    """The user file's path under the environment `environ`,
+    `config.yaml` in the configuration directory: the global file unless
+    `--config` names another."""
+    return config_dir(environ) / USER_FILE
+
+
+def is_project_name(name):
+    """Whether `name` is a project name: letters, digits, `.`, `_` and `-`,
+    not starting with `.`, and not ending in `.yaml`, so it names a file in
+    the projects folder and nothing outside it."""
+    if name.endswith(PROJECT_SUFFIX):
+        return False
+    return PROJECT_NAME.fullmatch(name) is not None
+
+
+def project_file(environ, name):
+    """The path of project `name`'s file under the environment `environ`,
+    `projects/NAME.yaml` in the configuration directory, which neither
+    `--config` nor `--no-user-config` moves. `name` must be a project name."""
+    if not is_project_name(name):
+        raise ValueError(f"not a project name: {name!r}")
+    return config_dir(environ) / PROJECTS_DIR / f"{name}{PROJECT_SUFFIX}"
 
 
 def merge(*layers):

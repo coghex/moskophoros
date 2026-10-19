@@ -8,8 +8,8 @@ input file, the filesystem or Blender belong to the stages that use them.
 
 `resolve_settings` lays the settings layers under the parsed options,
 following design §CLI, Settings files, and §Scale and ground point, Reuse:
-the shipped defaults, the user file, a loaded sheet (`--settings-from`) and
-`--config` files. `read_settings` reads and checks the loaded sheet's
+the shipped defaults, the global file, a loaded sheet (`--settings-from`) and
+a project file (`--project`). `read_settings` reads and checks the loaded sheet's
 `settings`, and `apply_settings` merges them with the options. It also reads
 the selected palette and material library snapshots; these reads precede any
 Blender invocation.
@@ -100,7 +100,7 @@ REDUCTIONS = ("plain", "mode")
 SHEET_SCHEMA = "moskophoros.sheet/13"
 _MAX_DIGITS = 4300
 _VIEW_FIELDS = ("view", "pitch", "directions", "start_angle")
-_REPEATABLE = frozenset({"--clip", "--once", "--config"})
+_REPEATABLE = frozenset({"--clip", "--once"})
 # The `Options` field of each file setting whose name differs, which is also
 # its option's name in `explicit`.
 _SETTING_FIELDS = MappingProxyType(
@@ -158,8 +158,8 @@ class Options:
 
     `explicit` holds the field names of the options given on the command
     line, as distinct from defaults and preset-derived values; once
-    `resolve_settings` has run, it also holds the fields a `--config` file
-    set, which act as explicit options. `view` is the resolved preset name,
+    `resolve_settings` has run, it also holds the fields a project file set,
+    which act as explicit options. `view` is the resolved preset name,
     or `custom` when an explicit pitch, direction count or start angle
     overrides the preset. `clip` is None when every clip is selected; `ppm`,
     `cell` and `ground_px` are None when automatic. `origins` names the
@@ -200,8 +200,11 @@ class Options:
     ao_samples: int = layered.DEFAULTS["shade.ao_samples"]
     occlusion_weight: float = layered.DEFAULTS["shade.occlusion_weight"]
     convexity_weight: float = layered.DEFAULTS["shade.convexity_weight"]
-    configs: tuple[Path, ...] = ()
+    # The global file `--config` names, in place of the user file; whether
+    # `--no-user-config` uses none; and the `--project` name.
+    config: Path | None = None
     no_user_config: bool = False
+    project: str | None = None
     origins: MappingProxyType = MappingProxyType({})
     # The global frame count as given, "auto" or a count, and each clip's own
     # by name: a count, "auto", or None to take the global (settings design
@@ -258,6 +261,8 @@ def parse_args(argv: Sequence[str]) -> Options:
         parser.error("--depth and --no-depth cannot be given together")
     if args.light is not None and args.no_light:
         parser.error("--light and --no-light cannot be given together")
+    if args.config is not None and args.no_user_config:
+        parser.error("--config and --no-user-config cannot be given together")
 
     once = tuple(args.once or ())
     clip = None if args.clip is None else tuple(args.clip)
@@ -318,8 +323,9 @@ def parse_args(argv: Sequence[str]) -> Options:
         occlusion_weight=args.occlusion_weight,
         convexity_weight=args.convexity_weight,
         shade_range=args.shade_range,
-        configs=tuple(args.configs or ()),
+        config=args.config,
         no_user_config=args.no_user_config,
+        project=args.project,
         frames=args.frames,
         normals=(
             not args.no_normals
@@ -386,23 +392,25 @@ def resolve_settings(options: Options, environ=None) -> Options:
     """Lay the settings layers under `options`, then resolve the palette and
     material library bytes and check the combination, all before Blender.
 
-    The layers, lowest first, are the shipped defaults, the user file (unless
-    `--no-user-config`), a loaded sheet (`--settings-from`), the `--config`
-    files in order, then the command line (design §CLI, Settings files).
-    Every file is read and checked before any value is used. A `--config`
+    The layers, lowest first, are the shipped defaults, the global file (the
+    user file, or the one `--config` names; none with `--no-user-config`), a
+    loaded sheet (`--settings-from`), the project file (`--project`), then
+    the command line (design §CLI, Settings files; projects and camera design
+    D-11). Every file is read and checked before any value is used. A project
     value acts as its explicit option would, including against a loaded
-    sheet. The user file and the defaults are only defaults: a loaded sheet
+    sheet. The global file and the defaults are only defaults: a loaded sheet
     records every setting they hold, so they apply only without one.
-    `environ` locates the user file; it is `os.environ` by default. Only the
-    palette and library that survive the merge are read.
+    `environ` locates the user file and the project files; it is
+    `os.environ` by default. Only the palette and library that survive the
+    merge are read.
     """
     environ = os.environ if environ is None else environ
-    defaults, user, configs = _read_layers(options, environ)
+    defaults, global_, projects = _read_layers(options, environ)
     options = _apply_layer(
-        options, layered.merge(*(values for _, values in configs)), configs
+        options, layered.merge(*(values for _, values in projects)), projects
     )
     reused_colors = None
-    clip_layers = [] if user is None else [user[1].get("clips", {})]
+    clip_layers = [] if global_ is None else [global_[1].get("clips", {})]
     if options.settings_from is not None:
         reused = read_settings(options.settings_from)
         options = apply_settings(options, reused)
@@ -410,11 +418,11 @@ def resolve_settings(options: Options, environ=None) -> Options:
             reused_colors = reused.palette.colors
         clip_layers.append(reused.clip_frames)
     else:
-        options = _apply_defaults(options, defaults, user)
+        options = _apply_defaults(options, defaults, global_)
     # Each clip's own frame count merges by clip name, the loaded sheet's
     # included, a higher layer's null clearing a lower one's count; per-clip
     # values come from files and the sheet only (settings design D-17, D-39).
-    clip_layers += [values.get("clips", {}) for _, values in configs]
+    clip_layers += [values.get("clips", {}) for _, values in projects]
     merged = {}
     for layer in clip_layers:
         merged.update(layer)
@@ -424,26 +432,35 @@ def resolve_settings(options: Options, environ=None) -> Options:
 
 
 def _read_layers(options, environ):
-    """The shipped defaults, the user file's layer and its label (or None),
-    and each `--config` file's label and layer, in command-line order."""
+    """The shipped defaults, the global file's label and layer (or None),
+    and the project file's label and layer in a list, empty without
+    `--project`. A missing `--config` file or project file is an error; a
+    missing user file is not. Nothing is created."""
     parser = _build_parser()[0]
     try:
         defaults = layered.read_defaults()
-        user = None
-        if not options.no_user_config:
+        global_ = None
+        if options.config is not None:
+            label = f"--config {str(options.config)!r}"
+            global_ = (
+                label,
+                layered.read_file(options.config, source=label, required=True),
+            )
+        elif not options.no_user_config:
             path = layered.user_file(environ)
             label = f"the user settings {str(path)!r}"
             values = layered.read_file(path, source=label, required=False)
-            user = None if values is None else (label, values)
-        configs = []
-        for path in options.configs:
-            label = f"--config {str(path)!r}"
-            configs.append(
+            global_ = None if values is None else (label, values)
+        projects = []
+        if options.project is not None:
+            path = layered.project_file(environ, options.project)
+            label = f"--project {options.project!r} ({str(path)!r})"
+            projects.append(
                 (label, layered.read_file(path, source=label, required=True))
             )
     except layered.SettingsError as error:
         parser.error(str(error))
-    return defaults, user, configs
+    return defaults, global_, projects
 
 
 def _apply_layer(options, values, sources, mark=True):
@@ -488,12 +505,12 @@ def _apply_layer(options, values, sources, mark=True):
     )
 
 
-def _apply_defaults(options, defaults, user):
-    """Without a loaded sheet, the user file's settings, then the shipped
-    defaults, for what neither the command line nor a `--config` file set."""
+def _apply_defaults(options, defaults, global_):
+    """Without a loaded sheet, the global file's settings, then the shipped
+    defaults, for what neither the command line nor a project file set."""
     sources = [("the shipped defaults", defaults)]
-    if user is not None:
-        sources.append(user)
+    if global_ is not None:
+        sources.append(global_)
     merged = layered.merge(*(values for _, values in sources))
     return _apply_layer(options, merged, sources, mark=False)
 
@@ -1147,7 +1164,7 @@ def _frame_warnings(options, selected):
     """The frame-count warnings for the selected clips (settings design D-25,
     D-26, D-41), neither an error nor a change to the output.
 
-    When `--frames` or a `--config` file set the global count, one warning
+    When `--frames` or a project file set the global count, one warning
     names every selected clip whose own value, a count or `auto`, beats it,
     even an equal one; a clip of zero duration and `static` are left out.
     Each of those whose own count is above 1 is named as keeping one frame.
@@ -1192,7 +1209,7 @@ _OVERRIDABLE = MappingProxyType(
 
 
 def _explicit_formula(options):
-    """The global formula values an option or a `--config` file set, by name:
+    """The global formula values an option or a project file set, by name:
     the ones a generated ramp's own value warns about (material styling
     design D-33)."""
     fields = {
@@ -1208,9 +1225,9 @@ def _explicit_formula(options):
 
 
 def _explicit_shading(options):
-    """The global shading values an option or a `--config` file set, by
-    name: the ones a material's own value warns about (settings design
-    D-23). The shipped defaults, the user file and a loaded sheet set none."""
+    """The global shading values an option or a project file set, by name:
+    the ones a material's own value warns about (settings design D-23). The
+    shipped defaults, the global file and a loaded sheet set none."""
     return {
         name: getattr(options, field)
         for name, field in _OVERRIDABLE.items()
@@ -1511,14 +1528,6 @@ class _Flag(argparse.Action):
         setattr(namespace, self.dest, True)
 
 
-class _Files(argparse.Action):
-    """A repeatable option collecting paths in the order given."""
-
-    def __call__(self, parser, namespace, values, option_string=None):
-        namespace.explicit_.add(self.dest)
-        setattr(namespace, self.dest, [*(getattr(namespace, self.dest) or []), values])
-
-
 class _Names(argparse.Action):
     """A repeatable option collecting distinct names in the order given."""
 
@@ -1678,6 +1687,15 @@ def _path(text):
     if not text:
         raise argparse.ArgumentTypeError("expected a path, got ''")
     return Path(text)
+
+
+def _project_name(text):
+    if not layered.is_project_name(text):
+        raise argparse.ArgumentTypeError(
+            f"{text!r} is not a project name: use letters, digits, '.', '_' and "
+            "'-', not starting with '.', and leave out '.yaml'"
+        )
+    return text
 
 
 def _outfile(text):
@@ -1943,24 +1961,35 @@ def _build_parser():
         "load every setting of an earlier sheet's JSON, a "
         f"{SHEET_SCHEMA} sheet (default: none)",
     )
-    value_options.add("--config")
-    parser.add_argument(
+    single(
         "--config",
-        dest="configs",
-        metavar="FILE",
-        type=_path,
-        action=_Files,
-        help="read settings from a YAML file; repeatable, later files winning. "
-        "A settings file may set cell, fps, frames, clips, palette, "
-        "materials, previews, normals, depth, light, shade and ramp; "
-        "its values act as the options would. The user file and the shipped "
-        "defaults give the defaults below any loaded sheet (default: none)",
+        "FILE",
+        _path,
+        None,
+        "use FILE as the global settings file, in place of the user file, "
+        "$XDG_CONFIG_HOME/moskophoros/config.yaml, else "
+        "~/.config/moskophoros/config.yaml. A settings file may set cell, fps, "
+        "frames, clips, palette, materials, previews, normals, depth, light, "
+        "shade and ramp. The global file and the shipped defaults give the "
+        "defaults, below any loaded sheet (default: the user file)",
     )
     parser.add_argument(
         "--no-user-config",
         action=_Flag,
-        help="skip the user settings file, $XDG_CONFIG_HOME/moskophoros/"
-        "config.yaml, else ~/.config/moskophoros/config.yaml (default: off)",
+        help="use no global settings file: skip the user file; cannot accompany "
+        "--config (default: off)",
+    )
+    single(
+        "--project",
+        "NAME",
+        _project_name,
+        None,
+        "read the project settings file projects/NAME.yaml in the "
+        "configuration directory, $XDG_CONFIG_HOME/moskophoros, else "
+        "~/.config/moskophoros; NAME is letters, digits, '.', '_' and '-', "
+        "not starting with '.', without '.yaml'. Its values act as the "
+        "options would, over the global file and any loaded sheet "
+        "(default: none)",
     )
     parser.add_argument(
         "--preview",

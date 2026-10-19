@@ -13,6 +13,7 @@ import pytest
 from glb_writer import GlbWriter
 from test_command import Setup, run
 from test_materials_command import forbid_blender
+from test_settings_command import project_file
 
 from moskophoros import cli
 
@@ -133,7 +134,7 @@ def test_without_a_count_the_sheet_records_auto_and_null(setup, capsys):
 # Precedence (D-26, D-31, D-39)
 
 
-@pytest.mark.parametrize("layer", ["option", "config", "user"])
+@pytest.mark.parametrize("layer", ["option", "project", "config", "user"])
 def test_a_clips_own_count_and_auto_beat_the_global_from_each_layer(
     setup, capsys, layer
 ):
@@ -141,6 +142,9 @@ def test_a_clips_own_count_and_auto_beat_the_global_from_each_layer(
     if layer == "option":
         user_file(clips)
         args = ["--frames", "5"]
+    elif layer == "project":
+        project_file("frames: 5\n" + clips)
+        args = ["--project", "look"]
     elif layer == "config":
         args = ["--config", str(config(setup, "frames: 5\n" + clips))]
     else:
@@ -153,15 +157,21 @@ def test_a_clips_own_count_and_auto_beat_the_global_from_each_layer(
 
 def test_null_takes_the_global_and_clears_a_lower_count(setup, capsys):
     user_file("clips:\n  walk: {frames: 2}\n")
-    path = config(setup, "clips:\n  walk: {frames: null}\n")
-    ok(capsys, setup.argv("--frames", "6", "--config", str(path), "--no-preview"))
+    project_file("clips:\n  walk: {frames: null}\n")
+    ok(capsys, setup.argv("--frames", "6", "--project", "look", "--no-preview"))
     assert counts(setup)["walk"] == (6, 4 / 6)
 
 
-def test_per_clip_entries_merge_by_name_across_layers(setup, capsys):
-    user_file("clips:\n  walk: {frames: 2}\n  attack: {frames: 4}\n")
-    path = config(setup, "clips:\n  attack: {frames: 3}\n")
-    ok(capsys, setup.argv("--config", str(path), "--no-preview"))
+@pytest.mark.parametrize("global_", ["user", "config"])
+def test_per_clip_entries_merge_by_name_across_layers(setup, capsys, global_):
+    text = "clips:\n  walk: {frames: 2}\n  attack: {frames: 4}\n"
+    args = []
+    if global_ == "user":
+        user_file(text)
+    else:
+        args = ["--config", str(config(setup, text))]
+    project_file("clips:\n  attack: {frames: 3}\n")
+    ok(capsys, setup.argv(*args, "--project", "look", "--no-preview"))
     assert counts(setup)["walk"][0] == 2
     assert counts(setup)["attack"][0] == 3
 
@@ -187,7 +197,7 @@ def test_an_entry_for_a_clip_not_selected_or_missing_is_unused(setup, capsys):
 # Warnings (D-25, D-26, D-41)
 
 
-@pytest.mark.parametrize("how", ["option", "config"])
+@pytest.mark.parametrize("how", ["option", "project"])
 @pytest.mark.parametrize("global_", ["4", "auto"])
 def test_an_explicit_global_names_the_clips_with_their_own(setup, capsys, how, global_):
     clips = (
@@ -196,7 +206,8 @@ def test_an_explicit_global_names_the_clips_with_their_own(setup, capsys, how, g
     if how == "option":
         args = ["--frames", global_, "--config", str(config(setup, clips))]
     else:
-        args = ["--config", str(config(setup, f"frames: {global_}\n" + clips))]
+        project_file(f"frames: {global_}\n" + clips)
+        args = ["--project", "look"]
     err = ok(capsys, setup.argv(*args, "--no-preview"))
     # Equal values still warn; the zero-duration pose is left out.
     assert frame_warnings(err) == [
@@ -205,14 +216,17 @@ def test_an_explicit_global_names_the_clips_with_their_own(setup, capsys, how, g
     ]
 
 
-@pytest.mark.parametrize("layer", ["defaults", "user", "sheet"])
-def test_a_global_from_the_defaults_the_user_file_or_a_sheet_warns_nothing(
+@pytest.mark.parametrize("layer", ["defaults", "user", "config", "sheet"])
+def test_a_global_from_the_defaults_the_global_file_or_a_sheet_warns_nothing(
     setup, capsys, layer
 ):
     clips = "clips:\n  walk: {frames: 4}\n"
     if layer == "user":
         user_file("frames: 3\n" + clips)
         err = ok(capsys, setup.argv("--no-preview"))
+    elif layer == "config":
+        path = config(setup, "frames: 3\n" + clips)
+        err = ok(capsys, setup.argv("--config", str(path), "--no-preview"))
     elif layer == "defaults":
         user_file(clips)
         err = ok(capsys, setup.argv("--no-preview"))
@@ -359,14 +373,28 @@ def test_frames_over_a_loaded_sheet_reaches_only_the_null_clips(setup, capsys):
     # walk keeps 2 and attack its own auto; neither is null. --clip dropped
     # attack's one-shot mark, so it loops: 2 frames over 0.5 s at 4 fps.
     assert counts(setup) == {"walk": (2, 2.0), "attack": (2, 1.0)}
-    path = config(setup, "clips:\n  walk: {frames: null}\n", "clear.yaml")
+    project_file("clips:\n  walk: {frames: null}\n", "clear")
     ok(
         capsys,
         reload(
-            setup, recorded, "--clip", "walk", "--config", str(path), "--frames", "5"
+            setup, recorded, "--clip", "walk", "--project", "clear", "--frames", "5"
         ),
     )
     assert counts(setup) == {"walk": (5, 4 / 5)}
+
+
+def test_per_clip_entries_merge_global_then_sheet_then_project(setup, capsys):
+    recorded = recorded_sheet(setup, capsys)
+    # The sheet records walk 2, attack auto and pose null. The global file's
+    # walk and pose sit below it; the project's attack sits above it.
+    user_file("clips:\n  walk: {frames: 9}\n  pose: {frames: 1}\n")
+    project_file("clips:\n  attack: {frames: 1}\n")
+    arguments = reload(setup, recorded, "--project", "look")
+    arguments.remove("--no-user-config")
+    ok(capsys, arguments)
+    recorded_clips = sheet(setup)["settings"]["clips"]
+    assert [clip["frames"] for clip in recorded_clips] == [2, 1, None]
+    assert counts(setup)["walk"][0] == 2
 
 
 # The capture job

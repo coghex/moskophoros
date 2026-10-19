@@ -3,6 +3,7 @@ with explicit options (design §Scale and ground point, Reuse)."""
 
 import copy
 import json
+import os
 import sys
 from contextlib import contextmanager
 from dataclasses import replace
@@ -832,11 +833,12 @@ def test_an_explicit_edges_overrides_the_reused_one(tmp_path, sheet, explicit):
 
 
 @pytest.mark.parametrize(("sheet", "configured"), [("soft", "hard"), ("hard", "soft")])
-def test_a_config_files_edges_overrides_the_reused_one(tmp_path, sheet, configured):
+def test_a_project_files_edges_overrides_the_reused_one(tmp_path, sheet, configured):
     path = write_sheet(tmp_path, edited({"style.edges": sheet}))
-    config = tmp_path / "look.yaml"
-    config.write_text(f"edges: {configured}\n")
-    options = reuse(path, "--config", str(config))
+    project = Path(os.environ["XDG_CONFIG_HOME"], "moskophoros", "projects")
+    project.mkdir(parents=True)
+    (project / "look.yaml").write_text(f"edges: {configured}\n")
+    options = reuse(path, "--project", "look")
     assert values(options) == REUSED | {"edges": configured}
 
 

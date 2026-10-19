@@ -1,7 +1,8 @@
-"""Settings layers in the command: the shipped defaults, the user file, a
-loaded sheet, `--config` files and options (settings design D-2, D-8, D-15,
-D-16, D-17, D-19, D-22, D-27, D-28 and D-32), with a controlled fake
-Blender.
+"""Settings layers in the command: the shipped defaults, the global file
+(the user file, or the one `--config` names), a loaded sheet, the project
+file (`--project`) and options (settings design D-2, D-8, D-15, D-16, D-17,
+D-19, D-22, D-27, D-28 and D-32; projects and camera design D-9, D-11, D-16
+and D-17), with a controlled fake Blender.
 
 The suite's `no_owner_settings` fixture points `$XDG_CONFIG_HOME` and `$HOME`
 at empty temporary directories, so a user file exists only where a test
@@ -10,8 +11,10 @@ writes one."""
 import errno
 import json
 import os
+import shutil
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -49,6 +52,20 @@ def config(directory, text, name="settings.yaml"):
     path = Path(directory) / name
     path.write_text(text)
     return path
+
+
+def project_file(text, name="look"):
+    """Write project `name`'s file in the suite's configuration directory."""
+    path = Path(
+        os.environ["XDG_CONFIG_HOME"], "moskophoros", "projects", f"{name}.yaml"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    return path
+
+
+def project_label(path, name="look"):
+    return f"--project {name!r} ({str(path)!r})"
 
 
 def resolved(*args):
@@ -108,14 +125,16 @@ def test_the_user_file_is_never_written(tmp_path):
     assert (path.read_bytes(), path.stat().st_mtime_ns) == before
 
 
-# `--config` files
+# The global file named by `--config`
 
 
-def test_a_config_file_applies(tmp_path):
+def test_a_config_file_applies_as_the_global_file(tmp_path):
     path = config(tmp_path, "version: 1\nfps: 8\ncell: 32x30\n")
     options = resolved("--config", str(path))
     assert (options.fps, options.cell) == (8.0, (32, 30))
-    assert {"fps", "cell"} <= options.explicit
+    # The global file gives defaults, as the user file does: not explicit
+    # values (projects and camera design D-11).
+    assert not {"fps", "cell"} & options.explicit
 
 
 def test_a_missing_config_file_is_a_usage_error(tmp_path, capsys):
@@ -132,23 +151,180 @@ def test_an_unreadable_config_file_is_a_usage_error(tmp_path, capsys):
     )
 
 
-def test_later_config_files_win_and_omitted_keys_fall_through(tmp_path):
-    first = config(tmp_path, "fps: 8\ncell: 48x48\n", "first.yaml")
+def test_a_second_config_is_a_usage_error(tmp_path, capsys):
+    # D-17's exception 1: two files are now the global file and a project.
+    first = config(tmp_path, "fps: 8\n", "first.yaml")
     second = config(tmp_path, "fps: 9\n", "second.yaml")
-    options = resolved("--config", str(first), "--config", str(second))
-    assert (options.fps, options.cell) == (9.0, (48, 48))
-    options = resolved("--config", str(second), "--config", str(first))
-    assert options.fps == 8.0
+    assert refused(capsys, "--config", str(first), "--config", str(second)) == (
+        f"argument --config: given more than once: {str(first)!r}, {str(second)!r}"
+    )
 
 
-def test_every_config_file_is_checked_even_when_a_later_one_overrides_it(
+def test_config_replaces_the_user_file(tmp_path):
+    # D-17's exception 2: a setting only the user file gave no longer applies.
+    user_file("fps: 6\ncell: 40x40\n")
+    options = resolved("--config", str(config(tmp_path, "fps: 8\n")))
+    assert (options.fps, options.cell) == (8.0, None)
+
+
+def test_config_with_no_user_config_is_a_usage_error(tmp_path, capsys):
+    # D-17's exception 3: `--config FILE` alone already uses no other file.
+    path = config(tmp_path, "fps: 8\n")
+    assert refused(capsys, "--config", str(path), "--no-user-config") == (
+        "--config and --no-user-config cannot be given together"
+    )
+
+
+def test_an_alternate_config_bypasses_a_malformed_user_file(tmp_path):
+    user_file("fps: 0\nunknown: 1\n")
+    assert resolved("--config", str(config(tmp_path, "fps: 8\n"))).fps == 8.0
+
+
+def test_the_global_file_is_checked_even_when_the_project_overrides_it(
     tmp_path, capsys
 ):
     bad = config(tmp_path, "fps: 0\n", "bad.yaml")
-    good = config(tmp_path, "fps: 9\n", "good.yaml")
-    assert refused(capsys, "--config", str(bad), "--config", str(good)) == (
+    project_file("fps: 9\n")
+    assert refused(capsys, "--config", str(bad), "--project", "look") == (
         f"--config {str(bad)!r}: fps: expected a finite number greater than 0, "
         "got 0 at line 1, column 1"
+    )
+
+
+def test_the_project_file_is_checked_even_when_an_option_overrides_it(capsys):
+    path = project_file("fps: 0\n")
+    assert refused(capsys, "--project", "look", "--fps", "9") == (
+        f"{project_label(path)}: fps: expected a finite number greater than 0, "
+        "got 0 at line 1, column 1"
+    )
+
+
+# Project files (projects and camera design D-9, D-11 and D-16)
+
+
+def test_a_project_file_found_through_xdg_config_home_applies():
+    project_file("fps: 8\ncell: 32x30\n")
+    options = resolved("--project", "look")
+    assert (options.fps, options.cell) == (8.0, (32, 30))
+    # A project's values act as explicit options.
+    assert {"fps", "cell"} <= options.explicit
+
+
+def test_without_xdg_config_home_projects_are_under_home(monkeypatch, tmp_path):
+    monkeypatch.delenv("XDG_CONFIG_HOME")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    path = tmp_path / ".config" / "moskophoros" / "projects" / "look.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text("fps: 7\n")
+    assert resolved("--project", "look").fps == 7.0
+
+
+def test_an_empty_xdg_config_home_means_home_for_projects(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", "")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    path = tmp_path / ".config" / "moskophoros" / "projects" / "look.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text("fps: 7\n")
+    assert resolved("--project", "look").fps == 7.0
+
+
+@pytest.mark.parametrize("how", ["config", "no-user-config"])
+def test_neither_config_nor_no_user_config_moves_the_projects(tmp_path, how):
+    project_file("fps: 8\n")
+    # A project folder beside the --config file is never looked in.
+    (tmp_path / "projects").mkdir()
+    (tmp_path / "projects" / "look.yaml").write_text("fps: 3\n")
+    if how == "config":
+        args = ["--config", str(config(tmp_path, "cell: 32x30\n"))]
+    else:
+        user_file("cell: 32x30\n")
+        args = ["--no-user-config"]
+    options = resolved(*args, "--project", "look")
+    assert options.fps == 8.0
+    assert options.cell == ((32, 30) if how == "config" else None)
+
+
+def test_a_missing_project_file_is_a_usage_error_and_creates_nothing(capsys):
+    home = Path(os.environ["XDG_CONFIG_HOME"])
+    before = sorted(home.rglob("*"))
+    path = home / "moskophoros" / "projects" / "absent.yaml"
+    assert refused(capsys, "--project", "absent") == (
+        f"{project_label(path, 'absent')}: does not exist"
+    )
+    assert sorted(home.rglob("*")) == before
+    user_file("fps: 6\n")
+    assert refused(capsys, "--project", "absent").endswith(": does not exist")
+    assert not (home / "moskophoros" / "projects").exists()
+
+
+def test_a_project_that_is_a_directory_is_a_usage_error(capsys):
+    path = project_file("fps: 8\n").parent / "folder.yaml"
+    path.mkdir()
+    assert refused(capsys, "--project", "folder").startswith(
+        f"{project_label(path, 'folder')}: cannot be read: "
+    )
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["", ".", "..", ".hidden", "a/b", "../look", "/look", "look.yaml", "a b", "lö"],
+)
+def test_a_name_that_is_not_a_project_name_is_a_usage_error_naming_it(capsys, name):
+    project_file("fps: 8\n")
+    message = refused(capsys, f"--project={name}")
+    assert message == (
+        f"argument --project: {name!r} is not a project name: use letters, "
+        "digits, '.', '_' and '-', not starting with '.', and leave out '.yaml'"
+    )
+
+
+@pytest.mark.parametrize("name", ["look..v2", "v1.2", "_draft", "-wide", "A-9"])
+def test_a_name_with_inner_dots_or_a_leading_dash_is_a_project_name(name):
+    project_file("fps: 8\n", name)
+    assert resolved(f"--project={name}").fps == 8.0
+
+
+def test_a_second_project_is_a_usage_error(capsys):
+    project_file("fps: 8\n")
+    project_file("fps: 9\n", "other")
+    assert refused(capsys, "--project", "look", "--project", "other") == (
+        "argument --project: given more than once: 'look', 'other'"
+    )
+
+
+@pytest.mark.parametrize("text", ["{}\n", "version: 1\n"])
+def test_an_empty_project_mapping_changes_nothing(text):
+    user_file("fps: 6\ncell: 40x40\n")
+    project_file(text)
+    assert resolved("--project", "look") == replace(
+        resolved(), project="look", explicit=frozenset({"project"})
+    )
+
+
+@pytest.mark.parametrize("text", ["", "# nothing\n"])
+def test_a_project_file_holding_no_document_is_a_usage_error(capsys, text):
+    path = project_file(text)
+    assert refused(capsys, "--project", "look") == (
+        f"{project_label(path)}: is empty: it holds no YAML document"
+    )
+
+
+def test_a_project_sets_only_what_it_lists(tmp_path):
+    user_file("fps: 6\npreviews: false\n")
+    project_file("cell: 32x30\n")
+    options = resolved("--project", "look")
+    assert (options.fps, options.previews, options.cell) == (6.0, False, (32, 30))
+
+
+def test_a_project_and_the_global_file_share_one_schema(tmp_path, capsys):
+    text = "fps: 6\nsupersample: 8\n"
+    path = project_file(text)
+    assert refused(capsys, "--project", "look") == (
+        f"{project_label(path)}: supersample: unknown key at line 2, column 1"
+    )
+    path = config(tmp_path, text)
+    assert refused(capsys, "--config", str(path)) == (
+        f"--config {str(path)!r}: supersample: unknown key at line 2, column 1"
     )
 
 
@@ -160,15 +336,22 @@ def test_the_user_file_is_above_the_defaults():
     assert resolved().fps == 6.0
 
 
-def test_a_config_file_is_above_the_user_file(tmp_path):
-    user_file("fps: 6\ncell: 40x40\n")
-    options = resolved("--config", str(config(tmp_path, "fps: 8\n")))
+@pytest.mark.parametrize("global_", ["user", "config"])
+def test_a_project_file_is_above_the_global_file(tmp_path, global_):
+    text = "fps: 6\ncell: 40x40\n"
+    if global_ == "user":
+        user_file(text)
+        args = []
+    else:
+        args = ["--config", str(config(tmp_path, text))]
+    project_file("fps: 8\n")
+    options = resolved(*args, "--project", "look")
     assert (options.fps, options.cell) == (8.0, (40, 40))
 
 
-def test_an_option_is_above_a_config_file(tmp_path):
-    path = config(tmp_path, "fps: 8\ncell: 48x48\npreviews: false\n")
-    options = resolved("--config", str(path), "--fps", "10", "--preview")
+def test_an_option_is_above_a_project_file():
+    project_file("fps: 8\ncell: 48x48\npreviews: false\n")
+    options = resolved("--project", "look", "--fps", "10", "--preview")
     assert (options.fps, options.cell, options.previews) == (10.0, (48, 48), True)
 
 
@@ -178,10 +361,20 @@ def test_a_loaded_sheet_is_above_the_user_file(tmp_path):
     assert (options.fps, options.cell, options.previews) == (24.0, (48, 40), False)
 
 
-def test_a_config_file_is_above_a_loaded_sheet(tmp_path):
+def test_a_loaded_sheet_is_above_a_config_global_file(tmp_path):
+    # D-17's exception 4: the sheet's values now win where the file's used to.
     path = config(tmp_path, "fps: 8\ncell: 32x30\npreviews: true\n")
     options = resolved(
         "--settings-from", str(write_sheet(tmp_path)), "--config", str(path)
+    )
+    assert (options.fps, options.cell, options.previews) == (24.0, (48, 40), False)
+
+
+def test_a_project_file_is_above_a_loaded_sheet(tmp_path):
+    user_file("fps: 6\n")
+    project_file("fps: 8\ncell: 32x30\npreviews: true\n")
+    options = resolved(
+        "--settings-from", str(write_sheet(tmp_path)), "--project", "look"
     )
     assert (options.fps, options.cell, options.previews) == (8.0, (32, 30), True)
     # As --cell after --settings-from: the reused scale and ground pixel stay,
@@ -189,13 +382,13 @@ def test_a_config_file_is_above_a_loaded_sheet(tmp_path):
     assert (options.ppm, options.ground_px) == (32.0, (24, 37))
 
 
-def test_an_option_is_above_a_loaded_sheet_and_a_config_file(tmp_path):
-    path = config(tmp_path, "fps: 8\n")
+def test_an_option_is_above_a_loaded_sheet_and_a_project_file(tmp_path):
+    project_file("fps: 8\n")
     options = resolved(
         "--settings-from",
         str(write_sheet(tmp_path)),
-        "--config",
-        str(path),
+        "--project",
+        "look",
         "--fps",
         "5",
     )
@@ -205,24 +398,25 @@ def test_an_option_is_above_a_loaded_sheet_and_a_config_file(tmp_path):
 # `auto` and `null` at each layer
 
 
-@pytest.mark.parametrize("layer", ["user", "config", "option"])
+@pytest.mark.parametrize("layer", ["user", "project", "option"])
 def test_cell_auto_at_each_layer_returns_to_the_automatic_cell(tmp_path, layer):
     user_file("cell: 48x48\n" if layer != "user" else "cell: auto\n")
     args = []
-    if layer == "config":
-        args = ["--config", str(config(tmp_path, "cell: auto\n"))]
+    if layer == "project":
+        project_file("cell: auto\n")
+        args = ["--project", "look"]
     elif layer == "option":
         args = ["--cell", "auto"]
     assert resolved(*args).cell is None
 
 
-@pytest.mark.parametrize("how", [("--cell", "auto"), "config"])
+@pytest.mark.parametrize("how", [("--cell", "auto"), "project"])
 def test_cell_auto_over_a_loaded_sheet_fits_with_the_reused_scale(tmp_path, how):
-    args = (
-        ["--config", str(config(tmp_path, "cell: auto\n"))]
-        if how == "config"
-        else list(how)
-    )
+    if how == "project":
+        project_file("cell: auto\n")
+        args = ["--project", "look"]
+    else:
+        args = list(how)
     options = resolved("--settings-from", str(write_sheet(tmp_path)), *args)
     assert (options.cell, options.ppm) == (None, 32.0)
 
@@ -232,15 +426,19 @@ def test_the_defaults_never_turn_ppm_sizing_into_a_fixed_cell():
     assert (options.ppm, options.cell) == (20.0, None)
 
 
-@pytest.mark.parametrize("layer", ["user", "config"])
+@pytest.mark.parametrize("layer", ["user", "config", "project"])
 def test_a_null_palette_and_library_at_a_layer_mean_none(tmp_path, layer):
     # The user file below names files that do not exist: they are never read.
     user_file("palette: missing.hex\nmaterials: missing.yaml\n")
     args = []
+    nulls = "palette: null\nmaterials: null\n"
     if layer == "config":
-        args = ["--config", str(config(tmp_path, "palette: null\nmaterials: null\n"))]
+        args = ["--config", str(config(tmp_path, nulls))]
+    elif layer == "project":
+        project_file(nulls)
+        args = ["--project", "look"]
     else:
-        user_file("palette: null\nmaterials: null\n")
+        user_file(nulls)
     options = resolved(*args)
     assert (options.palette, options.materials) == (None, None)
 
@@ -249,6 +447,14 @@ def test_an_overridden_user_path_that_no_longer_exists_is_never_read(tmp_path):
     user_file("palette: gone.hex\nmaterials: gone.yaml\n")
     palette = palette_file(tmp_path)
     options = resolved("--palette", str(palette), "--no-materials")
+    assert options.palette.source == "palette.hex"
+    assert options.materials is None
+
+
+def test_a_global_path_a_project_overrides_is_never_read(tmp_path):
+    path = config(tmp_path, "palette: gone.hex\nmaterials: gone.yaml\n")
+    project_file(f"palette: {palette_file(tmp_path)}\nmaterials: null\n")
+    options = resolved("--config", str(path), "--project", "look")
     assert options.palette.source == "palette.hex"
     assert options.materials is None
 
@@ -265,6 +471,19 @@ def test_paths_resolve_against_the_settings_files_directory(tmp_path, monkeypatc
     )
     monkeypatch.chdir(tmp_path)
     options = resolved("--config", str(path))
+    assert (options.palette.source, options.materials.source) == (
+        "palette.hex",
+        "materials.yaml",
+    )
+
+
+def test_paths_in_a_project_file_resolve_against_its_directory(tmp_path, monkeypatch):
+    path = project_file("palette: palette.hex\nmaterials: lib/materials.yaml\n")
+    (path.parent / "lib").mkdir()
+    palette_file(path.parent)
+    library_file(path.parent / "lib")
+    monkeypatch.chdir(tmp_path)
+    options = resolved("--project", "look")
     assert (options.palette.source, options.materials.source) == (
         "palette.hex",
         "materials.yaml",
@@ -305,76 +524,86 @@ def test_a_library_from_a_file_needs_a_palette(tmp_path, capsys):
     )
 
 
-# Palette and library from a `--config` over a loaded sheet (the reuse table)
+# Palette and library from a project over a loaded sheet (the reuse table)
 
 
-def test_a_reused_library_stays_with_a_config_palette_of_the_same_colours(tmp_path):
+def test_a_reused_library_stays_with_a_project_palette_of_the_same_colours(
+    tmp_path,
+):
     same = palette_file(tmp_path, name="same.hex")
-    path = config(tmp_path, f"palette: {same}\n")
+    project_file(f"palette: {same}\n")
     options = resolved(
-        "--settings-from", str(style_sheet(tmp_path)), "--config", str(path)
+        "--settings-from", str(style_sheet(tmp_path)), "--project", "look"
     )
     assert options.palette.source == "same.hex"
     assert options.materials.source == GOOD_RECORD["source"]
 
 
-def test_a_config_palette_of_other_colours_beside_a_reused_library_is_refused(
+def test_a_project_palette_of_other_colours_beside_a_reused_library_is_refused(
     tmp_path, capsys
 ):
     other = palette_file(tmp_path, COLORS[::-1], name="other.hex")
-    path = config(tmp_path, f"palette: {other}\n")
+    path = project_file(f"palette: {other}\n")
     message = refused(
-        capsys, "--settings-from", str(style_sheet(tmp_path)), "--config", str(path)
+        capsys, "--settings-from", str(style_sheet(tmp_path)), "--project", "look"
     )
     assert message.startswith(
-        f"--config {str(path)!r}: palette (line 1, column 1) {str(other)!r}: "
+        f"{project_label(path)}: palette (line 1, column 1) {str(other)!r}: "
     )
     assert "its colours differ from the reused palette" in message
 
 
-def test_a_config_null_palette_beside_a_reused_library_is_refused(tmp_path, capsys):
-    path = config(tmp_path, "palette: null\n")
+def test_a_project_null_palette_beside_a_reused_library_is_refused(tmp_path, capsys):
+    path = project_file("palette: null\n")
     message = refused(
-        capsys, "--settings-from", str(style_sheet(tmp_path)), "--config", str(path)
+        capsys, "--settings-from", str(style_sheet(tmp_path)), "--project", "look"
     )
     assert message == (
-        f"--config {str(path)!r}: palette (line 1, column 1): the reused material "
+        f"{project_label(path)}: palette (line 1, column 1): the reused material "
         "library needs a palette; also give --no-materials to drop it"
     )
 
 
-def test_a_config_null_library_drops_the_reused_one(tmp_path):
-    path = config(tmp_path, "palette: null\nmaterials: null\n")
+def test_a_project_null_library_drops_the_reused_one(tmp_path):
+    project_file("palette: null\nmaterials: null\n")
     options = resolved(
-        "--settings-from", str(style_sheet(tmp_path)), "--config", str(path)
+        "--settings-from", str(style_sheet(tmp_path)), "--project", "look"
     )
     assert (options.palette, options.materials) == (None, None)
 
 
-def test_a_config_library_replaces_the_reused_one_on_the_reused_palette(tmp_path):
-    path = config(tmp_path, f"materials: {library_file(tmp_path, name='mine.yaml')}\n")
+def test_a_project_library_replaces_the_reused_one_on_the_reused_palette(tmp_path):
+    project_file(f"materials: {library_file(tmp_path, name='mine.yaml')}\n")
     options = resolved(
-        "--settings-from", str(style_sheet(tmp_path)), "--config", str(path)
+        "--settings-from", str(style_sheet(tmp_path)), "--project", "look"
     )
     assert options.materials.source == "mine.yaml"
     assert options.palette.source == PALETTE_RECORD["source"]
 
 
-def test_the_user_files_palette_and_library_never_change_a_loaded_sheet(tmp_path):
-    user_file("palette: gone.hex\nmaterials: gone.yaml\n")
-    options = resolved("--settings-from", str(style_sheet(tmp_path)))
+@pytest.mark.parametrize("global_", ["user", "config"])
+def test_the_global_files_palette_and_library_never_change_a_loaded_sheet(
+    tmp_path, global_
+):
+    text = "palette: gone.hex\nmaterials: gone.yaml\n"
+    args = []
+    if global_ == "user":
+        user_file(text)
+    else:
+        args = ["--config", str(config(tmp_path, text))]
+    options = resolved("--settings-from", str(style_sheet(tmp_path)), *args)
     assert options.palette.source == PALETTE_RECORD["source"]
     assert options.materials.source == GOOD_RECORD["source"]
 
 
-def test_an_option_beats_a_config_palette_over_a_loaded_sheet(tmp_path):
+def test_an_option_beats_a_project_palette_over_a_loaded_sheet(tmp_path):
     other = palette_file(tmp_path, COLORS[::-1], name="other.hex")
-    path = config(tmp_path, f"palette: {other}\n")
+    project_file(f"palette: {other}\n")
     options = resolved(
         "--settings-from",
         str(style_sheet(tmp_path)),
-        "--config",
-        str(path),
+        "--project",
+        "look",
         "--no-palette",
         "--no-materials",
     )
@@ -398,6 +627,40 @@ def test_previews_false_in_a_settings_file_writes_no_previews(setup, capsys, tmp
     assert json.loads(setup.json.read_text())["settings"]["previews"] is False
 
 
+# The sheet and its bytes (projects and camera design D-9, D-17)
+
+
+def test_a_global_file_and_a_project_give_the_bytes_of_one_merged_file(
+    setup, capsys, tmp_path
+):
+    palette = palette_file(tmp_path)
+    merged = (
+        f"fps: 6\nedges: soft\ndepth: true\npalette: {palette}\n"
+        "light:\n  position: [-20, 30, 40]\n  intensity: 2\n"
+    )
+    path = config(tmp_path, merged, "zz-merged-q7.yaml")
+    status, _, err = run(capsys, setup.argv("--config", str(path)))
+    assert status == 0, err
+    expected = setup.listing()
+    assert {"hero.depth.png", "hero-lit.walk.gif"} <= set(expected)
+    shutil.rmtree(setup.out)
+    setup.out.mkdir()
+    path = config(
+        tmp_path,
+        f"fps: 9\nedges: soft\npalette: {palette}\nlight:\n  intensity: 2\n",
+        "zz-global-q7.yaml",
+    )
+    project_file("fps: 6\ndepth: true\nlight:\n  position: [-20, 30, 40]\n", "zz-q7")
+    status, _, err = run(
+        capsys, setup.argv("--config", str(path), "--project", "zz-q7")
+    )
+    assert status == 0, err
+    assert setup.listing() == expected
+    # The sheet names neither the project nor a settings file.
+    text = setup.json.read_text()
+    assert "q7" not in text and "projects" not in text
+
+
 # Every settings error before any Blender invocation
 
 
@@ -408,6 +671,21 @@ def bad_settings(kind, tmp_path):
     if kind == "user-unknown-key":
         user_file("supersample: 8\n")
         return []
+    if kind == "missing-project":
+        return ["--project", "absent"]
+    if kind == "bad-project-name":
+        return ["--project", "../look"]
+    if kind == "project-unknown-key":
+        project_file("supersample: 8\n")
+        return ["--project", "look"]
+    if kind == "project-missing-palette":
+        project_file("palette: absent.hex\n")
+        return ["--project", "look"]
+    if kind == "second-config":
+        good = config(tmp_path, "fps: 8\n", "good.yaml")
+        return ["--config", str(good), "--config", str(good)]
+    if kind == "config-and-no-user-config":
+        return ["--config", str(config(tmp_path, "fps: 8\n")), "--no-user-config"]
     texts = {
         "unknown-key": "view: side\n",
         "unknown-version": "version: 2\n",
@@ -441,6 +719,12 @@ def bad_settings(kind, tmp_path):
     [
         "missing-config",
         "user-unknown-key",
+        "missing-project",
+        "bad-project-name",
+        "project-unknown-key",
+        "project-missing-palette",
+        "second-config",
+        "config-and-no-user-config",
         "unknown-key",
         "unknown-version",
         "wrong-type",
@@ -532,7 +816,7 @@ def unusable(kind, directory, suffix):
     raise AssertionError(kind)
 
 
-@pytest.mark.parametrize("where", ["config", "user"])
+@pytest.mark.parametrize("where", ["config", "user", "project"])
 @pytest.mark.parametrize("key", ["palette", "materials"])
 @pytest.mark.parametrize(
     "kind",
@@ -555,6 +839,9 @@ def test_every_unusable_settings_path_is_exit_2_naming_file_key_and_line(
     if where == "config":
         directory = setup.tmp_path / "conf"
         directory.mkdir()
+    elif where == "project":
+        directory = Path(os.environ["XDG_CONFIG_HOME"], "moskophoros", "projects")
+        directory.mkdir(parents=True)
     else:
         directory = Path(os.environ["XDG_CONFIG_HOME"], "moskophoros")
         directory.mkdir(parents=True)
@@ -567,6 +854,9 @@ def test_every_unusable_settings_path_is_exit_2_naming_file_key_and_line(
     if where == "config":
         path = config(directory, text)
         label, args = f"--config {str(path)!r}", ["--config", str(path)]
+    elif where == "project":
+        path = project_file(text)
+        label, args = project_label(path), ["--project", "look"]
     else:
         path = user_file(text)
         label, args = f"the user settings {str(path)!r}", []
@@ -627,30 +917,38 @@ def test_each_shading_value_follows_the_layers(tmp_path, key):
     user_file(f"shade:\n  {key}: {written}\n")
     assert getattr(resolved(), field) == from_file != default
     sheet = str(write_sheet(tmp_path))
-    # The user file is only a default: a loaded sheet keeps its value.
+    # The global file is only a default: a loaded sheet keeps its value.
     assert getattr(resolved("--settings-from", sheet), field) == SHEET_VALUES[key]
     path = config(tmp_path, f"shade:\n  {key}: {written}\n", "look.yaml")
-    # A --config value acts as the option would, over a loaded sheet too.
     assert getattr(resolved("--config", str(path)), field) == from_file
     assert (
         getattr(resolved("--settings-from", sheet, "--config", str(path)), field)
+        == SHEET_VALUES[key]
+    )
+    # A project value acts as the option would, over a loaded sheet too.
+    project_file(f"shade:\n  {key}: {written}\n")
+    assert getattr(resolved("--no-user-config", "--project", "look"), field) == (
+        from_file
+    )
+    assert (
+        getattr(resolved("--settings-from", sheet, "--project", "look"), field)
         == from_file
     )
     # An option beats every layer.
-    assert getattr(resolved("--config", str(path), option, text), field) == given
+    assert getattr(resolved("--project", "look", option, text), field) == given
     assert (
         getattr(
-            resolved("--settings-from", sheet, "--config", str(path), option, text),
+            resolved("--settings-from", sheet, "--project", "look", option, text),
             field,
         )
         == given
     )
 
 
-def test_one_shade_key_in_a_config_inherits_the_rest(tmp_path):
+def test_one_shade_key_in_a_project_inherits_the_rest(tmp_path):
     user_file("shade:\n  ao_distance_m: 0.9\n  range: [90, 230]\n")
-    path = config(tmp_path, "shade:\n  convexity_weight: 0.5\n")
-    options = resolved("--config", str(path))
+    project_file("shade:\n  convexity_weight: 0.5\n")
+    options = resolved("--project", "look")
     assert (
         options.ao_distance,
         options.ao_samples,
@@ -659,7 +957,7 @@ def test_one_shade_key_in_a_config_inherits_the_rest(tmp_path):
         options.shade_range,
     ) == (0.9, 64, 0.25, 0.5, (90, 230))
     over_sheet = resolved(
-        "--settings-from", str(write_sheet(tmp_path)), "--config", str(path)
+        "--settings-from", str(write_sheet(tmp_path)), "--project", "look"
     )
     assert (
         over_sheet.ao_distance,
@@ -671,8 +969,8 @@ def test_one_shade_key_in_a_config_inherits_the_rest(tmp_path):
 
 def test_the_range_replaces_whole(tmp_path):
     user_file("shade:\n  range: [90, 230]\n")
-    path = config(tmp_path, "shade:\n  range: [10, 20]\n")
-    assert resolved("--config", str(path)).shade_range == (10, 20)
+    project_file("shade:\n  range: [10, 20]\n")
+    assert resolved("--project", "look").shade_range == (10, 20)
     assert resolved("--shade-range", "30,40").shade_range == (30, 40)
 
 
@@ -696,7 +994,7 @@ def test_a_bad_shading_option_is_exit_2_before_any_blender_invocation(
     assert setup.calls() == []
 
 
-@pytest.mark.parametrize("where", ["config", "user"])
+@pytest.mark.parametrize("where", ["config", "user", "project"])
 def test_129_samples_from_a_file_is_exit_2_naming_file_key_line_and_limit(
     setup, capsys, monkeypatch, where
 ):
@@ -704,6 +1002,9 @@ def test_129_samples_from_a_file_is_exit_2_naming_file_key_line_and_limit(
     if where == "config":
         path = config(setup.tmp_path, text)
         label, args = f"--config {str(path)!r}", ["--config", str(path)]
+    elif where == "project":
+        path = project_file(text)
+        label, args = project_label(path), ["--project", "look"]
     else:
         path = user_file(text)
         label, args = f"the user settings {str(path)!r}", []

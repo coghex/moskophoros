@@ -522,6 +522,56 @@ def test_the_user_file_is_under_home_otherwise(environ):
     )
 
 
+# Project files (projects and camera design D-9, D-16)
+
+
+def test_a_project_file_is_under_xdg_config_home_when_it_is_set():
+    environ = {"XDG_CONFIG_HOME": "/x/conf", "HOME": "/home/me"}
+    assert settings.project_file(environ, "look") == Path(
+        "/x/conf/moskophoros/projects/look.yaml"
+    )
+
+
+@pytest.mark.parametrize(
+    "environ", [{"HOME": "/home/me"}, {"XDG_CONFIG_HOME": "", "HOME": "/home/me"}]
+)
+def test_a_project_file_is_under_home_otherwise(environ):
+    assert settings.project_file(environ, "look..v2") == Path(
+        "/home/me/.config/moskophoros/projects/look..v2.yaml"
+    )
+
+
+@pytest.mark.parametrize(
+    "name", ["look", "look..v2", "v1.2", "_draft", "-wide", "A-9", "look.yml"]
+)
+def test_project_names(name):
+    assert settings.is_project_name(name)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "",
+        ".",
+        "..",
+        ".hidden",
+        "a/b",
+        "../look",
+        "/look",
+        "a\\b",
+        "look.yaml",
+        "a b",
+        "lö",
+        "look\n",
+        "look\0",
+    ],
+)
+def test_not_project_names(name):
+    assert not settings.is_project_name(name)
+    with pytest.raises(ValueError):
+        settings.project_file({"HOME": "/home/me"}, name)
+
+
 # Merging
 
 
