@@ -406,4 +406,16 @@ A capture of one frame in all eight directions, kept with `--work-dir`, measured
 
 Foliage self-occludes far more than the chest's solid surfaces. Each card also occludes as a solid rectangle, holes included, as D-7's approximation does.
 
-The owner asked for this to be fixed in the library's leaf entry, outside this record. It needs no change to moskophoros or to the owner's settings. Trials of the leaves' own ramp and shade values are kept in `cutout-review/trials/`. A shorter occlusion distance for the leaves (0.3 m and 0.15 m) left 83–87% of them in the darkest band. A shade range of the leaves' own was being tried when this was recorded.
+The owner asked for this to be fixed in the library's leaf entry, outside this record. It needs no change to moskophoros or to the owner's settings. Trials of the leaves' own ramp and shade values are kept in `cutout-review/trials/`. A shorter occlusion distance for the leaves (0.3 m and 0.15 m) left 83–87% of them in the darkest band. A shade range of the leaves' own spread them across the bands.
+
+**The owner's choice,** on 2026-10-19 at about 16:02 UTC, typed directly in the review agent's pane: "good work, they all look good so its hard to choose, F looks best i would say". Trial F keeps the review library's greens and gives the leaves their own range:
+
+```yaml
+Leaves: {uses: leaves, shade: {range: [110, 190]}}
+```
+
+- **Library:** `trials/lib-F.yaml`, SHA-256 `f67099def641676eb9a39924f2f89455ba93b03d88b9df6a8996c4eff528b74c`.
+- **Run:** the `library-hard` command with that library; fingerprint `sha256:3628f4f67a191d5aefa55d1f15974965a30c291b877ec823b86bc6f7c1ee4c25`.
+- **Result:** leaf pixels per band, darkest first, are 8%, 50%, 13% and 28%, where the review run had 86%, 5%, 6% and 4%.
+
+The bark and soil stay below the global range; giving them ranges of their own was offered, and the owner has not asked for it.
