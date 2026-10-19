@@ -165,6 +165,10 @@ These are the worker's, not decisions.
   - **Orthographic** ignores the position.
   - **Perspective** uses the position, and with it the viewing distance. Lens shift puts the ground point on its pixel.
   - Scale stays pixels per meter, measured at the ground point's depth under perspective. Fitting and overflow then work unchanged on projected extents.
+  - **Spike 1** (2026-10-19, Blender 5.2.2, headless; `~/.local/share/moskophoros-acceptance/projects-camera-design/spike-1/`, not committed) checked this:
+    - **Set-up:** a perspective camera placed off-axis, 3.26 m from the ground point, with the focal length set from the scale (`f = ppm · depth` in pixels) and lens shift set to put the ground point on pixel corner (64, 110) of a 128×128 image, at 40 px/m.
+    - **Result:** the rendered 1 m cube covered exactly the pixels predicted from its eight projected corners (columns 31–85, rows 68–120). The ground point landed on its corner, and a 1 m edge through the ground point spanned 40.0 px.
+    - So a perspective camera can keep today's framing contract, with fitting computed from projected extents.
 - **P-2. Directions keep turning the subject about the ground point; the camera stays where it is set.**
   - Labels, `--directions`, `--start-angle` and V-7's camera-fixed light are unchanged.
   - The presets become shorthands for camera settings.
