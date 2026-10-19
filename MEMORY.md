@@ -32,7 +32,7 @@ anything newer than the date below.
     2026-10-08;
   - settings: 2026-10-13;
   - lighting sheet: 2026-10-14;
-  - alpha: 2026-10-19, without cutouts (below).
+  - alpha: 2026-10-19, cutouts judged separately on a shrub the same day.
 - **Settings arc** ([design](docs/designs/settings_design.md)): accepted
   by the owner on 2026-10-13 ([record](docs/acceptance/settings.md)); epic
   #83 closed. Layered YAML settings (user file, reused sheet, `--config`,
@@ -46,8 +46,8 @@ anything newer than the date below.
   owner on 2026-10-19 ([record](docs/acceptance/alpha.md)); epic #113 closed.
   Sheets carry the model's transparency: `MASK` cutouts, `BLEND` translucency
   in 8-bit alpha, `--edges hard|soft` (both required), and maps aligned with
-  the colour. The owner's review model had no `MASK` material, so cutouts are
-  not yet judged by eye.
+  the colour. Cutouts were judged on a separate shrub model and accepted
+  ([Cutouts](docs/acceptance/alpha.md#cutouts)).
 - **Open epics:** none. Material styling, settings, lighting sheets and
   alpha are complete; #63, #83, #95 and #113 are closed on the owner’s word.
 
@@ -95,10 +95,11 @@ anything newer than the date below.
 
 ## Next steps
 
-1. **Cutout review (in progress):** the owner is making a `MASK` test model
-   with the design agent, under
-   `~/.local/share/moskophoros-acceptance/cutout-model/`; an owner review of
-   cut-out edges follows.
+1. **Leaf colour (in progress, outside the tool):** with the review library
+   the shrub's leaves fall mostly into the darkest band, because foliage
+   shades below the owner's range. The owner is tuning the library's leaf
+   entry with the design agent; no tool or settings change
+   ([Leaf colour](docs/acceptance/alpha.md#leaf-colour)).
 2. **Later, on the owner's word:** more shading and texture for wood (raised
    in the alpha review; a look question, not yet an issue).
 3. **Deferred, each waiting on a stated trigger:**
