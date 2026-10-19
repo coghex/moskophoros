@@ -1,4 +1,4 @@
-"""The sheet PNG, its normal and depth maps, its `moskophoros.sheet/13` JSON
+"""The sheet PNG, its normal and depth maps, its `moskophoros.sheet/14` JSON
 and the animated previews, flat and lit, following design §Export.
 
 `encode` lays the reduced frames out on the sheet and its maps, describes
@@ -30,7 +30,7 @@ import moskophoros
 from moskophoros import imageops, sampling, views
 from moskophoros.capture.backend import settings_document
 
-SCHEMA = "moskophoros.sheet/13"
+SCHEMA = "moskophoros.sheet/14"
 # The global formula of generated ramps, in its recorded order, at the
 # shipped defaults (material styling design D-30, D-33).
 DEFAULT_RAMP = MappingProxyType(
@@ -275,9 +275,7 @@ def encode(
     if settings.ppm is None or settings.cell is None or settings.ground_px is None:
         raise ValueError("the settings are not fitted: scale, cell and ground pixel")
     selected_clips = tuple(selected_clips)
-    view = views.View(
-        settings.pitch, settings.directions, settings.start_angle, settings.model_yaw
-    )
+    view = views.View(settings.directions, settings.start_angle, settings.model_yaw)
     directions = views.directions(view)
     requested = sampling.frames(
         subject, selected_clips, view, settings.fps, settings.frames
@@ -530,9 +528,7 @@ def previews(frames, *, subject, settings, selected_clips, lit=False):
     if settings.cell is None:
         raise ValueError("the settings are not fitted: no cell size")
     selected_clips = tuple(selected_clips)
-    view = views.View(
-        settings.pitch, settings.directions, settings.start_angle, settings.model_yaw
-    )
+    view = views.View(settings.directions, settings.start_angle, settings.model_yaw)
     count = len(views.directions(view))
     width, height = settings.cell
     preview_width = count * width * PREVIEW_SCALE
@@ -631,9 +627,7 @@ def lit_previews(frames, *, subject, settings, selected_clips, light):
     if settings.cell is None or settings.ground_px is None:
         raise ValueError("the settings are not fitted: no cell or ground pixel")
     selected_clips = tuple(selected_clips)
-    view = views.View(
-        settings.pitch, settings.directions, settings.start_angle, settings.model_yaw
-    )
+    view = views.View(settings.directions, settings.start_angle, settings.model_yaw)
     requested = sampling.frames(
         subject, selected_clips, view, settings.fps, settings.frames
     )

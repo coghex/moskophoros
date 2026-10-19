@@ -14,7 +14,7 @@ from PIL import Image
 from shading import DEFAULT_SHADE
 
 import moskophoros
-from moskophoros import export, stylize
+from moskophoros import export, stylize, views
 from moskophoros.capture.backend import Settings, Shade, Source, settings_document
 from moskophoros.gltf import Clip, SelectedClip
 from moskophoros.sampling import NORMAL_MAP, FrameAddress, ImageFrame
@@ -34,7 +34,7 @@ GENERATOR = {
 # The described sheet: the `side` view (east, then west), three clips at 3 fps.
 SIDE = Settings(
     view="side",
-    pitch=0.0,
+    direction=views.pitch_direction(0.0),
     directions=2,
     start_angle=90.0,
     model_yaw=0.0,
@@ -80,7 +80,8 @@ CANONICAL = (
     '{"generator":{"blender":"5.2.2","color":{"technique":"cycles-flat-emission"},'
     '"numpy":"2.5.3","pillow":"12.3.0","python":"3.13.15","renderer":"cycles",'
     '"tool":"moskophoros","version":"0.1.0"},'
-    '"settings":{"cell":{"height":3,"width":2},'
+    '"settings":{"camera":{"direction":[0.0,0.0,-1.0],"position":null,'
+    '"projection":"orthographic","roll":0.0},"cell":{"height":3,"width":2},'
     '"clips":[{"frames":null,"loop":true,"name":"läuft"},'
     '{"frames":null,"loop":false,"name":"攻撃"},'
     '{"frames":null,"loop":true,"name":"pose"}],'
@@ -92,8 +93,8 @@ CANONICAL = (
     '"shade":{"ao_distance_m":0.3,"ao_samples":64,"convexity_weight":1.0,'
     '"occlusion_weight":0.25,"range":[84,191]},'
     '"style":{"edges":"hard","materials":null,"palette":null,"reduce":"plain"},'
-    '"supersample":4,"view":{"directions":2,"pitch_deg":0.0,"preset":"side",'
-    '"projection":"orthographic","start_angle_deg":90.0}},'
+    '"supersample":4,"view":{"directions":2,"preset":"side",'
+    '"start_angle_deg":90.0}},'
     '"source":{"sha256":"' + SHA + '"}}'
 )
 FINGERPRINT = "sha256:" + hashlib.sha256(CANONICAL.encode("utf-8")).hexdigest()
@@ -173,7 +174,7 @@ EXPECTED_FRAMES = ",\n".join(
 
 EXPECTED_JSON = (
     """{
-  "schema": "moskophoros.sheet/13",
+  "schema": "moskophoros.sheet/14",
   "generator": {
     "tool": "moskophoros",
     "version": "0.1.0",
@@ -195,10 +196,18 @@ EXPECTED_JSON = (
   "settings": {
     "view": {
       "preset": "side",
-      "projection": "orthographic",
-      "pitch_deg": 0.0,
       "directions": 2,
       "start_angle_deg": 90.0
+    },
+    "camera": {
+      "projection": "orthographic",
+      "direction": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "roll": 0.0,
+      "position": null
     },
     "model_yaw_deg": 0.0,
     "fps": 3.0,
@@ -335,10 +344,14 @@ def test_the_fingerprint_hashes_the_canonical_mirrored_object():
     settings = {
         "view": {
             "preset": "side",
-            "projection": "orthographic",
-            "pitch_deg": 0.0,
             "directions": 2,
             "start_angle_deg": 90.0,
+        },
+        "camera": {
+            "projection": "orthographic",
+            "direction": [0.0, 0.0, -1.0],
+            "roll": 0.0,
+            "position": None,
         },
         "model_yaw_deg": 0.0,
         "fps": 3.0,
@@ -534,7 +547,7 @@ def _chunks(png):
 
 GRID = Settings(
     view="custom",
-    pitch=30.0,
+    direction=views.pitch_direction(30.0),
     directions=4,
     start_angle=0.0,
     model_yaw=0.0,

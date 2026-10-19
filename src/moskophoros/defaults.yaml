@@ -5,7 +5,15 @@
 # a key it leaves out falls through to the layer below.
 version: 1
 view: iso        # topdown, side, iso or iso-true; sets the three below
-pitch: null      # camera pitch, 0 to 90; null: the view's
+pitch: null      # camera pitch, 0 to 90; null: the view's. A shorthand for
+                 # camera.direction; a file gives one or the other
+camera:          # the camera; each direction turns the subject in front of it
+  direction: null  # [x, y, z], the way it looks, each -1 to 1, not all 0;
+                   # normalised; null: the view's
+  roll: 0          # -1 to 1, a fraction of a half turn about the way it
+                   # looks; positive turns the picture clockwise
+  position: null   # [x, y, z], meters from the ground point; unused by the
+                   # orthographic camera
 directions: null # direction count, 1 to 64; null: the view's
 start_angle: null  # angle of direction 0, degrees; null: the view's
 model_yaw: 0     # degrees; corrects a model that does not face +Z

@@ -38,7 +38,7 @@ A run writes, beside each other:
   would, beside the flat one; the light is in sheet pixels from the ground
   point (x right, y up, z toward the viewer), `--light-intensity` and
   `--light-ambient` set its strength, and the sheet itself stays flat;
-- `hero.json`, the `moskophoros.sheet/13` description of every frame, the
+- `hero.json`, the `moskophoros.sheet/14` description of every frame, the
   settings and style used and a fingerprint of them, naming the maps;
 - `hero.<clip>.gif`, an animated preview of each clip in every direction,
   unless `--no-preview` is given.
@@ -136,8 +136,18 @@ clips:
   Idle: {frames: auto}   # by duration; null: take frames
 ```
 
+The camera looks down at 30° by default (`--view iso`). `--pitch DEG` sets
+another angle, from 0, level, to 90, straight down. `--camera-direction X,Y,Z`
+points it along any direction instead, in the model's coordinates, each value
+from -1 to 1 (`0,-1,0` looks straight down), and `--camera-roll R`, from -1
+to 1, turns the picture by R half turns, clockwise for positive R. Each
+direction still turns the model in front of the camera, and the direction
+names (`south`, `east`, ...) stay tied to that turn. `--pitch` and
+`--camera-direction` both set the
+direction, so only one may be given.
+
 Everything that shapes the picture can also come from YAML settings files,
-all sharing one format: the view, scale, cell, ground point, supersampling,
+all sharing one format: the view and camera, scale, cell, ground point, supersampling,
 reduction, fps, frame count, palette, library, edges, previews, normal and
 depth maps, light, shading and generated-ramp values, and which Blender to
 use. The global file,
@@ -152,6 +162,8 @@ is your home directory:
 ```yaml
 view: iso          # topdown, side, iso or iso-true
 directions: 4      # null: the view's; so are pitch and start_angle
+camera:
+  roll: 0.25       # a quarter turn clockwise; direction: [x, y, z] or null
 ppm: 40            # or auto, fitted; --ppm auto also drops a configured one
 cell: 48x48        # or auto
 supersample: 8
@@ -176,7 +188,8 @@ ramp:              # generated ramps: setting C, the high-contrast one
   chroma_fade: 0.6
 ```
 
-A `view` replaces the pitch, direction count and start angle set below it.
+A `view` replaces the direction, direction count and start angle set below
+it; a file gives `pitch` or `camera.direction`, never both.
 `blender` and `any_blender` choose Blender; they are never recorded in a
 sheet. The global file never changes a sheet loaded with `--settings-from`,
 except for those two, while a project does. `--no-user-config` uses no global

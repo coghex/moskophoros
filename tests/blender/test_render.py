@@ -85,6 +85,8 @@ def render(
     tmp_path,
     *,
     pitch=0.0,
+    direction=None,
+    roll=0.0,
     directions=1,
     start=0.0,
     yaw=0.0,
@@ -103,7 +105,7 @@ def render(
     clips = gltf.select_clips(subject, clip_names, ())
     settings = backend.Settings(
         "custom",
-        pitch,
+        views.pitch_direction(pitch) if direction is None else direction,
         directions,
         start,
         yaw,
@@ -115,9 +117,10 @@ def render(
         ground_px,
         "error",
         shade,
+        roll=roll,
     )
     frames = sampling.frames(
-        subject.name, clips, views.View(pitch, directions, start, yaw), fps
+        subject.name, clips, views.View(directions, start, yaw), fps
     )
     root = tmp_path / workspace
     root.mkdir()
@@ -235,6 +238,70 @@ def test_the_ground_point_and_an_off_ground_feature_land_where_projected(
         ), address
         expected = projected(
             FEATURE, GROUND, angle + yaw, pitch, ppm, supersample, ground_px
+        )
+        assert centroid(image, greenish) == pytest.approx(expected, abs=TOLERANCE_PX), (
+            address
+        )
+
+
+def camera_axes(direction, roll, rotation_deg):
+    """The camera's right, up and toward-viewer axes in the subject's frame,
+    for a subject turned by `rotation_deg` from the camera's reference
+    heading (design §Camera and directions): the camera's own axes from
+    `moskophoros.views`, turned back by the subject's whole turn."""
+    basis = views.camera_basis(direction, roll)
+    turn = np.array(views.rotation_matrix(-(views.heading(direction) + rotation_deg)))
+    return (
+        turn @ np.array(basis.right),
+        turn @ np.array(basis.up),
+        -(turn @ np.array(basis.forward)),
+    )
+
+
+# A general direction, looking down and across with a compass heading, and a
+# roll that is no quarter turn.
+GENERAL = views.normalise((0.45, -0.6, -0.65))
+GENERAL_ROLL = 0.37
+
+
+def test_a_general_direction_and_roll_frame_the_predicted_pixels(found, tmp_path):
+    cell, ground_px, supersample, ppm, yaw = (24, 20), (9, 11), 2, 10.0, 25.0
+    result, job = render(
+        found,
+        placement_model(tmp_path),
+        tmp_path,
+        direction=GENERAL,
+        roll=GENERAL_ROLL,
+        directions=3,
+        start=10.0,
+        yaw=yaw,
+        ground=GROUND,
+        ppm=ppm,
+        cell=cell,
+        ground_px=ground_px,
+        supersample=supersample,
+    )
+    assert job["settings"]["camera"] == {
+        "projection": "orthographic",
+        "direction": list(GENERAL),
+        "roll": GENERAL_ROLL,
+        "position": None,
+    }
+    rendered = images(result)
+    assert len(rendered) == 3
+    for (address, image), angle in zip(
+        rendered.items(), [10.0, 130.0, 250.0], strict=True
+    ):
+        assert image.size == (cell[0] * supersample, cell[1] * supersample)
+        marker = centroid(image, reddish)
+        assert marker == pytest.approx(
+            (ground_px[0] * supersample, ground_px[1] * supersample), abs=TOLERANCE_PX
+        ), address
+        right, up, _ = camera_axes(GENERAL, GENERAL_ROLL, angle + yaw)
+        offset = np.subtract(FEATURE, GROUND)
+        expected = (
+            (ground_px[0] + offset @ right * ppm) * supersample,
+            (ground_px[1] - offset @ up * ppm) * supersample,
         )
         assert centroid(image, greenish) == pytest.approx(expected, abs=TOLERANCE_PX), (
             address

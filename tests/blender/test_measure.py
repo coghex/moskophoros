@@ -38,6 +38,8 @@ def measure(
     clip_names=(),
     once=(),
     pitch=0.0,
+    direction=None,
+    roll=0.0,
     directions=1,
     start=0.0,
     yaw=0.0,
@@ -50,7 +52,7 @@ def measure(
     clips = gltf.select_clips(subject, clip_names, once)
     settings = backend.Settings(
         "custom",
-        pitch,
+        views.pitch_direction(pitch) if direction is None else direction,
         directions,
         start,
         yaw,
@@ -62,8 +64,9 @@ def measure(
         None,
         "error",
         DEFAULT_SHADE,
+        roll=roll,
     )
-    view = views.View(pitch, directions, start, yaw)
+    view = views.View(directions, start, yaw)
     frames = sampling.frames(subject.name, clips, view, fps)
     root = tmp_path / workspace
     root.mkdir()
@@ -189,6 +192,36 @@ def test_bounds_at_several_directions_with_yaw_pitch_and_ground(found, tmp_path)
     ):
         assert box == pytest.approx(want, abs=TOLERANCE)
         assert height == pytest.approx(want_height, abs=TOLERANCE)
+
+
+def test_bounds_with_a_general_direction_and_roll(found, tmp_path):
+    # Measured on the rolled screen axes, as the render frames them.
+    from test_render import GENERAL, GENERAL_ROLL, camera_axes
+
+    ground = (0.5, 0.25, -0.5)
+    result, _ = measure(
+        found,
+        projection_model(tmp_path),
+        tmp_path,
+        direction=GENERAL,
+        roll=GENERAL_ROLL,
+        directions=3,
+        start=10.0,
+        yaw=25.0,
+        ground=ground,
+    )
+    points = [world(point) for point in POINTS]
+    actual = by_clip(result)["static"]
+    for (_, _, box, height), angle in zip(actual, [10.0, 130.0, 250.0], strict=True):
+        right, up, _ = camera_axes(GENERAL, GENERAL_ROLL, angle + 25.0)
+        offsets = [
+            tuple(p - g for p, g in zip(point, ground, strict=True)) for point in points
+        ]
+        xs = [sum(a * b for a, b in zip(o, right, strict=True)) for o in offsets]
+        ys = [sum(a * b for a, b in zip(o, up, strict=True)) for o in offsets]
+        want = (max(0, -min(xs)), max(0, *xs), max(0, *ys), max(0, -min(ys)))
+        assert box == pytest.approx(want, abs=TOLERANCE)
+        assert height == pytest.approx(2.25, abs=TOLERANCE)
 
 
 # Evaluated geometry and clip isolation
@@ -531,7 +564,7 @@ def valid_job_text(found, tmp_path):
     clips = gltf.select_clips(subject, (), ())
     settings = backend.Settings(
         "custom",
-        0.0,
+        views.pitch_direction(0.0),
         1,
         0.0,
         0.0,
@@ -544,7 +577,7 @@ def valid_job_text(found, tmp_path):
         "error",
         DEFAULT_SHADE,
     )
-    frames = sampling.frames(subject.name, clips, views.View(0.0, 1, 0.0), 4.0)
+    frames = sampling.frames(subject.name, clips, views.View(1, 0.0), 4.0)
     job = backend.build_job(
         "measure",
         backend.Source(
@@ -571,7 +604,7 @@ def _repeat_first_frame(text):
         (lambda text: text.replace('{"', '{"schema": "x", "', 1), "duplicate key"),
         (
             lambda text: text.replace(
-                "moskophoros.capture-job/1", "moskophoros.capture-job/2"
+                "moskophoros.capture-job/2", "moskophoros.capture-job/3"
             ),
             "schema",
         ),
@@ -1138,7 +1171,7 @@ def test_the_script_refuses_what_the_input_contract_rejects(
     clips = (gltf.SelectedClip(gltf.Clip(0, clip, 0.0, 1.0, ()), one_shot=False),)
     settings = backend.Settings(
         "custom",
-        0.0,
+        views.pitch_direction(0.0),
         1,
         0.0,
         0.0,
@@ -1151,7 +1184,7 @@ def test_the_script_refuses_what_the_input_contract_rejects(
         "error",
         DEFAULT_SHADE,
     )
-    frames = sampling.frames(path.stem, clips, views.View(0.0, 1, 0.0), 4.0)
+    frames = sampling.frames(path.stem, clips, views.View(1, 0.0), 4.0)
     workspace = tmp_path / "work"
     workspace.mkdir()
     job = backend.build_job(

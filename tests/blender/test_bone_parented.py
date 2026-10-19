@@ -171,7 +171,7 @@ def run(found, path, tmp_path, mode, **fitted):
     clips = gltf.select_clips(subject, ["kick"], ["kick"])
     settings = backend.Settings(
         "custom",
-        0.0,
+        views.pitch_direction(0.0),
         1,
         0.0,
         0.0,
@@ -184,9 +184,7 @@ def run(found, path, tmp_path, mode, **fitted):
         "error",
         DEFAULT_SHADE,
     )
-    frames = sampling.frames(
-        subject.name, clips, views.View(0.0, 1, 0.0, 0.0), settings.fps
-    )
+    frames = sampling.frames(subject.name, clips, views.View(1, 0.0, 0.0), settings.fps)
     root = tmp_path / mode
     root.mkdir()
     source = backend.Source(

@@ -18,7 +18,7 @@ Decisions below were settled on 2026-09-29 unless marked otherwise.
 |---|---|
 | **subject** | Everything in the input file's default scene that is rendered. Named after the input file's stem. |
 | **clip** | One glTF animation, identified by its name. A file with no animations has one clip, `static`. |
-| **view** | The camera setup: projection, pitch, direction count and start angle. |
+| **view** | The camera setup: the camera's projection, direction, roll and position, the direction count and the start angle. |
 | **direction** | One subject rotation within a view, identified by its index and angle. |
 | **frame** | One image of one clip at one sample time from one direction. |
 | **cell** | The fixed-size rectangle every frame occupies. |
@@ -37,7 +37,10 @@ moskophoros [options] <infile.glb> <outfile.png>
 | Option | Default | Meaning |
 |---|---|---|
 | `--view NAME` | `iso` | Preset: `topdown`, `side`, `iso` or `iso-true`. A [settings file](#settings-files) may set it. |
-| `--pitch DEG` | from preset | Camera pitch, 0 to 90 inclusive. A [settings file](#settings-files) may set it. |
+| `--pitch DEG` | from preset | Camera pitch, 0 to 90 inclusive: a shorthand for the camera direction `(0, −sin p, −cos p)`. Cannot accompany `--camera-direction`. A [settings file](#settings-files) may set it. |
+| `--camera-direction X,Y,Z` | from preset | The way the camera looks, in subject coordinates: three finite numbers, each −1 to +1, not all 0, which the tool normalises. Cannot accompany `--pitch`. See [Camera and directions](#camera-and-directions). A [settings file](#settings-files) may set it. |
+| `--camera-roll R` | `0` | The camera's turn about the way it looks, a finite number from −1 to +1, a fraction of a half turn (`R · π` radians); positive turns the picture clockwise. A [settings file](#settings-files) may set it. |
+| `--camera-position X,Y,Z` | none | The camera's position, three finite numbers, meters from the ground point. The orthographic camera records it unused, with no warning (projects and camera design D-16). A [settings file](#settings-files) may set it. |
 | `--directions N` | from preset | Direction count, 1 to 64. A [settings file](#settings-files) may set it. |
 | `--start-angle DEG` | from preset | Angle of direction 0. A [settings file](#settings-files) may set it. |
 | `--model-yaw DEG` | `0` | Corrects a model that does not face +Z (see [Input contract](#input-contract)). A [settings file](#settings-files) may set it. |
@@ -65,7 +68,7 @@ moskophoros [options] <infile.glb> <outfile.png>
 | `--ramp-hue-shift DEG` | `-12` | How far each shade of a generated ramp turns the hue, in degrees, finite, −180 to 180. |
 | `--ramp-fade F` | `0.3` | How much chroma a generated ramp loses by its darkest shade, finite, 0 to 1. |
 | `--frames N` | `auto` | How many frames each clip is sampled to, a whole number 1 or more, retimed so every frame lasts `1/fps`; `auto` samples by duration. A clip's own count, set in a [settings file](#settings-files), beats it. See [Clips and sampling](#clips-and-sampling). |
-| `--settings-from FILE` | none | Load every recorded setting of an earlier `moskophoros.sheet/13` sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
+| `--settings-from FILE` | none | Load every recorded setting of an earlier `moskophoros.sheet/14` sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
 | `--config FILE` | the user file | Use FILE as the global settings file, in place of the user file. Given at most once. Its values are defaults, below a loaded sheet. See [Settings files](#settings-files). |
 | `--no-user-config` | off | Use no global settings file: skip the user file. Cannot accompany `--config`. |
 | `--project NAME` | none | Read the project file `projects/NAME.yaml` in the configuration directory. Given at most once. Its values act as the options would, over the global file and a loaded sheet. See [Settings files](#settings-files). |
@@ -155,7 +158,10 @@ default; a test keeps the two in agreement.
 | Setting | Option | Shipped default | Value |
 |---|---|---|---|
 | `view` | `--view NAME` | `iso` | `topdown`, `side`, `iso` or `iso-true`: a shorthand that sets the next three (see *The view*) |
-| `pitch` | `--pitch DEG` | `null` | a finite number from 0 to 90, or `null`: the view's |
+| `pitch` | `--pitch DEG` | `null` | a finite number from 0 to 90, or `null`: the view's; a shorthand for `camera.direction` |
+| `camera.direction` | `--camera-direction X,Y,Z` | `null` | `[x, y, z]`, three finite numbers each from −1 to 1, not all 0, normalised, or `null`: the view's |
+| `camera.roll` | `--camera-roll R` | `0` | a finite number from −1 to 1, a fraction of a half turn |
+| `camera.position` | `--camera-position X,Y,Z` | `null` | `[x, y, z]`, three finite numbers, meters from the ground point, or `null`; unused by the orthographic camera |
 | `directions` | `--directions N` | `null` | a whole number from 1 to 64, or `null`: the view's |
 | `start_angle` | `--start-angle DEG` | `null` | a finite number of degrees, or `null`: the view's |
 | `model_yaw` | `--model-yaw DEG` | `0` | a finite number of degrees |
@@ -195,6 +201,11 @@ Values are type-strict: a number is a YAML number, never a string such as
 numbers: an integral float such as `3.0` is taken as `3`, as `--ground-px`
 takes it. Whether the ground pixel lies inside the cell stays an
 [overflow](#scale-and-ground-point) question.
+
+The `camera` settings are a nested mapping in a file too, merged key by key
+the same way (projects and camera design D-7, D-16). The `camera.projection`
+setting comes with the perspective projection; until then a file giving it is
+refused as an unknown key, and the camera is orthographic.
 
 The `shade` settings are a nested mapping in a file, and each is a setting of
 its own: they merge key by key across the layers, so a file may set one and
@@ -267,8 +278,8 @@ identical resolved settings give identical bytes.
 - `auto` for `ppm` or `ground_px` is the automatic value: it clears a
   reused or lower value and fits, as `cell: auto` does for the cell, and
   `--ppm auto` and `--ground-px auto` accept it too.
-- `null` for `pitch`, `directions` or `start_angle` takes that value from the
-  view's preset in force (*The view*). `blender: null` discovers Blender as
+- `null` for `pitch`, `camera.direction`, `directions` or `start_angle`
+  takes that value from the view's preset in force (*The view*). `blender: null` discovers Blender as
   without `--blender`.
 - The app settings, `blender` and `any_blender`, layer like any setting,
   but no sheet records them, they never reach its fingerprint, and
@@ -279,9 +290,16 @@ identical resolved settings give identical bytes.
   `--config`, `--no-user-config` and `--project`, are not settings.
 
 **The view.** The view is one state: a preset marker, `topdown`, `side`,
-`iso`, `iso-true` or `custom`, and three values, the pitch, the direction
-count and the start angle, each either the preset's or an override (projects
-and camera design D-16). The layers apply from the weakest up:
+`iso`, `iso-true` or `custom`, and three values, the camera's direction, the
+direction count and the start angle, each either the preset's or an override
+(projects and camera design D-12, D-16). `pitch` and `camera.direction` are
+two spellings of one value, the direction: a `pitch` p sets the direction
+`(0, −sin p, −cos p)`. A file giving both, with any values, `null` included,
+in either order, is a usage error (exit 2) naming the file, the later key and
+its line, and so is `--pitch` with `--camera-direction`; nothing is written.
+The shipped defaults list both as `null`: they set the starting state and are
+not such a layer. The camera's roll and position are ordinary settings, not
+part of the view state. The layers apply from the weakest up:
 
 1. The shipped defaults set `iso`, with every value the preset's.
 2. A loaded sheet is a snapshot: it sets its recorded marker, `custom`
@@ -289,21 +307,22 @@ and camera design D-16). The layers apply from the weakest up:
    global file's view, below it, never applies over it.
 3. In each other layer, a `view` applies first, whatever its place in the
    file: it sets the preset and every value to the preset's, replacing any
-   lower layer's values. Then a non-null `pitch`, `directions` or
-   `start_angle` is an override, and a `null` resets that value to the
-   preset's. While the marker is `custom`, from a loaded sheet, a `null` has
+   lower layer's values. Then a non-null `pitch` or `camera.direction`,
+   `directions` or `start_angle` is an override, and a `null` resets that
+   value to the preset's. While the marker is `custom`, from a loaded sheet, a `null` has
    no preset to reset to: it is a usage error naming the file, the key and its
    line, unless the same layer gives a `view`. The command line is the last
-   layer, `--view` applying before `--pitch`, `--directions` and
-   `--start-angle`.
+   layer, `--view` applying before `--pitch` or `--camera-direction`,
+   `--directions` and `--start-angle`.
 4. After the last layer, the recorded marker is the preset's name when every
    value is the preset's, else `custom`.
 
 So `view: topdown` with `pitch: null` in one layer gives `topdown`;
-`view: iso` with `pitch: 45` gives `custom` with pitch 45; a lower
-`pitch: 45` under a higher `pitch: null` gives the preset's pitch; and an
-`iso` sheet reloaded with nothing above it records `iso`, with its JSON and
-fingerprint unchanged.
+`view: iso` with `pitch: 45` gives `custom` with pitch 45's direction; a
+lower `pitch: 45` under a higher `camera.direction: null` gives the preset's
+direction, as does a lower `camera.direction` under a higher `pitch: null`;
+and an `iso` sheet reloaded with nothing above it records `iso`, with its
+JSON and fingerprint unchanged.
 
 **Files.** The global file and a project file share one schema: either may
 set any setting in the table above, and a project file sets only what it
@@ -339,7 +358,11 @@ too.
 ```yaml
 version: 1
 view: iso               # topdown, side, iso or iso-true
-pitch: null             # 0 to 90; null: the view's
+# pitch: 30            # 0 to 90; null: the view's; or camera.direction, not both
+camera:
+  direction: null       # [x, y, z], each -1 to 1, not all 0; null: the view's
+  roll: 0               # -1 to 1, a fraction of a half turn
+  position: null        # [x, y, z] meters from the ground point; unused
 directions: 8           # 1 to 64; null: the view's
 start_angle: null       # degrees; null: the view's
 model_yaw: 0
@@ -398,6 +421,10 @@ decision 2026-10-01):
   `edges` that is not one of those two strings, named with the file, the key
   and its line; in a reused sheet, a `settings.style.edges` that is missing
   or not one of them (alpha design D-9).
+- `--pitch` together with `--camera-direction`; `--camera-direction` not
+  three finite numbers `X,Y,Z` each from −1 to 1, or all 0;
+  `--camera-roll` not a finite number from −1 to 1; `--camera-position` not
+  three finite numbers `X,Y,Z` (projects and camera design D-7, D-12, D-16).
 - `--palette` together with `--no-palette`, or either option repeated.
 - `--materials` together with `--no-materials`, or either option repeated.
 - `--preview` together with `--no-preview`, or either option repeated.
@@ -429,8 +456,12 @@ decision 2026-10-01):
   the line; a missing project file's error names its path, and nothing is
   created. The view, scale and framing settings and the app settings are
   refused as their options are: a `view` that is not a preset name; a
-  `pitch` not from 0 to 90, `directions` not a whole number from 1 to 64,
-  or `start_angle` not a finite number, other than `null`; a `model_yaw` not
+  `pitch` not from 0 to 90, a `camera.direction` not three finite numbers
+  each from −1 to 1, or all 0, `directions` not a whole number from 1 to 64,
+  or `start_angle` not a finite number, other than `null`; a `pitch` and a
+  `camera.direction` in one file, whatever their values; a `camera.roll` not
+  a finite number from −1 to 1; a `camera.position` not three finite numbers
+  nor `null`; a `model_yaw` not
   a finite number; a `ppm` not finite and greater than 0, nor `auto`; a
   `ground` not three finite numbers; a `ground_px` not two whole numbers 0
   or greater, nor `auto`; a `supersample` not a whole number from 1 to 16; a
@@ -438,7 +469,8 @@ decision 2026-10-01):
   `null`; an `any_blender` not `true` or `false`. Booleans and numeric
   strings are never numbers.
 - Over a loaded sheet whose view is `custom`, a project file's `null` for
-  `pitch`, `directions` or `start_angle` without a `view` in the same file,
+  `pitch`, `camera.direction`, `directions` or `start_angle` without a
+  `view` in the same file,
   named with the file, the key and its line (projects and camera design
   D-16).
 - `--config` given more than once, or together with `--no-user-config`;
@@ -559,24 +591,66 @@ not supported.
 All geometry is in glTF coordinates: +X right, +Y up, +Z toward the viewer at
 direction 0.
 
-**The camera never moves; the subject turns.** The camera is orthographic and
-centered on the ground point. Pitch `p` is the angle between the viewing
-direction and the ground: 0° looks horizontally, 90° looks straight down.
+**The camera is set once; each direction turns the subject in front of it**
+(projects and camera design D-3, D-7, D-8, D-10). The camera is orthographic
+and centered on the ground point. It looks along its direction, with a roll,
+and the light stays fixed to it.
 
-- The camera sits in direction `(0, sin p, cos p)` from the ground point.
-- Screen right is always +X.
-- Screen up is `(0, cos p, −sin p)`. At 90° this is −Z, continuous with lower
-  pitches, so top-down has no ambiguous roll.
+**Basis.** Let `f` be the normalised `camera.direction`, the way the camera
+looks, in subject coordinates.
 
-**Direction angles are measured on screen.** For direction `i` of `N`:
+- The unrolled axes: `r₀ = normalise(f × Y)` and `u₀ = r₀ × f`. When `f`'s
+  horizontal part is exactly zero, so it looks straight down or up, `r₀ = +X`.
+- The roll turns them about `f` by `ρ = roll · π` radians, giving screen
+  right `r` and screen up `u`:
+  - `r = r₀·cos ρ + u₀·sin ρ`;
+  - `u = u₀·cos ρ − r₀·sin ρ`.
+
+  A positive roll turns the camera counter-clockwise as it looks, so the
+  picture turns clockwise: at `roll = 0.5`, `r = u₀` and `u = −r₀`, and a
+  point at the top of the picture is now at its right. Roll −1 and +1 give the
+  same picture.
+- The rolled `r` and `u` are used for everything that makes the picture: the
+  render transform, the measured bounds and the orthographic framing. Only
+  the reference heading for each direction's turn uses `f` alone.
+- `camera.position` is unused by the orthographic camera. It is recorded as
+  given, with no warning (D-16).
+
+**Pitch is a shorthand.** Pitch `p`, the angle between the viewing direction
+and the ground (0° looks horizontally, 90° straight down), sets the direction
+`(0, −sin p, −cos p)` (D-12). With roll 0 it gives the pitch-only camera
+exactly: screen right +X and screen up `(0, cos p, −sin p)`, with the camera
+in direction `(0, sin p, cos p)` from the ground point. At 90° up is −Z,
+continuous with lower pitches, so top-down has no ambiguous roll.
+
+**Normalising.** The tool divides a direction by its largest component, then
+by its length, so a tiny one such as `(1e-300, 1e-300, 0)`, or a subnormal
+one such as `(5e-324, 5e-324, 0)`, is normalised too. A direction whose length is already within `1e-12` of 1 is
+kept exactly as given, so normalising twice changes nothing, a pitch's
+direction is kept bit for bit, and a recorded direction reloads unchanged.
+
+**Exactness.** The products are written so a direction a pitch or preset
+sets gives exactly the pitch camera's basis, bounds, camera transform and
+pixels. Measuring keeps one detail of the pitch camera's floating point: it
+evaluated the vertical part of a straight-down camera's up as `cos 90°`,
+about `6e-17`, not 0. So a camera looking straight down without a roll
+measures with that up, which can move a fitted cell by one pixel; any roll,
+and every other direction, measures with the exact axes.
+
+**Direction angles are measured from the camera.** For direction `i` of `N`:
 
 ```
 θᵢ = (start + i · 360 / N) mod 360
 ```
 
 The subject is rotated by `θᵢ + model-yaw` about the vertical axis through the
-ground point. The rotation is counter-clockwise when seen from above (+Y),
-which gives these facings:
+ground point, measured from the camera's unrolled reference heading: at
+`θ = 0` the subject's +Z faces the camera's horizontal heading, `−(f_x, 0,
+f_z)`, or +Z when the camera looks straight down or up (D-10). So the
+direction's compass heading changes no orthographic picture and no label;
+only its steepness and the roll do. The rotation is counter-clockwise when
+seen from above (+Y), which gives these facings for a camera looking down or
+level with no roll:
 
 | Angle | Subject faces | Label |
 |---|---|---|
@@ -589,22 +663,31 @@ which gives these facings:
 | 270° | screen left | `west` |
 | 315° | down and left | `south-west` |
 
-Labels are screen-relative and are recorded only for angles that are exact
-multiples of 45°; any other angle has label `null`. Directions appear in the
-sheet in index order.
+Labels come from `θ` alone (D-18) and are recorded only for angles that are
+exact multiples of 45°; any other angle has label `null`. Their
+screen-relative description holds for cameras that look down or level with
+no roll. With a roll or an upward camera the picture turns, but no label
+changes: at `roll = 1` the picture is upside down, so `east` (90°), facing
++X, faces screen left and keeps its name; looking straight up,
+`f = (0, 1, 0)`, `r = +X` and `u = (0, 0, 1)`, so `south` (0°), facing +Z,
+faces up the screen and keeps its name. Directions appear in the sheet in
+index order.
 
 ### Presets
 
-| Preset | Pitch | Directions | Start angle |
-|---|---|---|---|
-| `topdown` | 90° | 8 | 0° |
-| `side` | 0° | 2 (east, west) | 90° |
-| `iso` | 30° | 8 | 0° |
-| `iso-true` | arctan(1/√2) ≈ 35.264° | 8 | 0° |
+| Preset | Pitch | Direction | Directions | Start angle |
+|---|---|---|---|---|
+| `topdown` | 90° | `(0, −1, 0)` | 8 | 0° |
+| `side` | 0° | `(0, 0, −1)` | 2 (east, west) | 90° |
+| `iso` | 30° | `(0, −sin 30°, −cos 30°)` | 8 | 0° |
+| `iso-true` | arctan(1/√2) ≈ 35.264° | its pitch's | 8 | 0° |
 
-Explicit `--pitch`, `--directions` and `--start-angle`, or the settings
-`pitch`, `directions` and `start_angle`, override the preset's values, and the
-recorded preset name is then `custom`. How a settings file's `view` and these
+A preset is a shorthand: it sets its pitch's direction, the direction count
+and the start angle (D-12). Explicit `--pitch` or `--camera-direction`,
+`--directions` and `--start-angle`, or the settings `pitch` or
+`camera.direction`, `directions` and `start_angle`, override the preset's
+values, and the recorded preset name is then `custom`. The roll and the
+position are no part of a preset and never make the view `custom`. How a settings file's `view` and these
 values layer is under [Settings files](#settings-files), *The view*.
 
 The tool renders no ground. Isometric games conventionally run their grid
@@ -770,6 +853,7 @@ every recorded setting that affects the output (owner decisions 2026-10-11,
 settings design D-15, D-16, D-19 and D-28):
 
 - view and model yaw
+- the camera, `settings.camera`: its direction, roll and position
 - fps and supersample
 - ppm, cell, ground point and ground pixel
 - root-motion mode
@@ -788,8 +872,8 @@ This makes scale, cell and ground pixel fixed. Options given explicitly, and
 project values, override the reused values; the global file, whether the user
 file or a `--config` file, and the shipped defaults never do (projects and
 camera design D-11). A project's `ppm`, `ground`, `ground_px`, `model_yaw`,
-`supersample`, `reduce` and `root_motion` replace the reused values as their
-options do; `ppm: auto` or `--ppm auto`, and `ground_px: auto` or
+`camera.roll`, `camera.position`, `supersample`, `reduce` and `root_motion`
+replace the reused values as their options do; `ppm: auto` or `--ppm auto`, and `ground_px: auto` or
 `--ground-px auto`, drop the reused scale or ground pixel and fit them again
 in the cell in force. The app settings, `blender` and `any_blender`, are
 never recorded or loaded, so the global file's apply over a loaded sheet. An explicit `--reduce` replaces the reused reduction,
@@ -832,9 +916,10 @@ loaded sheet, so it never changes a loaded sheet's ramps (material styling
 design D-33). The
 global formula reloads from `settings.ramp`.
 
-Only the current sheet schema, `moskophoros.sheet/13`, loads (owner decision
-2026-10-11, settings design D-24). A sheet of any other schema, `/1` to `/12`
-included, is a usage error naming its schema and the supported one. Nothing
+Only the current sheet schema, `moskophoros.sheet/14`, loads (owner decision
+2026-10-11, settings design D-24; projects and camera design D-14, D-17). A
+sheet of any other schema, `/1` to `/13` included, is a usage error naming
+its schema and the supported one. Nothing
 defaults a missing `settings.style.edges`. A file
 that is unreadable, or not a sheet document, is a usage error.
 
@@ -864,17 +949,23 @@ palette are validated before any Blender invocation.
 The reused view is a snapshot in the view's layers (see
 [Settings files](#settings-files), *The view*). An explicit `--view`, or a
 project's `view`, replaces the whole reused view: that preset's values
-apply, then any `--pitch`, `--directions` or `--start-angle`, or the
-project's `pitch`, `directions` or `start_angle`, on top, exactly as without
-reuse. Without one, the reused view stays, and an explicit or project
-`pitch`, `directions` or `start_angle` overrides its value and makes the
-preset `custom`. A project's `null` resets that value to the reused preset's,
+apply, then any `--pitch` or `--camera-direction`, `--directions` or
+`--start-angle`, or the project's `pitch` or `camera.direction`,
+`directions` or `start_angle`, on top, exactly as without reuse. Without
+one, the reused view stays, its recorded direction among its values, and an
+explicit or project direction, `directions` or `start_angle` overrides its
+value and makes the preset `custom`. A project's `null` resets that value to the reused preset's,
 and over a reused `custom` view is a usage error unless the project gives a
 `view`.
 
 The reused `settings` are checked strictly. Every reused field must be
-present with a value its option would accept, `projection` must be
-`orthographic`, and `pixels_per_meter`, `cell` and `ground_px` must be set.
+present with a value its option would accept, and `pixels_per_meter`, `cell`
+and `ground_px` must be set. `view` must be an object with exactly `preset`,
+`directions` and `start_angle_deg`. `camera` must be an object with exactly
+`projection`, which must be `orthographic`; `direction`, a list of three
+numbers, never booleans, each from −1 to 1, normalised: its length within
+`1e-12` of 1, and it is kept exactly as recorded; `roll`, a number from −1 to
+1; and `position`, `null` or a list of three finite numbers.
 `cell` is the fitted `{width, height}` record, never `auto`. `previews`,
 `normals` and `depth` must be `true` or `false`. `light` must be an object
 with exactly `position`, `null` or a list of three numbers, never booleans,
@@ -1343,11 +1434,11 @@ keys, missing required fields and invalid numeric values are rejected.
 
 | Field | Meaning |
 |---|---|
-| `schema` | Exactly `moskophoros.capture-job/1`. |
+| `schema` | Exactly `moskophoros.capture-job/2`. |
 | `mode` | `measure` or `render`. |
 | `source` | Absolute `path` to the original GLB, its `sha256` and the selected original glTF `scene` index. |
 | `subject`, `variant` | Input stem and `default`, matching every requested frame address. |
-| `settings` | The accepted sheet settings, using resolved option values, with the global frame count `frames` and each clip entry's own `frames` as given, which the script checks (a count, `auto`, or for a clip `null`); the job's `frames` list already holds the times they sample, so Blender never resamples, and `time_scale` is not in the job. In measure mode, `pixels_per_meter`, `cell` and `ground_px` are null: fitting belongs to the caller. In render mode all three are resolved, fixed values. `shade` carries the shade's capture values, exactly `ao_distance_m` (finite, greater than 0), `ao_samples` (an integer, 1 to 128), `occlusion_weight` and `convexity_weight` (finite, 0 or greater), and `materials`: for each glTF material whose library entry gives its own `ao_distance_m`, `occlusion_weight` or `convexity_weight`, in ascending material order, exactly `material` (its glTF index) and its three resolved capture values, each its own or the global. Both the launcher and the script check them. Of the style, the job carries only those per-material values (owner decision 2026-10-11, settings design D-36, amending the rule below): the sheet's ramps, generated or listed, palette, reduction, default ramp, `previews` and shade ranges, the library's own `shade` included, are left out, as they act after capture, so the job and its `job_sha256` are the same whatever they are (owner decisions 2026-10-04, 2026-10-12). |
+| `settings` | The accepted sheet settings, using resolved option values, with the global frame count `frames` and each clip entry's own `frames` as given, which the script checks (a count, `auto`, or for a clip `null`); the job's `frames` list already holds the times they sample, so Blender never resamples, and `time_scale` is not in the job. In measure mode, `pixels_per_meter`, `cell` and `ground_px` are null: fitting belongs to the caller. In render mode all three are resolved, fixed values. `view` holds exactly `preset`, `directions` and `start_angle_deg`, and `camera`, after it, exactly `projection` (`orthographic`), `direction` (three finite numbers each from −1 to 1, normalised to within `1e-12` of length 1), `roll` (a finite number from −1 to 1) and `position` (three finite numbers, or null), as the sheet records them (projects and camera design D-14, D-16); both the launcher and the script check them strictly, and the script projects and frames with the rolled screen axes (see [Camera and directions](#camera-and-directions)). `shade` carries the shade's capture values, exactly `ao_distance_m` (finite, greater than 0), `ao_samples` (an integer, 1 to 128), `occlusion_weight` and `convexity_weight` (finite, 0 or greater), and `materials`: for each glTF material whose library entry gives its own `ao_distance_m`, `occlusion_weight` or `convexity_weight`, in ascending material order, exactly `material` (its glTF index) and its three resolved capture values, each its own or the global. Both the launcher and the script check them. Of the style, the job carries only those per-material values (owner decision 2026-10-11, settings design D-36, amending the rule below): the sheet's ramps, generated or listed, palette, reduction, default ramp, `previews` and shade ranges, the library's own `shade` included, are left out, as they act after capture, so the job and its `job_sha256` are the same whatever they are (owner decisions 2026-10-04, 2026-10-12). |
 | `clips` | Selected clips in sheet order. Each carries its original `animation_index`, `name`, `t0_s`, `t1_s` and candidate `roots`. The synthetic `static` clip has a null animation index, zero endpoints and no animated roots. |
 | `clips[].roots` | Each candidate root's original `node_index` and optional original `node_name`, determined using the accepted ancestry rule. Indices identify nodes; names are diagnostics, never assumed unique. |
 | `frames` | The exact requested samples in sheet order: clip, direction, then sample. Each carries an `address`, sample `index` and direction `angle_deg`. The address has `subject`, `variant`, `clip`, `direction` and `time_s`. |
@@ -2181,11 +2272,11 @@ game recovers `depth = (code − 32768) / 16` and, with the pixel's position,
 published with the other outputs, rolled back with them, and named in an
 output error (exit 6) when it cannot be written.
 
-**JSON (`moskophoros.sheet/13`).**
+**JSON (`moskophoros.sheet/14`).**
 
 ```json
 {
-  "schema": "moskophoros.sheet/13",
+  "schema": "moskophoros.sheet/14",
   "generator": {
     "tool": "moskophoros", "version": "0.1.0",
     "python": "3.x.y", "numpy": "x.y.z", "pillow": "x.y.z",
@@ -2201,8 +2292,10 @@ output error (exit 6) when it cannot be written.
   "subject": "hero",
   "variant": "default",
   "settings": {
-    "view": { "preset": "iso", "projection": "orthographic",
-              "pitch_deg": 30.0, "directions": 8, "start_angle_deg": 0.0 },
+    "view": { "preset": "iso", "directions": 8, "start_angle_deg": 0.0 },
+    "camera": { "projection": "orthographic",
+                "direction": [0.0, -0.49999999999999994, -0.8660254037844387],
+                "roll": 0.0, "position": null },
     "model_yaw_deg": 0.0,
     "fps": 12.0,
     "frames": "auto",
@@ -2267,6 +2360,13 @@ output error (exit 6) when it cannot be written.
   It sits between `ramp` and `clips`. Export writes and fingerprints the record the
   command resolved without interpreting it, so a new look changes neither
   export nor capture (owner decisions 2026-10-04, 2026-10-07).
+- `settings.view` records the view: `preset`, the preset's name or `custom`,
+  `directions` and `start_angle_deg`. `settings.camera`, directly after it,
+  records the camera: `projection`, `"orthographic"`; `direction`, the
+  normalised direction, three numbers; `roll`, a number; and `position`,
+  three numbers or `null`, recorded unused by the orthographic camera. The
+  pitch is not recorded: the direction holds it. Both are inside the
+  fingerprint (projects and camera design D-14, D-16).
 - `settings.frames` records the global frame count as given, `auto` or a
   count, directly after `settings.fps`; each `settings.clips` entry runs
   `name`, `loop` and `frames`, the clip's own value as given: a count,
@@ -2317,7 +2417,10 @@ output error (exit 6) when it cannot be written.
   recorded `generator.renderer` `"workbench"` and `generator.studio_light`,
   and had no `generator.color`; `moskophoros.sheet/12` had no
   `settings.style.edges`, and its pixels' alpha was only 0 or 255;
-  [reuse](#scale-and-ground-point) loads only `/13` (settings design D-24). The normal and depth capture adds no fixed
+  `moskophoros.sheet/13` recorded the view's `projection` and `pitch_deg`
+  in `settings.view` and had no `settings.camera`;
+  [reuse](#scale-and-ground-point) loads only `/14` (settings design D-24;
+  projects and camera design D-14, D-17). The normal and depth capture adds no fixed
   parameter to `generator.shade` (lighting sheet design D-26).
 - `generator` records this tool, its Python and libraries, and what the
   render result's `backend` reports: the Blender version, `renderer`
@@ -2471,8 +2574,10 @@ file name and no other options gives a byte-identical PNG, JSON and
 previews, flat and lit, and the same normal and depth maps, with the same
 generator. A sheet made with `--no-preview` reloads writing no previews, one made with
 `--no-normals` writing no normal map and recording `null` for it, and one
-made without `--depth` writing no depth map. The whole-command Blender
-tests check this.
+made without `--depth` writing no depth map. A recorded camera direction is
+kept exactly as recorded, never normalised again, so a sheet with any
+direction and roll reproduces itself too (projects and camera design D-14).
+The whole-command Blender tests check this.
 
 ## Project layout
 

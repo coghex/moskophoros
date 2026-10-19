@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from moskophoros import cli
+from moskophoros.views import normalise, pitch_direction
 
 POSITIONALS = ["in.glb", "out.png"]
 USAGE_LINE = "usage: moskophoros [options] <infile.glb> <outfile.png>"
@@ -37,7 +38,7 @@ def test_defaults():
         infile=Path("in.glb"),
         outfile=Path("out.png"),
         view="iso",
-        pitch=30.0,
+        direction=pitch_direction(30.0),
         directions=8,
         start_angle=0.0,
         model_yaw=0.0,
@@ -72,41 +73,68 @@ def test_defaults():
 )
 def test_presets_resolve(view, pitch, directions, start_angle):
     options = parse("--view", view)
-    assert (options.view, options.pitch, options.directions, options.start_angle) == (
-        view,
-        pitch,
-        directions,
-        start_angle,
-    )
+    assert (
+        options.view,
+        options.direction,
+        options.directions,
+        options.start_angle,
+    ) == (view, pitch_direction(pitch), directions, start_angle)
 
 
 def test_iso_true_pitch():
-    assert parse("--view", "iso-true").pitch == pytest.approx(35.264389682754654)
+    _, y, z = parse("--view", "iso-true").direction
+    assert math.degrees(math.atan2(-y, -z)) == pytest.approx(35.264389682754654)
 
 
 @pytest.mark.parametrize(
     ("override", "expected"),
     [
-        (["--pitch", "45"], (45.0, 2, 90.0)),
-        (["--directions", "4"], (0.0, 4, 90.0)),
-        (["--start-angle", "270"], (0.0, 2, 270.0)),
+        (["--pitch", "45"], (pitch_direction(45.0), 2, 90.0)),
+        (["--directions", "4"], (pitch_direction(0.0), 4, 90.0)),
+        (["--start-angle", "270"], (pitch_direction(0.0), 2, 270.0)),
         # Even a value equal to the preset's makes the view custom.
-        (["--pitch", "0"], (0.0, 2, 90.0)),
+        (["--pitch", "0"], (pitch_direction(0.0), 2, 90.0)),
+        (["--camera-direction", "0,0,-1"], ((0.0, 0.0, -1.0), 2, 90.0)),
+        (["--camera-direction", "1,0,-1"], (normalise((1, 0, -1)), 2, 90.0)),
     ],
 )
 def test_an_explicit_override_makes_the_view_custom(override, expected):
     options = parse("--view", "side", *override)
     assert options.view == "custom"
-    assert (options.pitch, options.directions, options.start_angle) == expected
+    assert (options.direction, options.directions, options.start_angle) == expected
+
+
+def test_the_roll_and_position_do_not_make_the_view_custom():
+    options = parse("--camera-roll", "0.5", "--camera-position", "1,2,3")
+    assert (options.view, options.roll, options.camera_position) == (
+        "iso",
+        0.5,
+        (1.0, 2.0, 3.0),
+    )
 
 
 def test_an_override_without_view_starts_from_the_default_preset():
     options = parse("--directions", "16")
-    assert (options.view, options.pitch, options.directions, options.start_angle) == (
-        "custom",
-        30.0,
-        16,
-        0.0,
+    assert (
+        options.view,
+        options.direction,
+        options.directions,
+        options.start_angle,
+    ) == ("custom", pitch_direction(30.0), 16, 0.0)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--pitch", "30", "--camera-direction", "0,-1,0"],
+        ["--camera-direction", "0,-1,0", "--pitch", "30"],
+        ["--view", "iso", "--camera-direction", "0,0,-1", "--pitch", "0"],
+    ],
+)
+def test_pitch_and_a_camera_direction_cannot_be_given_together(capsys, options):
+    assert usage_error(capsys, [*options, *POSITIONALS]) == (
+        "--pitch and --camera-direction cannot be given together: both set the "
+        "camera's direction"
     )
 
 
@@ -136,7 +164,7 @@ def test_explicit_options_are_recorded_apart_from_defaults_and_presets():
     )
     # Preset-derived and default values are not explicit, even when an
     # explicit value equals the default.
-    assert (options.pitch, options.directions) == (90.0, 8)
+    assert (options.direction, options.directions) == (pitch_direction(90.0), 8)
     assert options.fps == 12.0
     assert options.supersample == 8
 
@@ -144,7 +172,9 @@ def test_explicit_options_are_recorded_apart_from_defaults_and_presets():
 def test_every_option_can_be_recorded_as_explicit(tmp_path):
     options = cli.parse_args(
         [
-            *["--view", "side", "--pitch", "10", "--directions", "4"],
+            *["--view", "side", "--camera-direction", "0,-0.6,-0.8"],
+            *["--camera-roll", "-0.25", "--camera-position", "0,1,2"],
+            *["--directions", "4"],
             *["--start-angle", "5", "--model-yaw", "-90"],
             *["--clip", "a", "--once", "a", "--fps", "24", "--ppm", "64"],
             *["--cell", "32x48", "--ground", "1,2,3", "--ground-px", "16,40"],
@@ -185,7 +215,9 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         infile=Path("in.glb"),
         outfile=Path("out.png"),
         view="custom",
-        pitch=10.0,
+        direction=(0.0, -0.6, -0.8),
+        roll=-0.25,
+        camera_position=(0.0, 1.0, 2.0),
         directions=4,
         start_angle=5.0,
         model_yaw=-90.0,
@@ -237,8 +269,17 @@ def test_no_user_config_is_recorded_as_explicit():
 @pytest.mark.parametrize(
     ("option", "value", "field", "expected"),
     [
-        ("--pitch", "0", "pitch", 0.0),
-        ("--pitch", "90", "pitch", 90.0),
+        ("--pitch", "0", "direction", (0.0, 0.0, -1.0)),
+        ("--pitch", "90", "direction", (0.0, -1.0, 0.0)),
+        ("--camera-roll", "-1", "roll", -1.0),
+        ("--camera-roll", "1", "roll", 1.0),
+        ("--camera-direction", "-1,1,-1", "direction", normalise((-1, 1, -1))),
+        (
+            "--camera-direction",
+            "1e-300,1e-300,0",
+            "direction",
+            normalise((1e-300, 1e-300, 0.0)),
+        ),
         ("--directions", "1", "directions", 1),
         ("--directions", "64", "directions", 64),
         ("--fps", "0.001", "fps", 0.001),
@@ -286,6 +327,17 @@ def test_range_boundaries_are_accepted(option, value, field, expected):
     [
         ("--pitch", "-0.001", "must be from 0 to 90"),
         ("--pitch", "90.001", "must be from 0 to 90"),
+        ("--camera-roll", "-1.001", "must be from -1 to 1"),
+        ("--camera-roll", "1.5", "must be from -1 to 1"),
+        ("--camera-roll", "nan", "expected a finite number"),
+        ("--camera-direction", "0,0,0", "points nowhere"),
+        ("--camera-direction", "0,0,-0", "points nowhere"),
+        ("--camera-direction", "0,-1.5,0", "each from -1 to 1"),
+        ("--camera-direction", "0,-1", "expected X,Y,Z"),
+        ("--camera-direction", "0,inf,-1", "expected X,Y,Z"),
+        ("--camera-direction", "0,nan,-1", "expected X,Y,Z"),
+        ("--camera-position", "0,1", "expected X,Y,Z"),
+        ("--camera-position", "0,1,inf", "expected X,Y,Z"),
         ("--directions", "0", "must be from 1 to 64"),
         ("--directions", "65", "must be from 1 to 64"),
         ("--directions", "8.5", "expected an integer"),
@@ -387,6 +439,7 @@ def test_values_starting_with_a_dash():
     "option",
     [
         "--pitch",
+        "--camera-roll",
         "--directions",
         "--start-angle",
         "--model-yaw",
@@ -585,6 +638,9 @@ def test_unknown_options_and_wrong_positional_counts_are_rejected(
 DESIGN_OPTIONS = {
     "--view NAME": "iso",
     "--pitch DEG": "from the view",
+    "--camera-direction X,Y,Z": "from the view",
+    "--camera-roll R": "0",
+    "--camera-position X,Y,Z": "none",
     "--directions N": "from the view",
     "--start-angle DEG": "from the view",
     "--model-yaw DEG": "0",

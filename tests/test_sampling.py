@@ -127,7 +127,7 @@ def test_frames_are_in_sheet_order():
     # attack: d = 0.5 s at 4 fps, n = 2, one-shot: 1.0, 1.25, 1.5.
     walk = looping(animation("walk", 0.25, 0.75, index=1))
     attack = one_shot(animation("attack", 1.0, 1.5, index=0))
-    view = View(30.0, 3, 10.0)
+    view = View(3, 10.0)
 
     result = frames("hero", [walk, attack], view, 4)
 
@@ -142,14 +142,12 @@ def test_frames_are_in_sheet_order():
 
 
 def test_addresses_start_at_a_nonzero_t0():
-    result = frames(
-        "hero", [looping(animation("idle", 7.5, 8.5))], View(30.0, 1, 0.0), 2
-    )
+    result = frames("hero", [looping(animation("idle", 7.5, 8.5))], View(1, 0.0), 2)
     assert [frame.address.time_s for frame in result] == [7.5, 8.0]
 
 
 def test_the_static_clip_has_one_frame_per_direction():
-    result = frames("crate", [looping(STATIC)], View(90.0, 8, 0.0), 12)
+    result = frames("crate", [looping(STATIC)], View(8, 0.0), 12)
     assert [
         (f.address.clip, f.address.direction, f.address.time_s) for f in result
     ] == [("static", d, 0.0) for d in range(8)]
@@ -159,12 +157,12 @@ def test_the_static_clip_has_one_frame_per_direction():
 def test_two_frames_with_one_address_are_rejected():
     clip = looping(animation("walk", 0.0, 1.0))
     with pytest.raises(ValueError, match="share the address"):
-        frames("hero", [clip, clip], View(30.0, 2, 0.0), 4)
+        frames("hero", [clip, clip], View(2, 0.0), 4)
 
 
 def test_frames_are_deterministic():
     clips = [looping(animation("walk", 0.0, 1.0)), one_shot(animation("hit", 0.0, 0.3))]
-    view = View(30.0, 8, 0.0, model_yaw=45.0)
+    view = View(8, 0.0, model_yaw=45.0)
     assert frames("hero", clips, view, 12) == frames("hero", clips, view, 12)
 
 
@@ -254,7 +252,7 @@ def test_a_bad_count_is_a_bug(frames):
 
 
 def test_frames_use_the_resolved_counts():
-    view = View(0.0, 1, 0.0)
+    view = View(1, 0.0)
     walk = counted(animation("walk", 0.0, 1.0), None)
     jump = counted(animation("jump", 0.0, 1.0, 1), 3, once=True)
     result = frames("hero", (walk, jump), view, 12, 4)

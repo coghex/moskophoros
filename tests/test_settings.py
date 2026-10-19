@@ -37,6 +37,9 @@ def test_the_schema_holds_this_slices_settings():
     assert list(settings.SCHEMA) == [
         "view",
         "pitch",
+        "camera.direction",
+        "camera.roll",
+        "camera.position",
         "directions",
         "start_angle",
         "model_yaw",
@@ -69,10 +72,20 @@ def test_the_schema_holds_this_slices_settings():
         "ramp.hue_shift_deg",
         "ramp.chroma_fade",
     ]
-    assert settings.GROUPS == {"shade", "light", "ramp"}
+    assert settings.GROUPS == {"camera", "shade", "light", "ramp"}
     for name, setting in settings.SCHEMA.items():
         assert setting.kind, name
         assert callable(setting.check), name
+
+
+def test_the_design_s_example_settings_file_loads():
+    # A user may copy it into a global or project file as it stands.
+    text = (ROOT / "docs" / "design.md").read_text(encoding="utf-8")
+    start = text.index("```yaml\nversion: 1\nview: iso")
+    example = text[start + len("```yaml\n") : text.index("```\n", start + 1)]
+    layer = read_bytes(example.encode(), source="example", directory=ROOT)
+    assert layer["camera.direction"] is None
+    assert "pitch" not in layer
 
 
 def test_the_defaults_file_and_the_schema_table_agree():
@@ -84,6 +97,11 @@ def test_the_defaults_file_and_the_schema_table_agree():
         # (projects and camera design D-12, D-16): today's option defaults.
         "view": "iso",
         "pitch": None,
+        # The camera (projects and camera design D-7, D-16): the view's
+        # direction, no roll, and no position.
+        "camera.direction": None,
+        "camera.roll": 0.0,
+        "camera.position": None,
         "directions": None,
         "start_angle": None,
         "model_yaw": 0.0,

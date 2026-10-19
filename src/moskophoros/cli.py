@@ -77,6 +77,12 @@ class Preset:
     directions: int
     start_angle: float
 
+    @property
+    def direction(self):
+        """The camera direction the preset's pitch sets (projects and camera
+        design D-12)."""
+        return views.pitch_direction(self.pitch)
+
 
 PRESETS = MappingProxyType(
     {
@@ -91,16 +97,18 @@ PRESETS = MappingProxyType(
     }
 )
 DEFAULT_VIEW = "iso"
-# The resolved view name once --pitch, --directions or --start-angle is given.
+# The resolved view name once --pitch, --camera-direction, --directions or
+# --start-angle is given.
 CUSTOM_VIEW = "custom"
 ROOT_MOTION_MODES = layered.ROOT_MOTION_MODES
 # The values --reduce accepts; the first is the default.
 REDUCTIONS = layered.REDUCTIONS
 # The only sheet schema `--settings-from` loads (settings design D-24).
-SHEET_SCHEMA = "moskophoros.sheet/13"
+SHEET_SCHEMA = "moskophoros.sheet/14"
 _MAX_DIGITS = 4300
-# The view's values a preset gives, which an override replaces.
-_VIEW_VALUES = ("pitch", "directions", "start_angle")
+# The view's values a preset gives, which an override replaces. `--pitch` and
+# `--camera-direction` both set the direction.
+_VIEW_VALUES = ("direction", "directions", "start_angle")
 _REPEATABLE = frozenset({"--clip", "--once"})
 # The `Options` field of each file setting whose name differs, which is also
 # its option's name in `explicit`.
@@ -117,6 +125,8 @@ _SETTING_FIELDS = MappingProxyType(
         "ramp.lightness_step": "ramp_step",
         "ramp.hue_shift_deg": "ramp_hue_shift",
         "ramp.chroma_fade": "ramp_fade",
+        "camera.roll": "roll",
+        "camera.position": "camera_position",
     }
 )
 # The file settings that are paths, with the `Options` fields a path and a
@@ -160,10 +170,12 @@ class Options:
     `explicit` holds the field names of the options given on the command
     line, as distinct from defaults and preset-derived values; once
     `resolve_settings` has run, it also holds the fields a project file set,
-    which act as explicit options. `view` is the resolved preset name,
-    or `custom` when an explicit pitch, direction count or start angle
-    overrides the preset; `preset` is the preset `--view` names, or the
-    default. `clip` is None when every clip is selected; `ppm`, `cell` and
+    which act as explicit options; `--pitch` is named `pitch` there. `view`
+    is the resolved preset name, or `custom` when an explicit direction,
+    direction count or start angle overrides the preset; `preset` is the
+    preset `--view` names, or the default. `direction` is the camera's
+    normalised direction, which `--pitch` or the preset may set, `roll` its
+    roll and `camera_position` its position, or None. `clip` is None when every clip is selected; `ppm`, `cell` and
     `ground_px` are None when automatic. `origins` names the settings file
     that set a palette, a library or the Blender executable, for its errors.
     """
@@ -171,7 +183,7 @@ class Options:
     infile: Path
     outfile: Path
     view: str
-    pitch: float
+    direction: tuple[float, float, float]
     directions: int
     start_angle: float
     model_yaw: float
@@ -232,6 +244,10 @@ class Options:
     ramp_hue_shift: float = layered.DEFAULTS["ramp.hue_shift_deg"]
     ramp_fade: float = layered.DEFAULTS["ramp.chroma_fade"]
     preset: str = DEFAULT_VIEW
+    roll: float = layered.DEFAULTS["camera.roll"]
+    camera_position: tuple[float, float, float] | None = layered.DEFAULTS[
+        "camera.position"
+    ]
 
 
 class UsageError(SystemExit):
@@ -266,6 +282,11 @@ def parse_args(argv: Sequence[str]) -> Options:
         parser.error("--light and --no-light cannot be given together")
     if args.config is not None and args.no_user_config:
         parser.error("--config and --no-user-config cannot be given together")
+    if args.pitch is not None and args.direction is not None:
+        parser.error(
+            "--pitch and --camera-direction cannot be given together: both set "
+            "the camera's direction"
+        )
 
     once = tuple(args.once or ())
     clip = None if args.clip is None else tuple(args.clip)
@@ -285,12 +306,20 @@ def parse_args(argv: Sequence[str]) -> Options:
         explicit = (explicit - {"no_light"}) | {"light"}
     explicit = frozenset(explicit)
     preset = PRESETS[args.view]
-    overrides = {"pitch", "directions", "start_angle"} & explicit
+    overrides = {"pitch", "direction", "directions", "start_angle"} & explicit
+    if "direction" in explicit:
+        direction = args.direction
+    elif "pitch" in explicit:
+        direction = views.pitch_direction(args.pitch)
+    else:
+        direction = preset.direction
     return Options(
         infile=args.infile,
         outfile=args.outfile,
         view=CUSTOM_VIEW if overrides else args.view,
-        pitch=args.pitch if "pitch" in explicit else preset.pitch,
+        direction=direction,
+        roll=args.roll,
+        camera_position=args.camera_position,
         directions=args.directions if "directions" in explicit else preset.directions,
         start_angle=(
             args.start_angle if "start_angle" in explicit else preset.start_angle
@@ -350,16 +379,19 @@ def parse_args(argv: Sequence[str]) -> Options:
 class ReusedSettings:
     """The values `--settings-from` reuses, named as in `Options`.
 
-    `view` is a preset name or `custom`, with the view's recorded pitch,
-    direction count and start angle. Scale, cell and ground pixel are always
-    set: reuse makes them fixed. `clip` is the recorded clip selection, in
+    `view` is a preset name or `custom`, with the view's recorded direction,
+    direction count and start angle; `roll` and `camera_position` are the
+    camera's recorded roll and position. Scale, cell and ground pixel are
+    always set: reuse makes them fixed. `clip` is the recorded clip selection, in
     sheet order, and `once` the one-shot clips among it.
     """
 
     view: str
-    pitch: float
+    direction: tuple[float, float, float]
     directions: int
     start_angle: float
+    roll: float
+    camera_position: tuple[float, float, float] | None
     model_yaw: float
     fps: float
     supersample: int
@@ -540,13 +572,17 @@ def _apply_defaults(options, defaults, global_, names=None):
 
 
 def _command_line_view(options):
-    """The command line's view settings as a layer: `--view`, then
-    `--pitch`, `--directions` and `--start-angle`, each only when given."""
-    values = {"view": options.preset} if "view" in options.explicit else {}
+    """The command line's view settings as a layer: `--view`, then the
+    direction `--pitch` or `--camera-direction` sets, `--directions` and
+    `--start-angle`, each only when given."""
+    explicit = options.explicit
+    values = {"view": options.preset} if "view" in explicit else {}
+    if explicit & {"pitch", "direction"}:
+        values["camera.direction"] = options.direction
     values |= {
         name: getattr(options, name)
-        for name in _VIEW_VALUES
-        if name in options.explicit
+        for name in ("directions", "start_angle")
+        if name in explicit
     }
     return ("the command line", layered.Layer(values))
 
@@ -555,8 +591,10 @@ def _resolve_view(options, layers):
     """Resolve the view through `layers`, `(label, values)` from the weakest
     (projects and camera design D-16, *How they resolve*).
 
-    The view is a preset marker and three values, the pitch, the direction
-    count and the start angle, each the preset's or an override. A loaded
+    The view is a preset marker and three values, the direction, the
+    direction count and the start angle, each the preset's or an override.
+    A layer sets the direction with `pitch`, the direction it gives, or
+    `camera.direction`, never both (`settings.read_bytes`). A loaded
     sheet, given as its `ReusedSettings`, is a snapshot: its recorded marker,
     `custom` included, and its values, each counted as the preset's. Within a
     layer, a `view` applies first and sets every value to its preset's; then
@@ -577,23 +615,43 @@ def _resolve_view(options, layers):
             preset = layer["view"]
             values = {name: getattr(PRESETS[preset], name) for name in _VIEW_VALUES}
             overrides.clear()
-        for name in _VIEW_VALUES:
-            if name not in layer:
-                continue
-            if layer[name] is not None:
-                values[name] = layer[name]
+        given = {}
+        for name, key in _VIEW_KEYS:
+            if key in layer:
+                value = layer[key]
+                if key == "pitch" and value is not None:
+                    value = views.pitch_direction(value)
+                given[name] = value
+        for name, value in given.items():
+            if value is not None:
+                values[name] = value
                 overrides.add(name)
                 continue
             if preset == CUSTOM_VIEW:
-                line, column = layer.where[name]
+                key = next(key for key in _view_keys(name) if key in layer)
+                line, column = layer.where[key]
                 _build_parser()[0].error(
-                    f"{label}: {name} (line {line}, column {column}): null takes "
+                    f"{label}: {key} (line {line}, column {column}): null takes "
                     "the view's preset value, but the loaded sheet's view is "
                     "custom, with no preset; give a view in the same file"
                 )
             values[name] = getattr(PRESETS[preset], name)
             overrides.discard(name)
     return replace(options, view=CUSTOM_VIEW if overrides else preset, **values)
+
+
+# Each view value with the layer keys that set it, as `(value, key)`: the
+# direction from `pitch`, as the direction it gives, or `camera.direction`.
+_VIEW_KEYS = (
+    ("direction", "pitch"),
+    ("direction", "camera.direction"),
+    ("directions", "directions"),
+    ("start_angle", "start_angle"),
+)
+
+
+def _view_keys(name):
+    return [key for value, key in _VIEW_KEYS if value == name]
 
 
 _UNREADABLE = (OSError, ValueError, RuntimeError)
@@ -773,15 +831,25 @@ def read_settings(path) -> ReusedSettings:
         checked["style"] = _style(checked["style"], problems)
     if problems:
         _settings_error(path, "; ".join(problems))
-    view, cell, ground, ground_px, shade, style = (
+    view, camera, cell, ground, ground_px, shade, style = (
         checked[name]
-        for name in ("view", "cell", "ground_m", "ground_px", "shade", "style")
+        for name in (
+            "view",
+            "camera",
+            "cell",
+            "ground_m",
+            "ground_px",
+            "shade",
+            "style",
+        )
     )
     return ReusedSettings(
         view=view["preset"],
-        pitch=view["pitch_deg"],
+        direction=camera["direction"],
         directions=view["directions"],
         start_angle=view["start_angle_deg"],
+        roll=camera["roll"],
+        camera_position=camera["position"],
         model_yaw=checked["model_yaw_deg"],
         fps=checked["fps"],
         supersample=checked["supersample"],
@@ -842,7 +910,7 @@ def apply_settings(options: Options, reused: ReusedSettings) -> Options:
     names = [
         field.name
         for field in fields(ReusedSettings)
-        if field.name not in ("clip", "once", "clip_frames", *layered.VIEW_SETTINGS)
+        if field.name not in ("clip", "once", "clip_frames", "view", *_VIEW_VALUES)
     ]
     values = {name: getattr(reused, name) for name in names if name not in explicit}
     if "clip" not in explicit:
@@ -866,7 +934,9 @@ def capture_settings(options: Options) -> backend.Settings:
     """
     return backend.Settings(
         view=options.view,
-        pitch=options.pitch,
+        direction=options.direction,
+        roll=options.roll,
+        position=options.camera_position,
         directions=options.directions,
         start_angle=options.start_angle,
         model_yaw=options.model_yaw,
@@ -1053,9 +1123,7 @@ def _command(options):
     _check_targets(
         [outfile, json_path, *normal_paths, *depth_paths, *preview_paths, *lit_paths]
     )
-    view = views.View(
-        options.pitch, options.directions, options.start_angle, options.model_yaw
-    )
+    view = views.View(options.directions, options.start_angle, options.model_yaw)
     requested = sampling.frames(
         subject.name, selected, view, options.fps, options.frames
     )
@@ -1689,6 +1757,7 @@ def _shade_range_option(text):
 
 
 _pitch = _from_to(_number, 0, 90)
+_roll = _from_to(_number, -1, 1)
 _directions = _from_to(_integer, 1, 64)
 _supersample = _from_to(_integer, 1, 16)
 _cell_side = _from_to(_integer, 1, 4096)
@@ -1722,6 +1791,28 @@ def _light(text):
             f"expected X,Y,Z, three finite numbers, got {text!r}"
         ) from None
     return x, y, z
+
+
+def _camera_direction(text):
+    """`X,Y,Z`, three finite numbers each from -1 to 1, not all 0, as the
+    normalised direction."""
+    parts = text.split(",")
+    try:
+        if len(parts) != 3:
+            raise argparse.ArgumentTypeError(text)
+        vector = tuple(_number(part) for part in parts)
+    except argparse.ArgumentTypeError:
+        vector = None
+    if vector is None or not all(-1 <= component <= 1 for component in vector):
+        raise argparse.ArgumentTypeError(
+            "expected X,Y,Z, three finite numbers each from -1 to 1, not all 0, "
+            f"got {text!r}"
+        )
+    if not any(vector):
+        raise argparse.ArgumentTypeError(
+            f"expected a direction, but {text!r} points nowhere"
+        )
+    return views.normalise(vector)
 
 
 def _ground(text):
@@ -1837,7 +1928,35 @@ def _build_parser():
         "DEG",
         _pitch,
         None,
-        "camera pitch, 0 to 90 (default: from the view)",
+        "camera pitch, 0 to 90: a shorthand for the camera direction "
+        "(0, -sin DEG, -cos DEG) (default: from the view)",
+    )
+    single(
+        "--camera-direction",
+        "X,Y,Z",
+        _camera_direction,
+        None,
+        "the way the camera looks, in subject coordinates, each -1 to 1, not "
+        "all 0, normalised; cannot accompany --pitch (default: from the view)",
+        dest="direction",
+    )
+    single(
+        "--camera-roll",
+        "R",
+        _roll,
+        layered.DEFAULTS["camera.roll"],
+        "the camera's turn about the way it looks, -1 to 1, a fraction of a "
+        "half turn; positive turns the picture clockwise (default: 0)",
+        dest="roll",
+    )
+    single(
+        "--camera-position",
+        "X,Y,Z",
+        _ground,
+        layered.DEFAULTS["camera.position"],
+        "the camera's position in meters from the ground point; the "
+        "orthographic camera records it unused (default: none)",
+        dest="camera_position",
     )
     single(
         "--directions",
@@ -2059,7 +2178,8 @@ def _build_parser():
         "use FILE as the global settings file, in place of the user file, "
         "$XDG_CONFIG_HOME/moskophoros/config.yaml, else "
         "~/.config/moskophoros/config.yaml. A settings file may set the view, "
-        "pitch, directions, start_angle, model_yaw, ppm, cell, ground, "
+        "pitch or camera.direction, camera.roll, camera.position, directions, "
+        "start_angle, model_yaw, ppm, cell, ground, "
         "ground_px, supersample, reduce, root_motion, fps, frames, clips, "
         "palette, materials, edges, previews, normals, depth, light, shade, "
         "ramp, and the app settings blender and any_blender. The global file "
@@ -2479,13 +2599,40 @@ _MATERIALS_FIELDS = {
     "default": _Nullable(_ramp_name),
     "materials": _anything,
 }
+
+
+def _recorded_direction(value):
+    """A recorded camera direction: a list of three numbers, never booleans,
+    each from -1 to 1, normalised to within `views.UNIT_TOLERANCE`. It is
+    kept exactly as recorded."""
+    if (
+        not isinstance(value, list)
+        or len(value) != 3
+        or any(isinstance(v, bool) or not isinstance(v, int | float) for v in value)
+    ):
+        raise argparse.ArgumentTypeError(
+            f"expected [x, y, z], three numbers, got {_shown(value)}"
+        )
+    vector = tuple(_number(repr(component)) for component in value)
+    if not views.is_unit(vector):
+        raise argparse.ArgumentTypeError(
+            "expected a normalised direction, each component from -1 to 1 and "
+            f"its length within {views.UNIT_TOLERANCE} of 1, got {_shown(value)}"
+        )
+    return vector
+
+
 _SETTINGS = {
     "view": {
         "preset": _one_of(*PRESETS, CUSTOM_VIEW),
-        "projection": _one_of("orthographic"),
-        "pitch_deg": _reused(_pitch),
         "directions": _reused(_directions),
         "start_angle_deg": _reused(_number),
+    },
+    "camera": {
+        "projection": _one_of(backend.PROJECTION),
+        "direction": _recorded_direction,
+        "roll": _reused(_roll),
+        "position": _Nullable(_light_position),
     },
     "model_yaw_deg": _reused(_number),
     "fps": _reused(_positive),
