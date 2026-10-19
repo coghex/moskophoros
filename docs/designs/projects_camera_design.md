@@ -31,7 +31,7 @@ concrete precondition
 - **Goal:** each project's rendering look lives in its own settings file, and
   its view is a camera with a position, a direction and a projection, set in
   that file or on the command line.
-- **Done when:** CAM-1 to CAM-4 are merged; today's commands keep their sheet, map and preview bytes (Q-6); and the owner has accepted the CAM-5 review.
+- **Done when:** CAM-1 to CAM-4 are merged; commands whose resolved settings are unchanged keep their sheet, map and preview bytes (D-14, D-17); and the owner has accepted the CAM-5 review.
 - **Users and operators:** the owner, rendering sprites for each project from
   that project's settings file; later, a GUI over the same settings.
 - **Arc label:** `None proposed`.
@@ -210,12 +210,18 @@ any_blender: false
 **Basis.** Let `f` be the normalised `camera.direction`, in subject (glTF) coordinates.
 - **Screen right:** `r = normalise(f × Y)`. When `f`'s horizontal part is exactly zero, so it looks straight down or up, `r = +X`.
 - **Screen up:** `u = r × f`.
-- **Roll** turns `r` and `u` about `f` by `roll · π` radians. **(D-16)** A positive roll turns the camera counter-clockwise as it looks, so the picture turns clockwise.
+- **Roll** turns `r` and `u` about `f` by `ρ = roll · π` radians. **(D-16)** A positive roll turns the camera counter-clockwise as it looks, so the picture turns clockwise:
+  - `r' = r·cos ρ + u·sin ρ`;
+  - `u' = u·cos ρ − r·sin ρ`.
+
+  For example, at `roll = 0.5`, `r' = u` and `u' = −r`: a point that was at the top of the picture is now at its right.
 - **Today's camera follows:** for `pitch` p, `f = (0, −sin p, −cos p)` gives `r = +X` and `u = (0, cos p, −sin p)`.
 
 **Directions** (D-8, D-10). Each direction turns the subject by `θᵢ + model_yaw` about the vertical axis through the ground point.
-- `θ` is measured from the camera: at `θ = 0` the subject's +Z faces the camera's horizontal heading, `−(f_x, 0, f_z)`, or +Z when the camera looks straight down or up.
-- The labels keep their meaning, and the light stays fixed to the camera.
+- `θ` is measured from the camera's unrolled reference heading: at `θ = 0` the subject's +Z faces the camera's horizontal heading, `−(f_x, 0, f_z)`, or +Z when the camera looks straight down or up.
+- **Labels come from `θ` alone** (D-18): `south` is 0°, `east` 90°, and so on, as today. Their screen-relative description holds for downward or level cameras with no roll. The light stays fixed to the camera.
+- **A half-turn roll** (`roll = 1`): the picture is upside down, so `east` (90°), which faces +X, faces screen left. It keeps the name `east`.
+- **A camera looking straight up,** `f = (0, 1, 0)`: `r = +X` and `u = (0, 0, 1)`, so `south` (0°), facing +Z, faces up the screen. It keeps the name `south`.
 - In orthographic, the direction's heading changes nothing in the picture.
 
 **Orthographic.**
@@ -373,7 +379,7 @@ The owner approved every recommendation of questions batch 2 (`questions-2.md`, 
 
 - **The position** is in meters from the ground point. Orthographic ignores it. A perspective camera without a position is a usage error.
 - **Roll 0** keeps the picture's horizontal level. When the direction points straight down or straight up, screen right is +X, which is today's `topdown` picture.
-- **The facing** of each direction is measured from the camera: direction 0, `south`, always faces the camera. So in orthographic only the direction's steepness and the roll change the picture; its compass heading does not.
+- **The facing** of each direction is measured from the camera: direction 0, `south`, always faces the camera. So in orthographic only the direction's steepness and the roll change the picture; its compass heading does not. *Refined by D-18:* the names stay tied to the model's turn under roll and upward views.
 
 ### D-11. The layers with projects
 
@@ -409,7 +415,7 @@ The owner approved every recommendation of questions batch 3 (`questions-3.md`, 
 
 This resolves Q-6.
 
-- **Pixels:** a command that sets no camera gives byte-identical sheets, maps and previews.
+- **Pixels:** a command that sets no camera gives byte-identical sheets, maps and previews. *Narrowed by D-17* to commands whose resolved settings are the same, with `--config`'s listed exceptions.
 - **JSON:** the sheet's JSON becomes `moskophoros.sheet/14`. It gains a `camera` record (projection, direction, roll, position), and drops `pitch_deg`, which the direction holds.
 - **Old sheets:** `/13` sheets stop loading with `--settings-from`.
 
@@ -446,6 +452,34 @@ The process after signoff, as the manager put it to the owner:
 3. processing into an epic and child issues;
 4. Codex approval of the children;
 5. the manager checking with the owner before any solving.
+
+### D-17. Byte identity covers commands whose resolved settings are the same; `--config`'s changes are listed exceptions
+
+This resolves Q-12 (review 1, C-2) and narrows D-14. The manager put the choice to the owner on 2026-10-19:
+- **A** (recommended): narrow D-14, so a command whose resolved settings are the same gives byte-identical output, and list the `--config` changes as deliberate exceptions;
+- **B:** keep the old `--config` layering as well.
+
+The manager noted that today's own files are unaffected: `config.yaml` is empty, and `synarchy.yaml` is self-contained. The owner answered "recommendation approved". The manager relayed it by cmux message `01601801-1300-45c4-b582-c75a9c1d1b77`, with `relay-camera-c2-c3.md` (SHA-256 `0b3ca5428b7258e772f72a0d3c8137aa434b660fc8985f353aab848e9f3e0515`).
+
+- **The promise:** a command whose resolved settings are the same before and after this arc gives byte-identical sheets, maps and previews. Only the JSON changes D-14 lists.
+- **The deliberate exceptions,** all from D-11:
+  1. **`--config` given twice** is a usage error. Before: `--config A --config B`. Now: `--config A --project B`, with B in `projects/`, or one merged file.
+  2. **`--config FILE` replaces the user file** instead of layering over it, so a setting only the user file gave no longer applies. Now: keep the user file as the global file and pass the other as `--project`, or merge them.
+  3. **`--config` with `--no-user-config`** is a usage error. Now: `--config FILE` alone already uses no other global file.
+  4. **`--config` with `--settings-from`:** the global file sits below the loaded sheet, so the sheet's values now win where the file's used to. Now: put those values in a project file or on the command line, which sit above the sheet.
+  5. **`/13` sheets no longer load** (D-14).
+- **Tests:** the tests pinning the old behaviours are replaced on purpose in CAM-1, not kept.
+
+### D-18. Direction names stay tied to the model's turn
+
+This resolves Q-13 (review 1, C-3), with the same message and relay as D-17. The manager put the choice:
+- **A** (recommended): the names stay tied to the model's turn. `south` is always direction 0 and `east` always the same quarter turn. On normal downward, unrolled views they mean exactly what they mean today; with roll or an upward camera the picture only rotates, and the names do not change.
+- **B:** recompute the names from where the model faces on screen.
+
+The owner answered "recommendation approved".
+
+- **Labels come from `θ` alone,** as today: `south` 0°, `south-east` 45° and so on. `θ` is measured from the camera's unrolled reference heading (D-10).
+- **Today's screen-relative description** ("south faces down the screen, east faces screen right") holds for cameras that look down or level with no roll. With a roll or an upward camera the picture turns, but no label changes.
 
 ## Proposals
 
@@ -520,16 +554,11 @@ Which app settings exist is still open, in Q-10.
 
 ### Q-12. Compatibility once `--config` names the global file (review 1, C-2)
 
-D-11's new `--config` changes the resolved settings of some of today's commands:
-- a second `--config` is now refused;
-- a `--config` file no longer layers over the user file;
-- a loaded sheet now sits above the global file.
-
-D-14 promises today's commands their exact pixels. The manager is asking the owner how to reconcile the two.
+**Resolved by D-17.**
 
 ### Q-13. Direction labels under roll and upward views (review 1, C-3)
 
-With a roll, or a camera looking up, `east` can face screen left, and `south` can face up the screen. That breaks the screen-relative meaning D-8 and D-10 keep. The manager is asking the owner.
+**Resolved by D-18.**
 
 ## Verification strategy
 
@@ -540,7 +569,7 @@ With a roll, or a camera looking up, `east` can face screen left, and `south` ca
   - the shorthand and `null`/`auto` rules within and across layers;
   - the perspective projection relative to the ground point (the ground projects to zero), off-axis fitting and overflow, calibration and lens shift for square, portrait, landscape, supersampled and widened-sensor cases (spike 2), and the near-plane boundary;
   - project names, the project directory under XDG, the layer order, and one schema in both kinds of file.
-- **Byte identity** (D-14, as narrowed by Q-12).
+- **Byte identity** (D-14, as narrowed by D-17).
   - Evidence comes from comparing outputs at the slice's base revision with its head, on generated fixtures, run locally and reported in the pull request. Pinned digests in tests are not used.
   - **Fixtures:** every preset, a custom pitch, a nonzero ground and model yaw, a rectangular cell, both reductions, and alpha and material-library cases.
   - **Changes that are allowed:** only those listed exactly per slice, such as the sheet JSON's schema, its `camera` record and the fingerprint. A pixel change is never accepted just because the new renderer produced it.
@@ -568,17 +597,17 @@ With a roll, or a camera looking up, `east` can face screen left, and `south` ca
 - **Phase:** 1.
 - **Depends on:** `none`.
 - **Ordering:** `critical path`.
-- **Relevant decisions:** D-1, D-9, D-11, D-16.
+- **Relevant decisions:** D-1, D-9, D-11, D-16, D-17.
 - **Acceptance signals:**
   - a project value overrides the global file's, and a flag overrides the project's;
   - a loaded sheet sits between the global file and the project;
   - project lookup works with XDG set and unset, with an alternate `--config` and with `--no-user-config`;
   - paths in a project file resolve relative to it, and the reuse palette and library rules hold for a project's values;
   - a second `--config`, `--config` with `--no-user-config`, a missing project file, or a bad or path-like name each fail with exit 2, naming the problem;
-  - **tests replaced on purpose:** the tests pinning today's repeatable, layered `--config` (`tests/test_settings_command.py`) are replaced with tests of the new precedence and refusals, as Q-12 settles;
-  - outputs keep their bytes wherever the resolved settings are the same (Q-12).
+  - **tests replaced on purpose:** the tests pinning today's repeatable, layered `--config` (`tests/test_settings_command.py`) are replaced with tests of the new precedence and refusals, and of D-17's five exceptions with their new equivalents;
+  - outputs keep their bytes wherever the resolved settings are the same (D-17).
 - **Out of scope:** new settings; the camera.
-- **Open questions:** Q-12.
+- **Open questions:** `None`.
 
 ### CAM-2. Make the view, scale and framing settings-file settings
 
@@ -609,16 +638,16 @@ With a roll, or a camera looking up, `east` can face screen left, and `south` ca
 - **Outcome:** the camera looks along any direction, with a roll, and `pitch` and the presets are shorthands for that direction.
 - **Scope:**
   - `camera.direction`, `camera.roll` and `camera.position` (recorded, unused in orthographic), as settings and options;
-  - the basis and roll rule, and each direction's facing and label rule (Q-13);
+  - the basis and roll rule, and each direction's facing and label rule (D-18), with the half-turn roll and straight-up examples as tests;
   - `pitch` with a direction refused within one layer;
   - sheet schema `/14` with `settings.camera`, an object with `projection` (a string), `direction` (an array of three numbers, normalised), `roll` (a number) and `position` (an array of three numbers, or `null`), placed after `settings.view`;
   - `--settings-from` of `/14` only;
   - the capture job's camera record, `capture-job/2`, and both its validators.
-  - **Contracts:** design §Camera and directions, §Presets, §Capture (job contract), §Export (sheet JSON) and §Reproducibility, updated.
+  - **Contracts:** design §Camera and directions (labels per D-18), §Presets, §Capture (job contract), §Export (sheet JSON) and §Reproducibility, updated.
 - **Phase:** 2.
 - **Depends on:** CAM-2.
 - **Ordering:** `critical path`.
-- **Relevant decisions:** D-3, D-7, D-8, D-10, D-12, D-14, D-16.
+- **Relevant decisions:** D-3, D-7, D-8, D-10, D-12, D-14, D-16, D-18.
 - **Acceptance signals:**
   - **the byte comparison against the base revision:** every preset and `pitch` gives today's pixels exactly;
   - **the expected JSON, job and fingerprint changes** are listed in the pull request and updated in `tests/test_export.py` and `tests/test_capture_backend.py`;
@@ -627,7 +656,7 @@ With a roll, or a camera looking up, `east` can face screen left, and `south` ca
   - generate-then-reload gives equal settings for a non-trivial normalised direction, a roll and an ignored orthographic position;
   - a `/13` sheet is refused, naming both schemas.
 - **Out of scope:** perspective.
-- **Open questions:** Q-13.
+- **Open questions:** `None`.
 
 ### CAM-4. Add the perspective projection
 
@@ -683,8 +712,8 @@ With a roll, or a camera looking up, `east` can face screen left, and `south` ca
 `~/.local/share/moskophoros-acceptance/projects-camera-design/review-codex-1.md`, SHA-256 `0e2789e0b4152a0dcb10245dbde54e95eb7369e26fe5f71770538d558a3239d8`, reviewed `cb5b7b1e47`: 3 blocking, 5 should fix.
 
 - **C-1, blocking: fixed.** The perspective projection is relative to the ground point, `X = d·x_c/z_c − x_g` and `Y = d·y_c/z_c − y_g`, as spike 1's script already computed. The subject's turn and the camera basis come first. Spike 1's bounds are given half-open.
-- **C-2, blocking: with the owner.** The manager is asking the owner; the answer will be recorded as Q-12.
-- **C-3, blocking: with the owner.** As C-2; the answer will be recorded as Q-13.
+- **C-2, blocking: resolved by the owner (D-17).** D-14 is narrowed to commands whose resolved settings are the same. The five `--config` and sheet exceptions are listed with their new equivalents, and CAM-1 replaces the affected tests on purpose.
+- **C-3, blocking: resolved by the owner (D-18).** Labels come from `θ` alone, measured from the camera's unrolled reference heading. The screen-relative description holds for downward or level unrolled cameras. The roll matrix, a half-turn example and a straight-up example are given.
 - **C-4, should fix: fixed.** The design now specifies:
   - calibration from the horizontal sensor fit, with the lens and sensor chosen together so neither falls below Blender's 1 mm minimum;
   - lens shift in units of the image width;
