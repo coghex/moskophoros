@@ -136,10 +136,11 @@ clips:
   Idle: {frames: auto}   # by duration; null: take frames
 ```
 
-The cell, fps, frame count, palette, library, edges, previews, normal and
-depth maps, light, shading and generated-ramp values can also come from YAML
-settings
-files, all sharing one format. The global file,
+Everything that shapes the picture can also come from YAML settings files,
+all sharing one format: the view, scale, cell, ground point, supersampling,
+reduction, fps, frame count, palette, library, edges, previews, normal and
+depth maps, light, shading and generated-ramp values, and which Blender to
+use. The global file,
 `~/.config/moskophoros/config.yaml` (or
 `$XDG_CONFIG_HOME/moskophoros/config.yaml`), holds your own defaults;
 `--config other.yaml` uses another file as the global file instead. A
@@ -149,7 +150,12 @@ command-line options still win. Paths in a file are relative to it, and `~`
 is your home directory:
 
 ```yaml
+view: iso          # topdown, side, iso or iso-true
+directions: 4      # null: the view's; so are pitch and start_angle
+ppm: 40            # or auto, fitted; --ppm auto also drops a configured one
 cell: 48x48        # or auto
+supersample: 8
+reduce: mode       # or plain, the default
 fps: 12
 palette: ~/palettes/vince-144.gpl
 materials: robot-library.yaml
@@ -170,8 +176,11 @@ ramp:              # generated ramps: setting C, the high-contrast one
   chroma_fade: 0.6
 ```
 
-The global file never changes a sheet loaded with `--settings-from`, while a
-project does. `--no-user-config` uses no global file. See
+A `view` replaces the pitch, direction count and start angle set below it.
+`blender` and `any_blender` choose Blender; they are never recorded in a
+sheet. The global file never changes a sheet loaded with `--settings-from`,
+except for those two, while a project does. `--no-user-config` uses no global
+file. See
 [docs/design.md](docs/design.md#settings-files).
 
 `moskophoros --help` lists every option.
