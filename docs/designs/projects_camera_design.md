@@ -200,7 +200,7 @@ Each is validated exactly as its option is. The schema table in `settings.py` an
 
 ### Sheets (D-14)
 
-The schema, the `camera` record, dropping `pitch_deg`, and refusing `/13` are decided (D-14). The field layout below is a **(D-16)**.
+The schema, the `camera` record, dropping `pitch_deg`, and refusing `/13` are decided (D-14). The field layout below is decided by D-16.
 
 - **A new sheet schema,** `moskophoros.sheet/14`.
 - **`settings.view`** keeps `preset`, `directions` and `start_angle_deg`.
