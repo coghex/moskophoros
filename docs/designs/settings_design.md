@@ -411,9 +411,20 @@ The owner's review asked these to be explicit. The owner signed them off
    - **After the last layer,** the recorded marker is the preset's name when
      every value is the preset's, else `custom`. An `iso` sheet reloaded with
      nothing above it records `iso`, with its JSON and fingerprint unchanged.
-   - The command line is the last layer: `--view`, then `--pitch`,
-     `--directions` and `--start-angle`. CAM-3 adds `camera.direction` as a
-     second spelling of the pitch.
+   - The command line is the last layer: `--view`, then `--pitch` or
+     `--camera-direction`, `--directions` and `--start-angle`.
+   - *Extended by CAM-3* (#130, projects and camera design D-7, D-12, D-14
+     and D-16): the view state's first value is the camera's direction, and
+     `pitch` and `camera.direction` are its two spellings, a `pitch` p
+     setting `(0, −sin p, −cos p)`. One file, or the command line, giving
+     both, with any values, `null` included, is a usage error; the shipped
+     defaults list both as `null` and are exempt, as they set the starting
+     state. `camera.roll` and `camera.position` are ordinary settings in the
+     nested `camera` mapping, merged key by key. The sheet becomes
+     `moskophoros.sheet/14`, recording `settings.camera` (projection,
+     normalised direction, roll, position) after `settings.view`, which no
+     longer records `projection` or `pitch_deg`; `--settings-from` loads
+     `/14` only.
 
 ### Files and errors (D-17, D-30)
 
