@@ -305,24 +305,38 @@ materials:
 
 ### Layers and precedence (D-2, D-8, D-17)
 
+**Superseded in part by the projects and camera design** (D-9, D-11, D-16 and
+D-17, owner decisions 2026-10-19), which its CAM-1 slice (#128) implements:
+`--config` names the one global file instead of a repeatable explicit layer,
+and the explicit settings-file layer is the project file. The layers below
+are those decisions; [the projects and camera design](projects_camera_design.md)
+(*Files and layers*) records them.
+
 Lowest to highest:
 
 1. **Shipped defaults:** a YAML file inside the package (for example
    `src/moskophoros/defaults.yaml`), holding every setting.
-2. **The user file:** `$XDG_CONFIG_HOME/moskophoros/config.yaml`, else
-   `~/.config/moskophoros/config.yaml`. It is optional, and is skipped under
-   `--no-user-config`.
+2. **The global file,** the default project: the user file,
+   `$XDG_CONFIG_HOME/moskophoros/config.yaml`, else
+   `~/.config/moskophoros/config.yaml`, which is optional; or the one file
+   `--config FILE` names in its place, which must exist; or none under
+   `--no-user-config`, which cannot accompany `--config`.
 3. **A loaded sheet:** `--settings-from FILE`, or a sheet loaded in a future
    UI. Every recorded setting that affects the output (D-16), including the
    clip selection and one-shot marks (D-19).
-4. **`--config FILE`**, repeatable, later files winning.
+4. **The project file,** `--project NAME`: `projects/NAME.yaml` in the same
+   configuration directory, which neither `--config` nor `--no-user-config`
+   moves. It must exist. `NAME` is letters, digits, `.`, `_` and `-`, not
+   starting with `.`, given without `.yaml`.
 5. **Command-line options.**
 
 - Each layer is a partial tree: a key that a layer leaves out falls through
-  to the layer below.
-- Lists replace rather than merge. Per-clip entries merge by clip name.
+  to the layer below. The global file and a project file share one schema.
+- Lists replace rather than merge. Per-clip entries merge by clip name:
+  global, then sheet, then project.
 - Loading is in memory, for that generation only. The tool never writes the
-  user file or any `--config` file (D-15).
+  global file or a project file, and never creates `projects/` (D-15). The
+  sheet never names the project or a settings file.
 - Today's reuse rules carry over unchanged inside the sheet layer. An explicit
   `--view` still replaces the whole reused view, and a reused library still
   stays with its palette (design §Scale and ground point, *Reuse*).
@@ -342,7 +356,10 @@ The owner's review asked these to be explicit. The owner signed them off
 2. **`null` means none**, for the palette and the library, as `--no-palette`
    and `--no-materials` do.
 3. **A `--config` value acts exactly as the same explicit option would**,
-   including today's reuse rules against a loaded sheet.
+   including today's reuse rules against a loaded sheet. *Superseded by the
+   projects and camera design D-11:* a project file's values now act this
+   way, and a `--config` file is the global file, a default below the sheet,
+   as the user file is (see *Layers and precedence* above).
    - `cell` in a `--config` over a loaded sheet behaves like `--cell` after
      `--settings-from`.
    - A palette or library from a `--config` follows the material styling D-24
