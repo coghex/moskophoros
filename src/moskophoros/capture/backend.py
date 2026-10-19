@@ -25,10 +25,11 @@ from moskophoros.materials import RAMP_ALPHA_MODES
 
 INTERNAL_ERROR = 1
 BACKEND_ERROR = 5
-JOB_SCHEMA = "moskophoros.capture-job/1"
+JOB_SCHEMA = "moskophoros.capture-job/2"
 RESULT_SCHEMA = "moskophoros.capture-result/3"
 MODES = ("measure", "render")
 CUSTOM_VIEW = "custom"
+PROJECTION = "orthographic"
 MAX_CELL = 4096
 MAX_SUPERSAMPLE = 16
 
@@ -156,13 +157,16 @@ class Shade:
 class Settings:
     """Resolved settings, as the sheet's `settings` object records them.
 
-    `view` is a preset name or `custom`. `ppm`, `cell` and `ground_px` are
-    None until fitting resolves them. `shade` holds the capture values of
-    the shade.
+    `view` is a preset name or `custom`. `direction` is the camera's
+    normalised direction, `roll` its roll, a fraction of a half turn, and
+    `position` its position in meters from the ground point, or None;
+    orthographic records it unused. `ppm`, `cell` and `ground_px` are None
+    until fitting resolves them. `shade` holds the capture values of the
+    shade.
     """
 
     view: str
-    pitch: float
+    direction: tuple[float, float, float]
     directions: int
     start_angle: float
     model_yaw: float
@@ -177,6 +181,8 @@ class Settings:
     # The global frame count as given: "auto" or a count (settings design
     # D-13, D-31); each selected clip carries its own.
     frames: int | str = sampling.AUTO
+    roll: float = 0.0
+    position: tuple[float, float, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -257,9 +263,7 @@ def build_job(mode, source, subject, settings, selected_clips, frames, output_di
     selected_clips = tuple(selected_clips)
     _check_clips(selected_clips)
     frames = tuple(frames)
-    view = views.View(
-        settings.pitch, settings.directions, settings.start_angle, settings.model_yaw
-    )
+    view = views.View(settings.directions, settings.start_angle, settings.model_yaw)
     try:
         expected = sampling.frames(
             subject, selected_clips, view, settings.fps, settings.frames
@@ -304,10 +308,18 @@ def settings_document(settings, selected_clips, fitted=True):
     return {
         "view": {
             "preset": settings.view,
-            "projection": "orthographic",
-            "pitch_deg": float(settings.pitch),
             "directions": settings.directions,
             "start_angle_deg": float(settings.start_angle),
+        },
+        "camera": {
+            "projection": PROJECTION,
+            "direction": [float(component) for component in settings.direction],
+            "roll": float(settings.roll),
+            "position": (
+                None
+                if settings.position is None
+                else [float(coordinate) for coordinate in settings.position]
+            ),
         },
         "model_yaw_deg": float(settings.model_yaw),
         "fps": float(settings.fps),
@@ -407,8 +419,21 @@ def _check_settings(settings, mode):
     problems = []
     if settings.view not in (*PRESETS, CUSTOM_VIEW):
         problems.append(f"view {settings.view!r}")
-    if not (_is_number(settings.pitch) and 0 <= settings.pitch <= 90):
-        problems.append(f"pitch {settings.pitch!r}")
+    if not (
+        isinstance(settings.direction, tuple)
+        and len(settings.direction) == 3
+        and all(map(_is_number, settings.direction))
+        and views.is_unit(settings.direction)
+    ):
+        problems.append(f"direction {settings.direction!r}")
+    if not (_is_number(settings.roll) and -1 <= settings.roll <= 1):
+        problems.append(f"roll {settings.roll!r}")
+    if settings.position is not None and not (
+        isinstance(settings.position, tuple)
+        and len(settings.position) == 3
+        and all(map(_is_number, settings.position))
+    ):
+        problems.append(f"position {settings.position!r}")
     if not (_is_int(settings.directions) and 1 <= settings.directions <= 64):
         problems.append(f"directions {settings.directions!r}")
     for name in ("start_angle", "model_yaw"):

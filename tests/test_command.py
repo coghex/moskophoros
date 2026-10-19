@@ -325,7 +325,7 @@ def test_a_run_writes_the_sheet_its_json_and_a_preview_per_clip(setup, capsys):
         "hero.walk.gif",
     ]
     description = json.loads(setup.json.read_text())
-    assert description["schema"] == "moskophoros.sheet/13"
+    assert description["schema"] == "moskophoros.sheet/14"
     assert description["maps"] == {
         "normal": {"file": "hero.normal.png"},
         "depth": None,
@@ -387,10 +387,14 @@ def test_the_fingerprint_reaches_the_frames_before_stylize(setup, capsys, monkey
     settings = {
         "view": {
             "preset": "iso",
-            "projection": "orthographic",
-            "pitch_deg": 30.0,
             "directions": 8,
             "start_angle_deg": 0.0,
+        },
+        "camera": {
+            "projection": "orthographic",
+            "direction": [0.0, -0.49999999999999994, -0.8660254037844387],
+            "roll": 0.0,
+            "position": None,
         },
         "model_yaw_deg": 0.0,
         "fps": 4.0,
@@ -480,14 +484,16 @@ def test_the_style_never_reaches_the_capture_jobs(setup, capsys):
     for mode in MODES:
         job = json.loads(jobs[0][mode])
         assert "style" not in job["settings"]
-        assert job["schema"] == "moskophoros.capture-job/1"
+        assert job["schema"] == "moskophoros.capture-job/2"
 
 
 # Measure and render jobs as master built them before the style was recorded,
 # for fixed source and output paths: SHA-256 of the job file's text. A job now
 # also carries the shade's capture values, `settings.shade`, and the frame
-# counts as given, `settings.frames` and each clip's `frames`; without them it
-# is exactly that job.
+# counts as given, `settings.frames` and each clip's `frames`, and since
+# capture-job/2 the camera, `settings.camera`, in place of the view's
+# `projection` and `pitch_deg`; written back as that view, it is exactly that
+# job.
 JOB_BASELINES = {
     "measure": "ff7fc011058a0270b604a93cb7fcccaa930addf47248857ed31a0d0b88b8348d",
     "render": "445b27ea3c882aabdb2bf0a1fe366462a0029a6ab3ae7ac99ba37436b0ce7017",
@@ -511,9 +517,7 @@ def test_the_capture_jobs_are_byte_identical_to_the_baseline(options):
     )
     settings = cli.capture_settings(cli.resolve_settings(parsed))
     selected = gltf.select_clips(subject, parsed.clip or (), parsed.once)
-    view = views.View(
-        settings.pitch, settings.directions, settings.start_angle, settings.model_yaw
-    )
+    view = views.View(settings.directions, settings.start_angle, settings.model_yaw)
     requested = sampling.frames("hero", selected, view, settings.fps)
     fitted = replace(settings, ppm=24.5, cell=(48, 40), ground_px=(24, 37))
     for mode, resolved in (("measure", settings), ("render", fitted)):
@@ -530,6 +534,21 @@ def test_the_capture_jobs_are_byte_identical_to_the_baseline(options):
         assert job["settings"].pop("frames") == "auto"
         for clip in job["settings"]["clips"]:
             assert clip.pop("frames") is None
+        assert job["schema"] == "moskophoros.capture-job/2"
+        assert job["settings"].pop("camera") == {
+            "projection": "orthographic",
+            "direction": [0.0, -0.49999999999999994, -0.8660254037844387],
+            "roll": 0.0,
+            "position": None,
+        }
+        view = job["settings"]["view"]
+        job["schema"] = "moskophoros.capture-job/1"
+        job["settings"]["view"] = {
+            "preset": view.pop("preset"),
+            "projection": "orthographic",
+            "pitch_deg": 30.0,
+            **view,
+        }
         text = blender._job_text(job)
         assert hashlib.sha256(text.encode()).hexdigest() == JOB_BASELINES[mode]
 
@@ -1079,7 +1098,7 @@ def test_a_bad_settings_file_is_a_usage_error(setup, capsys):
     bad.write_text("{}")
     status, _, err = run(capsys, setup.argv("--settings-from", str(bad)))
     assert status == 2
-    assert "is not a moskophoros.sheet/13 document" in err
+    assert "is not a moskophoros.sheet/14 document" in err
     assert setup.listing() == earlier
 
 

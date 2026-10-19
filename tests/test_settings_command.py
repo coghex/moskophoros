@@ -30,7 +30,8 @@ from test_materials_command import (
 )
 from test_reuse import write_sheet
 
-from moskophoros import cli
+from moskophoros import cli, views
+from moskophoros import settings as settings_module
 
 POSITIONALS = ["in.glb", "out.png"]
 ROOT = Path(__file__).resolve().parents[1]
@@ -1206,7 +1207,7 @@ def test_an_older_sheet_is_exit_2_naming_its_schema_and_the_supported_one(
     forbid_blender(monkeypatch)
     status, _, err = run(capsys, reload(setup, sheet))
     assert status == 2
-    assert "moskophoros.sheet/3" in err and "moskophoros.sheet/13" in err
+    assert "moskophoros.sheet/3" in err and "moskophoros.sheet/14" in err
 
 
 def test_a_reloaded_sheet_without_previews_writes_none(setup, capsys):
@@ -1223,12 +1224,20 @@ def test_a_reloaded_sheet_without_previews_writes_none(setup, capsys):
 # The view, scale and framing, and the app settings (projects and camera
 # design D-4, D-5, D-12, D-16)
 
-VIEW = ("view", "pitch", "directions", "start_angle")
+VIEW = ("view", "direction", "directions", "start_angle")
+P = views.pitch_direction
 # Each new setting in a file, and the options that give the same values.
 EQUIVALENTS = [
     ("view: side\n", ["--view", "side"]),
     ("view: topdown\npitch: 45\n", ["--view", "topdown", "--pitch", "45"]),
     ("pitch: 12.5\n", ["--pitch", "12.5"]),
+    ("camera:\n  direction: [0, -1, -1]\n", ["--camera-direction", "0,-1,-1"]),
+    (
+        "view: side\ncamera:\n  direction: [0.5, -0.25, -1]\n",
+        ["--view", "side", "--camera-direction", "0.5,-0.25,-1"],
+    ),
+    ("camera:\n  roll: -0.75\n", ["--camera-roll", "-0.75"]),
+    ("camera:\n  position: [0, 2, 3.5]\n", ["--camera-position", "0,2,3.5"]),
     ("directions: 4\n", ["--directions", "4"]),
     ("start_angle: -45\n", ["--start-angle", "-45"]),
     ("model_yaw: -90\n", ["--model-yaw", "-90"]),
@@ -1282,12 +1291,13 @@ def test_an_empty_file_and_the_default_command_resolve_as_today(text):
     assert comparable(resolved("--project", "look")) == comparable(default)
     today = cli.parse_args(POSITIONALS)
     assert comparable(default) == comparable(today)
-    assert (default.view, default.pitch, default.directions, default.start_angle) == (
-        "iso",
-        30.0,
-        8,
-        0.0,
-    )
+    assert (
+        default.view,
+        default.direction,
+        default.directions,
+        default.start_angle,
+    ) == ("iso", P(30.0), 8, 0.0)
+    assert (default.roll, default.camera_position) == (0.0, None)
 
 
 @pytest.mark.parametrize("preset", list(cli.PRESETS))
@@ -1306,20 +1316,20 @@ def test_a_layers_view_replaces_a_lower_layers_values():
     user_file("pitch: 45\ndirections: 4\nstart_angle: 10\n")
     project_file("view: side\n")
     options = resolved("--project", "look")
-    assert [getattr(options, name) for name in VIEW] == ["side", 0.0, 2, 90.0]
+    assert [getattr(options, name) for name in VIEW] == ["side", P(0.0), 2, 90.0]
     project_file("pitch: 45\ndirections: 4\nstart_angle: 10\n")
     options = resolved("--project", "look", "--view", "topdown")
-    assert [getattr(options, name) for name in VIEW] == ["topdown", 90.0, 8, 0.0]
+    assert [getattr(options, name) for name in VIEW] == ["topdown", P(90.0), 8, 0.0]
 
 
 def test_a_layers_view_applies_before_its_own_values():
     user_file("view: topdown\npitch: null\n")
     options = resolved()
-    assert [getattr(options, name) for name in VIEW] == ["topdown", 90.0, 8, 0.0]
+    assert [getattr(options, name) for name in VIEW] == ["topdown", P(90.0), 8, 0.0]
     # Key order in the file does not matter.
     user_file("pitch: 45\nview: iso\n")
     options = resolved()
-    assert [getattr(options, name) for name in VIEW] == ["custom", 45.0, 8, 0.0]
+    assert [getattr(options, name) for name in VIEW] == ["custom", P(45.0), 8, 0.0]
 
 
 def test_a_lower_override_and_a_higher_null_give_the_presets_value():
@@ -1327,23 +1337,23 @@ def test_a_lower_override_and_a_higher_null_give_the_presets_value():
     project_file("pitch: null\n")
     options = resolved("--project", "look")
     # The higher null clears the pitch only; the direction count stays.
-    assert [getattr(options, name) for name in VIEW] == ["custom", 30.0, 4, 0.0]
+    assert [getattr(options, name) for name in VIEW] == ["custom", P(30.0), 4, 0.0]
     project_file("pitch: null\ndirections: null\n")
     options = resolved("--project", "look")
-    assert [getattr(options, name) for name in VIEW] == ["iso", 30.0, 8, 0.0]
+    assert [getattr(options, name) for name in VIEW] == ["iso", P(30.0), 8, 0.0]
 
 
 def test_a_null_takes_the_value_of_the_preset_in_force():
     user_file("view: side\npitch: 45\n")
     project_file("pitch: null\n")
     options = resolved("--project", "look")
-    assert [getattr(options, name) for name in VIEW] == ["side", 0.0, 2, 90.0]
+    assert [getattr(options, name) for name in VIEW] == ["side", P(0.0), 2, 90.0]
 
 
 def test_an_option_override_over_a_files_view_makes_it_custom():
     project_file("view: topdown\n")
     options = resolved("--project", "look", "--directions", "4")
-    assert [getattr(options, name) for name in VIEW] == ["custom", 90.0, 4, 0.0]
+    assert [getattr(options, name) for name in VIEW] == ["custom", P(90.0), 4, 0.0]
 
 
 def custom_sheet(tmp_path):
@@ -1352,11 +1362,10 @@ def custom_sheet(tmp_path):
     settings = json.loads(json.dumps(SETTINGS))
     settings["view"] = {
         "preset": "custom",
-        "projection": "orthographic",
-        "pitch_deg": 20.0,
         "directions": 4,
         "start_angle_deg": 45.0,
     }
+    settings["camera"]["direction"] = list(P(20.0))
     return write_sheet(tmp_path, settings)
 
 
@@ -1376,7 +1385,7 @@ def test_a_custom_sheet_with_a_view_and_a_null_in_one_layer_gives_the_preset(
     sheet = custom_sheet(tmp_path)
     project_file("view: iso\ndirections: null\n")
     options = resolved("--settings-from", str(sheet), "--project", "look")
-    assert [getattr(options, name) for name in VIEW] == ["iso", 30.0, 8, 0.0]
+    assert [getattr(options, name) for name in VIEW] == ["iso", P(30.0), 8, 0.0]
 
 
 def test_a_custom_sheet_keeps_its_marker_and_values_with_nothing_above(tmp_path):
@@ -1384,17 +1393,17 @@ def test_a_custom_sheet_keeps_its_marker_and_values_with_nothing_above(tmp_path)
     # The global file sits below the loaded sheet, so its view never applies.
     user_file("view: topdown\npitch: null\n")
     options = resolved("--settings-from", str(sheet))
-    assert [getattr(options, name) for name in VIEW] == ["custom", 20.0, 4, 45.0]
+    assert [getattr(options, name) for name in VIEW] == ["custom", P(20.0), 4, 45.0]
 
 
 def test_a_project_value_over_a_sheet_is_an_override(tmp_path):
     sheet = write_sheet(tmp_path)  # a side sheet
     project_file("directions: 4\n")
     options = resolved("--settings-from", str(sheet), "--project", "look")
-    assert [getattr(options, name) for name in VIEW] == ["custom", 0.0, 4, 90.0]
+    assert [getattr(options, name) for name in VIEW] == ["custom", P(0.0), 4, 90.0]
     project_file("directions: null\n")
     options = resolved("--settings-from", str(sheet), "--project", "look")
-    assert [getattr(options, name) for name in VIEW] == ["side", 0.0, 2, 90.0]
+    assert [getattr(options, name) for name in VIEW] == ["side", P(0.0), 2, 90.0]
 
 
 def test_an_iso_sheet_reloads_as_iso_with_its_json_and_fingerprint(setup, capsys):
@@ -1407,6 +1416,242 @@ def test_an_iso_sheet_reloads_as_iso_with_its_json_and_fingerprint(setup, capsys
     user_file("view: side\npitch: 45\nsupersample: 4\nppm: 3\n")
     assert run(capsys, argv)[0] == 0
     assert setup.json.read_bytes() == before
+
+
+# The camera (projects and camera design D-3, D-7, D-12, D-14, D-16)
+
+
+def generated_and_reloaded(setup, capsys, *options):
+    """Run with `options`, then reload its sheet with nothing else; return
+    both runs' complete output, every file's bytes by name."""
+    status, _, err = run(capsys, setup.argv(*options))
+    assert status == 0, err
+    first = setup.listing()
+    sheet = setup.tmp_path / "recorded.json"
+    sheet.write_bytes(setup.json.read_bytes())
+    for path in setup.out.iterdir():
+        path.unlink()
+    status, _, err = run(capsys, reload(setup, sheet))
+    assert status == 0, err
+    return first, setup.listing()
+
+
+def camera_record(setup):
+    settings = json.loads(setup.json.read_text())["settings"]
+    return settings["view"], settings["camera"]
+
+
+@pytest.mark.parametrize(
+    ("files", "options", "preset", "direction"),
+    [
+        # A named preset, and a custom view.
+        ({}, ["--view", "topdown"], "topdown", P(90.0)),
+        ({}, ["--pitch", "47.25", "--directions", "3"], "custom", P(47.25)),
+        # A non-trivial normalised direction, a roll and an ignored position.
+        (
+            {},
+            ["--camera-direction", "0.3,-0.7,-0.2"],
+            "custom",
+            views.normalise((0.3, -0.7, -0.2)),
+        ),
+        ({}, ["--camera-roll", "0.37"], "iso", P(30.0)),
+        ({}, ["--camera-position", "0.5,-2,7"], "iso", P(30.0)),
+        (
+            {"project": "camera:\n  direction: [-1, 0.25, 1]\n  roll: -0.5\n"},
+            [],
+            "custom",
+            views.normalise((-1, 0.25, 1)),
+        ),
+        # The cross-layer resets: a lower pitch with a higher null direction
+        # under a named preset, and a higher null pitch over a lower
+        # direction.
+        (
+            {
+                "user": "view: side\npitch: 45\n",
+                "project": "camera:\n  direction: null\n",
+            },
+            [],
+            "side",
+            P(0.0),
+        ),
+        (
+            {"user": "camera:\n  direction: [1, -1, -1]\n", "project": "pitch: null\n"},
+            [],
+            "iso",
+            P(30.0),
+        ),
+    ],
+)
+def test_a_14_sheet_reloads_to_equal_complete_output(
+    setup, capsys, files, options, preset, direction
+):
+    if "user" in files:
+        user_file(files["user"])
+    if "project" in files:
+        project_file(files["project"])
+        options = [*options, "--project", "look"]
+    first, again = generated_and_reloaded(setup, capsys, *options)
+    assert again == first
+    view, camera = camera_record(setup)
+    assert view["preset"] == preset
+    assert camera["projection"] == "orthographic"
+    assert tuple(camera["direction"]) == direction
+    assert "pitch_deg" not in view and "projection" not in view
+
+
+def test_the_camera_record_holds_the_roll_and_the_unused_position(setup, capsys):
+    argv = setup.argv("--camera-roll", "-0.25", "--camera-position", "0,1.5,-3")
+    status, _, err = run(capsys, argv)
+    # Orthographic records the position unused, with no warning (D-16).
+    assert (status, err) == (0, "")
+    assert camera_record(setup)[1] == {
+        "projection": "orthographic",
+        "direction": list(P(30.0)),
+        "roll": -0.25,
+        "position": [0.0, 1.5, -3.0],
+    }
+
+
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [
+        # Naive squared-length normalisation would underflow to 0.
+        (["--camera-direction", "1e-300,1e-300,0"], (1e-300, 1e-300, 0.0)),
+        # Repeated normalisation could move a component by one step.
+        (["--camera-direction", "0.1,0.1,0.1"], (0.1, 0.1, 0.1)),
+    ],
+)
+def test_a_numerically_sensitive_direction_reloads_unchanged(
+    setup, capsys, given, expected
+):
+    status, _, err = run(capsys, setup.argv(*given))
+    assert status == 0, err
+    record = setup.json.read_bytes()
+    direction = camera_record(setup)[1]["direction"]
+    assert tuple(direction) == views.normalise(expected)
+    assert all(component == pytest.approx(direction[0]) for component in direction[:2])
+    for round in range(2):
+        sheet = setup.tmp_path / f"round-{round}.json"
+        sheet.write_bytes(setup.json.read_bytes())
+        assert run(capsys, reload(setup, sheet))[0] == 0
+        assert setup.json.read_bytes() == record
+
+
+def pair_text(first, pitch, direction):
+    pitch_line = f"pitch: {pitch}\n"
+    direction_lines = f"camera:\n  direction: {direction}\n"
+    if first == "pitch":
+        return "fps: 4\n" + pitch_line + direction_lines, ("camera.direction", 4, 3)
+    return "fps: 4\n" + direction_lines + pitch_line, ("pitch", 4, 1)
+
+
+@pytest.mark.parametrize("where", ["user", "config", "project"])
+@pytest.mark.parametrize("first", ["pitch", "camera.direction"])
+@pytest.mark.parametrize(
+    ("pitch", "direction"),
+    [("45", "[0, -1, 0]"), ("45", "null"), ("null", "[0, -1, 0]"), ("null", "null")],
+)
+def test_pitch_and_a_direction_in_one_file_are_exit_2_and_write_nothing(
+    setup, capsys, monkeypatch, where, first, pitch, direction
+):
+    text, (key, line, column) = pair_text(first, pitch, direction)
+    if where == "user":
+        path = user_file(text)
+        label, argv = f"the user settings {str(path)!r}", []
+    elif where == "config":
+        path = config(setup.tmp_path, text)
+        label, argv = f"--config {str(path)!r}", ["--config", str(path)]
+    else:
+        path = project_file(text)
+        label, argv = project_label(path), ["--project", "look"]
+    forbid_blender(monkeypatch)
+    status, _, err = run(capsys, setup.argv(*argv))
+    assert status == 2
+    assert err.splitlines()[-1] == (
+        f"moskophoros: error: {label}: {key}: pitch and camera.direction both set "
+        f"the camera's direction; give only one of them at line {line}, column "
+        f"{column}"
+    )
+    assert setup.listing() == {}
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--pitch", "45", "--camera-direction", "0,-1,0"],
+        ["--camera-direction", "0,-1,0", "--pitch", "45"],
+    ],
+)
+def test_pitch_and_a_direction_on_the_command_line_write_nothing(
+    setup, capsys, monkeypatch, options
+):
+    forbid_blender(monkeypatch)
+    status, _, err = run(capsys, setup.argv(*options))
+    assert status == 2
+    assert "--pitch and --camera-direction cannot be given together" in err
+    assert setup.listing() == {}
+
+
+def test_the_shipped_defaults_give_both_spellings_of_the_direction():
+    # They set the view's starting state and are not an ordinary layer.
+    shipped = settings_module.read_defaults()
+    assert (shipped["pitch"], shipped["camera.direction"]) == (None, None)
+
+
+@pytest.mark.parametrize(
+    ("text", "key", "problem"),
+    [
+        (
+            "camera:\n  direction: [0, 0, 0]\n",
+            "camera.direction",
+            "expected a direction, but [0, 0, 0] points nowhere",
+        ),
+        (
+            "camera:\n  direction: [0, -1.5, 0]\n",
+            "camera.direction",
+            "expected [x, y, z], three finite numbers each from -1 to 1, not all 0, "
+            "or null, got [0, -1.5, 0]",
+        ),
+        (
+            "camera:\n  direction: [0, 1e400, -1]\n",
+            "camera.direction",
+            "expected [x, y, z], three finite numbers each from -1 to 1, not all 0, "
+            "or null, got [0, inf, -1]",
+        ),
+        (
+            "camera:\n  roll: 1.5\n",
+            "camera.roll",
+            "expected a finite number from -1 to 1, got 1.5",
+        ),
+        (
+            "camera:\n  roll: 1e400\n",
+            "camera.roll",
+            "expected a finite number from -1 to 1, got inf",
+        ),
+        (
+            "camera:\n  position: [0, 1, -1e400]\n",
+            "camera.position",
+            "expected [x, y, z], three finite numbers, or null, got [0, 1, -inf]",
+        ),
+        (
+            "camera:\n  projection: orthographic\n",
+            "camera.projection",
+            "unknown key",
+        ),
+    ],
+)
+def test_a_bad_camera_setting_is_exit_2_naming_file_key_and_line(
+    setup, capsys, monkeypatch, text, key, problem
+):
+    path = project_file("fps: 4\n" + text)
+    forbid_blender(monkeypatch)
+    status, _, err = run(capsys, setup.argv("--project", "look"))
+    assert status == 2
+    assert err.splitlines()[-1] == (
+        f"moskophoros: error: {project_label(path)}: {key}: {problem} at line 3, "
+        "column 3"
+    )
+    assert setup.listing() == {}
 
 
 @pytest.mark.parametrize(

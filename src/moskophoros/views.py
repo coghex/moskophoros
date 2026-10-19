@@ -1,7 +1,8 @@
 """Camera and direction math, following design §Camera and directions.
 
 All geometry is in glTF coordinates: +X right, +Y up, +Z toward the viewer at
-direction 0. The camera never moves; the subject turns. Angles are in
+direction 0. The camera is set once and looks along its direction, with a
+roll; each direction turns the subject in front of it. Angles are in
 degrees. Everything here is pure.
 """
 
@@ -22,13 +23,17 @@ LABELS = MappingProxyType(
         315: "south-west",
     }
 )
+# A direction whose length is within this of 1 is already normalised and is
+# kept exactly as given, so a recorded direction reloads unchanged (design
+# §Reproducibility); any other is divided by its length.
+UNIT_TOLERANCE = 1e-12
 
 
 @dataclass(frozen=True)
 class View:
-    """A resolved view: preset resolution belongs to `moskophoros.cli`."""
+    """A resolved view's directions: preset resolution belongs to
+    `moskophoros.cli`."""
 
-    pitch: float
     directions: int
     start_angle: float
     model_yaw: float = 0.0
@@ -36,9 +41,10 @@ class View:
 
 @dataclass(frozen=True)
 class CameraBasis:
-    """`direction` points from the ground point toward the camera."""
+    """`forward` is the way the camera looks, from it toward the ground
+    point; `right` and `up` are the picture's axes."""
 
-    direction: tuple[float, float, float]
+    forward: tuple[float, float, float]
     right: tuple[float, float, float]
     up: tuple[float, float, float]
 
@@ -49,7 +55,8 @@ class Direction:
 
     `angle` is θᵢ in [0, 360). `rotation` is θᵢ + model yaw, also reduced to
     [0, 360): the subject's turn about the vertical axis through the ground
-    point, counter-clockwise seen from above.
+    point, counter-clockwise seen from above, measured from the camera's
+    reference heading (`heading`).
     """
 
     index: int
@@ -58,16 +65,104 @@ class Direction:
     rotation: float
 
 
-def camera_basis(pitch):
-    """The camera basis for `pitch`, from 0 (horizontal) to 90 (top-down)."""
+def normalise(vector):
+    """`vector`, three finite numbers not all 0, as a direction of length 1.
+
+    One already within `UNIT_TOLERANCE` of length 1 is kept exactly, so
+    normalising twice changes nothing. The length is taken without squaring
+    the components, so a tiny vector such as `(1e-300, 1e-300, 0)` is
+    normalised too.
+    """
+    x, y, z = (float(component) for component in vector)
+    if not all(map(math.isfinite, (x, y, z))):
+        raise ValueError(f"a direction must be finite, got {vector!r}")
+    length = math.hypot(x, y, z)
+    if length == 0:
+        raise ValueError(f"a direction cannot be all 0, got {vector!r}")
+    if abs(length - 1) <= UNIT_TOLERANCE:
+        return x, y, z
+    return x / length, y / length, z / length
+
+
+def is_unit(vector):
+    """Whether `vector` is a normalised direction: three finite numbers,
+    each from −1 to +1, within `UNIT_TOLERANCE` of length 1."""
+    return (
+        len(vector) == 3
+        and all(
+            math.isfinite(component) and -1 <= component <= 1 for component in vector
+        )
+        and abs(math.hypot(*vector) - 1) <= UNIT_TOLERANCE
+    )
+
+
+def pitch_direction(pitch):
+    """The direction `pitch` sets, `(0, −sin p, −cos p)`: from 0, level, to
+    90, straight down (projects and camera design D-12)."""
     if not 0 <= pitch <= 90:
         raise ValueError(f"pitch must be from 0 to 90, got {pitch!r}")
     sin, cos = _sin_cos(pitch)
-    return CameraBasis(
-        direction=(0.0, sin, cos),
-        right=(1.0, 0.0, 0.0),
-        up=(0.0, cos, 0.0 - sin),
-    )
+    return 0.0, 0.0 - sin, 0.0 - cos
+
+
+def camera_basis(direction, roll=0.0):
+    """The camera's axes for `direction` and `roll` (design §Camera and
+    directions, Basis).
+
+    With `f` the normalised direction, the unrolled right is
+    `r₀ = normalise(f × Y)`, or +X when `f` looks straight down or up, and
+    the unrolled up `u₀ = r₀ × f`. The roll turns both about `f` by
+    `ρ = roll · π`: `r = r₀·cos ρ + u₀·sin ρ` and `u = u₀·cos ρ − r₀·sin ρ`,
+    so a positive roll turns the picture clockwise. The products are
+    written out so the axes `pitch_direction` gives are exactly today's.
+    """
+    if not (math.isfinite(roll) and -1 <= roll <= 1):
+        raise ValueError(f"roll must be from -1 to 1, got {roll!r}")
+    forward = normalise(direction)
+    fx, fy, fz = forward
+    level = _level(fx, fz)
+    # r₀ = (f × Y) / |f × Y|, with f × Y = (−f_z, 0, f_x).
+    right = (1.0, 0.0, 0.0) if level == 0 else (0.0 - fz / level, 0.0, fx / level)
+    # r₀ × f, for the horizontal r₀: its Y component is |f × Y| itself.
+    up = (0.0 - fy * right[2], level, fy * right[0])
+    if roll != 0:
+        sin, cos = _sin_cos(roll * 180)
+        right, up = (
+            tuple(r * cos + u * sin for r, u in zip(right, up, strict=True)),
+            tuple(u * cos - r * sin for r, u in zip(right, up, strict=True)),
+        )
+    return CameraBasis(forward, right, up)
+
+
+def heading(direction):
+    """The camera's reference heading: the turn about +Y, in degrees in
+    [0, 360), at which a subject facing +Z faces the camera's horizontal
+    heading `−(f_x, 0, f_z)`; 0 when it looks straight down or up. Each
+    direction's turn is measured from it (D-10, D-18)."""
+    fx, _, fz = normalise(direction)
+    if fx == 0 and fz == 0:
+        return 0.0
+    return _wrap(math.degrees(math.atan2(0.0 - fx, 0.0 - fz)))
+
+
+def subject_basis(direction, roll=0.0):
+    """The camera's axes in the subject's frame at θ = 0: the subject turned
+    by `heading(direction)` takes the camera's heading with it, so this is
+    the camera for the same direction turned to look along −Z.
+
+    The picture comes from these alone. In orthographic, the direction's
+    heading changes no picture and no label (design §Camera and
+    directions). For a direction `pitch_direction` gives, this is
+    `camera_basis` of the same direction, exactly.
+    """
+    fx, fy, fz = normalise(direction)
+    return camera_basis((0.0, fy, 0.0 - _level(fx, fz)), roll)
+
+
+def _level(x, z):
+    """The length of the horizontal part `(x, 0, z)`: exactly `|z|` when `x`
+    is 0, as for every direction a pitch sets."""
+    return abs(z) if x == 0 else math.hypot(x, z)
 
 
 def directions(view):

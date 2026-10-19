@@ -235,7 +235,7 @@ def make_job(tmp_path, mode="measure"):
     clips = (SelectedClip(Clip(0, "idle", 0.0, 0.0, ()), one_shot=False),)
     settings = Settings(
         "topdown",
-        90.0,
+        views.pitch_direction(90.0),
         1,
         0.0,
         0.0,
@@ -248,7 +248,7 @@ def make_job(tmp_path, mode="measure"):
         "error",
         DEFAULT_SHADE,
     )
-    frames = sampling.frames("hero", clips, views.View(90.0, 1, 0.0), 12.0)
+    frames = sampling.frames("hero", clips, views.View(1, 0.0), 12.0)
     workspace = tmp_path / "work"
     workspace.mkdir()
     job = build_job(

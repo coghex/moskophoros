@@ -50,7 +50,7 @@ from array import array
 
 import bpy
 
-JOB_SCHEMA = "moskophoros.capture-job/1"
+JOB_SCHEMA = "moskophoros.capture-job/2"
 RESULT_SCHEMA = "moskophoros.capture-result/3"
 NODE_NAME = "moskophoros.node.{}"
 ANIMATION_NAME = "moskophoros.animation.{}"
@@ -68,6 +68,9 @@ _MATERIAL = re.compile(r"moskophoros\.material\.(\d+)\.data(?:\.\d+)?")
 _TARGET_PATH = re.compile(r'key_blocks\["moskophoros\.target\.(\d+)"\]\.value')
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+# A camera direction within this of length 1 is normalised, as
+# moskophoros.views.UNIT_TOLERANCE says.
+UNIT_TOLERANCE = 1e-12
 _GLB_HEADER = struct.Struct("<4sII")
 _CHUNK_HEADER = struct.Struct("<II")
 _JSON_CHUNK = 0x4E4F534A
@@ -185,6 +188,7 @@ def check_job(job):
         job["settings"],
         [
             "view",
+            "camera",
             "model_yaw_deg",
             "fps",
             "frames",
@@ -201,14 +205,37 @@ def check_job(job):
     )
     view = _fields(
         settings["view"],
-        ["preset", "projection", "pitch_deg", "directions", "start_angle_deg"],
+        ["preset", "directions", "start_angle_deg"],
         "settings.view",
     )
     _require(isinstance(view["preset"], str) and view["preset"], "the view preset")
-    _require(view["projection"] == "orthographic", "the projection")
+    camera = _fields(
+        settings["camera"],
+        ["projection", "direction", "roll", "position"],
+        "settings.camera",
+    )
+    _require(camera["projection"] == "orthographic", "the projection")
+    direction = camera["direction"]
     _require(
-        _is_number(view["pitch_deg"]) and 0 <= view["pitch_deg"] <= 90,
-        "settings.view.pitch_deg",
+        isinstance(direction, list)
+        and len(direction) == 3
+        and all(_is_number(value) and -1 <= value <= 1 for value in direction)
+        and abs(math.hypot(*direction) - 1) <= UNIT_TOLERANCE,
+        "settings.camera.direction is not a normalised direction",
+    )
+    _require(
+        _is_number(camera["roll"]) and -1 <= camera["roll"] <= 1,
+        "settings.camera.roll",
+    )
+    position = camera["position"]
+    _require(
+        position is None
+        or (
+            isinstance(position, list)
+            and len(position) == 3
+            and all(map(_is_number, position))
+        ),
+        "settings.camera.position",
     )
     _require(
         _is_int(view["directions"]) and 1 <= view["directions"] <= 64,
@@ -834,15 +861,16 @@ def vertices(objects, depsgraph):
     return points
 
 
-def bounds(points, ground, rotation_deg, pitch_deg):
+def bounds(points, ground, rotation_deg, axes):
     """L, R, U, D on the screen plane from the projected ground point, with
     the subject turned by `rotation_deg` about the vertical axis through
-    `ground`, counter-clockwise seen from above."""
+    `ground`, counter-clockwise seen from above, and `axes` the screen's
+    right and up in the subject's frame (`measure_axes`)."""
     if not points:
         return {"L": 0.0, "R": 0.0, "U": 0.0, "D": 0.0}
     a = math.radians(rotation_deg)
-    p = math.radians(pitch_deg)
-    cos_a, sin_a, cos_p, sin_p = math.cos(a), math.sin(a), math.cos(p), math.sin(p)
+    cos_a, sin_a = math.cos(a), math.sin(a)
+    (rx, ry, rz), (ux, uy, uz) = axes
     gx, gy, gz = ground
     xs = []
     ys = []
@@ -850,8 +878,8 @@ def bounds(points, ground, rotation_deg, pitch_deg):
         dx, dy, dz = x - gx, y - gy, z - gz
         turned_x = dx * cos_a + dz * sin_a
         turned_z = -dx * sin_a + dz * cos_a
-        xs.append(turned_x)
-        ys.append(cos_p * dy - sin_p * turned_z)
+        xs.append(rx * turned_x + ry * dy + rz * turned_z)
+        ys.append(ux * turned_x + uy * dy + uz * turned_z)
     return {
         "L": max(0.0, -min(xs)),
         "R": max(0.0, *xs),
@@ -893,7 +921,7 @@ def measure(job, document, statics):
     scene = bpy.context.scene
     fps = scene.render.fps / scene.render.fps_base
     settings = job["settings"]
-    pitch = settings["view"]["pitch_deg"]
+    axes = measure_axes(settings["camera"])
     yaw = settings["model_yaw_deg"]
     ground = tuple(settings["ground_m"][axis] for axis in "xyz")
     check_node_names()
@@ -938,7 +966,7 @@ def measure(job, document, statics):
                 # Reduce first: a huge yaw would swallow the angle.
                 rotation = (angle % 360 + yaw % 360) % 360
                 measured[(clip["name"], direction, time_s)] = (
-                    bounds(points, ground, rotation, pitch),
+                    bounds(points, ground, rotation, axes),
                     height,
                 )
 
@@ -2002,6 +2030,54 @@ def _blender(vector):
     return (x, -z, y)
 
 
+def subject_axes(camera):
+    """The camera's toward, right and up in the subject's frame at θ = 0,
+    as moskophoros.views.subject_basis gives them (design §Camera and
+    directions).
+
+    Each direction's turn is measured from the camera's horizontal heading,
+    so the subject and the camera's heading turn together, and the camera
+    is the same direction turned to look along −Z: f = (0, f_y, −h), with h
+    the length of the direction's horizontal part. The unrolled right is
+    +X and the unrolled up (0, h, f_y); the roll turns both by roll · π,
+    positive turning the picture clockwise. A direction pitch p sets,
+    (0, −sin p, −cos p), gives exactly the pitch camera's axes:
+    toward (0, sin p, cos p), right +X and up (0, cos p, −sin p).
+    """
+    fx, fy, fz = camera["direction"]
+    level = _level(fx, fz)
+    toward = (0.0, 0.0 - fy, level)
+    right = (1.0, 0.0, 0.0)
+    up = (0.0, level, fy)
+    if camera["roll"] != 0:
+        sin, cos = _sin_cos(camera["roll"] * 180)
+        right, up = (
+            tuple(r * cos + u * sin for r, u in zip(right, up, strict=True)),
+            tuple(u * cos - r * sin for r, u in zip(right, up, strict=True)),
+        )
+    return toward, right, up
+
+
+def _level(x, z):
+    """The length of (x, 0, z), exactly |z| when x is 0, as
+    moskophoros.views computes it."""
+    return abs(z) if x == 0 else math.hypot(x, z)
+
+
+def measure_axes(camera):
+    """The screen's right and up that measuring projects onto: those of
+    `subject_axes`, except that a camera looking straight down without a
+    roll keeps the up the pitch-only camera measured with, whose vertical
+    part was cos 90° in floating point, about 6e-17, not 0. That small part
+    can move a fitted cell by a pixel, so it stays (design §Camera and
+    directions)."""
+    _, right, up = subject_axes(camera)
+    fx, fy, fz = camera["direction"]
+    if fx == 0 and fz == 0 and fy < 0 and camera["roll"] == 0:
+        up = (up[0], math.cos(math.radians(90.0)), up[2])
+    return right, up
+
+
 def place_camera(camera, settings, rotation_deg, reach):
     """Put the orthographic camera where the ground point lands on pixel
     corner (gx·s, gy·s), as if the subject were turned by `rotation_deg`, and
@@ -2010,15 +2086,13 @@ def place_camera(camera, settings, rotation_deg, reach):
     Turning the subject by a about the vertical axis through the ground
     point is the same image as turning the camera by −a around it, since
     the colour is flat and unlit.
-    The camera sits in direction (0, sin p, cos p) from the ground point
-    and looks back at it, with screen right +X and screen up
-    (0, cos p, −sin p).
+    The camera sits along `subject_axes`'s toward from the ground point and
+    looks back at it, with its right and up as the picture's.
     """
-    sin_p, cos_p = _sin_cos(settings["view"]["pitch_deg"])
     sin_a, cos_a = _sin_cos(-rotation_deg)
-    toward = _turn((0.0, sin_p, cos_p), sin_a, cos_a)
-    right = _turn((1.0, 0.0, 0.0), sin_a, cos_a)
-    up = _turn((0.0, cos_p, 0.0 - sin_p), sin_a, cos_a)
+    toward, right, up = (
+        _turn(axis, sin_a, cos_a) for axis in subject_axes(settings["camera"])
+    )
     scale = settings["supersample"]
     meters = 1.0 / (settings["pixels_per_meter"] * scale)  # per image pixel
     _, _, width, height = frame_size(settings)

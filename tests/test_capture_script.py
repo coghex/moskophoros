@@ -227,3 +227,169 @@ def test_a_count_of_65_or_more_names_the_frame_and_the_limit(script, deepest):
 def test_a_nan_alpha_is_refused(script):
     with pytest.raises(script.ScriptError, match=r"alpha at pixel \(1, 0\) is nan"):
         script.coverage(array("f", [0.0, math.nan]), 2, "frame 0")
+
+
+# The camera (projects and camera design D-7, D-8, D-10, D-14)
+
+
+def legacy_bounds(points, ground, rotation_deg, pitch_deg):
+    """The pitch-only camera's measured bounds, as the script computed them
+    before the camera had a direction."""
+    a = math.radians(rotation_deg)
+    p = math.radians(pitch_deg)
+    cos_a, sin_a, cos_p, sin_p = math.cos(a), math.sin(a), math.cos(p), math.sin(p)
+    gx, gy, gz = ground
+    xs = []
+    ys = []
+    for x, y, z in points:
+        dx, dy, dz = x - gx, y - gy, z - gz
+        turned_x = dx * cos_a + dz * sin_a
+        turned_z = -dx * sin_a + dz * cos_a
+        xs.append(turned_x)
+        ys.append(cos_p * dy - sin_p * turned_z)
+    return {
+        "L": max(0.0, -min(xs)),
+        "R": max(0.0, *xs),
+        "U": max(0.0, *ys),
+        "D": max(0.0, -min(ys)),
+    }
+
+
+def camera(direction, roll=0.0):
+    return {"direction": list(direction), "roll": roll}
+
+
+def bits(values):
+    return [float(value).hex() for value in values]
+
+
+PITCHES = [0.0, 1e-9, 12.5, 30.0, 35.264389682754654, 45.0, 47.25, 60.0, 89.999, 90.0]
+ROTATIONS = [0.0, 12.5, 45.0, 90.0, 135.0, 180.0, 270.0, 359.0]
+
+
+@pytest.mark.parametrize("pitch", PITCHES)
+def test_a_pitch_direction_measures_today_s_bounds_bit_for_bit(script, pitch):
+    import random
+
+    from moskophoros import views
+
+    generator = random.Random(int(pitch * 1000))
+    points = [tuple(generator.uniform(-2.0, 2.0) for _ in range(3)) for _ in range(64)]
+    points += [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, -1.0, 0.0), (0.0, 0.0, 1.0)]
+    axes = script.measure_axes(camera(views.pitch_direction(pitch)))
+    for ground in [(0.0, 0.0, 0.0), (0.25, -0.5, 1.5)]:
+        for rotation in ROTATIONS:
+            assert bits(script.bounds(points, ground, rotation, axes).values()) == bits(
+                legacy_bounds(points, ground, rotation, pitch).values()
+            ), (ground, rotation)
+
+
+def test_straight_down_keeps_the_pitch_camera_s_rounding(script):
+    # cos 90° is about 6e-17 in floating point, not 0, and the pitch-only
+    # camera measured with it; at 1 pixel per meter that small part makes
+    # the fitted cell 4 pixels tall rather than 3.
+    from moskophoros import fit, sampling
+
+    points = [(-1.0, -1.0, -1.0), (1.0, -1.0, -1.0), (0.0, -1.0, 0.0)]
+    axes = script.measure_axes(camera((0.0, -1.0, 0.0)))
+    box = script.bounds(points, (0.0, 0.0, 0.0), 0.0, axes)
+    assert box == legacy_bounds(points, (0.0, 0.0, 0.0), 0.0, 90.0)
+    assert box["D"] == 6.123233995736766e-17
+    address = sampling.FrameAddress("cube", "default", "static", 0, 0.0)
+    bounds = fit.Bounds(box["L"], box["R"], box["U"], box["D"])
+    resolved = fit.resolve({address: fit.Measurement(bounds, 0.0)}, ppm=1.0)
+    assert resolved.cell[1] == 4
+    # A roll, or any other direction, measures with the exact axes.
+    rolled = script.measure_axes(camera((0.0, -1.0, 0.0), 1.0))
+    assert rolled[1][1] == 0.0
+
+
+@pytest.mark.parametrize(
+    ("direction", "roll"),
+    [
+        ((0.0, -0.5, -0.8660254037844386), 0.0),
+        ((0.0, -1.0, 0.0), 0.0),
+        ((0.0, 1.0, 0.0), 0.25),
+        ((0.3, -0.7, -0.2), 0.37),
+        ((-1.0, 0.25, 1.0), -0.5),
+        ((0.1, 0.1, 0.1), 1.0),
+        ((0.6, 0.0, 0.8), -1.0),
+    ],
+)
+def test_the_script_s_axes_are_moskophoros_views(script, direction, roll):
+    from moskophoros import views
+
+    unit = views.normalise(direction)
+    toward, right, up = script.subject_axes(camera(unit, roll))
+    basis = views.subject_basis(unit, roll)
+    assert bits(right) == bits(basis.right)
+    assert bits(up) == bits(basis.up)
+    assert toward == pytest.approx(tuple(-value for value in basis.forward))
+
+
+@pytest.mark.parametrize("pitch", PITCHES)
+def test_a_pitch_direction_places_today_s_camera_axes_bit_for_bit(script, pitch):
+    from moskophoros import views
+
+    sin_p, cos_p = script._sin_cos(pitch)
+    legacy = ((0.0, sin_p, cos_p), (1.0, 0.0, 0.0), (0.0, cos_p, 0.0 - sin_p))
+    axes = script.subject_axes(camera(views.pitch_direction(pitch)))
+    for axis, expected in zip(axes, legacy, strict=True):
+        assert bits(axis) == bits(expected)
+
+
+def valid_job():
+    from test_capture_backend import CLIPS, MEASURE_SETTINGS, SOURCE, VIEW
+
+    from moskophoros import sampling
+    from moskophoros.capture import backend
+
+    frames = sampling.frames("hero", CLIPS, VIEW, MEASURE_SETTINGS.fps)
+    return backend.build_job(
+        "measure", SOURCE, "hero", MEASURE_SETTINGS, CLIPS, frames, "/work/measure"
+    )
+
+
+def test_the_script_accepts_the_launcher_s_camera_record(script):
+    job = valid_job()
+    assert job["schema"] == script.JOB_SCHEMA == "moskophoros.capture-job/2"
+    script.check_job(job)
+    job["settings"]["camera"] |= {"roll": -1, "position": [0, 1.5, -3.0]}
+    script.check_job(job)
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"projection": "perspective"}, "the projection"),
+        ({"direction": [0.0, 0.0, 0.0]}, "settings.camera.direction"),
+        ({"direction": [0.0, -0.5, -0.5]}, "settings.camera.direction"),
+        ({"direction": [0.0, -1.0]}, "settings.camera.direction"),
+        ({"direction": [0.0, True, 0.0]}, "settings.camera.direction"),
+        ({"direction": None}, "settings.camera.direction"),
+        ({"roll": 1.5}, "settings.camera.roll"),
+        ({"roll": "0"}, "settings.camera.roll"),
+        ({"position": [0, 1]}, "settings.camera.position"),
+        ({"position": [0, 1, "2"]}, "settings.camera.position"),
+        ({"fov": 50}, "settings.camera is missing"),
+    ],
+)
+def test_the_script_refuses_a_malformed_camera_record(script, change, message):
+    job = valid_job()
+    job["settings"]["camera"] |= change
+    with pytest.raises(script.ScriptError, match=message):
+        script.check_job(job)
+
+
+@pytest.mark.parametrize(
+    ("view", "message"),
+    [
+        ({"pitch_deg": 30.0}, "settings.view is missing"),
+        ({"projection": "orthographic"}, "settings.view is missing"),
+    ],
+)
+def test_the_script_refuses_the_old_view_record(script, view, message):
+    job = valid_job()
+    job["settings"]["view"] |= view
+    with pytest.raises(script.ScriptError, match=message):
+        script.check_job(job)

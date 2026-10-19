@@ -18,15 +18,20 @@ from moskophoros import cli, export, fit, gltf, ramps, sampling, stylize, views
 from moskophoros.capture.backend import Settings, Shade, Source
 
 USAGE_LINE = "usage: moskophoros [options] <infile.glb> <outfile.png>"
+pitch = views.pitch_direction
 
 # A hand-written sheet's settings, every value differing from its default.
 SETTINGS = {
     "view": {
         "preset": "side",
-        "projection": "orthographic",
-        "pitch_deg": 0.0,
         "directions": 2,
         "start_angle_deg": 90.0,
+    },
+    "camera": {
+        "projection": "orthographic",
+        "direction": [0.0, 0.0, -1.0],
+        "roll": 0.25,
+        "position": [0.5, 1.5, -2.0],
     },
     "model_yaw_deg": -45.0,
     "fps": 24.0,
@@ -62,9 +67,11 @@ SETTINGS = {
 }
 REUSED = {
     "view": "side",
-    "pitch": 0.0,
+    "direction": (0.0, 0.0, -1.0),
     "directions": 2,
     "start_angle": 90.0,
+    "roll": 0.25,
+    "camera_position": (0.5, 1.5, -2.0),
     "model_yaw": -45.0,
     "fps": 24.0,
     "frames": 6,
@@ -98,7 +105,7 @@ REUSED = {
 
 def write_sheet(tmp_path, settings=None, name="old.json", **document):
     path = tmp_path / name
-    contents = {"schema": "moskophoros.sheet/13"} | document
+    contents = {"schema": "moskophoros.sheet/14"} | document
     contents["settings"] = copy.deepcopy(SETTINGS if settings is None else settings)
     path.write_text(json.dumps(contents, ensure_ascii=False), encoding="utf-8")
     return path
@@ -200,7 +207,14 @@ def test_read_settings_returns_the_reused_values(tmp_path):
         ("--root-motion", "error", {"root_motion": "error"}),
         ("--reduce", "plain", {"reduce": "plain"}),
         ("--reduce", "mode", {"reduce": "mode"}),
-        ("--pitch", "10", {"pitch": 10.0, "view": "custom"}),
+        ("--pitch", "10", {"direction": pitch(10.0), "view": "custom"}),
+        (
+            "--camera-direction",
+            "0,-1,-1",
+            {"direction": views.normalise((0, -1, -1)), "view": "custom"},
+        ),
+        ("--camera-roll", "-0.5", {"roll": -0.5}),
+        ("--camera-position", "0,2,3", {"camera_position": (0.0, 2.0, 3.0)}),
         ("--directions", "4", {"directions": 4, "view": "custom"}),
         ("--start-angle", "45", {"start_angle": 45.0, "view": "custom"}),
         ("--preview", None, {"previews": True}),
@@ -246,7 +260,7 @@ def test_explicit_settings_resolve_into_a_fixed_configuration(tmp_path):
 def test_an_explicit_view_resolves_exactly_as_without_reuse(tmp_path, overrides):
     with_reuse = reuse(write_sheet(tmp_path), "--view", "topdown", *overrides)
     without = cli.parse_args(["--view", "topdown", *overrides, "in.glb", "out.png"])
-    view = ("view", "pitch", "directions", "start_angle")
+    view = ("view", "direction", "directions", "start_angle")
     assert values(with_reuse, view) == values(without, view)
     assert values(with_reuse, REUSED.keys() - set(view)) == {
         name: REUSED[name] for name in REUSED.keys() - set(view)
@@ -255,9 +269,9 @@ def test_an_explicit_view_resolves_exactly_as_without_reuse(tmp_path, overrides)
 
 def test_an_explicit_default_view_still_replaces_the_reused_view(tmp_path):
     options = reuse(write_sheet(tmp_path), "--view", "iso")
-    assert values(options, ("view", "pitch", "directions", "start_angle")) == {
+    assert values(options, ("view", "direction", "directions", "start_angle")) == {
         "view": "iso",
-        "pitch": 30.0,
+        "direction": pitch(30.0),
         "directions": 8,
         "start_angle": 0.0,
     }
@@ -265,9 +279,9 @@ def test_an_explicit_default_view_still_replaces_the_reused_view(tmp_path):
 
 def test_an_individual_override_keeps_the_rest_of_the_reused_view(tmp_path):
     options = reuse(write_sheet(tmp_path), "--pitch", "60")
-    assert values(options, ("view", "pitch", "directions", "start_angle")) == {
+    assert values(options, ("view", "direction", "directions", "start_angle")) == {
         "view": "custom",
-        "pitch": 60.0,
+        "direction": pitch(60.0),
         "directions": 2,
         "start_angle": 90.0,
     }
@@ -277,15 +291,15 @@ def test_a_reused_custom_view_keeps_its_recorded_values(tmp_path):
     settings = edited(
         {
             "view.preset": "custom",
-            "view.pitch_deg": 52.5,
+            "camera.direction": list(pitch(52.5)),
             "view.directions": 5,
             "view.start_angle_deg": 400.0,
         }
     )
     options = reuse(write_sheet(tmp_path, settings))
-    assert values(options, ("view", "pitch", "directions", "start_angle")) == {
+    assert values(options, ("view", "direction", "directions", "start_angle")) == {
         "view": "custom",
-        "pitch": 52.5,
+        "direction": pitch(52.5),
         "directions": 5,
         "start_angle": 400.0,
     }
@@ -293,9 +307,13 @@ def test_a_reused_custom_view_keeps_its_recorded_values(tmp_path):
 
 def test_a_reused_preset_name_keeps_its_recorded_values(tmp_path):
     # The recorded parameters are reused as written, not the preset's.
-    settings = edited({"view.preset": "iso", "view.pitch_deg": 31.0})
+    settings = edited({"view.preset": "iso", "camera.direction": list(pitch(31.0))})
     options = reuse(write_sheet(tmp_path, settings))
-    assert (options.view, options.pitch, options.directions) == ("iso", 31.0, 2)
+    assert (options.view, options.direction, options.directions) == (
+        "iso",
+        pitch(31.0),
+        2,
+    )
 
 
 # Clips (settings design D-19 and D-27)
@@ -425,7 +443,7 @@ def test_previews_must_be_a_boolean(tmp_path, capsys, value):
 def test_a_document_with_only_schema_and_settings_is_enough(tmp_path):
     path = tmp_path / "minimal.json"
     path.write_text(
-        json.dumps({"schema": "moskophoros.sheet/13", "settings": SETTINGS})
+        json.dumps({"schema": "moskophoros.sheet/14", "settings": SETTINGS})
     )
     assert values(reuse(path)) == REUSED
 
@@ -449,10 +467,23 @@ def test_a_whole_float_ground_pixel_is_accepted_as_its_option_accepts_it(tmp_pat
 
 
 def test_integer_valued_numbers_are_accepted_as_floats(tmp_path):
-    settings = edited({"fps": 24, "pixels_per_meter": 32, "view.pitch_deg": 0})
+    settings = edited(
+        {
+            "fps": 24,
+            "pixels_per_meter": 32,
+            "camera.direction": [0, 0, -1],
+            "camera.roll": 1,
+        }
+    )
     options = reuse(write_sheet(tmp_path, settings))
-    assert (options.fps, options.ppm, options.pitch) == (24.0, 32.0, 0.0)
-    assert all(type(v) is float for v in (options.fps, options.ppm, options.pitch))
+    assert (options.fps, options.ppm, options.direction, options.roll) == (
+        24.0,
+        32.0,
+        (0.0, 0.0, -1.0),
+        1.0,
+    )
+    numbers = (options.fps, options.ppm, *options.direction, options.roll)
+    assert all(type(v) is float for v in numbers)
 
 
 # Rejections: the file
@@ -494,7 +525,7 @@ def test_a_deeply_nested_file_is_rejected(tmp_path, capsys):
     ("text", "key"),
     [
         (
-            '{"schema": "moskophoros.sheet/13", "schema": "moskophoros.sheet/13"}',
+            '{"schema": "moskophoros.sheet/14", "schema": "moskophoros.sheet/14"}',
             "schema",
         ),
         ('{"settings": {"fps": 12, "fps": 12}}', "fps"),
@@ -509,11 +540,11 @@ def test_a_repeated_key_anywhere_is_rejected(tmp_path, capsys, text, key):
     assert rejected(capsys, path) == f"repeats the key {key!r}"
 
 
-NOT_A_SHEET = "is not a moskophoros.sheet/13 document"
+NOT_A_SHEET = "is not a moskophoros.sheet/14 document"
 
 
 def older(schema):
-    return f"is a {schema} sheet; only moskophoros.sheet/13 sheets load, so generate it again"
+    return f"is a {schema} sheet; only moskophoros.sheet/14 sheets load, so generate it again"
 
 
 @pytest.mark.parametrize(
@@ -527,7 +558,8 @@ def older(schema):
         ({"schema": "moskophoros.sheet/6"}, older("moskophoros.sheet/6")),
         ({"schema": "moskophoros.sheet/5"}, older("moskophoros.sheet/5")),
         ({"schema": "moskophoros.sheet/4"}, older("moskophoros.sheet/4")),
-        ({"schema": "moskophoros.sheet/14"}, older("moskophoros.sheet/14")),
+        ({"schema": "moskophoros.sheet/15"}, older("moskophoros.sheet/15")),
+        ({"schema": "moskophoros.sheet/13"}, older("moskophoros.sheet/13")),
         ({"schema": "moskophoros.sheet/12"}, older("moskophoros.sheet/12")),
         ({"schema": "moskophoros.sheet/11"}, older("moskophoros.sheet/11")),
         ({"schema": "moskophoros.sheet/10"}, older("moskophoros.sheet/10")),
@@ -540,17 +572,17 @@ def older(schema):
         ),
         ({"schema": 1}, f"{NOT_A_SHEET}: schema is 1"),
         (
-            {"schema": ["moskophoros.sheet/13"]},
-            f'{NOT_A_SHEET}: schema is ["moskophoros.sheet/13"]',
+            {"schema": ["moskophoros.sheet/14"]},
+            f'{NOT_A_SHEET}: schema is ["moskophoros.sheet/14"]',
         ),
         ({"schema": None}, f"{NOT_A_SHEET}: schema is null"),
-        ({"schema": "moskophoros.sheet/13"}, "settings: missing"),
+        ({"schema": "moskophoros.sheet/14"}, "settings: missing"),
         (
-            {"schema": "moskophoros.sheet/13", "settings": None},
+            {"schema": "moskophoros.sheet/14", "settings": None},
             "settings: must be set, got null",
         ),
         (
-            {"schema": "moskophoros.sheet/13", "settings": []},
+            {"schema": "moskophoros.sheet/14", "settings": []},
             "settings: expected an object, got []",
         ),
     ],
@@ -566,10 +598,13 @@ def test_a_file_that_is_not_a_sheet_is_rejected(tmp_path, capsys, document, prob
 REUSED_FIELDS = [
     "view",
     "view.preset",
-    "view.projection",
-    "view.pitch_deg",
     "view.directions",
     "view.start_angle_deg",
+    "camera",
+    "camera.projection",
+    "camera.direction",
+    "camera.roll",
+    "camera.position",
     "model_yaw_deg",
     "fps",
     "supersample",
@@ -636,10 +671,48 @@ def test_a_missing_field_is_rejected(tmp_path, capsys, field):
         ("style.edges", "fuzzy", "expected 'hard' or 'soft', got \"fuzzy\""),
         ("style.edges", "HARD", "expected 'hard' or 'soft', got \"HARD\""),
         ("style.edges", True, "expected 'hard' or 'soft', got true"),
-        ("view.pitch_deg", 90.5, "must be from 0 to 90, got '90.5'"),
-        ("view.pitch_deg", -0.1, "must be from 0 to 90, got '-0.1'"),
-        ("view.pitch_deg", "30", 'expected a number, got "30"'),
-        ("view.pitch_deg", True, "expected a number, got true"),
+        ("camera", [0, 0, -1], "expected an object, got [0, 0, -1]"),
+        (
+            "camera.projection",
+            "perspective",
+            "expected 'orthographic', got \"perspective\"",
+        ),
+        ("camera.direction", [0, 0], "expected [x, y, z], three numbers, got [0, 0]"),
+        (
+            "camera.direction",
+            [0, True, -1],
+            "expected [x, y, z], three numbers, got [0, true, -1]",
+        ),
+        (
+            "camera.direction",
+            [0, 0, 0],
+            "expected a normalised direction, each component from -1 to 1 and "
+            "its length within 1e-12 of 1, got [0, 0, 0]",
+        ),
+        (
+            "camera.direction",
+            [0, -0.5, -0.5],
+            "expected a normalised direction, each component from -1 to 1 and "
+            "its length within 1e-12 of 1, got [0, -0.5, -0.5]",
+        ),
+        (
+            "camera.direction",
+            [0, -2, 0],
+            "expected a normalised direction, each component from -1 to 1 and "
+            "its length within 1e-12 of 1, got [0, -2, 0]",
+        ),
+        ("camera.roll", 1.5, "must be from -1 to 1, got '1.5'"),
+        ("camera.roll", "0", 'expected a number, got "0"'),
+        (
+            "camera.position",
+            [1, 2],
+            "expected [x, y, z], three numbers, or null, got [1, 2]",
+        ),
+        (
+            "camera.position",
+            [1, 2, "3"],
+            'expected [x, y, z], three numbers, or null, got [1, 2, "3"]',
+        ),
         ("view.directions", 0, "must be from 1 to 64, got '0'"),
         ("view.directions", 65, "must be from 1 to 64, got '65'"),
         ("view.directions", 8.0, "expected an integer, got '8.0'"),
@@ -709,9 +782,9 @@ def test_an_unacceptable_value_is_rejected(tmp_path, capsys, field, value, probl
 
 @pytest.mark.parametrize("projection", ["perspective", "Orthographic", None, 0])
 def test_the_projection_must_be_orthographic(tmp_path, capsys, projection):
-    path = write_sheet(tmp_path, edited({"view.projection": projection}))
+    path = write_sheet(tmp_path, edited({"camera.projection": projection}))
     problem = rejected(capsys, path)
-    assert problem.startswith("settings.view.projection: ")
+    assert problem.startswith("settings.camera.projection: ")
     shown = "must be set, got null" if projection is None else "expected 'orthographic'"
     assert shown in problem
 
@@ -724,7 +797,16 @@ def test_the_fixed_values_must_be_set(tmp_path, capsys, field):
 
 @pytest.mark.parametrize(
     "field",
-    ["fps", "view.pitch_deg", "root_motion", "ground_m", "style", "style.reduce"],
+    [
+        "fps",
+        "camera",
+        "camera.direction",
+        "camera.roll",
+        "root_motion",
+        "ground_m",
+        "style",
+        "style.reduce",
+    ],
 )
 def test_other_null_fields_are_rejected(tmp_path, capsys, field):
     path = write_sheet(tmp_path, edited({field: None}))
@@ -736,6 +818,9 @@ def test_other_null_fields_are_rejected(tmp_path, capsys, field):
     [
         "variant",
         "view.roll_deg",
+        "view.pitch_deg",
+        "view.projection",
+        "camera.fov",
         "cell.depth",
         "ground_px.z",
         "ground_m.w",
@@ -852,6 +937,7 @@ def test_an_explicit_reduce_overrides_the_reused_one(tmp_path, sheet, explicit):
 @pytest.mark.parametrize(
     "schema",
     [
+        "moskophoros.sheet/13",
         "moskophoros.sheet/12",
         "moskophoros.sheet/11",
         "moskophoros.sheet/10",
@@ -936,7 +1022,7 @@ SUBJECT = gltf.Subject(
 ORIGINALS = {
     "iso": Settings(
         view="iso",
-        pitch=30.0,
+        direction=views.pitch_direction(30.0),
         directions=8,
         start_angle=0.0,
         model_yaw=0.0,
@@ -951,7 +1037,7 @@ ORIGINALS = {
     ),
     "iso-true": Settings(
         view="iso-true",
-        pitch=cli.PRESETS["iso-true"].pitch,
+        direction=views.pitch_direction(cli.PRESETS["iso-true"].pitch),
         directions=8,
         start_angle=0.0,
         model_yaw=12.5,
@@ -966,7 +1052,7 @@ ORIGINALS = {
     ),
     "custom": Settings(
         view="custom",
-        pitch=47.25,
+        direction=views.pitch_direction(47.25),
         directions=3,
         start_angle=-370.5,
         model_yaw=-90.0,
@@ -1005,9 +1091,7 @@ def _encode(
     """The encoded sheet, with `lit`, its lit previews' GIFs when a light is
     placed and previews are on."""
     selected = gltf.select_clips(SUBJECT, clip_names, once_names)
-    view = views.View(
-        settings.pitch, settings.directions, settings.start_angle, settings.model_yaw
-    )
+    view = views.View(settings.directions, settings.start_angle, settings.model_yaw)
     width, height = settings.cell
 
     def frame(address):
@@ -1188,7 +1272,8 @@ def test_an_override_on_a_reused_sheet_changes_only_that_value(tmp_path):
     again = json.loads(_rerun(path, "--pitch", "45").json)
 
     expected = json.loads(original.json)["settings"]
-    expected["view"] |= {"preset": "custom", "pitch_deg": 45.0}
+    expected["view"] |= {"preset": "custom"}
+    expected["camera"] |= {"direction": list(pitch(45.0))}
     assert again["settings"] == expected
 
 
@@ -1308,7 +1393,7 @@ def test_a_reused_mode_sheet_round_trips_and_differs_from_plain(tmp_path):
 
 STYLED = Settings(
     view="custom",
-    pitch=30.0,
+    direction=views.pitch_direction(30.0),
     directions=2,
     start_angle=0.0,
     model_yaw=0.0,
@@ -1355,9 +1440,7 @@ def _styled(resolved):
     from `_supersampled` frames, reduced by its style."""
     settings = replace(cli.capture_settings(resolved), shade=DEFAULT_SHADE)
     selected = gltf.select_clips(SUBJECT, resolved.clip or (), resolved.once)
-    view = views.View(
-        settings.pitch, settings.directions, settings.start_angle, settings.model_yaw
-    )
+    view = views.View(settings.directions, settings.start_angle, settings.model_yaw)
     captured = [
         _supersampled(requested.address, settings)
         for requested in sampling.frames("hero", selected, view, settings.fps)

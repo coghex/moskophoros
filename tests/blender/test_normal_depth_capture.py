@@ -5,7 +5,9 @@ Expected values are worked out here from the fixtures' known geometry and
 the camera of design §Camera and directions, independently of the script:
 for direction angle a and pitch p, the camera's right, up and toward-viewer
 axes are (1, 0, 0), (0, cos p, −sin p) and (0, sin p, cos p) turned by −a
-about +Y. A camera-space normal is the world normal's components along them,
+about +Y; for a general direction and roll, they are `moskophoros.views`'
+camera axes turned back by the subject's whole turn (`test_render.camera_axes`).
+A camera-space normal is the world normal's components along them,
 and a depth is a point's distance toward the viewer from the ground point,
 (P − G) · toward.
 """
@@ -20,7 +22,7 @@ import pytest
 from glb_writer import GlbWriter
 from material_models import Model, edges, form, sphere
 from PIL import Image
-from test_render import cube, marker_model, render
+from test_render import GENERAL, GENERAL_ROLL, camera_axes, cube, marker_model, render
 
 from moskophoros.capture import backend, blender
 
@@ -165,6 +167,39 @@ def test_a_plane_reads_its_exact_camera_space_normal(found, tmp_path, pitch):
             assert normal[codes == 1][:, 0].mean() > 0 > normal[codes == 2][:, 0].mean()
 
 
+def test_a_general_camera_reads_each_plane_s_camera_space_normal(found, tmp_path):
+    # The normal stays in the camera's space, +Z toward the viewer, for a
+    # camera looking along a general direction with a roll.
+    path = surfaces_model(
+        tmp_path, "planes", [plane(c, n, 0.25) for c, n in TILTED.values()]
+    )
+    result, job = render(
+        found,
+        path,
+        tmp_path,
+        direction=GENERAL,
+        roll=GENERAL_ROLL,
+        directions=8,
+        ppm=40.0,
+        cell=(80, 48),
+        ground_px=(40, 30),
+        supersample=2,
+    )
+    for ordinal in (0, 1):
+        angle = job["frames"][ordinal]["angle_deg"]
+        right, up, toward = camera_axes(GENERAL, GENERAL_ROLL, angle)
+        codes, normal, _ = frame(result, ordinal)
+        for code, (_, world) in TILTED.items():
+            n = np.asarray(world) / np.linalg.norm(world)
+            assert n @ toward > 0.2, "the fixture must face the camera"
+            expected = np.array((n @ right, n @ up, n @ toward))
+            hit = codes == code
+            assert hit.sum() > 100, (angle, code)
+            errors = angle_deg(normal[hit], expected)
+            assert errors.max() <= PLANE_TOLERANCE_DEG, (angle, code)
+            assert (normal[hit][:, 2] > 0).all()
+
+
 def sphere_errors(found, tmp_path, smooth):
     """The angles between a sphere's captured normals and the exact sphere's,
     over the pixels facing the viewer by 0.3 or more, in two directions."""
@@ -244,10 +279,11 @@ def facing_quads(z_values, half=0.25):
     return quads
 
 
-def expected_depth(z, pitch, angle, shape, ground_px, ppm, supersample):
+def expected_depth(z, pitch, angle, shape, ground_px, ppm, supersample, camera=None):
     """Each pixel's depth where its view ray meets the plane at `z` (the
-    ground point at the origin)."""
-    right, up, toward = axes(pitch, angle)
+    ground point at the origin), for `pitch`, or for `camera`, its right, up
+    and toward-viewer axes."""
+    right, up, toward = axes(pitch, angle) if camera is None else camera
     across, above = pixel_offsets(shape, ground_px, ppm, supersample)
     return (z - across * right[2] - above * up[2]) / toward[2]
 
@@ -278,6 +314,34 @@ def test_surfaces_in_front_of_and_behind_the_ground_point_read_signed_depths(
         assert (depth[codes == 1] > 0).all() and (depth[codes == 2] < 0).all()
         depths.append(depth)
     np.testing.assert_allclose(depths[0], depths[1], atol=DEPTH_TOLERANCE_M)
+
+
+def test_a_general_camera_reads_signed_ground_relative_depths(found, tmp_path):
+    # Depth is along the general camera's viewing axis from the ground
+    # point, positive toward the viewer, whatever the direction and roll.
+    z_values = {1: 0.3, 2: -0.5}
+    path = surfaces_model(tmp_path, "general", facing_quads(list(z_values.values())))
+    result, _ = render(
+        found,
+        path,
+        tmp_path,
+        direction=GENERAL,
+        roll=GENERAL_ROLL,
+        ppm=40.0,
+        cell=(72, 48),
+        ground_px=(36, 36),
+        supersample=2,
+    )
+    codes, _, depth = frame(result)
+    camera = camera_axes(GENERAL, GENERAL_ROLL, 0.0)
+    for code, z in z_values.items():
+        hit = codes == code
+        assert hit.sum() > 100
+        expected = expected_depth(
+            z, None, 0.0, codes.shape, (36, 36), 40.0, 2, camera=camera
+        )
+        assert np.abs(depth[hit] - expected[hit]).max() <= DEPTH_TOLERANCE_M
+    assert (depth[codes == 1] > 0).all() and (depth[codes == 2] < 0).all()
 
 
 def test_a_plane_at_a_known_position_reads_its_depth(found, tmp_path):

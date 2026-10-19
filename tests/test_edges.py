@@ -174,7 +174,7 @@ SOURCE = Source(Path("/models/hero.glb"), "ab" * 32, 0)
 def _settings(supersample=2):
     return Settings(
         view="custom",
-        pitch=0.0,
+        direction=views.pitch_direction(0.0),
         directions=1,
         start_angle=0.0,
         model_yaw=0.0,
@@ -191,7 +191,7 @@ def _settings(supersample=2):
 
 def _sheet(look, edges, depth_m=DEPTH_M):
     settings = _settings()
-    view = views.View(settings.pitch, settings.directions, settings.start_angle)
+    view = views.View(settings.directions, settings.start_angle)
     (requested,) = sampling.frames("hero", SELECTED, view, settings.fps)
     one = frame(*(block(2, k, depth_m) for k in (1, 2, 3, 4)))
     captured = ImageFrame(requested.address, one.pixels, {}, one.buffers)
@@ -244,7 +244,7 @@ def test_depth_overflow_applies_to_partial_pixels(look):
         with pytest.raises(export.DepthOverflow):
             _sheet(look, edges, depth_m=300.0)
     settings = _settings()
-    view = views.View(settings.pitch, settings.directions, settings.start_angle)
+    view = views.View(settings.directions, settings.start_angle)
     (requested,) = sampling.frames("hero", SELECTED, view, settings.fps)
     # Only the partial block is deep: soft overflows, hard does not.
     deep = frame(block(2, 1, 300.0), block(2, 4), block(2, 4), block(2, 4))

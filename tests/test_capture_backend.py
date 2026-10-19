@@ -42,7 +42,7 @@ ATTACK = Clip(1, "attack", 1.0, 1.25, (Root(3, "hips"), Root(7, None)))
 CLIPS = (SelectedClip(WALK, one_shot=False), SelectedClip(ATTACK, one_shot=True))
 MEASURE_SETTINGS = Settings(
     view="custom",
-    pitch=30.0,
+    direction=views.pitch_direction(30.0),
     directions=2,
     start_angle=10.0,
     model_yaw=0.0,
@@ -56,7 +56,7 @@ MEASURE_SETTINGS = Settings(
     shade=DEFAULT_SHADE,
 )
 RENDER_SETTINGS = replace(MEASURE_SETTINGS, ppm=10.0, cell=(4, 3), ground_px=(2, 2))
-VIEW = views.View(30.0, 2, 10.0, 0.0)
+VIEW = views.View(2, 10.0, 0.0)
 
 
 def frames(clips=CLIPS):
@@ -120,10 +120,14 @@ def expected_settings(ppm, cell, ground_px):
     return {
         "view": {
             "preset": "custom",
-            "projection": "orthographic",
-            "pitch_deg": 30.0,
             "directions": 2,
             "start_angle_deg": 10.0,
+        },
+        "camera": {
+            "projection": "orthographic",
+            "direction": [0.0, -0.49999999999999994, -0.8660254037844387],
+            "roll": 0.0,
+            "position": None,
         },
         "model_yaw_deg": 0.0,
         "fps": 4.0,
@@ -150,7 +154,7 @@ def expected_settings(ppm, cell, ground_px):
 
 def expected_job(mode, settings, output_dir):
     return {
-        "schema": "moskophoros.capture-job/1",
+        "schema": "moskophoros.capture-job/2",
         "mode": mode,
         "source": {"path": "/models/hero.glb", "sha256": SHA, "scene": 0},
         "subject": "hero",
@@ -268,7 +272,22 @@ def test_frames_must_be_the_ones_the_clips_and_settings_give(name):
         ({"source": Source(Path("hero.glb"), SHA, 0)}, "absolute"),
         ({"source": Source(Path("/models/hero.glb"), "AB" * 32, 0)}, "sha256"),
         ({"source": Source(Path("/models/hero.glb"), SHA, -1)}, "scene"),
-        ({"settings": replace(MEASURE_SETTINGS, pitch=91.0)}, "pitch"),
+        (
+            {"settings": replace(MEASURE_SETTINGS, direction=(0.0, 0.0, 0.0))},
+            "direction",
+        ),
+        (
+            {"settings": replace(MEASURE_SETTINGS, direction=(0.0, -0.5, -0.5))},
+            "direction",
+        ),
+        ({"settings": replace(MEASURE_SETTINGS, direction=(0.0, 1.0))}, "direction"),
+        ({"settings": replace(MEASURE_SETTINGS, roll=1.5)}, "roll"),
+        ({"settings": replace(MEASURE_SETTINGS, roll=float("nan"))}, "roll"),
+        ({"settings": replace(MEASURE_SETTINGS, position=(0.0, 1.0))}, "position"),
+        (
+            {"settings": replace(MEASURE_SETTINGS, position=(0.0, 1.0, float("inf")))},
+            "position",
+        ),
         ({"settings": replace(MEASURE_SETTINGS, fps=float("nan"))}, "fps"),
         ({"settings": replace(MEASURE_SETTINGS, supersample=17)}, "supersample"),
         ({"settings": replace(MEASURE_SETTINGS, view="front")}, "view"),

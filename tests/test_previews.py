@@ -20,7 +20,7 @@ GREY = (128, 128, 128)
 def _settings(directions, cell, fps=2.0):
     return Settings(
         view="custom",
-        pitch=30.0,
+        direction=views.pitch_direction(30.0),
         directions=directions,
         start_angle=0.0,
         model_yaw=0.0,
@@ -41,7 +41,7 @@ def _clip(name, t0=0.0, t1=1.0, one_shot=False, index=0):
 
 def _previews(settings, clips, pixels):
     """Previews of `clips`, each frame's pixels from `pixels(clip, d, k)`."""
-    view = views.View(settings.pitch, settings.directions, settings.start_angle)
+    view = views.View(settings.directions, settings.start_angle)
     requested = sampling.frames("hero", clips, view, settings.fps)
     frames = [
         ImageFrame(f.address, pixels(f.address.clip, f.address.direction, f.index))
@@ -330,7 +330,7 @@ def test_a_frame_too_long_for_a_float_is_a_usage_error():
 def test_a_missing_frame_is_rejected():
     settings = _settings(2, (1, 1))
     clips = (_clip("walk"),)
-    view = views.View(30.0, 2, 0.0)
+    view = views.View(2, 0.0)
     requested = sampling.frames("hero", clips, view, 2.0)[1:]
     frames = [ImageFrame(f.address, _solid((0, 0, 0, 255), (1, 1))) for f in requested]
     with pytest.raises(ValueError, match="missing"):
@@ -440,7 +440,7 @@ def _opaque_frames():
     position, a transparent border, and maps for lighting."""
     settings = _settings(2, (5, 4))
     clips = (_clip("walk"), _clip("jump", 0.0, 0.5, one_shot=True, index=1))
-    view = views.View(settings.pitch, settings.directions, settings.start_angle)
+    view = views.View(settings.directions, settings.start_angle)
     frames = []
     for requested in sampling.frames("hero", clips, view, settings.fps):
         address = requested.address

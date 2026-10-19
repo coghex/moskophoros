@@ -27,7 +27,7 @@ from importlib import resources
 from pathlib import Path
 from types import MappingProxyType
 
-from moskophoros import yamlfile
+from moskophoros import views, yamlfile
 from moskophoros.capture.backend import MAX_AO_SAMPLES
 from moskophoros.imageops import EDGES
 
@@ -207,6 +207,27 @@ def _check_light_position(value):
         else _shown(value)
     )
     raise _Bad(f"expected [x, y, z], three finite numbers, or null, got {shown}")
+
+
+def _check_direction(value):
+    """The camera's direction: `null`, the view's, or `[x, y, z]`, three
+    finite numbers each from −1 to +1, not all 0, normalised (projects and
+    camera design D-7)."""
+    if value is None:
+        return None
+    if isinstance(value, list) and len(value) == 3:
+        try:
+            vector = tuple(_finite(component, "") for component in value)
+        except _Bad:
+            vector = None
+        if vector is not None and all(-1 <= component <= 1 for component in vector):
+            if any(vector):
+                return views.normalise(vector)
+            raise _Bad("expected a direction, but [0, 0, 0] points nowhere")
+    raise _Bad(
+        "expected [x, y, z], three finite numbers each from -1 to 1, not all 0, "
+        f"or null, got {_shown_list(value)}"
+    )
 
 
 def _check_ambient(value):
@@ -408,8 +429,11 @@ VIEWS = ("topdown", "side", "iso", "iso-true")
 REDUCTIONS = ("plain", "mode")
 ROOT_MOTION_MODES = ("error", "keep")
 # The view's settings (projects and camera design D-16): a preset, and the
-# values a preset gives, which `null` takes from the preset in force.
-VIEW_SETTINGS = ("view", "pitch", "directions", "start_angle")
+# values a preset gives, which `null` takes from the preset in force. `pitch`
+# and `camera.direction` are two spellings of the direction (`DIRECTION`),
+# and one layer may give only one of them (D-12).
+VIEW_SETTINGS = ("view", "pitch", "camera.direction", "directions", "start_angle")
+DIRECTION = ("pitch", "camera.direction")
 # The app settings: never recorded in a sheet, never loaded from one, and
 # no part of its fingerprint (projects and camera design D-16).
 APP_SETTINGS = ("blender", "any_blender")
@@ -428,6 +452,27 @@ SCHEMA = MappingProxyType(
             "degrees",
             None,
             _nullable(_within(0, 90), "a finite number from 0 to 90"),
+        ),
+        "camera.direction": Setting(
+            "the way the camera looks, [x, y, z] in subject coordinates, each "
+            "-1 to 1, not all 0, normalised, or null: the view's",
+            None,
+            None,
+            _check_direction,
+        ),
+        "camera.roll": Setting(
+            "the camera's turn about the way it looks, -1 to 1, a fraction of a "
+            "half turn; positive turns the picture clockwise",
+            "half turns",
+            0,
+            _within(-1, 1),
+        ),
+        "camera.position": Setting(
+            "the camera's position from the ground point, [x, y, z], or null; "
+            "unused by the orthographic camera",
+            "meters",
+            None,
+            _check_light_position,
         ),
         "directions": Setting(
             "the direction count, 1 to 64, or null: the view's",
@@ -643,12 +688,14 @@ DEFAULTS = MappingProxyType(
 )
 
 
-def read_bytes(data, *, source, directory):
+def read_bytes(data, *, source, directory, shipped=False):
     """The layer the settings file `data` gives, read from `directory`.
 
     `source` names the file in errors. Paths resolve against `directory`,
     with a leading `~` expanded. Raises `SettingsError` naming the key path
-    and line of the first problem.
+    and line of the first problem. A file giving both spellings of the
+    direction, `pitch` and `camera.direction`, with any values, is refused,
+    except the `shipped` defaults, which set the view's initial state.
     """
     try:
         document, marks = yamlfile.load_located(data)
@@ -715,6 +762,13 @@ def read_bytes(data, *, source, directory):
                 refuse(path, error.problem)
         layer[key] = checked
         layer.where[key] = yamlfile.locate(marks, path)
+    if not shipped and all(name in layer for name in DIRECTION):
+        later = max(DIRECTION, key=lambda name: layer.where[name])
+        refuse(
+            tuple(later.split(".")),
+            "pitch and camera.direction both set the camera's direction; give "
+            "only one of them",
+        )
     if clips:
         layer["clips"] = clips
     return layer
@@ -770,7 +824,7 @@ def read_file(path, *, source, required):
 def read_defaults():
     """The shipped defaults layer, from the packaged `defaults.yaml`."""
     data = resources.files("moskophoros").joinpath(DEFAULTS_FILE).read_bytes()
-    return read_bytes(data, source="the shipped defaults", directory=".")
+    return read_bytes(data, source="the shipped defaults", directory=".", shipped=True)
 
 
 def config_dir(environ):

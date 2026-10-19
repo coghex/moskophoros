@@ -15,7 +15,7 @@ from test_command import Setup, earlier_outputs, run
 from test_materials_command import forbid_blender
 from test_reuse import write_sheet
 
-from moskophoros import cli, export, imageops
+from moskophoros import cli, export, imageops, views
 from moskophoros.capture.backend import Settings
 from moskophoros.gltf import Clip, SelectedClip
 from moskophoros.sampling import (
@@ -246,7 +246,7 @@ def test_no_nan_or_infinity_for_any_finite_light():
 
 SETTINGS = Settings(
     view="custom",
-    pitch=30.0,
+    direction=views.pitch_direction(30.0),
     directions=2,
     start_angle=0.0,
     model_yaw=0.0,
