@@ -20,7 +20,7 @@ concrete precondition
 ## Processing status
 
 - [x] EPIC. Projects and a free camera — [#127]
-- [ ] CAM-1. Add projects and a single global settings file
+- [x] CAM-1. Add projects and a single global settings file — [#128]
 - [ ] CAM-2. Make the view, scale and framing settings-file settings
 - [ ] CAM-3. Point the orthographic camera with a direction and roll
 - [ ] CAM-4. Add the perspective projection
