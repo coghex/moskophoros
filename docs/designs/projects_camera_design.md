@@ -199,23 +199,36 @@ any_blender: false
   - giving both a `pitch` and a `camera.direction` in the same layer, or on the command line, is a usage error (D-12).
 - **Across layers, the higher layer wins** whichever form it used: a project's `camera.direction` replaces a global `pitch`, and a project's `view` replaces a global `camera.direction`, direction count and start angle.
 - **Explicit values** of `pitch`, `directions`, `start_angle` or `camera.direction` over a preset make the recorded preset `custom`, as today.
-- **How they resolve** (review 1, C-6). The layers are read from the weakest up.
-  - A layer's `view` sets the preset and clears every lower `pitch`, `directions`, `start_angle` and `camera.direction`.
-  - A non-null `pitch` sets the direction and clears a lower `camera.direction`; a non-null `camera.direction` clears a lower `pitch`.
-  - A non-null `pitch` and a non-null `camera.direction` in the same layer are the conflict. `null` never conflicts.
-  - After the last layer, each value still `null` takes the preset's. The recorded preset is the preset's name only when no non-null override remains, else `custom`.
+- **How they resolve** (review 1, C-6; review 2, C-9). The view is one state:
+  - a preset marker `P`: one of the four presets, or `custom`;
+  - three values: the direction `V`, the direction count `N` and the start angle `S`;
+  - and, for each value, whether it is the preset's or an override.
+
+  `pitch` and `camera.direction` are two spellings of one logical key, the direction. The layers apply from the weakest up:
+  - **The shipped defaults** set `P = iso`, with every value the preset's.
+  - **A loaded sheet is a snapshot,** not shorthand input. It sets `P` to its recorded marker, which may be `custom`, and `V`, `N` and `S` to its recorded values, each counted as the preset's. So a reloaded `iso` sheet stays `iso`, and a `custom` one stays `custom`.
+  - **A layer's concrete `view`** sets `P` to that preset and every value to the preset's. It applies before the rest of the same layer.
+  - **A layer's non-null `pitch` or `camera.direction`** sets `V`, and a non-null `directions` or `start_angle` sets its value. Each is then an override.
+    - Giving both `pitch` and `camera.direction` in one layer, with any values, `null` included, is a usage error (D-12). So the alias never depends on key order.
+  - **A layer's `null`** for the direction, `directions` or `start_angle` resets that value to `P`'s and counts it as the preset's.
+    - When `P` is `custom`, there is no preset to reset to. A `null` is then a usage error naming the key, unless the same layer gives a concrete `view`.
+  - **After the last layer,** the recorded marker is `P` when every value is the preset's, else `custom`.
+  - **Worked cases:**
+    - a lower `pitch: 45` and a higher `camera.direction: null` give the preset's direction;
+    - a `custom` sheet with a higher `directions: null` is an error, while `view: iso` with `directions: null` in the same layer is `iso`;
+    - an `iso` sheet reloaded with nothing above it records `iso`, and its JSON and fingerprint are unchanged.
 
 ### The camera (D-3, D-7, D-8, D-10)
 
 **Basis.** Let `f` be the normalised `camera.direction`, in subject (glTF) coordinates.
-- **Screen right:** `r = normalise(f × Y)`. When `f`'s horizontal part is exactly zero, so it looks straight down or up, `r = +X`.
-- **Screen up:** `u = r × f`.
-- **Roll** turns `r` and `u` about `f` by `ρ = roll · π` radians. **(D-16)** A positive roll turns the camera counter-clockwise as it looks, so the picture turns clockwise:
-  - `r' = r·cos ρ + u·sin ρ`;
-  - `u' = u·cos ρ − r·sin ρ`.
+- **Unrolled axes:** `r₀ = normalise(f × Y)` and `u₀ = r₀ × f`. When `f`'s horizontal part is exactly zero, so it looks straight down or up, `r₀ = +X`.
+- **Roll** turns them about `f` by `ρ = roll · π` radians, giving the screen axes `r` (right) and `u` (up). **(D-16)** A positive roll turns the camera counter-clockwise as it looks, so the picture turns clockwise:
+  - `r = r₀·cos ρ + u₀·sin ρ`;
+  - `u = u₀·cos ρ − r₀·sin ρ`.
 
-  For example, at `roll = 0.5`, `r' = u` and `u' = −r`: a point that was at the top of the picture is now at its right.
-- **Today's camera follows:** for `pitch` p, `f = (0, −sin p, −cos p)` gives `r = +X` and `u = (0, cos p, −sin p)`.
+  For example, at `roll = 0.5`, `r = u₀` and `u = −r₀`: a point that was at the top of the picture is now at its right.
+- **Where each is used** (review 2, C-10): `r` and `u`, the rolled axes, are used everywhere the picture is made: the render transform, the orthographic framing, the perspective camera space, fitting and lens shift. Only the reference heading for `θ` uses `f` alone, and the unrolled axes appear nowhere else.
+- **Today's camera follows:** for `pitch` p and roll 0, `f = (0, −sin p, −cos p)` gives `r = +X` and `u = (0, cos p, −sin p)`.
 
 **Directions** (D-8, D-10). Each direction turns the subject by `θᵢ + model_yaw` about the vertical axis through the ground point.
 - `θ` is measured from the camera's unrolled reference heading: at `θ = 0` the subject's +Z faces the camera's horizontal heading, `−(f_x, 0, f_z)`, or +Z when the camera looks straight down or up.
@@ -253,8 +266,13 @@ any_blender: false
   - Rendered surfaces are triangles between measured vertices, so their depths lie within the measured range.
   - Both values reach the render job from the caller, which computes them from the measure results over all frames.
   - The script reads back the stored planes and refuses (exit 5) any that would not enclose the measured range.
-- **The capture protocol** (C-5). Under perspective, each measure result frame gains `depth_m`, the nearest and farthest `z_c` of its vertices.
-  - **A frame with a vertex too near to project** carries `bounds: null` beside its `depth_m`. The launcher accepts `null` bounds only under perspective with `depth_m[0] ≤ 1e-4`, and the caller turns it into the overflow above.
+- **The capture protocol** (C-5; review 2, C-12). Under perspective, each measure result frame gains `depth_m`, the nearest and farthest `z_c` of its vertices. The existing keys keep their names.
+  - **A frame with a vertex too near to project** carries `bounds_m: null` beside its `depth_m`, and keeps its `address` and `height_m`. The launcher accepts a `null` `bounds_m` only under perspective with `depth_m[0] ≤ 1e-4`, and the caller turns it into the overflow above. For example:
+
+    ```json
+    {"address": {…}, "bounds_m": [0.41, 0.38, 1.12, 0.05], "height_m": 0.0, "depth_m": [2.71, 3.96]}
+    {"address": {…}, "bounds_m": null, "height_m": 0.0, "depth_m": [-0.20, 3.10]}
+    ```
   - **Any other missing, non-finite or mismatched value** stays malformed output, exit 5.
   - **Schemas:** the job schema moves to `moskophoros.capture-job/3` and the result schema to `moskophoros.capture-result/4` in CAM-4. CAM-3 moves the job to `/2` for the orthographic camera record.
 - **The maps** (D-13).
@@ -462,13 +480,13 @@ This resolves Q-12 (review 1, C-2) and narrows D-14. The manager put the choice 
 The manager noted that today's own files are unaffected: `config.yaml` is empty, and `synarchy.yaml` is self-contained. The owner answered "recommendation approved". The manager relayed it by cmux message `01601801-1300-45c4-b582-c75a9c1d1b77`, with `relay-camera-c2-c3.md` (SHA-256 `0b3ca5428b7258e772f72a0d3c8137aa434b660fc8985f353aab848e9f3e0515`).
 
 - **The promise:** a command whose resolved settings are the same before and after this arc gives byte-identical sheets, maps and previews. Only the JSON changes D-14 lists.
-- **The deliberate exceptions,** all from D-11:
+- **The deliberate exceptions,** 1 to 4 from D-11 and 5 from D-14. CAM-1 delivers and tests 1 to 4; CAM-3, which introduces `/14`, delivers and tests 5 (review 2, C-11).
   1. **`--config` given twice** is a usage error. Before: `--config A --config B`. Now: `--config A --project B`, with B in `projects/`, or one merged file.
   2. **`--config FILE` replaces the user file** instead of layering over it, so a setting only the user file gave no longer applies. Now: keep the user file as the global file and pass the other as `--project`, or merge them.
   3. **`--config` with `--no-user-config`** is a usage error. Now: `--config FILE` alone already uses no other global file.
   4. **`--config` with `--settings-from`:** the global file sits below the loaded sheet, so the sheet's values now win where the file's used to. Now: put those values in a project file or on the command line, which sit above the sheet.
   5. **`/13` sheets no longer load** (D-14).
-- **Tests:** the tests pinning the old behaviours are replaced on purpose in CAM-1, not kept.
+- **Tests:** the tests pinning the old behaviours are replaced on purpose, in CAM-1 for 1 to 4 and in CAM-3 for 5, not kept.
 
 ### D-18. Direction names stay tied to the model's turn
 
@@ -567,7 +585,7 @@ Which app settings exist is still open, in Q-10.
   - `pitch` and the presets giving today's basis exactly;
   - each direction's facing measured from the camera;
   - the shorthand and `null`/`auto` rules within and across layers;
-  - the perspective projection relative to the ground point (the ground projects to zero), off-axis fitting and overflow, calibration and lens shift for square, portrait, landscape, supersampled and widened-sensor cases (spike 2), and the near-plane boundary;
+  - the perspective projection relative to the ground point (the ground projects to zero), with the rolled axes (`roll = 0.5` moves a point above the ground to its right), off-axis fitting and overflow, calibration and lens shift for square, portrait, landscape, supersampled and widened-sensor cases (spike 2), and the near-plane boundary;
   - project names, the project directory under XDG, the layer order, and one schema in both kinds of file.
 - **Byte identity** (D-14, as narrowed by D-17).
   - Evidence comes from comparing outputs at the slice's base revision with its head, on generated fixtures, run locally and reported in the pull request. Pinned digests in tests are not used.
@@ -604,7 +622,7 @@ Which app settings exist is still open, in Q-10.
   - project lookup works with XDG set and unset, with an alternate `--config` and with `--no-user-config`;
   - paths in a project file resolve relative to it, and the reuse palette and library rules hold for a project's values;
   - a second `--config`, `--config` with `--no-user-config`, a missing project file, or a bad or path-like name each fail with exit 2, naming the problem;
-  - **tests replaced on purpose:** the tests pinning today's repeatable, layered `--config` (`tests/test_settings_command.py`) are replaced with tests of the new precedence and refusals, and of D-17's five exceptions with their new equivalents;
+  - **tests replaced on purpose:** the tests pinning today's repeatable, layered `--config` (`tests/test_settings_command.py`) are replaced with tests of the new precedence and refusals, and of D-17's exceptions 1 to 4 with their new equivalents. Generating and reusing `/13` sheets keeps working in CAM-1;
   - outputs keep their bytes wherever the resolved settings are the same (D-17).
 - **Out of scope:** new settings; the camera.
 - **Open questions:** `None`.
@@ -628,6 +646,11 @@ Which app settings exist is still open, in Q-10.
   - each preset resolves as today;
   - a layer's `view` replaces the pitch, direction count and start angle below it;
   - `null` and `auto` clear inherited values from files and flags, and `--ppm auto` or `--ground-px auto` drop a reused value;
+  - **the view state's worked cases** (C-9):
+    - a named-preset sheet reloads with its marker, JSON and fingerprint unchanged;
+    - a `custom` sheet with a `null` reset is refused, and with a concrete `view` in the same layer it is accepted;
+    - a lower `pitch` with a higher `null` direction gives the preset's direction;
+    - `pitch` and `camera.direction` in one layer are refused whatever their values (with `camera.direction` arriving in CAM-3, CAM-2 tests the rule for `pitch` against `view` and `null`);
   - app settings survive layering but never enter the sheet's settings or its fingerprint;
   - the byte comparison holds for commands that set none of these.
 - **Out of scope:** the camera's direction, roll, position and projection.
@@ -654,7 +677,8 @@ Which app settings exist is still open, in Q-10.
   - a direction and roll give the predicted basis;
   - looking straight down gives today's `topdown`;
   - generate-then-reload gives equal settings for a non-trivial normalised direction, a roll and an ignored orthographic position;
-  - a `/13` sheet is refused, naming both schemas.
+  - D-17's exception 5: a `/13` sheet is refused, naming both schemas, and the test that loaded `/13` is replaced on purpose;
+  - generating and reloading a `/14` sheet gives equal complete output, its JSON and fingerprint included, for a named preset, a `custom` view, and `pitch` and `camera.direction` against `null` in one layer.
 - **Out of scope:** perspective.
 - **Open questions:** `None`.
 
@@ -665,7 +689,7 @@ Which app settings exist is still open, in Q-10.
   - the perspective camera, its calibration, lens shift and clipping, as under *Design*;
   - fitting and overflow from ground-relative projected extents;
   - a missing position (exit 2), a ground point behind the camera (exit 2) and a vertex too near the camera (exit 4) as errors;
-  - the measure result's `depth_m` and `null` bounds, `capture-job/3` and `capture-result/4`, and the launcher's validators;
+  - the measure result's `depth_m` and `null` `bounds_m`, `capture-job/3` and `capture-result/4`, and the launcher's validators;
   - the maps under perspective.
   - **Contracts:** design §Scale and ground point, §Capture, §Export (depth and lit previews, qualifying position reconstruction) and §Exit codes, updated.
 - **Phase:** 3.
@@ -673,7 +697,7 @@ Which app settings exist is still open, in Q-10.
 - **Ordering:** `critical path`.
 - **Relevant decisions:** D-3, D-10, D-12, D-13, D-16.
 - **Acceptance signals:**
-  - a generated cube's framing covers exactly the predicted pixels, square, rectangular, supersampled and wide-field;
+  - a generated cube's framing covers exactly the predicted pixels, square, rectangular, supersampled and wide-field, and with a nonzero roll and an off-axis ground point in a rectangular cell, so measure and render use the same rolled axes (C-10);
   - all three fitting cases, an off-axis ground point and animated extents fit with the 1-pixel margin;
   - depth sign, scale and range follow `(d − z_c)·ppm`, and the 2D lit preview's formula holds;
   - perspective settings reload with `--settings-from`;
@@ -726,3 +750,16 @@ Which app settings exist is still open, in Q-10.
 - **C-6, should fix: fixed.** Literal shipped defaults, the meaning of an absent key, `null` and `auto`, `--ppm auto` and `--ground-px auto`, `blender: null`, and the order in which the shorthands resolve.
 - **C-7, should fix: fixed.** CAM-5 rebases relative paths when it moves the project file, compares resolved settings and asset bytes before rendering, and never overwrites an existing project file.
 - **C-8, should fix: fixed.** Each slice names the contracts it updates and the tests it replaces on purpose. Byte identity is shown by comparing the base revision with the head on generated fixtures. The project directory under XDG is independent of `--config`.
+
+### Review 2 (Codex, 2026-10-19)
+
+`~/.local/share/moskophoros-acceptance/projects-camera-design/review-codex-2.md`, SHA-256 `fa7b22a468c6597ec2e92c7a676c96823d1264415dd3717252a08ff686de45ae`, reviewed `7d149825ca`. It found C-1 to C-4 and C-7 fixed, and C-5, C-6 and C-8 partly fixed; their remaining parts are C-9 to C-12. No owner decision was needed.
+
+- **C-9, should fix: fixed.**
+  - The view is one state: a preset marker and three values, each the preset's or an override. A loaded sheet is a snapshot that keeps its marker, `custom` included.
+  - `pitch` and `camera.direction` are one logical key, and giving both in one layer, with any values, is an error.
+  - A `null` resets a value to the preset's, and over a `custom` view it needs a concrete `view` in the same layer.
+  - The worked cases and full generate-and-reload equality are in CAM-2 and CAM-3.
+- **C-10, should fix: fixed.** `r₀` and `u₀` are the unrolled axes. The rolled `r` and `u` are used for everything that makes the picture: render, framing, perspective camera space, fitting and lens shift. CAM-4 tests a rolled, off-axis perspective camera in a rectangular cell.
+- **C-11, should fix: fixed.** CAM-1 delivers and tests D-17's exceptions 1 to 4 and keeps `/13` working. CAM-3 delivers exception 5 with `/14`.
+- **C-12, minor: fixed.** The measure frame keeps `bounds_m`, which is `null` for a too-near frame, with its `address` and `height_m`, as the example frames show.
