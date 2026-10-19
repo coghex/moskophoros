@@ -124,7 +124,7 @@ worker's proposals, which the owner signed off with the whole design.
 - **The global file:** `$XDG_CONFIG_HOME/moskophoros/config.yaml`, else `~/.config/moskophoros/config.yaml`, as today, or the one file given with `--config FILE`.
   - It is the default project. A missing default global file is not an error; a missing `--config` file is.
   - `--no-user-config` uses none, and cannot be given with `--config`.
-- **A project file:** `projects/NAME.yaml` in the same configuration directory, chosen with `--project NAME`.
+- **A project file:** `projects/NAME.yaml` in the configuration directory, chosen with `--project NAME`. That directory is `$XDG_CONFIG_HOME/moskophoros/` when the variable is set and not empty, else `~/.config/moskophoros/`, the same rule as the default global file. `--config FILE` and `--no-user-config` never move it.
   - A missing one is a usage error naming its path. The tool never creates the folder or any file.
   - **(D-16)** `NAME` is a plain file name: letters, digits, `.`, `_` and `-`, not starting with `.`, and without `.yaml`. Anything else is a usage error, so `--project ../x` cannot reach outside the folder.
 - **One schema.** Both kinds of file take every setting (the settings table below, today's table included). They are read by today's strict reader with today's errors, and paths inside them resolve relative to the file.
@@ -145,22 +145,52 @@ Each is validated exactly as its option is. The schema table in `settings.py` an
 | Setting | Option | Shipped default | Value |
 |---|---|---|---|
 | `view` | `--view NAME` | `iso` | a preset name; a shorthand (below) |
-| `pitch` | `--pitch DEG` | from `view` | 0 to 90; a shorthand for `camera.direction` |
-| `directions` | `--directions N` | from `view` | 1 to 64 |
-| `start_angle` | `--start-angle DEG` | from `view` | degrees |
+| `pitch` | `--pitch DEG` | `null` | 0 to 90, or `null`; a shorthand for `camera.direction` |
+| `directions` | `--directions N` | `null` | 1 to 64, or `null` |
+| `start_angle` | `--start-angle DEG` | `null` | degrees, or `null` |
 | `model_yaw` | `--model-yaw DEG` | `0` | degrees |
 | `camera.projection` | `--projection NAME` **(D-16)** | `orthographic` | `orthographic` or `perspective` |
-| `camera.direction` | `--camera-direction X,Y,Z` **(D-16)** | from `view` | three numbers, each −1 to +1, not all 0 |
+| `camera.direction` | `--camera-direction X,Y,Z` **(D-16)** | `null` | three numbers, each −1 to +1, not all 0, or `null` |
 | `camera.roll` | `--camera-roll R` **(D-16)** | `0` | −1 to +1, a fraction of a half turn |
 | `camera.position` | `--camera-position X,Y,Z` **(D-16)** | `null` | meters from the ground point, or `null` |
-| `ppm` | `--ppm N` | `auto` | greater than 0, or `auto` |
+| `ppm` | `--ppm N` | `auto` | greater than 0, or `auto` (the option accepts `auto` too) |
 | `ground` | `--ground X,Y,Z` | `[0, 0, 0]` | meters, subject coordinates |
-| `ground_px` | `--ground-px X,Y` | `auto` | a cell pixel corner, or `auto` |
+| `ground_px` | `--ground-px X,Y` | `auto` | a cell pixel corner, or `auto` (the option accepts `auto` too) |
 | `supersample` | `--supersample N` | `8` | 1 to 16 |
 | `reduce` | `--reduce NAME` | `plain` | `plain` or `mode` |
 | `root_motion` | `--root-motion MODE` | `error` | `error` or `keep` |
-| `blender` | `--blender PATH` | discovered | an executable path; app setting |
+| `blender` | `--blender PATH` | `null` | an executable path, or `null` to discover it as today; app setting |
 | `any_blender` | `--any-blender` | `false` | `true` or `false`; app setting |
+
+**Absent, `null` and `auto`** (review 1, C-6). In a file, a key that is left out is not set by that layer.
+
+- **`null`** for `pitch`, `directions`, `start_angle` or `camera.direction` is an explicit value meaning "take it from the `view` in force". It clears a lower layer's override of that value.
+- **`auto`** for `ppm` or `ground_px` means automatic fitting. It clears a reused or lower value, as `cell: auto` does today, and `--ppm auto` and `--ground-px auto` become option syntax (CAM-2).
+- **`blender: null`** discovers Blender as today.
+- **The shipped `defaults.yaml`,** literally, for these keys:
+
+```yaml
+view: iso
+pitch: null
+directions: null
+start_angle: null
+model_yaw: 0
+camera:
+  projection: orthographic
+  direction: null
+  roll: 0
+  position: null
+ppm: auto
+ground: [0, 0, 0]
+ground_px: auto
+supersample: 8
+reduce: plain
+root_motion: error
+blender: null
+any_blender: false
+```
+
+`--any-blender` sets `true`, and only a file can set `false`. Every value is type-strict and finite, and every error names the file, the key and the line, as today.
 
 **Shorthands (D-16, following settings design §Merge rules item 9).**
 - **Within one layer:**
@@ -169,6 +199,11 @@ Each is validated exactly as its option is. The schema table in `settings.py` an
   - giving both a `pitch` and a `camera.direction` in the same layer, or on the command line, is a usage error (D-12).
 - **Across layers, the higher layer wins** whichever form it used: a project's `camera.direction` replaces a global `pitch`, and a project's `view` replaces a global `camera.direction`, direction count and start angle.
 - **Explicit values** of `pitch`, `directions`, `start_angle` or `camera.direction` over a preset make the recorded preset `custom`, as today.
+- **How they resolve** (review 1, C-6). The layers are read from the weakest up.
+  - A layer's `view` sets the preset and clears every lower `pitch`, `directions`, `start_angle` and `camera.direction`.
+  - A non-null `pitch` sets the direction and clears a lower `camera.direction`; a non-null `camera.direction` clears a lower `pitch`.
+  - A non-null `pitch` and a non-null `camera.direction` in the same layer are the conflict. `null` never conflicts.
+  - After the last layer, each value still `null` takes the preset's. The recorded preset is the preset's name only when no non-null override remains, else `custom`.
 
 ### The camera (D-3, D-7, D-8, D-10)
 
@@ -187,16 +222,39 @@ Each is validated exactly as its option is. The schema table in `settings.py` an
 - The image comes from `f`, the roll, the scale, the cell, the ground point and the ground pixel, as today.
 - `camera.position` is ignored. **(D-16)** It is recorded as given, with no warning.
 
-**Perspective** (spike 1).
+**Perspective** (spikes 1 and 2).
 - **Placement:** the camera stands at the ground point plus `camera.position` and looks along `f`.
-- **The ground point must be in front of it:** its depth `d = −position · f` must be greater than 0. **(D-16)** Otherwise it is a usage error.
-- **The focal length** is `ppm · d` sheet pixels, so `ppm` holds at the ground point's depth (D-12). Lens shift puts the ground point on the ground pixel.
-- **Fitting:**
-  - the measure phase records each vertex's screen offset as `d · x_c / z_c` and `d · y_c / z_c` meters, where `x_c`, `y_c`, `z_c` are the vertex in camera space, `z_c` its depth;
-  - those offsets are independent of `ppm`, so today's three fitting cases and overflow work unchanged;
-  - **(D-16)** a vertex at or behind the camera, `z_c ≤ 0`, is an overflow (exit 4) naming the clip, direction and sample time.
-- **Clipping:** the near plane is set from the measured nearest depth, and the far plane beyond the farthest.
-- **The maps** (D-13): the normal map stays in the camera's space. The depth map keeps today's encoding at the ground point's scale. The lit preview lights the sprite the 2D way.
+- **Camera space:** a point `p`, after the subject's turn for its direction about the ground point, has `x_c = (p − c)·r`, `y_c = (p − c)·u` and depth `z_c = (p − c)·f`, where `c` is the camera's position.
+  - The ground point's own are `(x_g, y_g, d)`, with `d = −position · f`.
+  - **(D-16)** `d` must be greater than 0, or it is a usage error, checked before Blender runs.
+- **Projection, relative to the ground point** (review 1, C-1). A point lands at sheet position `(gx + ppm·X, gy − ppm·Y)`, where:
+  - `X = d·x_c/z_c − x_g`;
+  - `Y = d·y_c/z_c − y_g`.
+
+  So the ground point projects to `(0, 0)`, and `ppm` holds for a surface at the ground point's depth (D-12).
+- **Fitting** uses today's quantities: `L = max(0, −min X)`, `R = max(0, max X)`, `U = max(0, max Y)` and `D = max(0, −min Y)`, over every evaluated vertex of every sample, clip and direction. They are independent of `ppm`, so today's three fitting cases and overflow check apply unchanged.
+- **Calibration** (review 1, C-4; spike 2). Blender renders the supersampled frame, `W × H` image pixels, with `s` the supersample factor.
+  - **Focal length:** `ppm·d·s` image pixels. The sensor fit is horizontal, so `lens / sensor_width = ppm·d·s / W`. When that ratio times 36 is at least 1, the sensor is 36 mm and the lens is `36·ratio` mm. Otherwise the lens is 1 mm and the sensor is `1/ratio` mm. Both stay at or above Blender's 1 mm minimum, so no value is clamped.
+  - **Lens shift:** `shift = (offset of the ground point's unshifted projection from its target pixel corner) / W`, horizontally and vertically, in units of the image **width** (the sensor-fit side), for portrait as well as landscape images.
+  - **Spike 2 confirmed this:** with the projection above, portrait, landscape and supersampled rectangles and the widened-sensor case all rendered exactly the predicted pixels.
+  - **The script reads back** the stored lens, sensor and shift, and refuses (a script error, exit 5) a stored ratio or shift more than 1e-6 relative away from the one asked for.
+- **Too near to project** (review 1, C-4 and C-5).
+  - A vertex with `z_c ≤ 1e-4` m, at, behind or too near the camera to clip, is an overflow (exit 4). It names the source file, the clip, the direction, the sample time and the nearest depth, and nothing is rendered or published.
+  - **(D-16)** item 6's `z_c ≤ 0` is the main case; the margin keeps the near plane representable.
+- **Clipping** (C-4, C-5).
+  - **Near plane:** half the nearest measured vertex depth.
+  - **Far plane:** twice the farthest, plus 1 m.
+  - Rendered surfaces are triangles between measured vertices, so their depths lie within the measured range.
+  - Both values reach the render job from the caller, which computes them from the measure results over all frames.
+  - The script reads back the stored planes and refuses (exit 5) any that would not enclose the measured range.
+- **The capture protocol** (C-5). Under perspective, each measure result frame gains `depth_m`, the nearest and farthest `z_c` of its vertices.
+  - **A frame with a vertex too near to project** carries `bounds: null` beside its `depth_m`. The launcher accepts `null` bounds only under perspective with `depth_m[0] ≤ 1e-4`, and the caller turns it into the overflow above.
+  - **Any other missing, non-finite or mismatched value** stays malformed output, exit 5.
+  - **Schemas:** the job schema moves to `moskophoros.capture-job/3` and the result schema to `moskophoros.capture-result/4` in CAM-4. CAM-3 moves the job to `/2` for the orthographic camera record.
+- **The maps** (D-13).
+  - The normal map stays in the camera's space.
+  - The depth map's value is `(d − z_c)·ppm` sheet pixels, toward the viewer, at the ground point's scale, with today's encoding and range.
+  - The lit preview lights each pixel from its pixel-centre screen position and its encoded depth, the 2D way, and does not reconstruct the 3D position. Design §Export's account of reconstructing a position is qualified accordingly.
 
 ### Sheets (D-14)
 
@@ -400,7 +458,7 @@ These were the worker's. Each was accepted, as noted.
   - Scale stays pixels per meter, measured at the ground point's depth under perspective. Fitting and overflow then work unchanged on projected extents.
   - **Spike 1** (2026-10-19, Blender 5.2.2, headless; `~/.local/share/moskophoros-acceptance/projects-camera-design/spike-1/`, not committed) checked this:
     - **Set-up:** a perspective camera placed off-axis, 3.26 m from the ground point, with the focal length set from the scale (`f = ppm · depth` in pixels) and lens shift set to put the ground point on pixel corner (64, 110) of a 128×128 image, at 40 px/m.
-    - **Result:** the rendered 1 m cube covered exactly the pixels predicted from its eight projected corners (columns 31–85, rows 68–120). The ground point landed on its corner, and a 1 m edge through the ground point spanned 40.0 px.
+    - **Result:** the rendered 1 m cube covered exactly the pixels predicted from its eight projected corners (columns [31, 85) and rows [68, 120), half-open). The ground point landed on its corner, and a 1 m edge through the ground point spanned 40.0 px.
     - So a perspective camera can keep today's framing contract, with fitting computed from projected extents.
 - **P-2. Directions keep turning the subject about the ground point; the camera stays where it is set.** The owner accepted this as D-8.
   - Labels, `--directions`, `--start-angle` and V-7's camera-fixed light are unchanged.
@@ -460,21 +518,38 @@ Which app settings exist is still open, in Q-10.
 
 **Resolved by D-13.**
 
+### Q-12. Compatibility once `--config` names the global file (review 1, C-2)
+
+D-11's new `--config` changes the resolved settings of some of today's commands:
+- a second `--config` is now refused;
+- a `--config` file no longer layers over the user file;
+- a loaded sheet now sits above the global file.
+
+D-14 promises today's commands their exact pixels. The manager is asking the owner how to reconcile the two.
+
+### Q-13. Direction labels under roll and upward views (review 1, C-3)
+
+With a roll, or a camera looking up, `east` can face screen left, and `south` can face up the screen. That breaks the screen-relative meaning D-8 and D-10 keep. The manager is asking the owner.
+
 ## Verification strategy
 
 - **Pure tests,** without Blender:
-  - the camera basis from a direction and roll, including straight down and up, and roll −1 against +1;
+  - the camera basis from a direction and roll, including straight down and up, and roll −1 against +1, with a worked roll example;
   - `pitch` and the presets giving today's basis exactly;
-  - each direction's facing measured from the camera's heading;
-  - the shorthand rules within and across layers;
-  - the perspective projection, focal length, lens shift and fitting from projected extents, against hand-computed cases like spike 1;
-  - project names, the layer order, and one schema in both kinds of file.
-- **Byte identity:** today's commands, without camera settings, keep their sheet, map and preview bytes. Only the sheet JSON's schema and new camera record change. Existing tests that compare outputs pass unchanged apart from those fields.
+  - each direction's facing measured from the camera;
+  - the shorthand and `null`/`auto` rules within and across layers;
+  - the perspective projection relative to the ground point (the ground projects to zero), off-axis fitting and overflow, calibration and lens shift for square, portrait, landscape, supersampled and widened-sensor cases (spike 2), and the near-plane boundary;
+  - project names, the project directory under XDG, the layer order, and one schema in both kinds of file.
+- **Byte identity** (D-14, as narrowed by Q-12).
+  - Evidence comes from comparing outputs at the slice's base revision with its head, on generated fixtures, run locally and reported in the pull request. Pinned digests in tests are not used.
+  - **Fixtures:** every preset, a custom pitch, a nonzero ground and model yaw, a rectangular cell, both reductions, and alpha and material-library cases.
+  - **Changes that are allowed:** only those listed exactly per slice, such as the sheet JSON's schema, its `camera` record and the fingerprint. A pixel change is never accepted just because the new renderer produced it.
 - **Blender tests** (`@pytest.mark.blender`, generated fixtures):
   - an orthographic camera with a general direction and a roll;
-  - a perspective camera whose framing covers the predicted pixels exactly, as in spike 1;
-  - a vertex behind the camera failing with exit 4.
-- **The owner's visual review** (CAM-5): the owner's own project files and renders, judged by eye (V-12).
+  - a perspective camera whose framing covers the predicted pixels exactly, as in spikes 1 and 2;
+  - a vertex too near the camera failing with exit 4, keeping earlier outputs.
+- **The owner's visual review** (CAM-5): the owner's own project files and renders, judged by eye (V-12). It gates the epic, though it is off the implementation's critical path.
+- **Documentation.** `docs/design.md` is read by tests, so each slice updates the sections it changes in its own pull request. Designs and acceptance records are landed with `docs-push` and linked from the pull request.
 
 ## Delivery plan
 
@@ -483,23 +558,27 @@ Which app settings exist is still open, in Q-10.
 - **Outcome:** `--project NAME` layers `projects/NAME.yaml` over the global file, and `--config FILE` names the one global file.
 - **Scope:**
   - `--project NAME` and its name rule;
+  - the project directory under `$XDG_CONFIG_HOME`, never moved by `--config` or `--no-user-config`;
   - `--config FILE` given at most once, replacing `config.yaml`;
   - `--no-user-config` refused with `--config`;
   - the layer order with a loaded sheet;
   - one schema for both kinds of file;
-  - a missing project file as a usage error;
-  - design §Settings files and §CLI updated in the same pull request.
+  - a missing project file as a usage error.
+  - **Contracts:** design §CLI and §Settings files, and the settings design's layers, updated.
 - **Phase:** 1.
 - **Depends on:** `none`.
 - **Ordering:** `critical path`.
-- **Relevant decisions:** D-1, D-9, D-11.
+- **Relevant decisions:** D-1, D-9, D-11, D-16.
 - **Acceptance signals:**
   - a project value overrides the global file's, and a flag overrides the project's;
   - a loaded sheet sits between the global file and the project;
-  - a second `--config`, `--config` with `--no-user-config`, a missing project file or a bad name each fail with exit 2, naming the problem;
-  - today's commands keep their outputs' bytes.
+  - project lookup works with XDG set and unset, with an alternate `--config` and with `--no-user-config`;
+  - paths in a project file resolve relative to it, and the reuse palette and library rules hold for a project's values;
+  - a second `--config`, `--config` with `--no-user-config`, a missing project file, or a bad or path-like name each fail with exit 2, naming the problem;
+  - **tests replaced on purpose:** the tests pinning today's repeatable, layered `--config` (`tests/test_settings_command.py`) are replaced with tests of the new precedence and refusals, as Q-12 settles;
+  - outputs keep their bytes wherever the resolved settings are the same (Q-12).
 - **Out of scope:** new settings; the camera.
-- **Open questions:** `None`.
+- **Open questions:** Q-12.
 
 ### CAM-2. Make the view, scale and framing settings-file settings
 
@@ -507,16 +586,21 @@ Which app settings exist is still open, in Q-10.
 - **Scope:**
   - `view`, `pitch`, `directions`, `start_angle`, `model_yaw`, `ppm`, `ground`, `ground_px`, `supersample`, `reduce` and `root_motion`;
   - the app settings `blender` and `any_blender`;
-  - the shorthand rules for `view` and `pitch` across layers;
-  - the schema table, `defaults.yaml` and the design's settings table.
+  - the `null` and `auto` values, including `--ppm auto` and `--ground-px auto`;
+  - the shorthand rules for `view` and `pitch` across layers.
+  - **Contracts:** the schema table, `defaults.yaml`, design §CLI, §Settings files, *Option validation* and *Reuse*, and the settings design, updated.
 - **Phase:** 1.
 - **Depends on:** CAM-1.
 - **Ordering:** `critical path`.
-- **Relevant decisions:** D-4, D-5, D-12.
+- **Relevant decisions:** D-4, D-5, D-12, D-16.
 - **Acceptance signals:**
   - each new setting in a file gives the same output as its option;
+  - an empty file and the unchanged default command give today's outputs;
+  - each preset resolves as today;
   - a layer's `view` replaces the pitch, direction count and start angle below it;
-  - outputs of commands that set none of these are unchanged.
+  - `null` and `auto` clear inherited values from files and flags, and `--ppm auto` or `--ground-px auto` drop a reused value;
+  - app settings survive layering but never enter the sheet's settings or its fingerprint;
+  - the byte comparison holds for commands that set none of these.
 - **Out of scope:** the camera's direction, roll, position and projection.
 - **Open questions:** `None`.
 
@@ -525,37 +609,48 @@ Which app settings exist is still open, in Q-10.
 - **Outcome:** the camera looks along any direction, with a roll, and `pitch` and the presets are shorthands for that direction.
 - **Scope:**
   - `camera.direction`, `camera.roll` and `camera.position` (recorded, unused in orthographic), as settings and options;
-  - the basis and roll rule, and each direction's facing measured from the camera;
+  - the basis and roll rule, and each direction's facing and label rule (Q-13);
   - `pitch` with a direction refused within one layer;
-  - sheet schema `/14` with `settings.camera`, and `--settings-from` of `/14` only.
+  - sheet schema `/14` with `settings.camera`, an object with `projection` (a string), `direction` (an array of three numbers, normalised), `roll` (a number) and `position` (an array of three numbers, or `null`), placed after `settings.view`;
+  - `--settings-from` of `/14` only;
+  - the capture job's camera record, `capture-job/2`, and both its validators.
+  - **Contracts:** design §Camera and directions, §Presets, §Capture (job contract), §Export (sheet JSON) and §Reproducibility, updated.
 - **Phase:** 2.
 - **Depends on:** CAM-2.
 - **Ordering:** `critical path`.
-- **Relevant decisions:** D-3, D-7, D-8, D-10, D-12, D-14.
+- **Relevant decisions:** D-3, D-7, D-8, D-10, D-12, D-14, D-16.
 - **Acceptance signals:**
-  - every preset and `pitch` gives today's pixels exactly;
+  - **the byte comparison against the base revision:** every preset and `pitch` gives today's pixels exactly;
+  - **the expected JSON, job and fingerprint changes** are listed in the pull request and updated in `tests/test_export.py` and `tests/test_capture_backend.py`;
   - a direction and roll give the predicted basis;
   - looking straight down gives today's `topdown`;
+  - generate-then-reload gives equal settings for a non-trivial normalised direction, a roll and an ignored orthographic position;
   - a `/13` sheet is refused, naming both schemas.
 - **Out of scope:** perspective.
-- **Open questions:** `None`.
+- **Open questions:** Q-13.
 
 ### CAM-4. Add the perspective projection
 
 - **Outcome:** `camera.projection: perspective` renders from the camera's position, with pixels per meter at the ground point's depth.
 - **Scope:**
-  - the perspective camera, its focal length and lens shift, and its clipping;
-  - fitting and overflow from projected extents;
-  - a missing position, a ground point behind the camera, and a vertex behind the camera as errors;
+  - the perspective camera, its calibration, lens shift and clipping, as under *Design*;
+  - fitting and overflow from ground-relative projected extents;
+  - a missing position (exit 2), a ground point behind the camera (exit 2) and a vertex too near the camera (exit 4) as errors;
+  - the measure result's `depth_m` and `null` bounds, `capture-job/3` and `capture-result/4`, and the launcher's validators;
   - the maps under perspective.
+  - **Contracts:** design §Scale and ground point, §Capture, §Export (depth and lit previews, qualifying position reconstruction) and §Exit codes, updated.
 - **Phase:** 3.
 - **Depends on:** CAM-3.
 - **Ordering:** `critical path`.
-- **Relevant decisions:** D-3, D-10, D-12, D-13.
+- **Relevant decisions:** D-3, D-10, D-12, D-13, D-16.
 - **Acceptance signals:**
-  - a generated cube's framing covers exactly the predicted pixels;
-  - a fitted perspective sheet's subject fills its cell with the 1-pixel margin;
-  - each error has its exit code and message.
+  - a generated cube's framing covers exactly the predicted pixels, square, rectangular, supersampled and wide-field;
+  - all three fitting cases, an off-axis ground point and animated extents fit with the 1-pixel margin;
+  - depth sign, scale and range follow `(d − z_c)·ppm`, and the 2D lit preview's formula holds;
+  - perspective settings reload with `--settings-from`;
+  - a too-near vertex exits 4 and keeps earlier outputs, while malformed or mismatched results stay exit 5;
+  - each error has its exit code and message;
+  - the byte comparison holds for orthographic commands.
 - **Out of scope:** other projections; baked light (the shading design).
 - **Open questions:** `None`.
 
@@ -563,13 +658,42 @@ Which app settings exist is still open, in Q-10.
 
 - **Outcome:** the owner judges, by eye, renders made from their own project files with the new camera, and the verdict is recorded.
 - **Scope:**
-  - move `~/.config/moskophoros/synarchy.yaml` to `projects/synarchy.yaml`, keeping a copy, and record the move (D-15);
-  - the three review renders of D-15, with commands signed off by the owner before rendering;
-  - the record in `docs/acceptance/`.
+  - **Before any change,** keep a pre-migration baseline: today's Synarchy render, from `--config ~/.config/moskophoros/synarchy.yaml`, and its hashes.
+  - **Move** `~/.config/moskophoros/synarchy.yaml` to `projects/synarchy.yaml` (D-15), keeping the original as a copy:
+    - **rebase every relative path** so it names the same file, for example `palettes/synarchy.gpl` to `../palettes/synarchy.gpl`;
+    - **record** both paths and both files' hashes;
+    - **before rendering,** confirm that the resolved rendering settings and the referenced palette's and library's bytes are the same;
+    - **if `projects/synarchy.yaml` already exists,** stop and ask the owner; never overwrite it.
+  - The three review renders of D-15, with commands signed off by the owner before rendering.
+  - The record in `docs/acceptance/`.
 - **Phase:** 4.
 - **Depends on:** CAM-4.
-- **Ordering:** `not on the critical path`.
+- **Ordering:** `not on the critical path`; it gates the epic's completion.
 - **Relevant decisions:** D-1, D-6, D-15.
-- **Acceptance signals:** the owner's verdict, quoted and dated.
+- **Acceptance signals:**
+  - the project render is byte-identical to the pre-migration baseline;
+  - the owner's verdict, quoted and dated.
 - **Out of scope:** baked light, the Codekarl palette and its look.
 - **Open questions:** `None`.
+
+## Revision notes
+
+### Review 1 (Codex, 2026-10-19)
+
+`~/.local/share/moskophoros-acceptance/projects-camera-design/review-codex-1.md`, SHA-256 `0e2789e0b4152a0dcb10245dbde54e95eb7369e26fe5f71770538d558a3239d8`, reviewed `cb5b7b1e47`: 3 blocking, 5 should fix.
+
+- **C-1, blocking: fixed.** The perspective projection is relative to the ground point, `X = d·x_c/z_c − x_g` and `Y = d·y_c/z_c − y_g`, as spike 1's script already computed. The subject's turn and the camera basis come first. Spike 1's bounds are given half-open.
+- **C-2, blocking: with the owner.** The manager is asking the owner; the answer will be recorded as Q-12.
+- **C-3, blocking: with the owner.** As C-2; the answer will be recorded as Q-13.
+- **C-4, should fix: fixed.** The design now specifies:
+  - calibration from the horizontal sensor fit, with the lens and sensor chosen together so neither falls below Blender's 1 mm minimum;
+  - lens shift in units of the image width;
+  - the read-back checks;
+  - the near and far planes from measured depths;
+  - a vertex nearer than 1e-4 m as an overflow.
+
+  Spike 2 (`projects-camera-design/spike-2/`) confirmed calibration and shift on portrait, landscape, supersampled and widened-sensor images. Its first run, with shift in units of the larger side, failed for portrait images, which is why the width is specified.
+- **C-5, should fix: fixed.** The measure result gains `depth_m` and allows `null` bounds only for a too-near frame under perspective. The caller raises exit 4, malformed output stays exit 5, and the caller computes the clipping planes for the render job. The schema bumps are assigned to CAM-3 and CAM-4.
+- **C-6, should fix: fixed.** Literal shipped defaults, the meaning of an absent key, `null` and `auto`, `--ppm auto` and `--ground-px auto`, `blender: null`, and the order in which the shorthands resolve.
+- **C-7, should fix: fixed.** CAM-5 rebases relative paths when it moves the project file, compares resolved settings and asset bytes before rendering, and never overwrites an existing project file.
+- **C-8, should fix: fixed.** Each slice names the contracts it updates and the tests it replaces on purpose. Byte identity is shown by comparing the base revision with the head on generated fixtures. The project directory under XDG is independent of `--config`.
