@@ -11,7 +11,7 @@ perspective, as settings and as options.
 It is the first of two designs the owner asked to settle before more renders.
 The shading design (baked light) follows it (request moskophoros-20261019-5).
 
-Design state: `exploring`
+Design state: `ready for issue processing`
 
 Status legend: `[ ]` unprocessed · `[#N]` linked to issue N · `[no-issue]`
 reviewed and deliberately not tracked separately · `[deferred]` blocked on a
@@ -115,8 +115,8 @@ shipped defaults (V-1).
 
 ## Design
 
-This is assembled from D-1 to D-12. Details no decision covers are marked
-**(proposal)**, and are signed off with the design.
+This is assembled from D-1 to D-16. The details marked **(D-16)** were the
+worker's proposals, which the owner signed off with the whole design.
 
 ### Files and layers (D-1, D-9, D-11)
 
@@ -126,7 +126,7 @@ This is assembled from D-1 to D-12. Details no decision covers are marked
   - `--no-user-config` uses none, and cannot be given with `--config`.
 - **A project file:** `projects/NAME.yaml` in the same configuration directory, chosen with `--project NAME`.
   - A missing one is a usage error naming its path. The tool never creates the folder or any file.
-  - **(proposal)** `NAME` is a plain file name: letters, digits, `.`, `_` and `-`, not starting with `.`, and without `.yaml`. Anything else is a usage error, so `--project ../x` cannot reach outside the folder.
+  - **(D-16)** `NAME` is a plain file name: letters, digits, `.`, `_` and `-`, not starting with `.`, and without `.yaml`. Anything else is a usage error, so `--project ../x` cannot reach outside the folder.
 - **One schema.** Both kinds of file take every setting (the settings table below, today's table included). They are read by today's strict reader with today's errors, and paths inside them resolve relative to the file.
 
 **The layers, weakest first:** shipped defaults < the global file < a loaded sheet (`--settings-from`) < the project file < the flags.
@@ -136,7 +136,7 @@ This is assembled from D-1 to D-12. Details no decision covers are marked
 **What the sheet records.**
 - Every resolved rendering setting, never the project's name or the settings files' names (D-9).
 - Palette and library sources stay recorded by base file name, as today.
-- **(proposal)** App settings are not recorded and are never loaded from a sheet.
+- **(D-16)** App settings are not recorded and are never loaded from a sheet.
 
 ### New settings (D-12)
 
@@ -149,10 +149,10 @@ Each is validated exactly as its option is. The schema table in `settings.py` an
 | `directions` | `--directions N` | from `view` | 1 to 64 |
 | `start_angle` | `--start-angle DEG` | from `view` | degrees |
 | `model_yaw` | `--model-yaw DEG` | `0` | degrees |
-| `camera.projection` | `--projection NAME` **(proposal)** | `orthographic` | `orthographic` or `perspective` |
-| `camera.direction` | `--camera-direction X,Y,Z` **(proposal)** | from `view` | three numbers, each −1 to +1, not all 0 |
-| `camera.roll` | `--camera-roll R` **(proposal)** | `0` | −1 to +1, a fraction of a half turn |
-| `camera.position` | `--camera-position X,Y,Z` **(proposal)** | `null` | meters from the ground point, or `null` |
+| `camera.projection` | `--projection NAME` **(D-16)** | `orthographic` | `orthographic` or `perspective` |
+| `camera.direction` | `--camera-direction X,Y,Z` **(D-16)** | from `view` | three numbers, each −1 to +1, not all 0 |
+| `camera.roll` | `--camera-roll R` **(D-16)** | `0` | −1 to +1, a fraction of a half turn |
+| `camera.position` | `--camera-position X,Y,Z` **(D-16)** | `null` | meters from the ground point, or `null` |
 | `ppm` | `--ppm N` | `auto` | greater than 0, or `auto` |
 | `ground` | `--ground X,Y,Z` | `[0, 0, 0]` | meters, subject coordinates |
 | `ground_px` | `--ground-px X,Y` | `auto` | a cell pixel corner, or `auto` |
@@ -162,7 +162,7 @@ Each is validated exactly as its option is. The schema table in `settings.py` an
 | `blender` | `--blender PATH` | discovered | an executable path; app setting |
 | `any_blender` | `--any-blender` | `false` | `true` or `false`; app setting |
 
-**Shorthands (proposal, following settings design §Merge rules item 9).**
+**Shorthands (D-16, following settings design §Merge rules item 9).**
 - **Within one layer:**
   - a `view` sets the direction, the direction count and the start angle, as `--view` does today;
   - a `pitch` sets the direction to `(0, −sin p, −cos p)`;
@@ -175,7 +175,7 @@ Each is validated exactly as its option is. The schema table in `settings.py` an
 **Basis.** Let `f` be the normalised `camera.direction`, in subject (glTF) coordinates.
 - **Screen right:** `r = normalise(f × Y)`. When `f`'s horizontal part is exactly zero, so it looks straight down or up, `r = +X`.
 - **Screen up:** `u = r × f`.
-- **Roll** turns `r` and `u` about `f` by `roll · π` radians. **(proposal)** A positive roll turns the camera counter-clockwise as it looks, so the picture turns clockwise.
+- **Roll** turns `r` and `u` about `f` by `roll · π` radians. **(D-16)** A positive roll turns the camera counter-clockwise as it looks, so the picture turns clockwise.
 - **Today's camera follows:** for `pitch` p, `f = (0, −sin p, −cos p)` gives `r = +X` and `u = (0, cos p, −sin p)`.
 
 **Directions** (D-8, D-10). Each direction turns the subject by `θᵢ + model_yaw` about the vertical axis through the ground point.
@@ -185,22 +185,22 @@ Each is validated exactly as its option is. The schema table in `settings.py` an
 
 **Orthographic.**
 - The image comes from `f`, the roll, the scale, the cell, the ground point and the ground pixel, as today.
-- `camera.position` is ignored. **(proposal)** It is recorded as given, with no warning.
+- `camera.position` is ignored. **(D-16)** It is recorded as given, with no warning.
 
 **Perspective** (spike 1).
 - **Placement:** the camera stands at the ground point plus `camera.position` and looks along `f`.
-- **The ground point must be in front of it:** its depth `d = −position · f` must be greater than 0. **(proposal)** Otherwise it is a usage error.
+- **The ground point must be in front of it:** its depth `d = −position · f` must be greater than 0. **(D-16)** Otherwise it is a usage error.
 - **The focal length** is `ppm · d` sheet pixels, so `ppm` holds at the ground point's depth (D-12). Lens shift puts the ground point on the ground pixel.
 - **Fitting:**
   - the measure phase records each vertex's screen offset as `d · x_c / z_c` and `d · y_c / z_c` meters, where `x_c`, `y_c`, `z_c` are the vertex in camera space, `z_c` its depth;
   - those offsets are independent of `ppm`, so today's three fitting cases and overflow work unchanged;
-  - **(proposal)** a vertex at or behind the camera, `z_c ≤ 0`, is an overflow (exit 4) naming the clip, direction and sample time.
+  - **(D-16)** a vertex at or behind the camera, `z_c ≤ 0`, is an overflow (exit 4) naming the clip, direction and sample time.
 - **Clipping:** the near plane is set from the measured nearest depth, and the far plane beyond the farthest.
 - **The maps** (D-13): the normal map stays in the camera's space. The depth map keeps today's encoding at the ground point's scale. The lit preview lights the sprite the 2D way.
 
 ### Sheets (D-14)
 
-The schema, the `camera` record, dropping `pitch_deg`, and refusing `/13` are decided (D-14). The field layout below is a **(proposal)**.
+The schema, the `camera` record, dropping `pitch_deg`, and refusing `/13` are decided (D-14). The field layout below is a **(D-16)**.
 
 - **A new sheet schema,** `moskophoros.sheet/14`.
 - **`settings.view`** keeps `preset`, `directions` and `start_angle_deg`.
@@ -365,9 +365,33 @@ This resolves Q-7. The review renders, each from the owner's own files:
 
 **The project file.** The CAM-5 review agent moves `~/.config/moskophoros/synarchy.yaml` to `~/.config/moskophoros/projects/synarchy.yaml`, keeping a copy, and records the move. The tool itself never moves files.
 
+### D-16. The whole design is signed off, with its eight remaining details
+
+The owner signed off the whole draft, typed in the manager's terminal on 2026-10-19: "yes that is all correct, go ahead". The manager relayed it by cmux message `74f98b31-f6c0-4f66-bb9b-ab0278a50f10`, with `relay-camera-signoff.md` (SHA-256 `2399fa85625c125fe191f4b2063e66b73c672889f35c894cad0988570a35c3a5`). It answered `signoff.md` (SHA-256 `7354caeffc75b3bc81168a859d1655ace8b19e2370b40689cb56183e80f02046`), which listed the five slices and these eight details, until then the worker's proposals:
+
+1. **Project names** are letters, digits, `.`, `_` and `-`, not starting with `.`, given without `.yaml`. Anything else is a usage error.
+2. **The options** are `--projection orthographic|perspective`, `--camera-direction X,Y,Z`, `--camera-roll R` and `--camera-position X,Y,Z`. The settings are `camera.projection`, `camera.direction`, `camera.roll` and `camera.position`.
+3. **The shorthand rules** are as under *Design*, *Shorthands*.
+4. **A positive roll** turns the camera counter-clockwise, so the picture turns clockwise.
+5. **An orthographic camera's position** is recorded as given, unused, with no warning.
+6. **Under perspective:**
+   - a ground point behind the camera is a usage error (exit 2);
+   - a vertex at or behind the camera is an overflow (exit 4), naming the clip, direction and sample time.
+7. **The `/14` sheet's layout:**
+   - `settings.view` keeps `preset`, `directions` and `start_angle_deg`;
+   - `settings.camera` holds `projection`, `direction` (normalised), `roll` and `position`.
+8. **App settings** are not recorded in a sheet and are never loaded from one.
+
+The process after signoff, as the manager put it to the owner:
+1. a Codex review of the design;
+2. revisions until it is solid;
+3. processing into an epic and child issues;
+4. Codex approval of the children;
+5. the manager checking with the owner before any solving.
+
 ## Proposals
 
-These are the worker's, not decisions.
+These were the worker's. Each was accepted, as noted.
 
 - **P-1. One camera model for both projections.** The owner accepted its scale as D-12.
   - The camera's direction and the scale fix the image. The ground point and ground pixel fix the framing, as today.
