@@ -136,7 +136,7 @@ This is assembled from D-1 to D-12. Details no decision covers are marked
 **What the sheet records.**
 - Every resolved rendering setting, never the project's name or the settings files' names (D-9).
 - Palette and library sources stay recorded by base file name, as today.
-- App settings are not recorded and are never loaded from a sheet.
+- **(proposal)** App settings are not recorded and are never loaded from a sheet.
 
 ### New settings (D-12)
 
@@ -196,11 +196,12 @@ Each is validated exactly as its option is. The schema table in `settings.py` an
   - those offsets are independent of `ppm`, so today's three fitting cases and overflow work unchanged;
   - **(proposal)** a vertex at or behind the camera, `z_c ≤ 0`, is an overflow (exit 4) naming the clip, direction and sample time.
 - **Clipping:** the near plane is set from the measured nearest depth, and the far plane beyond the farthest.
-- **The maps:** the normal map stays in the camera's space. The depth map's and the lit preview's meaning is Q-11.
+- **The maps** (D-13): the normal map stays in the camera's space. The depth map keeps today's encoding at the ground point's scale. The lit preview lights the sprite the 2D way.
 
-### Sheets (Q-6)
+### Sheets (D-14)
 
-**(proposal)**
+The schema, the `camera` record, dropping `pitch_deg`, and refusing `/13` are decided (D-14). The field layout below is a **(proposal)**.
+
 - **A new sheet schema,** `moskophoros.sheet/14`.
 - **`settings.view`** keeps `preset`, `directions` and `start_angle_deg`.
 - **A new `settings.camera`** records:
@@ -338,11 +339,37 @@ This resolves Q-10 and Q-5.
 - **`pitch` and the presets stay as shorthands** that set the direction. `pitch` sets the vector `(0, −sin p, −cos p)`, and `iso` is pitch 30, the 2:1 projection. Giving both a pitch and a direction is a usage error.
 - **Scale under perspective** is pixels per meter at the ground point's distance from the camera (spike 1). Fitting, the cell and the ground pixel work as they do today.
 
+### D-13. The maps under perspective
+
+The owner approved every recommendation of questions batch 3 (`questions-3.md`, SHA-256 `7047984f7ad211d5e22a9ad182250a3adc9c86878fc9e61a41f7296328f9177f`), and the manager's recommendation that the review agent moves the project file, typed in the manager's terminal on 2026-10-19: "all of your recommendations are correct". The manager relayed this by cmux message `b8560614-c876-4cf4-a7aa-10b44804c8a6`, with `relay-camera-batch3.md` (SHA-256 `f348210702880357d9019d270a0dff7fc0a3d02946ff200fa46cd09b39667f14`). The manager had also told the owner that under perspective the field of view is not set: it follows from the scale and the camera's distance. D-13 to D-15 are recorded from it. D-13 resolves Q-11 and Q-4.
+
+- **The normal map** stays in the camera's space.
+- **The depth map keeps today's encoding:** each pixel's distance along the viewing axis relative to the ground point's, in sheet pixels at the ground point's scale. A game reads it as it reads today's.
+- **The lit preview lights the sprite the 2D way,** from each pixel's screen position and the depth map, as a game's shader lights the flat sprite. It does not reconstruct perspective positions.
+
+### D-14. Today's pixels stay; the sheet's JSON moves to `/14`
+
+This resolves Q-6.
+
+- **Pixels:** a command that sets no camera gives byte-identical sheets, maps and previews.
+- **JSON:** the sheet's JSON becomes `moskophoros.sheet/14`. It gains a `camera` record (projection, direction, roll, position), and drops `pitch_deg`, which the direction holds.
+- **Old sheets:** `/13` sheets stop loading with `--settings-from`.
+
+### D-15. The owner's review (CAM-5)
+
+This resolves Q-7. The review renders, each from the owner's own files:
+
+1. **Synarchy's isometric sheet** through `--project synarchy`, on `alpha-model/v5/chest.glb`, shown byte-identical to today's.
+2. **A straight-on perspective panel** of `RobotExpressive.glb`, with no baked light.
+3. **A camera with a general direction and a roll,** on the shrub or the robot.
+
+**The project file.** The CAM-5 review agent moves `~/.config/moskophoros/synarchy.yaml` to `~/.config/moskophoros/projects/synarchy.yaml`, keeping a copy, and records the move. The tool itself never moves files.
+
 ## Proposals
 
 These are the worker's, not decisions.
 
-- **P-1. One camera model for both projections.**
+- **P-1. One camera model for both projections.** The owner accepted its scale as D-12.
   - The camera's direction and the scale fix the image. The ground point and ground pixel fix the framing, as today.
   - **Orthographic** ignores the position.
   - **Perspective** uses the position, and with it the viewing distance. Lens shift puts the ground point on its pixel.
@@ -354,7 +381,7 @@ These are the worker's, not decisions.
 - **P-2. Directions keep turning the subject about the ground point; the camera stays where it is set.** The owner accepted this as D-8.
   - Labels, `--directions`, `--start-angle` and V-7's camera-fixed light are unchanged.
   - The presets become shorthands for camera settings.
-- **P-3. Today's commands keep their output byte for byte.**
+- **P-3. Today's commands keep their output byte for byte.** The owner accepted this as D-14.
   - The defaults reproduce today's camera.
   - A new sheet schema records the camera.
 
@@ -379,7 +406,7 @@ Which app settings exist is still open, in Q-10.
 
 ### Q-4. Perspective's parameters
 
-The field of view is derived from the scale and the ground point's distance (D-12). Clipping is automatic (see *Design*). Still open: what the depth map's and the preview light's sheet-pixel units mean under perspective, which is Q-11.
+**Resolved by D-12 and D-13.** The field of view follows from the scale and the ground point's distance, clipping is automatic, and the maps follow D-13.
 
 ### Q-5. Scale and framing as settings
 
@@ -387,14 +414,11 @@ The field of view is derived from the scale and the ground point's distance (D-1
 
 ### Q-6. Compatibility
 
-- **Byte-identical output** for existing commands (P-3).
-- **The sheet schema bump,** which stops `/13` sheets loading under settings D-24.
-- **`--settings-from` with a camera.**
+**Resolved by D-14.**
 
 ### Q-7. Verification
 
-- **Probes and tests:** free and perspective cameras, and fitting under perspective.
-- **The owner's visual review** as its own slice.
+**Resolved by D-15** for the owner's review. The tests are under *Verification strategy*.
 
 ### Q-8. The camera's position, its roll's zero, and what each direction is measured from
 
@@ -410,10 +434,7 @@ The field of view is derived from the scale and the ground point's distance (D-1
 
 ### Q-11. The maps under perspective
 
-**Raised by D-12.** The depth map and the preview light are in "sheet pixels", which assumes one scale everywhere. Under perspective, the scale holds only at the ground point's distance.
-
-- **The depth map:** what its value means for a surface nearer or farther than the ground point.
-- **The lit preview:** whether it lights the sprite as a flat 2D picture with a height map, as a 2D game does, or reconstructs true perspective positions.
+**Resolved by D-13.**
 
 ## Verification strategy
 
@@ -486,14 +507,14 @@ The field of view is derived from the scale and the ground point's distance (D-1
 - **Phase:** 2.
 - **Depends on:** CAM-2.
 - **Ordering:** `critical path`.
-- **Relevant decisions:** D-3, D-7, D-8, D-10, D-12.
+- **Relevant decisions:** D-3, D-7, D-8, D-10, D-12, D-14.
 - **Acceptance signals:**
   - every preset and `pitch` gives today's pixels exactly;
   - a direction and roll give the predicted basis;
   - looking straight down gives today's `topdown`;
   - a `/13` sheet is refused, naming both schemas.
 - **Out of scope:** perspective.
-- **Open questions:** Q-6, which decides the byte-identity and schema details.
+- **Open questions:** `None`.
 
 ### CAM-4. Add the perspective projection
 
@@ -506,28 +527,25 @@ The field of view is derived from the scale and the ground point's distance (D-1
 - **Phase:** 3.
 - **Depends on:** CAM-3.
 - **Ordering:** `critical path`.
-- **Relevant decisions:** D-3, D-10, D-12.
+- **Relevant decisions:** D-3, D-10, D-12, D-13.
 - **Acceptance signals:**
   - a generated cube's framing covers exactly the predicted pixels;
   - a fitted perspective sheet's subject fills its cell with the 1-pixel margin;
   - each error has its exit code and message.
 - **Out of scope:** other projections; baked light (the shading design).
-- **Open questions:** Q-11.
+- **Open questions:** `None`.
 
 ### CAM-5. Owner review of projects and the camera
 
 - **Outcome:** the owner judges, by eye, renders made from their own project files with the new camera, and the verdict is recorded.
 - **Scope:**
-  - the owner's project files under `projects/`, written by the owner or with the owner's word;
-  - renders for the owner's review:
-    - the Synarchy project's isometric sheet through `--project`, identical to today's;
-    - a straight-on perspective panel;
-    - a camera with a general direction and a roll;
+  - move `~/.config/moskophoros/synarchy.yaml` to `projects/synarchy.yaml`, keeping a copy, and record the move (D-15);
+  - the three review renders of D-15, with commands signed off by the owner before rendering;
   - the record in `docs/acceptance/`.
 - **Phase:** 4.
 - **Depends on:** CAM-4.
 - **Ordering:** `not on the critical path`.
-- **Relevant decisions:** D-1, D-6.
+- **Relevant decisions:** D-1, D-6, D-15.
 - **Acceptance signals:** the owner's verdict, quoted and dated.
 - **Out of scope:** baked light, the Codekarl palette and its look.
-- **Open questions:** Q-7.
+- **Open questions:** `None`.
