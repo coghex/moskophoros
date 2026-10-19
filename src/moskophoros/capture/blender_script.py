@@ -41,9 +41,9 @@ import json
 import math
 import os
 import re
+import shutil
 import struct
 import sys
-import tempfile
 import urllib.parse
 import zlib
 from array import array
@@ -565,6 +565,13 @@ def refuse_unsupported(document, source):
                     f"{source}: animation {index} animates {pointer}, which is not "
                     "supported"
                 )
+
+
+# The directory, inside the phase directory, that the private copy is imported
+# from, so it shares the command workspace's lifetime: a temporary workspace is
+# deleted with it even after the launcher kills Blender, and a retained one may
+# keep it then. The script removes it when it finishes or fails.
+IMPORT = "import"
 
 
 def import_glb(data, directory):
@@ -2397,7 +2404,9 @@ def main(argv):
     if scene_index >= len(document.get("scenes", [])):
         raise ScriptError(f"{source} has no scene {scene_index}")
 
-    with tempfile.TemporaryDirectory(prefix="moskophoros-") as directory:
+    directory = os.path.join(job["output_dir"], IMPORT)
+    os.mkdir(directory)
+    try:
         import_glb(private_copy(document, rest, source, scene_index), directory)
         widen_weight_ranges()
         if job["mode"] == "measure":
@@ -2405,6 +2414,8 @@ def main(argv):
             backend = {"blender": ".".join(map(str, bpy.app.version))}
         else:
             frames, backend, materials = render_frames(job, document, record_statics())
+    finally:
+        shutil.rmtree(directory)
 
     result = {
         "schema": RESULT_SCHEMA,

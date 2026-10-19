@@ -121,13 +121,18 @@ With `--work-dir DIR`, `DIR` must be nonexistent or an existing empty
 directory. An existing nonempty directory is a usage error (exit 2) naming
 the directory, and its contents are untouched. The capture workspace contains
 separate `measure/` and `render/` directories, each with `job.json`, eventual
-`result.json` and produced buffers. During rendering, `render/` also holds
+`result.json` and produced buffers. While a phase runs, its directory also
+holds `import/`, the script's private copy of the model that Blender imports,
+which the phase removes when it finishes or fails. During rendering,
+`render/` also holds
 `scratch/`, the capture's scratch directory (its TGA and its main and
 count renders' OpenEXRs),
-which a successful phase removes; after a failure or interruption a
-retained workspace may still hold it. An explicitly supplied workspace
+which a successful phase removes. After a failure, a retained workspace may
+still hold `scratch/`; after an interruption, it may still hold `scratch/`
+and either phase's `import/`. An explicitly supplied workspace
 retains available artifacts after success or failure; normal temporary
-capture workspaces are deleted in either case, the scratch with them. Retention does not make an incomplete
+capture workspaces are deleted in either case, the scratch and the copy with
+them. Retention does not make an incomplete
 phase a valid result or supply a replay interface. Reusing a retained location
 requires choosing a new or empty directory (owner decision 2026-09-30).
 
@@ -1337,11 +1342,11 @@ Normal temporary capture directories are deleted after success or failure. Expli
 capture directories preserve available job/result/buffer evidence on failure,
 without treating incomplete phases as valid results. The script keeps the
 capture's intermediate TGA and OpenEXRs inside the render phase
-directory, so the launcher's deletion or retention of the workspace covers
-them even when it has killed Blender, where no cleanup inside Blender can
-run. The script's private copy of the model, which it imports from its own
-temporary directory, is not in the workspace: it is removed when the script
-finishes or fails, but not after the launcher kills Blender.
+directory, and imports its private copy of the model from `import/` inside
+each phase directory, so the launcher's deletion or retention of the
+workspace covers them even when it has killed Blender, where no cleanup
+inside Blender can run. The script removes the copy, `import/` and all, when
+it finishes or fails.
 
 #### compatibility and verification
 
