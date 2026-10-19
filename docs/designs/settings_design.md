@@ -338,8 +338,13 @@ Lowest to highest:
   global file or a project file, and never creates `projects/` (D-15). The
   sheet never names the project or a settings file.
 - Today's reuse rules carry over unchanged inside the sheet layer. An explicit
-  `--view` still replaces the whole reused view, and a reused library still
-  stays with its palette (design §Scale and ground point, *Reuse*).
+  `--view`, or a project's `view`, replaces the whole reused view, and a
+  reused library still stays with its palette (design §Scale and ground
+  point, *Reuse*). The loaded sheet is a snapshot in the view's layers (Merge
+  rules item 9).
+- The app settings, `blender` and `any_blender`, are no part of a sheet, so
+  the global file's apply over a loaded sheet too (projects and camera design
+  D-16).
 
 ### Merge rules (D-22)
 
@@ -353,6 +358,10 @@ The owner's review asked these to be explicit. The owner signed them off
    - `cell: auto` is today's rule: fitted with the pixels per meter when one
      is in force (from a loaded sheet or `--ppm`), else 64×64 with auto-fit.
    - So the defaults file never turns `--ppm`-only sizing into a fixed cell.
+   - `ppm: auto` and `ground_px: auto` are the automatic scale and ground
+     pixel, and `--ppm auto` and `--ground-px auto` take them too: each
+     clears a reused or lower value and fits again (projects and camera
+     design D-16, CAM-2).
 2. **`null` means none**, for the palette and the library, as `--no-palette`
    and `--no-materials` do.
 3. **A `--config` value acts exactly as the same explicit option would**,
@@ -379,11 +388,32 @@ The owner's review asked these to be explicit. The owner signed them off
    came from, before any Blender invocation.
 8. **One-shot marks over a loaded sheet (D-27).** An explicit `--once`
    replaces the loaded marks; each name must be in the loaded clip list.
-9. **Compound settings.** The view is not in the first scope. It comes only
-   from a loaded sheet or the command line, with today's rules: `--view`
-   replaces the whole reused view. When the view becomes a setting later, a
-   layer's preset will replace the pitch, directions and start angle below
-   it, as `--view` does. That is designed then.
+9. **Compound settings.** The view was not in the first scope. *Delivered by
+   the projects and camera design* (D-4, D-12 and D-16, owner decisions
+   2026-10-19; CAM-2, #129): `view`, `pitch`, `directions` and `start_angle`
+   are settings, with the model yaw, the scale, the ground point and pixel,
+   supersampling, the reduction and root motion.
+   - **The view is one state:** a preset marker, and the pitch, direction
+     count and start angle, each the preset's or an override.
+   - **The shipped defaults** set `iso`, with every value the preset's
+     (`pitch`, `directions` and `start_angle` default to `null`).
+   - **A loaded sheet is a snapshot,** not shorthand input: its recorded
+     marker, `custom` included, and its values, each counted as the
+     preset's. So the global file's view never applies over it.
+   - **A layer's `view`** applies first within that layer, whatever its
+     place in the file, and sets every value to its preset's, so it replaces
+     a lower layer's pitch, direction count and start angle, as `--view`
+     does.
+   - **A layer's non-null `pitch`, `directions` or `start_angle`** is an
+     override. **A layer's `null`** resets that value to the preset's; over a
+     loaded `custom` view, which has no preset, it is a usage error naming
+     the file, the key and its line, unless the same layer gives a `view`.
+   - **After the last layer,** the recorded marker is the preset's name when
+     every value is the preset's, else `custom`. An `iso` sheet reloaded with
+     nothing above it records `iso`, with its JSON and fingerprint unchanged.
+   - The command line is the last layer: `--view`, then `--pitch`,
+     `--directions` and `--start-angle`. CAM-3 adds `camera.direction` as a
+     second spelling of the pitch.
 
 ### Files and errors (D-17, D-30)
 
@@ -394,7 +424,11 @@ The owner's review asked these to be explicit. The owner signed them off
   version is an error.
 - **Exit codes:** every settings error is a usage error (exit 2) before any
   Blender invocation, including its version probe. A missing user file is not
-  an error; a missing `--config` file is.
+  an error; a missing `--config` file is. A `blender` setting naming no
+  executable, a failed version probe or a refused Blender version stays a
+  backend error (exit 5), as with `--blender`, and the error names the
+  settings file, the key and its line. Only the Blender that survives the
+  layers is checked.
 - Paths inside a file resolve relative to that file's directory, with a
   leading `~` expanded (D-30).
 - Tests and scripts use `--no-user-config`, so they never read the owner's
