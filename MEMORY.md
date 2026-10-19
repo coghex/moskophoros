@@ -68,13 +68,19 @@ anything newer than the date below.
   [tools/README.md](tools/README.md).
 - **Acceptance renders** of the owner's test model live outside git, under
   `~/.local/share/moskophoros-acceptance/` on the owner's Mac.
-- **The owner's user settings** (`~/.config/moskophoros/config.yaml`) set
-  their working palette, Vince 144 (Vince 128 plus a 16-step grey ramp),
-  and their shading (render N3), both chosen 2026-10-13, for every run.
-  The robot's library is `~/.config/moskophoros/libraries/robotexpressive.yaml`.
-  The shade range is 190–225. Generated ramps default to setting B; the owner
-  uses setting C for Synarchy.
-  Pass `--no-user-config` for any render that must match shipped defaults.
+- **The owner's settings are per project** (owner, 2026-10-19). Every
+  rendering setting lives in the project's own file, given with `--config`.
+  - `~/.config/moskophoros/synarchy.yaml`: live-lit isometric sprites. It
+    holds the palette `palettes/synarchy.gpl` (formerly Vince 144:
+    Vince 128 plus a 16-step grey ramp, unchanged), the shading (render N3,
+    range 190–225), ramp setting C, `edges: hard`, normal and depth maps on,
+    and a preview light.
+  - `config.yaml`, the user file, is kept for app settings and holds none
+    yet, so a run without `--config` uses the shipped defaults.
+  - `codekarl.yaml` comes later: the baked, straight-on art panels, with
+    their own palette.
+  - The robot's library is
+    `~/.config/moskophoros/libraries/robotexpressive.yaml`.
 
 ## Kanban pull-request flow
 
@@ -95,9 +101,19 @@ anything newer than the date below.
 
 ## Next steps
 
-1. **Later, on the owner's word:** more shading and texture for wood (raised
+1. **Projects and camera design (next, with the owner):** project settings
+   kept separate from app settings; the camera (position, direction, pitch
+   as any angle, directions), the projection (orthographic or perspective)
+   and the scale (`ppm`) as settings. This conflicts with nothing in the
+   vision.
+2. **Shading design (after that):** baked light for straight-on art panels.
+   The three shading ways are ramp only, brightness only, and both, with
+   dithering. It amends lighting D-4, `design.md` §Previews ("never baked"),
+   and material styling D-22 and D-25. Then the Codekarl palette and
+   `codekarl.yaml` follow.
+3. **Later, on the owner's word:** more shading and texture for wood (raised
    in the alpha review; a look question, not yet an issue).
-2. **Deferred, each waiting on a stated trigger:**
+4. **Deferred, each waiting on a stated trigger:**
    - recolouring without a re-render (settings D-18);
    - #43, mesh-weight animation and CUBICSPLINE tangents: approved, but held
      until a model needs it.
