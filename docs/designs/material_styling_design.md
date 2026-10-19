@@ -324,9 +324,10 @@ they win keeps the ordinary look even when the library or its default would
 map the name. A library that maps a name used only by `BLEND` materials
 gets a warning naming it.
 
-*Superseded by alpha design D-15 (owner, 2026-10-17), once its slices land:*
-cutouts and translucency are captured, and `BLEND` materials have an identity
-and can take a ramp. See D-26's note.
+*Superseded by alpha design D-15 (owner, 2026-10-17).* The alpha slices landed (#114 to #118) and the owner accepted them on 2026-10-19 ([record](../acceptance/alpha.md)), so the
+paragraph above no longer describes current behaviour: cutouts and
+translucency are captured, and `BLEND` materials have an identity and can take
+a ramp. See D-26's note.
 
 **Shade numerical contract.** The shade pass replaces every surface with one
 uniform white, **specular highlights off and every material display setting
@@ -1019,8 +1020,9 @@ D-3, D-6, D-11, D-12, D-14). `BLEND` materials leave the no-identity class:
 they have an identity like any other material, pool by name with opaque
 materials, and take a ramp through their entry or the library's default; the
 warning for a library mapping a name used only by `BLEND` materials goes.
-Until the alpha slices land, this decision and the no-identity rule describe
-current behaviour.
+The alpha slices landed (#114 to #118) and the owner accepted them on 2026-10-19 ([record](../acceptance/alpha.md)).
+This decision and the `BLEND` no-identity rule no longer describe current
+behaviour.
 
 ### D-27. The lighting sheet is a normal map with an optional depth map; light is previewed, not baked
 

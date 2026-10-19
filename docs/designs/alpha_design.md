@@ -17,6 +17,10 @@ It benefits the owner producing game art, and any project using the tool
 
 Design state: `ready for issue processing`
 
+Implemented: the slices landed as #114 to #118, and the owner accepted the arc
+on 2026-10-19 ([record](../acceptance/alpha.md)). `MASK` cutouts were not
+judged in that review, because the test model had none.
+
 Reset to `exploring` on 2026-10-17 for Codex review 1 (5 blocking, 3 should
 fix), then marked ready again the same day under the owner's delegation
 (request moskophoros-20261017-1): every finding is fixed and no owner
@@ -803,7 +807,8 @@ with D-1, D-6 and D-12 ("a translucent material can have a ramp too"):
   any other material, pool by name with opaque materials of the same name,
   and take a ramp through their entry or the library's default. The warning
   for a library mapping a name used only by `BLEND` materials goes.
-- Until the alpha slices land, D-26 and the no-identity rule describe current
+- The alpha slices landed (#114 to #118) and the owner accepted them on 2026-10-19 ([record](../acceptance/alpha.md)),
+  so D-26 and the `BLEND` no-identity rule no longer describe current
   behaviour. The note is recorded in `material_styling_design.md`.
 - **A `BLEND` entry's own shade** (recorded by the moskophoros manager on
   2026-10-17, answering the issue processor's question; it reads "like any
@@ -1161,8 +1166,9 @@ revision recorded in `material_styling_design.md` would say:
   no-identity class, and can take a ramp through their entry or the
   library's default. The warning for a library that maps a name used only by
   `BLEND` materials goes.
-- Until the alpha slices land, D-26 and the no-identity rule describe
-  current behaviour.
+- The alpha slices landed (#114 to #118) and the owner accepted them on 2026-10-19 ([record](../acceptance/alpha.md)),
+  so D-26 and the `BLEND` no-identity rule no longer describe current
+  behaviour.
 
 ### Q-17. The delivery slices
 

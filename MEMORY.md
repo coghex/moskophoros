@@ -4,7 +4,7 @@ Where the project stands, for an agent or the owner arriving cold. Read it
 after [AGENTS.md](AGENTS.md), then check `git log` and the tracker for
 anything newer than the date below.
 
-**Last reconciled: 2026-10-14.**
+**Last reconciled: 2026-10-19.**
 
 **Rules for this file:**
 - **Current state only.** When something changes, replace the old line; don't
@@ -31,14 +31,25 @@ anything newer than the date below.
   - material styling, a qualified acceptance of the proof of concept:
     2026-10-08;
   - settings: 2026-10-13;
-  - lighting sheet: 2026-10-14.
+  - lighting sheet: 2026-10-14;
+  - alpha: 2026-10-19, without cutouts (below).
 - **Settings arc** ([design](docs/designs/settings_design.md)): accepted
   by the owner on 2026-10-13 ([record](docs/acceptance/settings.md)); epic
   #83 closed. Layered YAML settings (user file, reused sheet, `--config`,
   options), the shading values, per-material shading and clip frame counts.
   Libraries are YAML (`moskophoros.materials/3`, with `/2` still supported).
-- **Open epics:** none. Material styling, settings and lighting sheets are
-  complete; #63, #83 and #95 are closed on the owner’s word.
+- **Lighting sheet** ([record](docs/acceptance/lighting-sheet.md)): every run
+  writes `<stem>.normal.png`; `--depth` adds a depth map and `--light X,Y,Z`
+  lit previews. Known cost: normal and depth encoding roughly doubles a test
+  render's time.
+- **Alpha arc** ([design](docs/designs/alpha_design.md)): accepted by the
+  owner on 2026-10-19 ([record](docs/acceptance/alpha.md)); epic #113 closed.
+  Sheets carry the model's transparency: `MASK` cutouts, `BLEND` translucency
+  in 8-bit alpha, `--edges hard|soft` (both required), and maps aligned with
+  the colour. The owner's review model had no `MASK` material, so cutouts are
+  not yet judged by eye.
+- **Open epics:** none. Material styling, settings, lighting sheets and
+  alpha are complete; #63, #83, #95 and #113 are closed on the owner’s word.
 
 ## Environment
 
@@ -84,14 +95,14 @@ anything newer than the date below.
 
 ## Next steps
 
-1. **Lighting sheet:** accepted by the owner on 2026-10-14
-   ([record](docs/acceptance/lighting-sheet.md)); epic #95 closed. Every run
-   writes `<stem>.normal.png`; `--depth` adds a depth map and `--light X,Y,Z`
-   lit previews. Known cost: normal and depth encoding roughly doubles a
-   test render's time.
-2. **Deferred, each waiting on a stated trigger:**
+1. **Cutout review (in progress):** the owner is making a `MASK` test model
+   with the design agent, under
+   `~/.local/share/moskophoros-acceptance/cutout-model/`; an owner review of
+   cut-out edges follows.
+2. **Later, on the owner's word:** more shading and texture for wood (raised
+   in the alpha review; a look question, not yet an issue).
+3. **Deferred, each waiting on a stated trigger:**
    - recolouring without a re-render (settings D-18);
-   - #75, glTF MASK cutouts;
    - #43, mesh-weight animation and CUBICSPLINE tangents: approved, but held
      until a model needs it.
 
