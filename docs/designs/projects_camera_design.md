@@ -266,11 +266,11 @@ any_blender: false
   - Rendered surfaces are triangles between measured vertices, so their depths lie within the measured range.
   - Both values reach the render job from the caller, which computes them from the measure results over all frames.
   - The script reads back the stored planes and refuses (exit 5) any that would not enclose the measured range.
-- **The capture protocol** (C-5; review 2, C-12). Under perspective, each measure result frame gains `depth_m`, the nearest and farthest `z_c` of its vertices. The existing keys keep their names.
+- **The capture protocol** (C-5; review 2, C-12). Under perspective, each measure result frame gains `depth_m`, the nearest and farthest `z_c` of its vertices. The existing keys keep their names and shapes; `bounds_m` stays an object of `L`, `R`, `U` and `D`.
   - **A frame with a vertex too near to project** carries `bounds_m: null` beside its `depth_m`, and keeps its `address` and `height_m`. The launcher accepts a `null` `bounds_m` only under perspective with `depth_m[0] ≤ 1e-4`, and the caller turns it into the overflow above. For example:
 
     ```json
-    {"address": {…}, "bounds_m": [0.41, 0.38, 1.12, 0.05], "height_m": 0.0, "depth_m": [2.71, 3.96]}
+    {"address": {…}, "bounds_m": {"L": 0.41, "R": 0.38, "U": 1.12, "D": 0.05}, "height_m": 0.0, "depth_m": [2.71, 3.96]}
     {"address": {…}, "bounds_m": null, "height_m": 0.0, "depth_m": [-0.20, 3.10]}
     ```
   - **Any other missing, non-finite or mismatched value** stays malformed output, exit 5.
@@ -678,7 +678,12 @@ Which app settings exist is still open, in Q-10.
   - looking straight down gives today's `topdown`;
   - generate-then-reload gives equal settings for a non-trivial normalised direction, a roll and an ignored orthographic position;
   - D-17's exception 5: a `/13` sheet is refused, naming both schemas, and the test that loaded `/13` is replaced on purpose;
-  - generating and reloading a `/14` sheet gives equal complete output, its JSON and fingerprint included, for a named preset, a `custom` view, and `pitch` and `camera.direction` against `null` in one layer.
+  - **valid cases** (C-13): generating and reloading a `/14` sheet gives equal complete output, its JSON and fingerprint included, for:
+    - a named preset;
+    - a `custom` view;
+    - a valid override of each value;
+    - the cross-layer resets, such as a lower `pitch: 45` with a higher `camera.direction: null` under a named preset, and a higher `pitch: null` over a lower `camera.direction`.
+  - **refused cases** (C-13): `pitch` and `camera.direction` given together in one ordinary layer (a file, or the command line) are a usage error, and no sheet is written. This holds in either key order, for every pairing: concrete with concrete, concrete with `null`, `null` with concrete, and `null` with `null`. The shipped defaults initialise the state directly and are not such a layer.
 - **Out of scope:** perspective.
 - **Open questions:** `None`.
 
@@ -763,3 +768,12 @@ Which app settings exist is still open, in Q-10.
 - **C-10, should fix: fixed.** `r₀` and `u₀` are the unrolled axes. The rolled `r` and `u` are used for everything that makes the picture: render, framing, perspective camera space, fitting and lens shift. CAM-4 tests a rolled, off-axis perspective camera in a rectangular cell.
 - **C-11, should fix: fixed.** CAM-1 delivers and tests D-17's exceptions 1 to 4 and keeps `/13` working. CAM-3 delivers exception 5 with `/14`.
 - **C-12, minor: fixed.** The measure frame keeps `bounds_m`, which is `null` for a too-near frame, with its `address` and `height_m`, as the example frames show.
+
+### Review 3 (Codex, 2026-10-19)
+
+`~/.local/share/moskophoros-acceptance/projects-camera-design/review-codex-3.md`, SHA-256 `9c4e5a54363ead61f034fce43a7307b39e57262f7a15956d782509e61b628b11`, reviewed `43010afd53`. It found C-6 and C-9 to C-12 fixed. No owner decision was needed.
+
+- **C-13, should fix: fixed.** CAM-3's acceptance now has two separate obligations:
+  - generate-and-reload equality, JSON and fingerprint included, for the valid cases, with the cross-layer resets named;
+  - a usage error, with no sheet written, for `pitch` and `camera.direction` together in one ordinary layer, in all four pairings and either key order.
+- **C-14, minor: fixed.** The successful example's `bounds_m` is the existing object of `L`, `R`, `U` and `D`. Only a too-near frame's is `null`.
