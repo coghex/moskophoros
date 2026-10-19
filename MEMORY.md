@@ -95,14 +95,9 @@ anything newer than the date below.
 
 ## Next steps
 
-1. **Leaf colour (in progress, outside the tool):** with the review library
-   the shrub's leaves fall mostly into the darkest band, because foliage
-   shades below the owner's range. The owner is tuning the library's leaf
-   entry with the design agent; no tool or settings change
-   ([Leaf colour](docs/acceptance/alpha.md#leaf-colour)).
-2. **Later, on the owner's word:** more shading and texture for wood (raised
+1. **Later, on the owner's word:** more shading and texture for wood (raised
    in the alpha review; a look question, not yet an issue).
-3. **Deferred, each waiting on a stated trigger:**
+2. **Deferred, each waiting on a stated trigger:**
    - recolouring without a re-render (settings D-18);
    - #43, mesh-weight animation and CUBICSPLINE tangents: approved, but held
      until a model needs it.
