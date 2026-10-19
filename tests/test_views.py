@@ -242,10 +242,27 @@ def test_a_direction_is_normalised_to_length_1():
     assert normalise((3, 0, 4)) == (0.6, 0.0, 0.8)
 
 
-def test_a_tiny_direction_is_normalised_without_underflow():
-    half = math.sqrt(0.5)
-    assert normalise((1e-300, 1e-300, 0)) == pytest.approx((half, half, 0.0))
-    assert normalise((5e-324, 0, 0)) == (1.0, 0.0, 0.0)
+@pytest.mark.parametrize(
+    ("vector", "expected"),
+    [
+        ((1e-300, 1e-300, 0), (math.sqrt(0.5), math.sqrt(0.5), 0.0)),
+        # Subnormal components: their own length rounds, so dividing by it
+        # would leave the result off length 1.
+        ((1e-320, 1e-320, 0), (math.sqrt(0.5), math.sqrt(0.5), 0.0)),
+        ((5e-324, 5e-324, 0), (math.sqrt(0.5), math.sqrt(0.5), 0.0)),
+        (
+            (5e-324, -5e-324, 5e-324),
+            (1 / math.sqrt(3), -1 / math.sqrt(3), 1 / math.sqrt(3)),
+        ),
+        ((1e-310, 0, -3e-310), (1 / math.sqrt(10), 0.0, -3 / math.sqrt(10))),
+        ((5e-324, 0, 0), (1.0, 0.0, 0.0)),
+    ],
+)
+def test_a_tiny_direction_is_normalised_without_underflow(vector, expected):
+    unit = normalise(vector)
+    assert unit == pytest.approx(expected, abs=1e-15)
+    assert is_unit(unit)
+    assert normalise(unit) == unit
 
 
 @pytest.mark.parametrize(

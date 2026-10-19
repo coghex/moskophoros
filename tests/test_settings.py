@@ -78,6 +78,16 @@ def test_the_schema_holds_this_slices_settings():
         assert callable(setting.check), name
 
 
+def test_the_design_s_example_settings_file_loads():
+    # A user may copy it into a global or project file as it stands.
+    text = (ROOT / "docs" / "design.md").read_text(encoding="utf-8")
+    start = text.index("```yaml\nversion: 1\nview: iso")
+    example = text[start + len("```yaml\n") : text.index("```\n", start + 1)]
+    layer = read_bytes(example.encode(), source="example", directory=ROOT)
+    assert layer["camera.direction"] is None
+    assert "pitch" not in layer
+
+
 def test_the_defaults_file_and_the_schema_table_agree():
     shipped = settings.read_defaults()
     assert list(shipped) == list(settings.SCHEMA)

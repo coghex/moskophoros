@@ -1517,6 +1517,8 @@ def test_the_camera_record_holds_the_roll_and_the_unused_position(setup, capsys)
     [
         # Naive squared-length normalisation would underflow to 0.
         (["--camera-direction", "1e-300,1e-300,0"], (1e-300, 1e-300, 0.0)),
+        # Subnormal: its own length rounds.
+        (["--camera-direction", "1e-320,1e-320,0"], (1e-320, 1e-320, 0.0)),
         # Repeated normalisation could move a component by one step.
         (["--camera-direction", "0.1,0.1,0.1"], (0.1, 0.1, 0.1)),
     ],

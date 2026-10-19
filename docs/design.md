@@ -358,7 +358,7 @@ too.
 ```yaml
 version: 1
 view: iso               # topdown, side, iso or iso-true
-pitch: null             # 0 to 90; null: the view's; or camera.direction
+# pitch: 30            # 0 to 90; null: the view's; or camera.direction, not both
 camera:
   direction: null       # [x, y, z], each -1 to 1, not all 0; null: the view's
   roll: 0               # -1 to 1, a fraction of a half turn
@@ -623,9 +623,9 @@ exactly: screen right +X and screen up `(0, cos p, −sin p)`, with the camera
 in direction `(0, sin p, cos p)` from the ground point. At 90° up is −Z,
 continuous with lower pitches, so top-down has no ambiguous roll.
 
-**Normalising.** The tool divides a direction by its length, computed
-without squaring its components, so a tiny one such as `(1e-300, 1e-300, 0)`
-is normalised too. A direction whose length is already within `1e-12` of 1 is
+**Normalising.** The tool divides a direction by its largest component, then
+by its length, so a tiny one such as `(1e-300, 1e-300, 0)`, or a subnormal
+one such as `(5e-324, 5e-324, 0)`, is normalised too. A direction whose length is already within `1e-12` of 1 is
 kept exactly as given, so normalising twice changes nothing, a pitch's
 direction is kept bit for bit, and a recorded direction reloads unchanged.
 

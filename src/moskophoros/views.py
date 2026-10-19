@@ -69,18 +69,22 @@ def normalise(vector):
     """`vector`, three finite numbers not all 0, as a direction of length 1.
 
     One already within `UNIT_TOLERANCE` of length 1 is kept exactly, so
-    normalising twice changes nothing. The length is taken without squaring
-    the components, so a tiny vector such as `(1e-300, 1e-300, 0)` is
-    normalised too.
+    normalising twice changes nothing. Any other is first divided by its
+    largest component, so the length it is then divided by is from 1 to √3
+    and exact enough even for a tiny vector such as `(1e-300, 1e-300, 0)` or
+    a subnormal one such as `(5e-324, 5e-324, 0)`, whose own length would
+    round.
     """
     x, y, z = (float(component) for component in vector)
     if not all(map(math.isfinite, (x, y, z))):
         raise ValueError(f"a direction must be finite, got {vector!r}")
-    length = math.hypot(x, y, z)
-    if length == 0:
+    largest = max(abs(x), abs(y), abs(z))
+    if largest == 0:
         raise ValueError(f"a direction cannot be all 0, got {vector!r}")
-    if abs(length - 1) <= UNIT_TOLERANCE:
+    if abs(math.hypot(x, y, z) - 1) <= UNIT_TOLERANCE:
         return x, y, z
+    x, y, z = x / largest, y / largest, z / largest
+    length = math.hypot(x, y, z)
     return x / length, y / length, z / length
 
 
