@@ -23,7 +23,7 @@ concrete precondition
 - [x] CAM-1. Add projects and a single global settings file — [#128]
 - [x] CAM-2. Make the view, scale and framing settings-file settings — [#129]
 - [x] CAM-3. Point the orthographic camera with a direction and roll — [#130]
-- [ ] CAM-4. Add the perspective projection
+- [x] CAM-4. Add the perspective projection — [#131]
 - [ ] CAM-5. Owner review of projects and the camera
 
 ## Epic contract
