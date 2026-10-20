@@ -4,7 +4,7 @@ Where the project stands, for an agent or the owner arriving cold. Read it
 after [AGENTS.md](AGENTS.md), then check `git log` and the tracker for
 anything newer than the date below.
 
-**Last reconciled: 2026-10-19.**
+**Last reconciled: 2026-10-20.**
 
 **Rules for this file:**
 - **Current state only.** When something changes, replace the old line; don't
@@ -32,7 +32,8 @@ anything newer than the date below.
     2026-10-08;
   - settings: 2026-10-13;
   - lighting sheet: 2026-10-14;
-  - alpha: 2026-10-19, cutouts judged separately on a shrub the same day.
+  - alpha: 2026-10-19, cutouts judged separately on a shrub the same day;
+  - projects and camera: 2026-10-20.
 - **Settings arc** ([design](docs/designs/settings_design.md)): accepted
   by the owner on 2026-10-13 ([record](docs/acceptance/settings.md)); epic
   #83 closed. Layered YAML settings (user file, reused sheet, `--config`,
@@ -48,8 +49,15 @@ anything newer than the date below.
   in 8-bit alpha, `--edges hard|soft` (both required), and maps aligned with
   the colour. Cutouts were judged on a separate shrub model and accepted
   ([Cutouts](docs/acceptance/alpha.md#cutouts)).
-- **Open epics:** none. Material styling, settings, lighting sheets and
-  alpha are complete; #63, #83, #95 and #113 are closed on the owner’s word.
+- **Projects and camera arc** ([design](docs/designs/projects_camera_design.md)):
+  accepted by the owner on 2026-10-20 ([record](docs/acceptance/projects-camera.md));
+  epic #127 closed. `--project NAME` reads `~/.config/moskophoros/projects/NAME.yaml`
+  over the global file. The camera takes a direction vector, a roll, a position, and
+  an orthographic or perspective projection, as flags or settings. Commands that
+  set no camera give byte-identical images. Contract: design §Camera and directions.
+- **Open epics:** none. Material styling, settings, lighting sheets, alpha
+  and projects and camera are complete; #63, #83, #95, #113 and #127 are
+  closed on the owner’s word.
 
 ## Environment
 
@@ -69,9 +77,10 @@ anything newer than the date below.
 - **Acceptance renders** of the owner's test model live outside git, under
   `~/.local/share/moskophoros-acceptance/` on the owner's Mac.
 - **The owner's settings are per project** (owner, 2026-10-19). Every
-  rendering setting lives in the project's own file, given with `--config`.
-  - `~/.config/moskophoros/synarchy.yaml`: live-lit isometric sprites. It
-    holds the palette `palettes/synarchy.gpl` (formerly Vince 144:
+  rendering setting lives in the project's own file, chosen with `--project`.
+  - `~/.config/moskophoros/projects/synarchy.yaml`: live-lit isometric sprites.
+    The pre-migration copy `~/.config/moskophoros/synarchy.yaml` is kept. It
+    holds the palette `../palettes/synarchy.gpl` (formerly Vince 144:
     Vince 128 plus a 16-step grey ramp, unchanged), the shading (render N3,
     range 190–225), ramp setting C, `edges: hard`, normal and depth maps on,
     and a preview light.
@@ -101,19 +110,14 @@ anything newer than the date below.
 
 ## Next steps
 
-1. **Projects and camera design (next, with the owner):** project settings
-   kept separate from app settings; the camera (position, direction, pitch
-   as any angle, directions), the projection (orthographic or perspective)
-   and the scale (`ppm`) as settings. This conflicts with nothing in the
-   vision.
-2. **Shading design (after that):** baked light for straight-on art panels.
+1. **Shading design (next, when the owner is ready):** baked light for straight-on art panels.
    The three shading ways are ramp only, brightness only, and both, with
    dithering. It amends lighting D-4, `design.md` §Previews ("never baked"),
    and material styling D-22 and D-25. Then the Codekarl palette and
    `codekarl.yaml` follow.
-3. **Later, on the owner's word:** more shading and texture for wood (raised
+2. **Later, on the owner's word:** more shading and texture for wood (raised
    in the alpha review; a look question, not yet an issue).
-4. **Deferred, each waiting on a stated trigger:**
+3. **Deferred, each waiting on a stated trigger:**
    - recolouring without a re-render (settings D-18);
    - #43, mesh-weight animation and CUBICSPLINE tangents: approved, but held
      until a model needs it.
