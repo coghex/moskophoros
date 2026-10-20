@@ -777,6 +777,13 @@ D-26 to D-28 record A/B/A: unit-budget lighting, snap dithering and a shared
 snap target. The numerical snap algorithm and composite dither ownership
 remain open.
 
+Batch 9 was posted on 2026-10-20 at 22:00:16 UTC in `#moskophoros`,
+message `ms3nau3wnydkdw35azsub3hr62`, under the same request, against
+draft `42e2e75f1b` and Probe 5's page hash above. It asks Q-6's snap
+algorithm/strength, Q-6/Q-11's composite ownership and fallback placement,
+and Q-9's visual-review boundary. These remain proposals pending the
+owner's answers.
+
 ### Q-1. Does a mode route all shading or only the added light?
 
 Resolved by D-5: option A, with neither as the fourth mode. The rejected
