@@ -288,10 +288,42 @@ Q-5's ownership recommendation:
 This resolves Q-5's ownership choice, not its full schema. Uniform-only
 controls were not selected.
 
+### D-11. One distant key, controlled by a camera-relative direction
+
+Owner, about 2026-10-20 19:46 UTC, typed directly in the manager's terminal;
+relayed by mosk-manager in cmux message
+`35757489-cc29-456a-a840-3a702ec80cb3`, answering batch 3 message
+`5eijvs26h8vy3b9iqnyztgwh4i` (Q-4 key control, Q-6 timing, Q-7 outlines):
+
+> "A for all is fine"
+
+The Q-4 recommendation is approved: one distant bake key set by a direction
+vector in camera coordinates. Its incoming direction is uniform across the
+subject; there is no bake-key distance to tune. The preview point light
+remains separate and available (D-6). A point bake key and selectable
+point/distant bake types are outside this arc. The vector convention and
+intensity remain to specify; this does not choose the final look.
+
+### D-12. Include optional dithering, off by default
+
+Same answer and provenance as D-11. The Q-6 timing recommendation is
+approved: dithering belongs in this arc and is optional, off by default to
+preserve D-8. Its pattern, affected transitions and stability through motion
+must be chosen from labelled comparisons before design readiness. No pattern
+or algorithm is approved by this decision.
+
+### D-13. Defer outlines to a separate style arc
+
+Same answer and provenance as D-11. The Q-7 recommendation is approved:
+outlines are outside this delivery and wait for a separate style arc. This
+arc covers shading and dithering. The live-lit use remains outline-free;
+no outline algorithm or appearance is selected for the baked use here.
+
 ## Proposals and open questions
 
 Unresolved recommendations below are proposals, not approved decisions.
-Batch 1's accepted answers are D-5 to D-7; batch 2's are D-8 to D-10.
+Batch 1's accepted answers are D-5 to D-7; batch 2's are D-8 to D-10;
+batch 3's are D-11 to D-13.
 No dependent formula or slice
 ordering is adopted while its blocking questions remain open.
 
@@ -309,8 +341,9 @@ proposed for approval in this batch.
 
 Batch 3 was posted on 2026-10-20 at 19:44:15 UTC in `#moskophoros`,
 message `5eijvs26h8vy3b9iqnyztgwh4i`, under the same request, against
-draft `2a5e2eb2e7`. It asks Q-4's key control type, Q-6's dithering timing
-and Q-7's outline scope. Answers are pending; it approves no rendered look.
+draft `2a5e2eb2e7`. It asked Q-4's key control type, Q-6's dithering timing
+and Q-7's outline scope. D-11 to D-13 record approval of all three A
+recommendations; the batch approved no rendered look.
 
 ### Q-1. Does a mode route all shading or only the added light?
 
@@ -335,19 +368,14 @@ Old-schema loading was also offered in batch 1 and is not being added.
 
 ### Q-4. Which light terms, in which frame, and how are they combined?
 
-Availability resolved by D-9. Still settle a point versus distant key;
+Availability resolved by D-9 and the distant key by D-11. Still settle
 whether sky/ground track world up or screen up under camera roll; whether the
 live-lit project wants any sky term. Preserve D-4's camera-fixed key.
 Define term weights, ambient combination, clamp order, and whether intensity
 can brighten beyond the base. Present labelled probes before a look choice.
 
-**Batch 3 asks the key's control type:** A, recommended, one distant key set
-by a direction vector in camera coordinates; B, one point key set by a
-position; C, one key selectable between direction and position. A gives the
-same incoming direction across the subject and avoids a distance to tune.
-C offers both spatial behaviours but adds a type, units and position contract.
-This is the bake key; D-6 leaves today's preview point light available in all
-cases. It does not settle a vector convention, intensity or final look.
+Batch 3 selected the distant key. Alternatives not selected were a point
+bake key, and a key selectable between direction and position.
 
 ### Q-5. Which controls may materials override?
 
@@ -362,29 +390,20 @@ signoff; inheritance and the remaining schema details stay open.
 
 ### Q-6. What dithering belongs in this arc?
 
-The owner requested “dithering/naturalness”; the previous arc excluded it.
-Settle whether it enters now, which colour transitions it affects, its
+The owner requested “dithering/naturalness”; D-12 includes it in this arc,
+off by default. Still settle which colour transitions it affects, its
 pattern and strength, and its behaviour through motion, rotation, alpha
 edges and mixed materials. Labelled comparisons are needed. Determinism
 alone does not establish visual stability.
 
-**Batch 3 asks timing only:** A, recommended, include optional dithering in
-this arc, off by default to preserve D-8; B, deliver shading first and design
-dithering as a later arc. A addresses the owner's naturalness request in
-this arc and requires motion comparisons; it approves no pattern or colour
-rule. Those follow through labelled probes.
+Deferring dithering to a later arc was not selected. Pattern and colour
+rules follow through labelled probes.
 
 ### Q-7. Do outlines belong in this arc?
 
-The live-lit use explicitly has none. Settle whether the baked use wants
-outlines now or leaves them for a later arc; do not infer that from “works
-of art”. Similarly distinguish dithering from later authored wood texture.
-
-**Batch 3 asks scope only:** A, recommended, defer outlines to a separate
-style arc and keep this arc focused on shading/dithering; B, include optional
-outlines in this arc, with their own design and visual review. The live-lit
-use remains outline-free in either case. No outline algorithm or look is
-chosen by this question.
+Resolved by D-13: defer outlines to a separate style arc. Including optional
+outlines now was not selected. This does not decide later authored wood
+texture, which is distinct from both outlines and dithering.
 
 ### Q-8. Where does the new operation sit in the pipeline?
 
@@ -432,8 +451,8 @@ this document-only exploration runs no repository tests.
 
 ## Delivery plan
 
-No slices yet: Q-1 to Q-3 are resolved; Q-4 and Q-5 are partly resolved;
-their remaining details and Q-6 to Q-11 remain open.
+No slices yet: Q-1 to Q-3 and Q-7 are resolved; Q-4 to Q-6 are partly
+resolved; their remaining details and Q-8 to Q-11 remain open.
 The processing ledger contains only
 the proposed umbrella, matching that state. Final readiness requires the
 owner's explicit signoff on behaviour, scope and dependency-ordered slices.
@@ -480,4 +499,6 @@ Codex review and tracker processing follow on the manager's instruction.
   `ae3ad3ce-e442-4abd-92fb-f51fb3f858de`; D-5 to D-7 preserve the exact
   answers and their limits. Batch 2 was answered through cmux relay
   `d44ba361-bf3c-4e8e-91a2-e59e2aeccd33`; D-8 to D-10 preserve its exact
-  answer and the approved recommendations. No readiness signoff has been received.
+  answer and the approved recommendations. Batch 3 was answered through cmux
+  relay `35757489-cc29-456a-a840-3a702ec80cb3`; D-11 to D-13 preserve it.
+  No readiness signoff has been received.
