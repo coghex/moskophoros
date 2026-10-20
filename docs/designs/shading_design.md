@@ -235,6 +235,39 @@ Dithering and snap are off. Representative PNGs were inspected. These
 opaque/cutout illustrations are not project defaults, acceptance of a
 look, or verification of perspective/translucency. No repository tests ran.
 
+### Probe 5: snap-dithering algorithm
+
+Prepared on 2026-10-20 from Probe 1's unchanged captures, using twelve
+Walking samples at direction 0 and one shrub sample. No new Blender run,
+production edit, owner-configuration change or repository test:
+
+- Page: `file:///Users/vincentcoghlan/.local/share/moskophoros-acceptance/shading-design/probe-5/page/index.html`.
+  SHA-256: `623ec674cb169014a53334fab336d3e6e917e8d7e48cf7b7a584514f18ba0db4`.
+- Prototype: `~/.local/share/moskophoros-acceptance/shading-design/probe-5/snap_dither.py`.
+  SHA-256: `30a42a0661895b020c7b6a0387ab90518d65b7538adb7a49edc7c0fe57a3db77`.
+- Manifest: `~/.local/share/moskophoros-acceptance/shading-design/probe-5/manifest.json`.
+  SHA-256: `36f215a6f300000293bd5263b1989a895a09aa5ff877cc4124516b84e1bfd9ff`.
+
+For brightness and both, and for each snap target, compare undithered
+nearest colour with two candidate algorithms. A uses the two nearest
+allowed colours in OKLab. B anchors the nearest colour and searches all
+partners for the segment with the least squared approximation error.
+Both project the desired colour onto the chosen segment, clamped to that
+segment, to obtain the second-colour fraction `t`. The ordered 4×4 tile
+chooses the second colour when its threshold is less than `strength*t`.
+Strengths 0.5 and 1 are displayed. Intermediate ramp selection is undithered.
+Stable ties follow target order; identical colours are deduplicated keeping
+the first occurrence, and a one-colour target remains constant.
+
+Assertions check target membership, unchanged alpha, strength zero matching
+the existing nearest-colour mapping, and twelve frames in the representative
+robot GIFs. All 26 page links and all strength-switch image variants exist.
+Representative PNGs were inspected. Prior probe page hashes are unchanged.
+The comparisons use the earlier experimental light and short ramps, not new
+project defaults. GIFs retain their earlier shared-palette limitations;
+PNGs show exact opaque subject colours. These samples have no translucent
+fronts and do not verify the proposed composite ownership rule below.
+
 ## Desired experience and settled scope
 
 The owner chooses project settings to generate either:
@@ -873,6 +906,31 @@ The ramp-only alternative was not selected. A labelled algorithm comparison
 and composite material-override rule remain necessary; this capability
 decision does not approve an unseen algorithm or rendered look.
 
+**Batch 9, snap algorithm proposal, not decided:** A (recommended) uses
+Probe 5's two-nearest-colour algorithm; B uses its nearest-anchor/best-segment
+partner search. A keeps both candidates close to the target; B can improve
+the segment approximation using a more distant, visibly contrasting partner.
+Both use the approved selected tile at cell coordinates, the projection
+fraction described above, stable target-order ties and the one-colour rule.
+Proposed shared dither strength is finite `[0,1]`, default 1 when a pattern
+is chosen; the pattern itself stays off by default. Zero is the undithered
+path. This chooses a numerical algorithm and strength contract, not a
+project's pattern or strength. The existing shade-driven ramp arithmetic
+still needs its final compatibility/sampling specification.
+
+**Batch 9, composite ownership proposal, not decided:** for whole-palette
+snap of a pixel containing both layers, A (recommended) takes the dither
+pattern/strength from the layer with the larger visible contribution (the
+existing front weight versus transmitted back weight, summed over the
+output pixel), ties to front. B always takes front when it contributes
+anything. C uses export/project dither settings for mixed pixels instead
+of material overrides there. For A/B, use the selected layer's winning
+material and its mode's no-dither rule, including neither. One-layer pixels
+retain their material controls. Own-ramp snap stays per layer, including
+whole-palette fallback for a missing ramp; that fallback changes the allowed
+colour set, not the per-layer placement. This is an ownership contract to
+verify on translucent evidence, not acceptance of an unseen result.
+
 ### Q-7. Do outlines belong in this arc?
 
 Resolved by D-13: defer outlines to a separate style arc. Including optional
@@ -915,6 +973,23 @@ modes, relevant camera settings and motion. Choose review inputs and
 configuration at that point, without treating the not-yet-authored Codekarl
 palette as an available dependency. Mechanical verification must cover
 reproduction, compatibility, alpha/map alignment, settings and errors.
+
+**Batch 9, review-boundary proposal, not decided:** A (recommended) reserves
+a separate owner visual-review slice after mechanical validation. Use the
+existing robot for motion, shrub for cutouts and chest for translucent
+layers; cover the live-lit eight-direction isometric use and straight-on
+baked panels, including perspective/roll, four modes and representative
+dither/snap combinations. Include a longer generic ramp example so the
+owner's D-18 suggestion is exercised without inventing the second game's
+palette. The owner selects actual live-lit sky strength and other project
+look values during that review; they remain deliberately open until then,
+and no project tuning is inferred from these design probes. Preserve the
+current live-lit settings until that review. The slice must stop for owner
+acceptance of the rendered evidence; passing tests cannot substitute for it.
+Then inventory/regenerate working sheets under D-8, preserving historical
+acceptance artifacts. B asks the owner to name different review inputs or
+coverage before this boundary is fixed. Detailed slice ordering follows once
+the remaining data/settings contracts are settled.
 
 ### Q-10. What other boundaries and delivery order should be explicit?
 
