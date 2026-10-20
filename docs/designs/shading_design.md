@@ -206,6 +206,35 @@ the target using existing short ramps; they do not decide a project look,
 test longer authored ramps, or verify translucent behaviour. No repository
 tests were run.
 
+### Probe 4: sky frame and brightness range
+
+Prepared on 2026-10-20 from Probe 1's immutable captures, without a new
+Blender run, production edit or owner-configuration change:
+
+- Page: `file:///Users/vincentcoghlan/.local/share/moskophoros-acceptance/shading-design/probe-4/page/index.html`.
+  SHA-256: `94782a1439904b32498d0b908370ef376f8eaadb4f87f56d5c31dd9ebec03ef4`.
+- Prototype: `~/.local/share/moskophoros-acceptance/shading-design/probe-4/lighting.py`.
+  SHA-256: `7d1ea7bad7813896cbee222bf2f5549d8f50090a07a1adfaf73c631c37773aca`.
+- Manifest: `~/.local/share/moskophoros-acceptance/shading-design/probe-4/manifest.json`.
+  SHA-256: `43061a871662d2af175dd96a0c11c6ff1a18cf1f5feb3f356dce871e504857c7`.
+
+The sky comparison isolates `e = a * (.20 + .80 * sky)` and uses the
+existing ramps, with key/ground off. It contrasts camera screen-up with
+subject/world up, unrolled and at a mathematically transformed 90-degree
+clockwise roll. The latter rotates cell pixels exactly and changes the
+camera-up facing vector from original `(0,1,0)` to `(-1,0,0)`, consistent
+with `views.camera_basis`; it is not a new capture or an end-to-end roll
+test. World-up colours were verified to rotate exactly with the subject,
+and both frame choices retain identical alpha.
+
+The brightness pair keeps Probe 1's original ambient/light signal and
+changes only the brightness ceiling: gain `.30 + .70*e` versus
+`.30 + 1.70*e`, with output channels clipped to white. The first frame
+changes at 4,573 visible robot pixels and 3,790 visible shrub pixels.
+Dithering and snap are off. Representative PNGs were inspected. These
+opaque/cutout illustrations are not project defaults, acceptance of a
+look, or verification of perspective/translucency. No repository tests ran.
+
 ## Desired experience and settled scope
 
 The owner chooses project settings to generate either:
@@ -657,6 +686,24 @@ Weights and bounds will be specified separately, with a zero-new-terms path
 preserving D-8 exactly. Selecting a family does not select these weights or
 the live-lit project's sky setting.
 
+**Batch 7, sky-frame proposal, not decided:** A (recommended) makes sky
+camera screen-up and ground screen-down, following camera roll. This
+preserves V-7's camera-fixed lighting rule. B makes these terms follow
+subject/world up and its opposite; this needs the owner's explicit narrow
+exception to V-7 for sky/ground. C offers both frames with camera as default
+and the same explicit exception when world is selected. The key remains
+camera-fixed under D-4 in all options. Probe 4 illustrates the difference;
+no vision amendment is made before the owner decides.
+
+**Batch 7, brightness-range proposal, not decided:** expose a floor and
+ceiling for the linear RGB gain. A (recommended) keeps both in `[0,1]`,
+with floor no greater than ceiling, so brightness only darkens or restores
+the base. B permits a ceiling up to 4, still at least the floor, with the
+floor in `[0,1]`; output channels clip at white. Ramp selection remains
+limited to its entries; these gain controls affect brightness/both only.
+Probe 4 illustrates ceilings 1 and 2. Defaults, exact formula and material
+inheritance remain for the later complete settings contract.
+
 ### Q-5. Which controls may materials override?
 
 Ownership resolved by D-10: project defaults and material mode/response
@@ -779,6 +826,15 @@ proposal preserved ordinary colour/texture without a resolved ramp, with
 brightness alone in both mode; it must not silently become a decision.
 Treating the entire palette as a shading ramp would be a different policy
 and needs its own definition, especially for texture and colour ordering.
+
+**Batch 7 clarification, not decided:** A (recommended) reads "the whole
+palette, either way" as snap fallback only: without a resolved ramp, ramp
+mode keeps ordinary colour/texture, both adds brightness to it, and either
+enabled snap target uses the whole palette. B also requests new shading
+through the whole palette for materials without ramps; that requires a
+separate ordering/texture policy and an opt-in compatibility rule before
+adoption. The question asks the extent of the answer, not whether the
+already accepted whole-palette snap fallback is allowed.
 
 ## Verification strategy
 
