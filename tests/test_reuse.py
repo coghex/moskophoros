@@ -70,6 +70,7 @@ REUSED = {
     "direction": (0.0, 0.0, -1.0),
     "directions": 2,
     "start_angle": 90.0,
+    "projection": "orthographic",
     "roll": 0.25,
     "camera_position": (0.5, 1.5, -2.0),
     "model_yaw": -45.0,
@@ -674,8 +675,8 @@ def test_a_missing_field_is_rejected(tmp_path, capsys, field):
         ("camera", [0, 0, -1], "expected an object, got [0, 0, -1]"),
         (
             "camera.projection",
-            "perspective",
-            "expected 'orthographic', got \"perspective\"",
+            "fisheye",
+            "expected 'orthographic' or 'perspective', got \"fisheye\"",
         ),
         ("camera.direction", [0, 0], "expected [x, y, z], three numbers, got [0, 0]"),
         (
@@ -780,13 +781,46 @@ def test_an_unacceptable_value_is_rejected(tmp_path, capsys, field, value, probl
     assert rejected(capsys, path) == f"settings.{field}: {problem}"
 
 
-@pytest.mark.parametrize("projection", ["perspective", "Orthographic", None, 0])
-def test_the_projection_must_be_orthographic(tmp_path, capsys, projection):
+@pytest.mark.parametrize("projection", ["Perspective", "fisheye", None, 0])
+def test_the_projection_must_be_orthographic_or_perspective(
+    tmp_path, capsys, projection
+):
     path = write_sheet(tmp_path, edited({"camera.projection": projection}))
     problem = rejected(capsys, path)
     assert problem.startswith("settings.camera.projection: ")
-    shown = "must be set, got null" if projection is None else "expected 'orthographic'"
+    shown = (
+        "must be set, got null"
+        if projection is None
+        else "expected 'orthographic' or 'perspective'"
+    )
     assert shown in problem
+
+
+def test_a_perspective_sheet_reloads_its_camera(tmp_path):
+    # The recorded position is in front of the camera: [0.5, 1.5, -2.0]
+    # looking along (0, 0, -1) has the ground point 2 m behind it, so the
+    # sheet's own position is moved in front.
+    camera = {"camera.projection": "perspective", "camera.position": [0.5, 1.5, 2.0]}
+    path = write_sheet(tmp_path, edited(camera))
+    options = reuse(path)
+    assert values(options, ["projection", "camera_position"]) == {
+        "projection": "perspective",
+        "camera_position": (0.5, 1.5, 2.0),
+    }
+    assert reuse(path, "--projection", "orthographic").projection == "orthographic"
+
+
+def test_a_reloaded_perspective_camera_behind_the_ground_point_is_refused(
+    tmp_path, capsys
+):
+    path = write_sheet(tmp_path, edited({"camera.projection": "perspective"}))
+    with pytest.raises(cli.UsageError) as raised:
+        reuse(path)
+    assert raised.value.code == 2
+    assert raised.value.message.endswith(
+        "has the ground point -2.0 m in front of it: the ground point must be in "
+        "front of the camera"
+    )
 
 
 @pytest.mark.parametrize("field", ["pixels_per_meter", "cell", "ground_px"])
@@ -1064,6 +1098,26 @@ ORIGINALS = {
         ground_px=(1, 1),
         root_motion="error",
         shade=DEFAULT_SHADE,
+    ),
+    # A rolled, off-axis perspective camera (projects and camera design
+    # D-3, D-10).
+    "perspective": Settings(
+        view="custom",
+        direction=views.normalise((0.3, -0.6, -0.7)),
+        directions=4,
+        start_angle=22.5,
+        model_yaw=10.0,
+        fps=12.0,
+        supersample=2,
+        ppm=40.0,
+        cell=(24, 32),
+        ground=(0.1, 0.2, -0.05),
+        ground_px=(9, 27),
+        root_motion="error",
+        shade=DEFAULT_SHADE,
+        projection="perspective",
+        roll=0.3,
+        position=(-1.5, 2.25, 2.0),
     ),
 }
 

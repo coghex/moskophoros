@@ -1,3 +1,4 @@
+import json
 import math
 import os
 from pathlib import Path
@@ -173,6 +174,7 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
     options = cli.parse_args(
         [
             *["--view", "side", "--camera-direction", "0,-0.6,-0.8"],
+            *["--projection", "perspective"],
             *["--camera-roll", "-0.25", "--camera-position", "0,1,2"],
             *["--directions", "4"],
             *["--start-angle", "5", "--model-yaw", "-90"],
@@ -216,6 +218,7 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         outfile=Path("out.png"),
         view="custom",
         direction=(0.0, -0.6, -0.8),
+        projection="perspective",
         roll=-0.25,
         camera_position=(0.0, 1.0, 2.0),
         directions=4,
@@ -299,6 +302,8 @@ def test_no_user_config_is_recorded_as_explicit():
         ("--root-motion", "keep", "root_motion", "keep"),
         ("--reduce", "plain", "reduce", "plain"),
         ("--reduce", "mode", "reduce", "mode"),
+        ("--projection", "orthographic", "projection", "orthographic"),
+        ("--projection", "perspective", "projection", "perspective"),
         ("--edges", "hard", "edges", "hard"),
         ("--edges", "soft", "edges", "soft"),
         ("--ao-distance", "1e-9", "ao_distance", 1e-9),
@@ -360,6 +365,8 @@ def test_range_boundaries_are_accepted(option, value, field, expected):
         ("--reduce", "Mode", "invalid choice"),
         ("--reduce", "Plain", "invalid choice"),
         ("--reduce", "", "invalid choice"),
+        ("--projection", "Perspective", "invalid choice"),
+        ("--projection", "fisheye", "invalid choice"),
         ("--edges", "fuzzy", "invalid choice"),
         ("--edges", "Hard", "invalid choice"),
         ("--edges", "", "invalid choice"),
@@ -638,6 +645,7 @@ def test_unknown_options_and_wrong_positional_counts_are_rejected(
 DESIGN_OPTIONS = {
     "--view NAME": "iso",
     "--pitch DEG": "from the view",
+    "--projection NAME": "orthographic",
     "--camera-direction X,Y,Z": "from the view",
     "--camera-roll R": "0",
     "--camera-position X,Y,Z": "none",
@@ -726,3 +734,177 @@ def test_a_valid_parse_leaves_the_filesystem_untouched(tmp_path, capsys):
     assert snapshot(tmp_path) == before
     assert not os.path.lexists(infile)
     assert capsys.readouterr() == ("", "")
+
+
+# The perspective camera (projects and camera design D-3, D-10, D-16)
+
+
+@pytest.fixture
+def setup(tmp_path):
+    from test_command import Setup
+
+    return Setup(tmp_path)
+
+
+# The iso camera, from 1.5 m above and 2.5 m in front of the ground point.
+PERSPECTIVE = ["--projection", "perspective", "--camera-position", "0,1.5,2.5"]
+
+
+def run(capsys, argv):
+    status = cli.run(argv)
+    out, err = capsys.readouterr()
+    assert out == ""
+    return status, err
+
+
+def test_the_projection_is_orthographic_by_default():
+    assert parse().projection == "orthographic"
+    options = parse("--projection", "perspective")
+    assert (options.projection, options.view) == ("perspective", "iso")
+    assert "projection" in options.explicit
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        (
+            ["--projection", "perspective"],
+            "the perspective camera needs a position: give --camera-position X,Y,Z "
+            "or camera.position, in meters from the ground point",
+        ),
+        (
+            ["--projection", "perspective", "--camera-position", "0,-1.5,-2.5"],
+            "the perspective camera at (0.0, -1.5, -2.5) from the ground point, "
+            "looking along (0.0, -0.49999999999999994, -0.8660254037844387), has "
+            "the ground point -2.915063509461097 m in front of it: the ground "
+            "point must be in front of the camera",
+        ),
+        (
+            [
+                *["--projection", "perspective", "--camera-direction", "0,0,-1"],
+                *["--camera-position", "1,0.5,0"],
+            ],
+            "the perspective camera at (1.0, 0.5, 0.0) from the ground point, "
+            "looking along (0.0, 0.0, -1.0), has the ground point 0.0 m in front "
+            "of it: the ground point must be in front of the camera",
+        ),
+    ],
+    ids=["no position", "behind", "beside"],
+)
+def test_a_perspective_camera_needs_the_ground_point_in_front(
+    setup, capsys, monkeypatch, options, message
+):
+    from test_materials_command import forbid_blender
+
+    earlier = setup.listing()
+    forbid_blender(monkeypatch)
+    status, err = run(capsys, setup.argv(*options))
+    assert status == 2
+    usage, error = err.splitlines()
+    assert usage == USAGE_LINE
+    assert error == f"moskophoros: error: {message}"
+    assert setup.listing() == earlier
+
+
+def test_a_settings_file_s_perspective_camera_is_checked_too(setup, capsys, tmp_path):
+    from test_materials_command import forbid_blender
+
+    project = tmp_path / "config" / "moskophoros" / "projects" / "look.yaml"
+    project.parent.mkdir(parents=True)
+    project.write_text("camera:\n  projection: perspective\n")
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+        forbid_blender(patch)
+        status, err = run(capsys, setup.argv("--project", "look"))
+    assert status == 2
+    assert "the perspective camera needs a position" in err
+    # The position in the file, or on the command line, completes it.
+    project.write_text(
+        "camera:\n  projection: perspective\n  position: [0, 1.5, 2.5]\n"
+    )
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+        assert run(capsys, setup.argv("--project", "look"))[0] == 0
+
+
+def test_a_perspective_run_clips_from_the_measured_depths(setup, capsys, tmp_path):
+    work = tmp_path / "work"
+    setup.configure(depth=[1.25, 4.5])
+    status, err = run(capsys, setup.argv(*PERSPECTIVE, "--work-dir", str(work)))
+    assert (status, err) == (0, "")
+    measure = json.loads((work / "measure" / "job.json").read_text())
+    render = json.loads((work / "render" / "job.json").read_text())
+    assert measure["clipping"] is None
+    # Half the nearest depth, and twice the farthest plus 1 m.
+    assert render["clipping"] == {
+        "near_m": 0.625,
+        "far_m": 10.0,
+        "depth_m": [1.25, 4.5],
+    }
+    for job in (measure, render):
+        assert job["schema"] == "moskophoros.capture-job/3"
+        assert job["settings"]["camera"] == {
+            "projection": "perspective",
+            "direction": list(pitch_direction(30.0)),
+            "roll": 0.0,
+            "position": [0.0, 1.5, 2.5],
+        }
+    recorded = json.loads(setup.json.read_text())["settings"]["camera"]
+    assert recorded == measure["settings"]["camera"]
+
+
+def test_a_vertex_too_near_the_camera_is_exit_4_with_nothing_published(setup, capsys):
+    from test_command import earlier_outputs
+
+    setup.configure(near=[1, 2])
+    earlier = earlier_outputs(setup, "hero.png", "hero.json", "hero.attack.gif")
+    status, err = run(capsys, setup.argv(*PERSPECTIVE))
+    assert status == 4
+    assert err.splitlines() == [
+        f"moskophoros: error: {setup.model}: a vertex is too near the perspective "
+        "camera to project, 0.0001 m from it or nearer, or behind it; move the "
+        "camera's position farther from the subject:",
+        "  clip 'walk', direction 0, time 0.25 s: nearest vertex depth -0.2 m",
+        "  clip 'walk', direction 0, time 0.5 s: nearest vertex depth -0.2 m",
+    ]
+    assert setup.listing() == earlier
+    assert [call["mode"] for call in setup.calls()] == ["measure"]
+
+
+@pytest.mark.parametrize(
+    ("options", "changes"),
+    [
+        ([], {"bounds_m": None}),
+        (PERSPECTIVE, {"bounds_m": None, "depth_m": [0.5, 3.0]}),
+        (PERSPECTIVE, {"depth_m": "missing"}),
+        (PERSPECTIVE, {"depth_m": [math.nan, 3.0]}),
+        (PERSPECTIVE, {"depth_m": [2.0, math.inf]}),
+        (PERSPECTIVE, {"depth_m": [3.0, 2.0]}),
+        (
+            PERSPECTIVE,
+            {"bounds_m": {"L": 0.1, "R": 0, "U": 0, "D": 0}, "depth_m": [0, 1]},
+        ),
+    ],
+    ids=[
+        "orthographic null bounds",
+        "null bounds with a far depth",
+        "no depths",
+        "a non-finite depth",
+        "an infinite depth",
+        "reversed depths",
+        "bounds with a near depth",
+    ],
+)
+def test_a_malformed_perspective_measurement_stays_exit_5(
+    setup, capsys, request, options, changes
+):
+    from test_command import earlier_outputs
+
+    setup.configure(frame_changes={"0": changes})
+    earlier = earlier_outputs(setup, "hero.png", "hero.json")
+    status, err = run(capsys, setup.argv(*options))
+    assert status == 5
+    # A non-finite number is no JSON number, refused as the result is read.
+    where = "non-finite" if "finite" in request.node.callspec.id else "frame 0"
+    assert err.startswith(f"moskophoros: error: the measure result is invalid: {where}")
+    assert setup.listing() == earlier

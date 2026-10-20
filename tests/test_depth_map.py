@@ -380,3 +380,64 @@ def test_a_failed_rename_rolls_the_depth_map_back_with_the_rest(
     assert status == 6
     assert any(str(target).endswith("hero.depth.png") for target in calls)
     assert setup.listing() == earlier
+
+
+# The depth map under perspective (projects and camera design D-13)
+
+
+def test_a_perspective_depth_is_d_minus_z_c_in_sheet_pixels(tmp_path):
+    """Each pixel's depth is `(d − z_c)·ppm` sheet pixels toward the viewer:
+    the script stores the ground point's camera depth less the pixel's view
+    depth, which Cycles gives along the viewing axis, and the reduction takes
+    it to sheet pixels at the ground point's scale, with today's encoding."""
+    import importlib.util
+    import sys
+    import types
+
+    from moskophoros import views
+    from moskophoros.capture import backend, blender
+
+    saved = sys.modules.get("bpy")
+    sys.modules["bpy"] = types.ModuleType("bpy")
+    try:
+        spec = importlib.util.spec_from_file_location("capture_script", blender.SCRIPT)
+        script = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(script)
+    finally:
+        if saved is None:
+            del sys.modules["bpy"]
+        else:
+            sys.modules["bpy"] = saved
+
+    camera = views.perspective(
+        views.normalise((0.3, -0.6, -0.7)), 0.3, (-1.5, 2.25, 2.0)
+    )
+    d = camera.ground[2]
+    ground = (0.0, 0.0, 0.0)
+    # Points nearer the camera than the ground point, on its plane and beyond.
+    points = [(0.2, 0.6, 0.3), (0.0, 0.0, 0.0), (-0.4, -0.2, -0.5), (0.5, 1.2, 0.9)]
+    depths = [views.project(camera, point, ground, 30.0)[2] for point in points]
+    assert depths[0] < d and depths[1] == pytest.approx(d) and depths[2] > d
+    width, height = len(points), 1
+    path = tmp_path / "depth.png"
+    script.write_depth(path, width, height, depths, d, "frame 0", [b"\xff" * width])
+    meters = backend.decode_depth(backend.read_wide_png(path))[0]
+    expected = np.array([d - z for z in depths], dtype=np.float32)
+    assert meters.tolist() == expected.tolist()
+
+    ppm = 40.0
+    normal = np.zeros((height, width, 3))
+    normal[..., 2] = 1.0
+    _, sheet = imageops.reduce_normal_depth(
+        normal, meters[None, :], np.ones((height, width), dtype=bool), 1, ppm
+    )
+    in_pixels = expected.astype(np.float64) * ppm
+    assert sheet[0].tolist() == (np.floor(16 * in_pixels + 0.5) / 16).tolist()
+    codes = export.encode_depth(sheet[0])
+    # Toward the viewer is positive: the nearer point encodes above 32768.
+    assert codes[0] > 32768 > codes[2]
+    assert codes[1] == 32768
+    assert codes.tolist() == (32768 + np.floor(16 * sheet[0] + 0.5)).tolist()
+    # The range is today's: the deepest point overflows it at a larger scale.
+    with pytest.raises(ValueError, match="2047.9375"):
+        export.encode_depth(in_pixels * 2048 / np.abs(in_pixels).max())

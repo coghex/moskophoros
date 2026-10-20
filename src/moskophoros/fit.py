@@ -36,9 +36,11 @@ class Bounds:
 
 @dataclass(frozen=True)
 class Measurement:
-    """One frame's measured bounds and its height along the vertical axis."""
+    """One frame's measured bounds and its height along the vertical axis.
+    The bounds are None for a frame with a vertex too near the perspective
+    camera to project, which `check_near` refuses before fitting."""
 
-    bounds: Bounds
+    bounds: Bounds | None
     height: float
 
 
@@ -68,6 +70,46 @@ class CellOverflow(Exception):
     def __init__(self, message, frames):
         super().__init__(message)
         self.frames = frames
+
+
+class NearOverflow(Exception):
+    """Frames with a vertex too near the perspective camera to project:
+    exit classification 4 (design §Camera and directions, Perspective).
+
+    `frames` holds each such frame's address with its nearest vertex depth
+    in meters, in request order.
+    """
+
+    exit_code = OVERFLOW_ERROR
+
+    def __init__(self, message, frames):
+        super().__init__(message)
+        self.frames = frames
+
+
+def check_near(source, measurements, depths, limit):
+    """Raise `NearOverflow` naming `source` for the frames whose bounds are
+    None, each with its nearest vertex depth from `depths`, which maps each
+    frame address to its nearest and farthest vertex depths; `limit` is how
+    near a vertex may not be."""
+    near = [
+        (address, depths[address][0])
+        for address, measurement in measurements.items()
+        if measurement.bounds is None
+    ]
+    if not near:
+        return
+    lines = [
+        f"{source}: a vertex is too near the perspective camera to project, "
+        f"{limit} m from it or nearer, or behind it; move the camera's position "
+        "farther from the subject:"
+    ]
+    for address, depth in near:
+        lines.append(
+            f"  clip {address.clip!r}, direction {address.direction}, "
+            f"time {address.time_s!r} s: nearest vertex depth {depth!r} m"
+        )
+    raise NearOverflow("\n".join(lines), tuple(near))
 
 
 def resolve(measurements, ppm=None, cell=None, ground_px=None):

@@ -146,6 +146,19 @@ names (`south`, `east`, ...) stay tied to that turn. `--pitch` and
 `--camera-direction` both set the
 direction, so only one may be given.
 
+The camera is orthographic unless `--projection perspective` is given. A
+perspective camera stands at `--camera-position X,Y,Z`, meters from the
+ground point, and needs one with the ground point in front of it;
+`--ppm` then holds at the ground point's distance, so nearer parts of the
+model look larger. The normal and depth maps stay those of the flat sprite,
+the depth in sheet pixels at the ground point's scale. A vertex at or behind
+the camera fails the run (exit 4) before anything is written.
+
+```sh
+moskophoros --projection perspective --camera-direction 0.3,-0.5,-0.8 \
+    --camera-position -1.5,2.5,4 hero.glb hero.png
+```
+
 Everything that shapes the picture can also come from YAML settings files,
 all sharing one format: the view and camera, scale, cell, ground point, supersampling,
 reduction, fps, frame count, palette, library, edges, previews, normal and

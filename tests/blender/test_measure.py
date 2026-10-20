@@ -604,7 +604,7 @@ def _repeat_first_frame(text):
         (lambda text: text.replace('{"', '{"schema": "x", "', 1), "duplicate key"),
         (
             lambda text: text.replace(
-                "moskophoros.capture-job/2", "moskophoros.capture-job/3"
+                "moskophoros.capture-job/3", "moskophoros.capture-job/4"
             ),
             "schema",
         ),

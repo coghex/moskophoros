@@ -103,6 +103,8 @@ CUSTOM_VIEW = "custom"
 ROOT_MOTION_MODES = layered.ROOT_MOTION_MODES
 # The values --reduce accepts; the first is the default.
 REDUCTIONS = layered.REDUCTIONS
+# The values --projection accepts; the first is the default.
+PROJECTIONS = layered.PROJECTIONS
 # The only sheet schema `--settings-from` loads (settings design D-24).
 SHEET_SCHEMA = "moskophoros.sheet/14"
 _MAX_DIGITS = 4300
@@ -125,6 +127,7 @@ _SETTING_FIELDS = MappingProxyType(
         "ramp.lightness_step": "ramp_step",
         "ramp.hue_shift_deg": "ramp_hue_shift",
         "ramp.chroma_fade": "ramp_fade",
+        "camera.projection": "projection",
         "camera.roll": "roll",
         "camera.position": "camera_position",
     }
@@ -174,9 +177,10 @@ class Options:
     is the resolved preset name, or `custom` when an explicit direction,
     direction count or start angle overrides the preset; `preset` is the
     preset `--view` names, or the default. `direction` is the camera's
-    normalised direction, which `--pitch` or the preset may set, `roll` its
-    roll and `camera_position` its position, or None. `clip` is None when every clip is selected; `ppm`, `cell` and
-    `ground_px` are None when automatic. `origins` names the settings file
+    normalised direction, which `--pitch` or the preset may set,
+    `projection` its projection, `roll` its roll and `camera_position` its
+    position, or None. `clip` is None when every clip is selected; `ppm`,
+    `cell` and `ground_px` are None when automatic. `origins` names the settings file
     that set a palette, a library or the Blender executable, for its errors.
     """
 
@@ -244,6 +248,7 @@ class Options:
     ramp_hue_shift: float = layered.DEFAULTS["ramp.hue_shift_deg"]
     ramp_fade: float = layered.DEFAULTS["ramp.chroma_fade"]
     preset: str = DEFAULT_VIEW
+    projection: str = layered.DEFAULTS["camera.projection"]
     roll: float = layered.DEFAULTS["camera.roll"]
     camera_position: tuple[float, float, float] | None = layered.DEFAULTS[
         "camera.position"
@@ -318,6 +323,7 @@ def parse_args(argv: Sequence[str]) -> Options:
         outfile=args.outfile,
         view=CUSTOM_VIEW if overrides else args.view,
         direction=direction,
+        projection=args.projection,
         roll=args.roll,
         camera_position=args.camera_position,
         directions=args.directions if "directions" in explicit else preset.directions,
@@ -380,16 +386,18 @@ class ReusedSettings:
     """The values `--settings-from` reuses, named as in `Options`.
 
     `view` is a preset name or `custom`, with the view's recorded direction,
-    direction count and start angle; `roll` and `camera_position` are the
-    camera's recorded roll and position. Scale, cell and ground pixel are
-    always set: reuse makes them fixed. `clip` is the recorded clip selection, in
-    sheet order, and `once` the one-shot clips among it.
+    direction count and start angle; `projection`, `roll` and
+    `camera_position` are the camera's recorded projection, roll and
+    position. Scale, cell and ground pixel are always set: reuse makes them
+    fixed. `clip` is the recorded clip selection, in sheet order, and `once`
+    the one-shot clips among it.
     """
 
     view: str
     direction: tuple[float, float, float]
     directions: int
     start_angle: float
+    projection: str
     roll: float
     camera_position: tuple[float, float, float] | None
     model_yaw: float
@@ -464,6 +472,7 @@ def resolve_settings(options: Options, environ=None) -> Options:
     if reused is not None:
         view_layers = [("--settings-from", reused)]
     options = _resolve_view(options, [*view_layers, *projects, command_line_view])
+    _check_camera(options)
     # Each clip's own frame count merges by clip name, the loaded sheet's
     # included, a higher layer's null clearing a lower one's count; per-clip
     # values come from files and the sheet only (settings design D-17, D-39).
@@ -474,6 +483,30 @@ def resolve_settings(options: Options, environ=None) -> Options:
     options = replace(options, clip_frames=MappingProxyType(merged))
     options = _resolve_palette(options)
     return _resolve_materials(options, reused_colors)
+
+
+def _check_camera(options):
+    """Refuse a perspective camera without a position, or with the ground
+    point not in front of it, `d = −position · f` 0 or less (projects and
+    camera design D-10, D-16), before Blender runs."""
+    if options.projection != backend.PERSPECTIVE:
+        return
+    parser = _build_parser()[0]
+    if options.camera_position is None:
+        parser.error(
+            "the perspective camera needs a position: give --camera-position "
+            "X,Y,Z or camera.position, in meters from the ground point"
+        )
+    depth = views.perspective(
+        options.direction, options.roll, options.camera_position
+    ).ground[2]
+    if not depth > 0:
+        parser.error(
+            f"the perspective camera at {_coordinates(options.camera_position)} "
+            f"from the ground point, looking along {_coordinates(options.direction)}, "
+            f"has the ground point {depth!r} m in front of it: the ground point "
+            "must be in front of the camera"
+        )
 
 
 def _read_layers(options, environ):
@@ -848,6 +881,7 @@ def read_settings(path) -> ReusedSettings:
         direction=camera["direction"],
         directions=view["directions"],
         start_angle=view["start_angle_deg"],
+        projection=camera["projection"],
         roll=camera["roll"],
         camera_position=camera["position"],
         model_yaw=checked["model_yaw_deg"],
@@ -934,6 +968,7 @@ def capture_settings(options: Options) -> backend.Settings:
     """
     return backend.Settings(
         view=options.view,
+        projection=options.projection,
         direction=options.direction,
         roll=options.roll,
         position=options.camera_position,
@@ -1063,6 +1098,7 @@ def run(argv: Sequence[str]) -> int:
     except (
         gltf.InputError,
         fit.CellOverflow,
+        fit.NearOverflow,
         export.DepthOverflow,
         backend.BackendError,
         _OutputError,
@@ -1185,6 +1221,15 @@ def _command(options):
         )
         if settings.root_motion == "error":
             check_root_motion(options.infile, measured.roots)
+        clip = None
+        if measured.depths is not None:
+            fit.check_near(
+                options.infile,
+                measured.measurements,
+                measured.depths,
+                views.NEAR_LIMIT,
+            )
+            clip = backend.clipping(measured.depths.values())
         fitted = fit.resolve(
             measured.measurements, options.ppm, options.cell, options.ground_px
         )
@@ -1204,6 +1249,7 @@ def _command(options):
                 selected,
                 requested,
                 str(workspace / "render"),
+                clip,
             ),
         )
         lookup = backend.material_lookup(rendered, subject)
@@ -1932,6 +1978,16 @@ def _build_parser():
         "(0, -sin DEG, -cos DEG) (default: from the view)",
     )
     single(
+        "--projection",
+        "NAME",
+        str,
+        layered.DEFAULTS["camera.projection"],
+        f"the camera's projection: {', '.join(PROJECTIONS)}; perspective looks "
+        "from --camera-position (default: "
+        f"{layered.DEFAULTS['camera.projection']})",
+        choices=PROJECTIONS,
+    )
+    single(
         "--camera-direction",
         "X,Y,Z",
         _camera_direction,
@@ -1955,7 +2011,8 @@ def _build_parser():
         _ground,
         layered.DEFAULTS["camera.position"],
         "the camera's position in meters from the ground point; the "
-        "orthographic camera records it unused (default: none)",
+        "perspective camera needs it, and the orthographic camera records it "
+        "unused (default: none)",
         dest="camera_position",
     )
     single(
@@ -2178,7 +2235,8 @@ def _build_parser():
         "use FILE as the global settings file, in place of the user file, "
         "$XDG_CONFIG_HOME/moskophoros/config.yaml, else "
         "~/.config/moskophoros/config.yaml. A settings file may set the view, "
-        "pitch or camera.direction, camera.roll, camera.position, directions, "
+        "pitch or camera.direction, camera.projection, camera.roll, "
+        "camera.position, directions, "
         "start_angle, model_yaw, ppm, cell, ground, "
         "ground_px, supersample, reduce, root_motion, fps, frames, clips, "
         "palette, materials, edges, previews, normals, depth, light, shade, "
@@ -2629,7 +2687,7 @@ _SETTINGS = {
         "start_angle_deg": _reused(_number),
     },
     "camera": {
-        "projection": _one_of(backend.PROJECTION),
+        "projection": _one_of(*PROJECTIONS),
         "direction": _recorded_direction,
         "roll": _reused(_roll),
         "position": _Nullable(_light_position),

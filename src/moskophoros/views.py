@@ -169,6 +169,147 @@ def _level(x, z):
     return abs(z) if x == 0 else math.hypot(x, z)
 
 
+# A vertex nearer the camera than this, along the way it looks, cannot be
+# projected: it is at, behind or too near the camera to clip (projects and
+# camera design D-16).
+NEAR_LIMIT = 1e-4
+
+
+@dataclass(frozen=True)
+class Perspective:
+    """The perspective camera in the subject's frame at θ = 0, as
+    `subject_basis` gives it: `basis` its axes, `position` its position
+    from the ground point, and `ground` the ground point's camera space
+    `(x_g, y_g, d)`, with `d` its depth along the way the camera looks."""
+
+    basis: CameraBasis
+    position: tuple[float, float, float]
+    ground: tuple[float, float, float]
+
+
+def perspective(direction, roll, position):
+    """The perspective camera standing at the ground point plus `position`,
+    looking along `direction` with `roll` (design §Camera and directions,
+    Perspective).
+
+    Each direction's turn is measured from the camera's heading, so in the
+    subject's frame at θ = 0 the camera's position is `position` turned by
+    the heading's opposite, as `subject_basis` turns its axes. The ground
+    point's depth `d = −position · f` is then that of the turned position
+    along the turned direction, which the turn keeps; a `d` of 0 or less
+    puts the ground point beside or behind the camera.
+    """
+    fx, _, fz = normalise(direction)
+    level = _level(fx, fz)
+    px, py, pz = (float(coordinate) for coordinate in position)
+    if not all(map(math.isfinite, (px, py, pz))):
+        raise ValueError(f"a position must be finite, got {position!r}")
+    if level != 0:
+        # The turn taking the heading −(f_x, 0, f_z) to +Z.
+        sin, cos = fx / level, 0.0 - fz / level
+        px, pz = px * cos + pz * sin, pz * cos - px * sin
+    basis = subject_basis(direction, roll)
+    turned = (px, py, pz)
+    ground = tuple(0.0 - _dot(turned, axis) for axis in basis_axes(basis))
+    return Perspective(basis, turned, ground)
+
+
+def basis_axes(basis):
+    """The basis's right, up and forward, the order of camera space."""
+    return basis.right, basis.up, basis.forward
+
+
+def project(camera, point, ground, rotation):
+    """Where `point`, in subject coordinates, lands from the perspective
+    `camera`, with the subject turned by `rotation` degrees about the
+    vertical axis through `ground`: `(X, Y, z_c)`, in meters on the ground
+    point's plane from the projected ground point, with `z_c` the point's
+    depth from the camera (design §Camera and directions, Perspective).
+
+    `X = d·x_c/z_c − x_g` and `Y = d·y_c/z_c − y_g`, so the ground point
+    projects to `(0, 0)`. A `z_c` of `NEAR_LIMIT` or less cannot be
+    projected, and gives None for X and Y.
+    """
+    x, y, z = rotate(rotation, tuple(p - g for p, g in zip(point, ground, strict=True)))
+    relative = tuple(
+        value - origin for value, origin in zip((x, y, z), camera.position, strict=True)
+    )
+    xc, yc, zc = (_dot(relative, axis) for axis in basis_axes(camera.basis))
+    xg, yg, d = camera.ground
+    if zc <= NEAR_LIMIT:
+        return None, None, zc
+    return d * xc / zc - xg, d * yc / zc - yg, zc
+
+
+def rotate(rotation, vector):
+    """`vector` turned by `rotation` degrees about +Y, as `rotation_matrix`
+    turns it."""
+    return tuple(_dot(row, vector) for row in rotation_matrix(rotation))
+
+
+def perspective_bounds(camera, points, ground, rotation):
+    """One frame's measurement under the perspective `camera`: `L`, `R`, `U`
+    and `D` from the projected ground point, as `fit.Bounds` holds them, or
+    None when a point is too near the camera to project, and the nearest and
+    farthest point depths `(near, far)` (design §Camera and directions,
+    Perspective). `points` must not be empty."""
+    projected = [project(camera, point, ground, rotation) for point in points]
+    depths = [zc for _, _, zc in projected]
+    near, far = min(depths), max(depths)
+    if near <= NEAR_LIMIT:
+        return None, (near, far)
+    xs = [x for x, _, _ in projected]
+    ys = [y for _, y, _ in projected]
+    return (
+        (max(0.0, -min(xs)), max(0.0, *xs), max(0.0, *ys), max(0.0, -min(ys))),
+        (near, far),
+    )
+
+
+def calibration(ppm, depth, supersample, width):
+    """The perspective camera's lens and sensor width in millimeters, with a
+    horizontal sensor fit, for `ppm` pixels per meter at the ground point's
+    `depth` and a rendered image `width` pixels wide, supersampled by
+    `supersample` (design §Capture, Perspective calibration).
+
+    The focal length is `ppm·d·s` image pixels, so `lens / sensor =
+    ppm·d·s / W`. The sensor is 36 mm and the lens 36 times that ratio when
+    that is at least 1 mm; otherwise the lens is 1 mm and the sensor 1 over
+    the ratio. Neither falls below Blender's 1 mm minimum.
+    """
+    ratio = ppm * depth * supersample / width
+    if 36 * ratio >= 1:
+        return 36 * ratio, 36.0
+    return 1.0, 1 / ratio
+
+
+def lens_shift(ppm, supersample, ground, size, ground_px):
+    """The perspective camera's lens shift `(x, y)`, which puts the ground
+    point's projection on its pixel corner `ground_px` of a rendered image of
+    `size` `(W, H)` pixels, supersampled by `supersample`, with `ground` the
+    ground point's camera space `(x_g, y_g, d)` (design §Capture,
+    Perspective calibration).
+
+    Unshifted, the ground point lands `ppm·s·x_g` image pixels right of the
+    image's centre and `ppm·s·y_g` above it. Blender's shift moves the view
+    in units of the image's width, the sensor-fit side, whatever its
+    shape: a positive x moves it right and a positive y up.
+    """
+    width, height = size
+    xg, yg, _ = ground
+    gx, gy = (coordinate * supersample for coordinate in ground_px)
+    return (
+        (width / 2 + ppm * supersample * xg - gx) / width,
+        (gy - height / 2 + ppm * supersample * yg) / width,
+    )
+
+
+def _dot(a, b):
+    """Written out: `sum` compensates its rounding, and the capture script
+    adds the products in this order without it."""
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
 def directions(view):
     """The view's directions in index order."""
     count = view.directions

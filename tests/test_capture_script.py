@@ -8,6 +8,7 @@ import math
 import sys
 import types
 from array import array
+from dataclasses import replace
 
 import pytest
 
@@ -352,7 +353,7 @@ def valid_job():
 
 def test_the_script_accepts_the_launcher_s_camera_record(script):
     job = valid_job()
-    assert job["schema"] == script.JOB_SCHEMA == "moskophoros.capture-job/2"
+    assert job["schema"] == script.JOB_SCHEMA == "moskophoros.capture-job/3"
     script.check_job(job)
     job["settings"]["camera"] |= {"roll": -1, "position": [0, 1.5, -3.0]}
     script.check_job(job)
@@ -361,7 +362,12 @@ def test_the_script_accepts_the_launcher_s_camera_record(script):
 @pytest.mark.parametrize(
     ("change", "message"),
     [
-        ({"projection": "perspective"}, "the projection"),
+        ({"projection": "fisheye"}, "the projection"),
+        ({"projection": "perspective"}, "the perspective camera has no position"),
+        (
+            {"projection": "perspective", "position": [0, -1, -1]},
+            "the ground point is not in front of the perspective camera",
+        ),
         ({"direction": [0.0, 0.0, 0.0]}, "settings.camera.direction"),
         ({"direction": [0.0, -0.5, -0.5]}, "settings.camera.direction"),
         ({"direction": [0.0, -1.0]}, "settings.camera.direction"),
@@ -393,3 +399,172 @@ def test_the_script_refuses_the_old_view_record(script, view, message):
     job["settings"]["view"] |= view
     with pytest.raises(script.ScriptError, match=message):
         script.check_job(job)
+
+
+# The perspective camera (projects and camera design D-3, D-10, D-12, D-16)
+
+PERSPECTIVE_CAMERAS = [
+    ((0.3, -0.6, -0.7), 0.3, (-1.5, 2.25, 2.0)),
+    ((0.0, -0.5, -0.8660254037844386), 0.0, (0.0, 2.0, 3.4641016151377544)),
+    ((0.0, -1.0, 0.0), -0.75, (0.25, 4.0, 0.5)),
+    ((-1.0, 0.25, 0.5), 1.0, (3.0, -0.5, -1.0)),
+    ((0.0, 0.0, -1.0), 0.5, (1.0, 0.5, 4.0)),
+]
+
+
+def perspective_camera(direction, roll, position):
+    from moskophoros import views
+
+    return {
+        "projection": "perspective",
+        "direction": list(views.normalise(direction)),
+        "roll": roll,
+        "position": list(position),
+    }
+
+
+@pytest.mark.parametrize("given", PERSPECTIVE_CAMERAS)
+def test_the_script_s_perspective_frame_is_moskophoros_views(script, given):
+    from moskophoros import views
+
+    camera = perspective_camera(*given)
+    axes, position, ground = script.perspective_frame(camera)
+    expected = views.perspective(camera["direction"], camera["roll"], given[2])
+    for axis, wanted in zip(axes, views.basis_axes(expected.basis), strict=True):
+        assert bits(axis) == bits(wanted)
+    assert bits(position) == bits(expected.position)
+    assert bits(ground) == bits(expected.ground)
+
+
+@pytest.mark.parametrize("rotation", ROTATIONS)
+@pytest.mark.parametrize("given", PERSPECTIVE_CAMERAS)
+def test_the_script_s_perspective_bounds_are_moskophoros_views(script, given, rotation):
+    import random
+
+    from moskophoros import views
+
+    generator = random.Random(int(rotation * 10))
+    points = [tuple(generator.uniform(-0.5, 0.5) for _ in range(3)) for _ in range(32)]
+    ground = (0.1, 0.2, -0.05)
+    camera = perspective_camera(*given)
+    box, depth = script.perspective_bounds(
+        points, ground, rotation, script.perspective_frame(camera)
+    )
+    wanted, wanted_depth = views.perspective_bounds(
+        views.perspective(camera["direction"], camera["roll"], given[2]),
+        points,
+        ground,
+        rotation,
+    )
+    assert bits(depth) == bits(wanted_depth)
+    assert bits(box.values()) == bits(wanted)
+
+
+def test_the_script_measures_a_frame_too_near_to_project(script):
+    camera = perspective_camera((0.0, 0.0, -1.0), 0.0, (0.0, 0.0, 2.0))
+    frame = script.perspective_frame(camera)
+    points = [(0.0, 0.0, 0.0), (0.0, 0.0, 2.5), (0.0, 0.0, -1.0)]
+    assert script.perspective_bounds(points, (0.0, 0.0, 0.0), 0.0, frame) == (
+        None,
+        [-0.5, 3.0],
+    )
+    # At the limit itself, as moskophoros.views.NEAR_LIMIT says.
+    near = [(0.0, 0.0, 2.0 - script.NEAR_LIMIT), (0.0, 0.0, 0.0)]
+    box, depth = script.perspective_bounds(near, (0.0, 0.0, 0.0), 0.0, frame)
+    assert (box is None) == (depth[0] <= script.NEAR_LIMIT)
+    # With no vertex, the ground point's own depth.
+    assert script.perspective_bounds([], (0.0, 0.0, 0.0), 0.0, frame) == (
+        {"L": 0.0, "R": 0.0, "U": 0.0, "D": 0.0},
+        [2.0, 2.0],
+    )
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        (40.0, 3.26, 1, 128),
+        (40.0, 3.26, 4, 512),
+        (1.0, 1.0, 1, 64),
+        (0.5, 0.25, 2, 1000),
+        (24.0, 1.7, 8, 192),
+    ],
+)
+def test_the_script_s_calibration_is_moskophoros_views(script, arguments):
+    from moskophoros import views
+
+    assert bits(script.calibration(*arguments)) == bits(views.calibration(*arguments))
+
+
+@pytest.mark.parametrize(
+    ("ground", "size", "ground_px"),
+    [
+        ((0.5, -0.25, 3.0), (40, 80), (5, 30)),
+        ((-0.5, 0.25, 3.0), (80, 40), (30, 5)),
+        ((0.31, 0.77, 2.5), (48, 64), (11, 29)),
+    ],
+)
+def test_the_script_s_lens_shift_is_moskophoros_views(script, ground, size, ground_px):
+    from moskophoros import views
+
+    assert bits(script.lens_shift(10.0, 2, ground, size, ground_px)) == bits(
+        views.lens_shift(10.0, 2, ground, size, ground_px)
+    )
+
+
+def perspective_job(mode="measure", clipping=None):
+    from test_capture_backend import CLIPS, MEASURE_SETTINGS, SOURCE, VIEW
+
+    from moskophoros import sampling
+    from moskophoros.capture import backend
+
+    settings = replace(
+        MEASURE_SETTINGS, projection="perspective", position=(0.0, 1.5, 2.5)
+    )
+    if mode == "render":
+        settings = replace(settings, ppm=10.0, cell=(4, 3), ground_px=(2, 2))
+    frames = sampling.frames("hero", CLIPS, VIEW, settings.fps)
+    return backend.build_job(
+        mode, SOURCE, "hero", settings, CLIPS, frames, f"/work/{mode}", clipping
+    )
+
+
+def test_the_script_accepts_the_launcher_s_perspective_jobs(script):
+    from moskophoros.capture import backend
+
+    script.check_job(perspective_job())
+    job = perspective_job("render", backend.Clipping(0.5, 7.0, (1.0, 3.0)))
+    assert job["clipping"] == {"near_m": 0.5, "far_m": 7.0, "depth_m": [1.0, 3.0]}
+    script.check_job(job)
+
+
+@pytest.mark.parametrize(
+    ("clipping", "message"),
+    [
+        (None, "clipping is not an object"),
+        ({"near_m": 0.5, "far_m": 7.0}, "clipping is missing"),
+        ({"near_m": 1.0, "far_m": 7.0, "depth_m": [1.0, 3.0]}, "do not enclose"),
+        ({"near_m": 0.5, "far_m": 3.0, "depth_m": [1.0, 3.0]}, "do not enclose"),
+        ({"near_m": 0.0, "far_m": 7.0, "depth_m": [1.0, 3.0]}, "do not enclose"),
+        ({"near_m": 0.5, "far_m": 7.0, "depth_m": [3.0, 1.0]}, "do not enclose"),
+        ({"near_m": 0.5, "far_m": 7.0, "depth_m": [1.0]}, "not two numbers"),
+        ({"near_m": 0.5, "far_m": 7.0, "depth_m": [True, 3.0]}, "not two numbers"),
+        ({"near_m": "0.5", "far_m": 7.0, "depth_m": [1.0, 3.0]}, "do not enclose"),
+    ],
+)
+def test_the_script_refuses_a_perspective_render_s_bad_clipping(
+    script, clipping, message
+):
+    from moskophoros.capture import backend
+
+    job = perspective_job("render", backend.Clipping(0.5, 7.0, (1.0, 3.0)))
+    job["clipping"] = clipping
+    with pytest.raises(script.ScriptError, match=message):
+        script.check_job(job)
+
+
+def test_the_script_refuses_clipping_for_any_other_job(script):
+    clipping = {"near_m": 0.5, "far_m": 7.0, "depth_m": [1.0, 3.0]}
+    for job in (valid_job(), perspective_job()):
+        job["clipping"] = clipping
+        with pytest.raises(script.ScriptError, match="only a perspective render"):
+            script.check_job(job)
