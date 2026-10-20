@@ -366,11 +366,62 @@ outlines are outside this delivery and wait for a separate style arc. This
 arc covers shading and dithering. The live-lit use remains outline-free;
 no outline algorithm or appearance is selected for the baked use here.
 
+### D-14. Ramp-mapped materials keep their library base colour
+
+Owner, about 2026-10-20 20:02 UTC, typed directly in the manager's terminal;
+relayed by mosk-manager in cmux message
+`ba055c23-a81e-43c6-b64e-8e3ab9b60301`, answering batch 4 message
+`2rnvusxti2arq8azwejcumt8z2`. The owner's complete answer was:
+
+> "1) A, 2) A, 3) i want to choose the pattern, and perhaps even more than just those 2"
+
+The first answer approves Q-11's base rule:
+
+- In brightness and neither, a ramp-mapped material takes the ramp's
+  last/lightest palette entry as its unshaded base.
+- An ordinary material keeps its captured unlit model colour/texture.
+- Turning off ramp shading does not discard a library's material colour.
+
+This selects a behaviour, not the example's teal colour. Missing-ramp
+handling and palette/composition policy remain in Q-11.
+
+**Visual provenance for D-14 to D-16:** the manager reports that the owner
+judged a simplified page at
+`~/.local/share/moskophoros-acceptance/shading-design/decide-batch4/index.html`,
+SHA-256 `bfd29db2aefe3bff99a651ce465d56a7d010d01d346e509b0856376b3b2929aa`.
+All 21 referenced images were verified byte-identical to Probe 1's originals.
+The page restates the same A/B choices and describes the images as rough
+tests, with strengths to be tuned later.
+
+### D-15. Multiply ambient form by the lighting factor
+
+Same answer and provenance as D-14. The owner's “2) A” approves the
+multiplicative family from Q-4: ambient form is multiplied by the light
+factor, so directional light does not erase a deep crease. The weighted
+average alternative was not selected. The probe's particular weights,
+brightness endpoints and project look are not defaults; their controls and
+precise arithmetic still need a contract.
+
+### D-16. The owner wants a choice of dither patterns
+
+Same answer and provenance as D-14. The owner's third answer is:
+
+> "3) i want to choose the pattern, and perhaps even more than just those 2"
+
+Do not freeze the design to the proposed 4×4 pattern. Keep a choice of
+patterns, with additional possibilities to present. The exact catalogue,
+how it is selected in settings, custom-pattern support and anchoring are
+still to settle through Q-6 and labelled renders.
+
+The manager suggested a user-selectable pattern setting and explicitly
+marked that reading non-binding. Batch 5 makes that proposed interface and
+its offered patterns explicit rather than treating one pattern as accepted.
+
 ## Proposals and open questions
 
 Unresolved recommendations below are proposals, not approved decisions.
 Batch 1's accepted answers are D-5 to D-7; batch 2's are D-8 to D-10;
-batch 3's are D-11 to D-13.
+batch 3's are D-11 to D-13; batch 4's are D-14 to D-16.
 No dependent formula or slice
 ordering is adopted while its blocking questions remain open.
 
@@ -396,7 +447,8 @@ Batch 4 was posted on 2026-10-20 at 19:55:23 UTC in `#moskophoros`,
 message `2rnvusxti2arq8azwejcumt8z2`, under the same request, against
 draft `74c8293a75` and Probe 1's page hash above. Its three questions are
 Q-11's base colour rule, Q-4's combination family and Q-6's ordered
-pattern/anchoring. Answers are pending; all recommendations remain proposals.
+pattern/anchoring. D-14 to D-16 record the answers: base rule A, combination
+family A, and an owner choice of patterns rather than one fixed pattern.
 The probe's illustrative weights, brightness endpoints and project look are
 not proposed defaults.
 
@@ -432,10 +484,9 @@ can brighten beyond the base. Present labelled probes before a look choice.
 Batch 3 selected the distant key. Alternatives not selected were a point
 bake key, and a key selectable between direction and position.
 
-**Batch 4 asks combination family:** A, recommended, multiply the normalised
-ambient-form signal by a lighting factor, retaining dark creases under a
-strong key; B, a weighted average of ambient form and the light terms, which
-can lift a low ambient value. Probe 1 illustrates A with
+Combination family resolved by D-15: multiply the normalised ambient-form
+signal by the lighting factor. The weighted-average alternative was not
+selected. Probe 1 illustrated the product with
 `e = a * clamp(.20 + .50*k + .20*s + .10*g, 0, 1)` and B with
 `e = (a + k + .4*s + .2*g) / 2.6`. `a` is the range-normalised shade;
 `k`, `s` and `g` are nonnegative key, sky and ground facing terms. These
@@ -466,9 +517,9 @@ alone does not establish visual stability.
 Deferring dithering to a later arc was not selected. Pattern and colour
 rules follow through labelled probes.
 
-**Batch 4 asks pattern and anchoring:** A, recommended, 4×4 ordered dithering
-with configurable strength; B, 2×2 ordered dithering with configurable
-strength; C, neither is suitable, investigate another pattern/anchoring.
+Batch 4 offered 4×4, 2×2 or further investigation. D-16 instead asks for
+an owner choice of patterns, potentially beyond those two. No fixed pattern
+or exact catalogue was selected.
 Both candidates choose adjacent ramp entries at output resolution and are
 fixed to cell pixel coordinates. They leave alpha and geometry unchanged.
 Packing does not shift the pattern, but moving surfaces pass through it.
@@ -501,6 +552,13 @@ directional shading to both layers cannot simply reuse that single normal
 for both: decide the required new capture data before finalising Q-8.
 Probe 1 avoids translucent fronts and therefore does not resolve this.
 
+Further code reading: `capture.blender_script.render_frame` already reads
+the back render's normal and, when present, the front render's normal; it
+then replaces the covered back values with the front values before writing
+the one normal buffer. Retaining the two values is a data-output extension,
+not inherently another ray-traced render. Its format, validation and default
+image compatibility still need verification.
+
 ### Q-9. What evidence completes the arc?
 
 Settle a distinct owner visual-review slice covering both uses, the four
@@ -519,20 +577,17 @@ dependencies for owner signoff.
 
 ### Q-11. What colour is shaded when ramp selection is off or unavailable?
 
-D-5 settles routing, not the base colour. Define the base for brightness and
-neither: the model's unlit colour/texture, a library-authored base, or a
-specified ramp entry. Also define ramp/both on an ordinary or unmapped
+D-14 settles the base: last/lightest ramp entry for mapped materials, model
+colour/texture for ordinary materials. Still define ramp/both on an ordinary or unmapped
 material; whether missing ramps are errors or use an explicit fallback;
 whether brightness may leave the palette; and how palette mapping,
 translucent composition and dithering interact. These choices must not
 silently discard textures or invent a ramp. Present labelled examples for
 colour choices before adopting a contract.
 
-**Batch 4 asks the base rule:** A, recommended, a material with a ramp uses
-its last/lightest palette entry as its unshaded base for brightness and
-neither; an ordinary material retains its captured unlit colour/texture.
-B, always take the model's captured base when ramp selection is off, even
-when a library assigns a different material colour. Probe 1 uses an explicit
+Batch 4 selected the library-base rule (D-14). The alternative of always
+taking the model's captured base when ramp selection is off was not selected.
+Probe 1 uses an explicit
 teal assignment to make the rules distinguishable: the existing gold ramp's
 last colour and the palette-mapped model colour happened to look alike.
 This choice does not approve teal as a look, generated-ramp base handling
@@ -598,4 +653,6 @@ Codex review and tracker processing follow on the manager's instruction.
   `d44ba361-bf3c-4e8e-91a2-e59e2aeccd33`; D-8 to D-10 preserve its exact
   answer and the approved recommendations. Batch 3 was answered through cmux
   relay `35757489-cc29-456a-a840-3a702ec80cb3`; D-11 to D-13 preserve it.
+  Batch 4 was answered through cmux relay
+  `ba055c23-a81e-43c6-b64e-8e3ab9b60301`; D-14 to D-16 preserve it.
   No readiness signoff has been received.
