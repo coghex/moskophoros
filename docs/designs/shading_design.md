@@ -739,6 +739,32 @@ Sky frame resolved by D-24 (batch 7 C); brightness range resolved by D-25
 (batch 7 A). Probe 4 illustrates those choices. Defaults, exact formula and
 material inheritance remain for the complete settings contract.
 
+**Batch 8, light-strength proposal, not decided:** A (recommended) uses
+three nonnegative strengths `K`, `S`, `G`, each at most 1, with their sum
+at most 1. Zero disables the corresponding key, sky or ground term. With
+nonnegative facing terms `k`, `s`, `g`, each in `[0,1]`, define
+`L = (1-K-S-G) + K*k + S*s + G*g`. The unallocated strength is the
+uniform light floor. All three zero gives `L=1` and preserves ambient-only
+shading; all defaults remain zero. The Probe 1 weights `.5/.2/.1` produce
+its illustrated `.2` floor exactly. Invalid totals are errors, not silently
+normalised. This makes turning on a term immediately reduce light on faces
+pointing away from it without requiring a second floor control.
+
+B offers independently adjustable nonnegative weights and an explicit
+uniform floor, with `L=clamp(floor+K*k+S*s+G*g,0,1)`. Its compatible default
+is floor 1 and all weights zero, so the floor must be lowered before adding
+a positive weight can change the image. B permits saturation and additional
+tuning combinations; the owner would still need to approve its bounds.
+
+For either choice, retain D-15's `e=a*L`, with a separate ambient-form
+on/off control: on uses the existing range-normalised form signal `a`,
+off supplies `a=1` so directional shading can operate alone. Default on
+preserves today's form shading. Brightness gain is
+`floor + (ceiling-floor)*e`, using D-25's bounds. The light floor and
+brightness floor are distinct quantities. Numeric precision, sampling and
+the exact compatibility path remain in Q-8; this proposal does not replace
+the existing integer ramp mapping for unchanged settings.
+
 ### Q-5. Which controls may materials override?
 
 Ownership resolved by D-10: project defaults and material mode/response
@@ -749,6 +775,17 @@ validation and inline reuse before choosing schemas or syntax.
 
 The exact response fields depend on Q-4 and will be enumerated before
 signoff; inheritance and the remaining schema details stay open.
+
+**Batch 8, snap ownership proposal, not decided:** A (recommended) makes
+the snap target one setting shared by the export/project, inherited through
+the normal settings layers, with no material override. Mode, response and
+dither overrides already approved remain available. This gives the final
+composite one unambiguous snap policy. B also allows per-material target
+overrides: if either contributing layer requests whole-palette snap, snap
+the final composite; otherwise each layer may request own-ramp snap or off
+before composition. In B a whole-palette request can change an overlapping
+layer's visible colour even if that other material requests off. A/B choose
+ownership, not file syntax or missing-palette validation.
 
 ### Q-6. What dithering belongs in this arc?
 
@@ -777,6 +814,17 @@ Catalogue, controls and anchoring resolved by D-17, selecting batch 5's A.
 Custom threshold files (B) and a different/subset catalogue (C) were not
 selected. Exact strength limits, arithmetic and interaction with the new
 optional brightness snap remain open.
+
+**Batch 8, dithering scope proposal, not decided:** A (recommended) dithers
+shade-driven ramp selection only; optional post-brightness snap uses nearest
+colour without dithering. Brightness-only with snap therefore remains
+undithered. B additionally supports dithering the snap quantisation; when
+snap is enabled, dither that final colour choice rather than dithering both
+the intermediate ramp selection and its subsequent snap. B requires a
+further labelled algorithm comparison and rules for material overrides at
+composited pixels. Continuous brightness without snap and neither mode
+receive no artificial noise in either option. This is a capability boundary,
+not approval of an unseen snap-dithering algorithm or rendered look.
 
 ### Q-7. Do outlines belong in this arc?
 
