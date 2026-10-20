@@ -57,7 +57,7 @@ canonical = json.dumps(
     job, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
 ).encode("ascii")
 result = {{
-    "schema": "moskophoros.capture-result/3",
+    "schema": "moskophoros.capture-result/4",
     "mode": mode,
     "job_sha256": hashlib.sha256(canonical).hexdigest(),
     "source_sha256": job["source"]["sha256"],
@@ -69,6 +69,20 @@ if mode == "measure":
           "height_m": config["height"]}}
         for f in job["frames"]
     ]
+    if job["settings"]["camera"]["projection"] == "perspective":
+        # Every frame's nearest and farthest vertex depth; a "near" frame
+        # has a vertex too near the camera, so no bounds.
+        for i, frame in enumerate(result["frames"]):
+            frame["depth_m"] = config.get("depth", [2.0, 3.0])
+            if i in config.get("near", []):
+                frame["bounds_m"] = None
+                frame["depth_m"] = config.get("near_depth", [-0.2, 3.1])
+    # Changes to measured frames by ordinal; "missing" leaves a key out.
+    for i, changes in config.get("frame_changes", {{}}).items():
+        for key, value in changes.items():
+            result["frames"][int(i)][key] = value
+            if value == "missing":
+                del result["frames"][int(i)][key]
     result["roots"] = [
         {{"clip": c["name"], "node_index": r["node_index"],
           "node_name": r["node_name"],
@@ -484,7 +498,7 @@ def test_the_style_never_reaches_the_capture_jobs(setup, capsys):
     for mode in MODES:
         job = json.loads(jobs[0][mode])
         assert "style" not in job["settings"]
-        assert job["schema"] == "moskophoros.capture-job/2"
+        assert job["schema"] == "moskophoros.capture-job/3"
 
 
 # Measure and render jobs as master built them before the style was recorded,
@@ -492,8 +506,9 @@ def test_the_style_never_reaches_the_capture_jobs(setup, capsys):
 # also carries the shade's capture values, `settings.shade`, and the frame
 # counts as given, `settings.frames` and each clip's `frames`, and since
 # capture-job/2 the camera, `settings.camera`, in place of the view's
-# `projection` and `pitch_deg`; written back as that view, it is exactly that
-# job.
+# `projection` and `pitch_deg`, and since capture-job/3 the perspective
+# render's `clipping`, null for the orthographic camera; written back as that
+# view, without `clipping`, it is exactly that job.
 JOB_BASELINES = {
     "measure": "ff7fc011058a0270b604a93cb7fcccaa930addf47248857ed31a0d0b88b8348d",
     "render": "445b27ea3c882aabdb2bf0a1fe366462a0029a6ab3ae7ac99ba37436b0ce7017",
@@ -534,7 +549,8 @@ def test_the_capture_jobs_are_byte_identical_to_the_baseline(options):
         assert job["settings"].pop("frames") == "auto"
         for clip in job["settings"]["clips"]:
             assert clip.pop("frames") is None
-        assert job["schema"] == "moskophoros.capture-job/2"
+        assert job["schema"] == "moskophoros.capture-job/3"
+        assert job.pop("clipping") is None
         assert job["settings"].pop("camera") == {
             "projection": "orthographic",
             "direction": [0.0, -0.49999999999999994, -0.8660254037844387],

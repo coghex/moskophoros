@@ -25,11 +25,14 @@ from moskophoros.materials import RAMP_ALPHA_MODES
 
 INTERNAL_ERROR = 1
 BACKEND_ERROR = 5
-JOB_SCHEMA = "moskophoros.capture-job/2"
-RESULT_SCHEMA = "moskophoros.capture-result/3"
+JOB_SCHEMA = "moskophoros.capture-job/3"
+RESULT_SCHEMA = "moskophoros.capture-result/4"
 MODES = ("measure", "render")
 CUSTOM_VIEW = "custom"
-PROJECTION = "orthographic"
+PERSPECTIVE = "perspective"
+# The camera's projections, the default first (projects and camera design
+# D-3).
+PROJECTIONS = ("orthographic", PERSPECTIVE)
 MAX_CELL = 4096
 MAX_SUPERSAMPLE = 16
 
@@ -157,12 +160,12 @@ class Shade:
 class Settings:
     """Resolved settings, as the sheet's `settings` object records them.
 
-    `view` is a preset name or `custom`. `direction` is the camera's
-    normalised direction, `roll` its roll, a fraction of a half turn, and
-    `position` its position in meters from the ground point, or None;
-    orthographic records it unused. `ppm`, `cell` and `ground_px` are None
-    until fitting resolves them. `shade` holds the capture values of the
-    shade.
+    `view` is a preset name or `custom`. `projection` is the camera's
+    projection, `direction` its normalised direction, `roll` its roll, a
+    fraction of a half turn, and `position` its position in meters from the
+    ground point, or None; perspective needs it, and orthographic records it
+    unused. `ppm`, `cell` and `ground_px` are None until fitting resolves
+    them. `shade` holds the capture values of the shade.
     """
 
     view: str
@@ -183,6 +186,31 @@ class Settings:
     frames: int | str = sampling.AUTO
     roll: float = 0.0
     position: tuple[float, float, float] | None = None
+    projection: str = "orthographic"
+
+
+@dataclass(frozen=True)
+class Clipping:
+    """A perspective render's clipping planes, `near` and `far`, in meters
+    from the camera, enclosing `depth`, the nearest and farthest measured
+    vertex depths over every frame (design §Capture, Perspective
+    clipping)."""
+
+    near: float
+    far: float
+    depth: tuple[float, float]
+
+
+def clipping(depths):
+    """The clipping planes for the measured `depths`, `(near, far)` for each
+    frame: the near plane half the nearest depth, and the far plane twice
+    the farthest plus 1 m. Every depth must be projectable, greater than
+    `views.NEAR_LIMIT`."""
+    nearest = min(near for near, _ in depths)
+    farthest = max(far for _, far in depths)
+    if not nearest > views.NEAR_LIMIT:
+        raise ValueError(f"a vertex {nearest!r} m from the camera cannot be clipped")
+    return Clipping(nearest / 2, 2 * farthest + 1, (nearest, farthest))
 
 
 @dataclass(frozen=True)
@@ -199,10 +227,13 @@ class CaptureResult:
 
     `backend` holds `blender`, and for a render also `renderer`, `color` and
     `shade`. A measure result has `measurements`, keyed by
-    frame address in request order, and `roots`; a render result has
-    `buffers`, mapping each address to its absolute buffer paths by name, and
-    `materials`, mapping each material-ID code to its glTF material index, or
-    to None for "no material".
+    frame address in request order, and `roots`; a perspective one also has
+    `depths`, each frame's nearest and farthest vertex depth by address, and
+    a frame with a vertex too near the camera to project has a measurement
+    whose bounds are None. A render result has `buffers`, mapping each
+    address to its absolute buffer paths by name, and `materials`, mapping
+    each material-ID code to its glTF material index, or to None for "no
+    material".
     """
 
     mode: str
@@ -211,6 +242,7 @@ class CaptureResult:
     roots: tuple[RootTravel, ...] | None
     buffers: dict[sampling.FrameAddress, dict[str, Path]] | None
     materials: dict[int, int | None] | None = None
+    depths: dict[sampling.FrameAddress, tuple[float, float]] | None = None
 
 
 @dataclass(frozen=True)
@@ -244,13 +276,17 @@ def job_sha256(job):
     return hashlib.sha256(canonical_json(job)).hexdigest()
 
 
-def build_job(mode, source, subject, settings, selected_clips, frames, output_dir):
+def build_job(
+    mode, source, subject, settings, selected_clips, frames, output_dir, clip=None
+):
     """Build a `mode` job, raising `MalformedJob` if the inputs disagree.
 
     `selected_clips` are `gltf.SelectedClip`s in sheet order, and `frames`
     the `sampling.Frame`s requested, which must be exactly those the clips
     and settings give. In a measure job, `pixels_per_meter`, `cell` and
-    `ground_px` are null; a render job needs all three resolved.
+    `ground_px` are null; a render job needs all three resolved. `clip`,
+    the `Clipping` from the measured depths, is given for a perspective
+    render job and for no other.
     """
     if mode not in MODES:
         raise MalformedJob(f"mode must be one of {MODES}, got {mode!r}")
@@ -260,6 +296,7 @@ def build_job(mode, source, subject, settings, selected_clips, frames, output_di
             f"subject {subject!r} is not the source's stem {Path(source.path).stem!r}"
         )
     _check_settings(settings, mode)
+    _check_clipping(clip, mode == "render" and settings.projection == PERSPECTIVE)
     selected_clips = tuple(selected_clips)
     _check_clips(selected_clips)
     frames = tuple(frames)
@@ -290,6 +327,13 @@ def build_job(mode, source, subject, settings, selected_clips, frames, output_di
         "settings": settings_document(settings, selected_clips, mode == "render"),
         "clips": [_clip_document(selected.clip) for selected in selected_clips],
         "frames": [_frame_document(frame) for frame in frames],
+        "clipping": None
+        if clip is None
+        else {
+            "near_m": float(clip.near),
+            "far_m": float(clip.far),
+            "depth_m": [float(depth) for depth in clip.depth],
+        },
         "output_dir": str(output_dir),
     }
     try:
@@ -312,7 +356,7 @@ def settings_document(settings, selected_clips, fitted=True):
             "start_angle_deg": float(settings.start_angle),
         },
         "camera": {
-            "projection": PROJECTION,
+            "projection": settings.projection,
             "direction": [float(component) for component in settings.direction],
             "roll": float(settings.roll),
             "position": (
@@ -434,6 +478,18 @@ def _check_settings(settings, mode):
         and all(map(_is_number, settings.position))
     ):
         problems.append(f"position {settings.position!r}")
+    if settings.projection not in PROJECTIONS:
+        problems.append(f"projection {settings.projection!r}")
+    elif settings.projection == PERSPECTIVE and not problems:
+        if settings.position is None:
+            problems.append("the perspective camera has no position")
+        elif (
+            not views.perspective(
+                settings.direction, settings.roll, settings.position
+            ).ground[2]
+            > 0
+        ):
+            problems.append("the ground point is not in front of the camera")
     if not (_is_int(settings.directions) and 1 <= settings.directions <= 64):
         problems.append(f"directions {settings.directions!r}")
     for name in ("start_angle", "model_yaw"):
@@ -472,6 +528,22 @@ def _check_settings(settings, mode):
         ]
     if problems:
         raise MalformedJob("invalid settings: " + "; ".join(problems))
+
+
+def _check_clipping(clip, wanted):
+    if not wanted:
+        if clip is not None:
+            raise MalformedJob("only a perspective render job has clipping planes")
+        return
+    if not isinstance(clip, Clipping):
+        raise MalformedJob(f"a perspective render job needs clipping, got {clip!r}")
+    values = (clip.near, clip.far, *clip.depth)
+    if not (
+        len(clip.depth) == 2
+        and all(map(_is_number, values))
+        and 0 < clip.near < clip.depth[0] <= clip.depth[1] < clip.far
+    ):
+        raise MalformedJob(f"the clipping planes {clip!r} do not enclose its depths")
 
 
 def _is_pair(value, low, high=None):
@@ -582,6 +654,18 @@ def _object(value, keys, where):
     return value
 
 
+def _depth_interval(value, where):
+    """A perspective frame's `depth_m`: exactly two finite numbers, never
+    booleans, the nearest first."""
+    if not (
+        isinstance(value, list) and len(value) == 2 and all(map(_is_number, value))
+    ):
+        raise _Invalid(f"{where} is not two finite numbers: {value!r}")
+    if value[0] > value[1]:
+        raise _Invalid(f"{where} is not nearest first: {value!r}")
+    return value[0], value[1]
+
+
 def _nonnegative(value, where):
     if not _is_number(value) or value < 0:
         raise _Invalid(f"{where} is not a finite number 0 or more: {value!r}")
@@ -611,11 +695,17 @@ def _result(job, phase_dir, document):
         raise _Invalid(
             f"frames has {len(records)} records for {len(requested)} requested"
         )
+    perspective = job["settings"]["camera"]["projection"] == PERSPECTIVE
+    if mode == "render":
+        fields = ["address", "buffers"]
+    elif perspective:
+        fields = ["address", "bounds_m", "height_m", "depth_m"]
+    else:
+        fields = ["address", "bounds_m", "height_m"]
     addresses = []
     for ordinal, (record, frame) in enumerate(zip(records, requested, strict=True)):
         where = f"frame {ordinal}"
-        fields = ["address", "bounds_m", "height_m"] if mode == "measure" else None
-        _object(record, fields or ["address", "buffers"], where)
+        _object(record, fields, where)
         if not _same_address(record["address"], frame["address"]):
             raise _Invalid(
                 f"{where} has address {record['address']!r}, but the request's is "
@@ -625,21 +715,43 @@ def _result(job, phase_dir, document):
 
     if mode == "measure":
         measurements = {}
+        depths = {} if perspective else None
         for ordinal, (record, address) in enumerate(
             zip(records, addresses, strict=True)
         ):
             where = f"frame {ordinal}"
-            bounds = _object(
-                record["bounds_m"], ["L", "R", "U", "D"], f"{where} bounds_m"
-            )
-            for side in "LRUD":
-                _nonnegative(bounds[side], f"{where} bounds_m.{side}")
+            near = False
+            if perspective:
+                depths[address] = depth = _depth_interval(
+                    record["depth_m"], f"{where} depth_m"
+                )
+                near = depth[0] <= views.NEAR_LIMIT
+            if near and record["bounds_m"] is not None:
+                raise _Invalid(
+                    f"{where} has bounds_m, but its nearest vertex is {depth[0]!r} m "
+                    f"from the camera, within {views.NEAR_LIMIT} m, too near to "
+                    "project"
+                )
+            if near:
+                box = None
+            else:
+                if record["bounds_m"] is None:
+                    raise _Invalid(
+                        f"{where} bounds_m is null, but only a perspective frame "
+                        f"with a vertex within {views.NEAR_LIMIT} m of the camera "
+                        "has none"
+                    )
+                bounds = _object(
+                    record["bounds_m"], ["L", "R", "U", "D"], f"{where} bounds_m"
+                )
+                for side in "LRUD":
+                    _nonnegative(bounds[side], f"{where} bounds_m.{side}")
+                box = fit.Bounds(bounds["L"], bounds["R"], bounds["U"], bounds["D"])
             measurements[address] = fit.Measurement(
-                fit.Bounds(bounds["L"], bounds["R"], bounds["U"], bounds["D"]),
-                _nonnegative(record["height_m"], f"{where} height_m"),
+                box, _nonnegative(record["height_m"], f"{where} height_m")
             )
         roots = _roots(document["roots"], job)
-        return CaptureResult(mode, backend, measurements, roots, None)
+        return CaptureResult(mode, backend, measurements, roots, None, depths=depths)
 
     materials = _materials(document["materials"])
     settings = job["settings"]

@@ -38,9 +38,10 @@ moskophoros [options] <infile.glb> <outfile.png>
 |---|---|---|
 | `--view NAME` | `iso` | Preset: `topdown`, `side`, `iso` or `iso-true`. A [settings file](#settings-files) may set it. |
 | `--pitch DEG` | from preset | Camera pitch, 0 to 90 inclusive: a shorthand for the camera direction `(0, −sin p, −cos p)`. Cannot accompany `--camera-direction`. A [settings file](#settings-files) may set it. |
+| `--projection NAME` | `orthographic` | The camera's projection: `orthographic`, or `perspective`, which looks from `--camera-position` and needs it (projects and camera design D-3, D-10, D-16). See [Camera and directions](#camera-and-directions). A [settings file](#settings-files) may set it. |
 | `--camera-direction X,Y,Z` | from preset | The way the camera looks, in subject coordinates: three finite numbers, each −1 to +1, not all 0, which the tool normalises. Cannot accompany `--pitch`. See [Camera and directions](#camera-and-directions). A [settings file](#settings-files) may set it. |
 | `--camera-roll R` | `0` | The camera's turn about the way it looks, a finite number from −1 to +1, a fraction of a half turn (`R · π` radians); positive turns the picture clockwise. A [settings file](#settings-files) may set it. |
-| `--camera-position X,Y,Z` | none | The camera's position, three finite numbers, meters from the ground point. The orthographic camera records it unused, with no warning (projects and camera design D-16). A [settings file](#settings-files) may set it. |
+| `--camera-position X,Y,Z` | none | The camera's position, three finite numbers, meters from the ground point. The perspective camera stands there, and needs it; the orthographic camera records it unused, with no warning (projects and camera design D-10, D-16). A [settings file](#settings-files) may set it. |
 | `--directions N` | from preset | Direction count, 1 to 64. A [settings file](#settings-files) may set it. |
 | `--start-angle DEG` | from preset | Angle of direction 0. A [settings file](#settings-files) may set it. |
 | `--model-yaw DEG` | `0` | Corrects a model that does not face +Z (see [Input contract](#input-contract)). A [settings file](#settings-files) may set it. |
@@ -159,9 +160,10 @@ default; a test keeps the two in agreement.
 |---|---|---|---|
 | `view` | `--view NAME` | `iso` | `topdown`, `side`, `iso` or `iso-true`: a shorthand that sets the next three (see *The view*) |
 | `pitch` | `--pitch DEG` | `null` | a finite number from 0 to 90, or `null`: the view's; a shorthand for `camera.direction` |
+| `camera.projection` | `--projection NAME` | `orthographic` | `orthographic` or `perspective` |
 | `camera.direction` | `--camera-direction X,Y,Z` | `null` | `[x, y, z]`, three finite numbers each from −1 to 1, not all 0, normalised, or `null`: the view's |
 | `camera.roll` | `--camera-roll R` | `0` | a finite number from −1 to 1, a fraction of a half turn |
-| `camera.position` | `--camera-position X,Y,Z` | `null` | `[x, y, z]`, three finite numbers, meters from the ground point, or `null`; unused by the orthographic camera |
+| `camera.position` | `--camera-position X,Y,Z` | `null` | `[x, y, z]`, three finite numbers, meters from the ground point, or `null`; needed by the perspective camera, unused by the orthographic one |
 | `directions` | `--directions N` | `null` | a whole number from 1 to 64, or `null`: the view's |
 | `start_angle` | `--start-angle DEG` | `null` | a finite number of degrees, or `null`: the view's |
 | `model_yaw` | `--model-yaw DEG` | `0` | a finite number of degrees |
@@ -203,9 +205,10 @@ takes it. Whether the ground pixel lies inside the cell stays an
 [overflow](#scale-and-ground-point) question.
 
 The `camera` settings are a nested mapping in a file too, merged key by key
-the same way (projects and camera design D-7, D-16). The `camera.projection`
-setting comes with the perspective projection; until then a file giving it is
-refused as an unknown key, and the camera is orthographic.
+the same way (projects and camera design D-3, D-7, D-16). A perspective
+camera needs a position from some layer, and the ground point in front of
+it; both are checked once the layers are merged, before Blender runs (see
+[Option validation](#option-validation)).
 
 The `shade` settings are a nested mapping in a file, and each is a setting of
 its own: they merge key by key across the layers, so a file may set one and
@@ -360,9 +363,11 @@ version: 1
 view: iso               # topdown, side, iso or iso-true
 # pitch: 30            # 0 to 90; null: the view's; or camera.direction, not both
 camera:
+  projection: orthographic  # or perspective, from the position
   direction: null       # [x, y, z], each -1 to 1, not all 0; null: the view's
   roll: 0               # -1 to 1, a fraction of a half turn
-  position: null        # [x, y, z] meters from the ground point; unused
+  position: null        # [x, y, z] meters from the ground point; perspective
+                        # needs it, orthographic leaves it unused
 directions: 8           # 1 to 64; null: the view's
 start_angle: null       # degrees; null: the view's
 model_yaw: 0
@@ -424,7 +429,13 @@ decision 2026-10-01):
 - `--pitch` together with `--camera-direction`; `--camera-direction` not
   three finite numbers `X,Y,Z` each from −1 to 1, or all 0;
   `--camera-roll` not a finite number from −1 to 1; `--camera-position` not
-  three finite numbers `X,Y,Z` (projects and camera design D-7, D-12, D-16).
+  three finite numbers `X,Y,Z`; a `--projection` other than `orthographic`
+  or `perspective` (projects and camera design D-3, D-7, D-12, D-16).
+- With the layers merged, a perspective camera without a position, or with
+  the ground point not in front of it: `d = −position · f`, its depth along
+  the normalised direction `f`, 0 or less. The message names the position
+  and the direction, and the check precedes Blender, whichever layer set
+  them (projects and camera design D-10, D-16).
 - `--palette` together with `--no-palette`, or either option repeated.
 - `--materials` together with `--no-materials`, or either option repeated.
 - `--preview` together with `--no-preview`, or either option repeated.
@@ -459,8 +470,9 @@ decision 2026-10-01):
   `pitch` not from 0 to 90, a `camera.direction` not three finite numbers
   each from −1 to 1, or all 0, `directions` not a whole number from 1 to 64,
   or `start_angle` not a finite number, other than `null`; a `pitch` and a
-  `camera.direction` in one file, whatever their values; a `camera.roll` not
-  a finite number from −1 to 1; a `camera.position` not three finite numbers
+  `camera.direction` in one file, whatever their values; a
+  `camera.projection` other than `orthographic` or `perspective`; a
+  `camera.roll` not a finite number from −1 to 1; a `camera.position` not three finite numbers
   nor `null`; a `model_yaw` not
   a finite number; a `ppm` not finite and greater than 0, nor `auto`; a
   `ground` not three finite numbers; a `ground_px` not two whole numbers 0
@@ -510,7 +522,7 @@ A usage error prints the usage synopsis to stderr, followed by the
 | 1 | Internal error (a bug); a traceback is printed. |
 | 2 | Usage error: bad option, value or combination. |
 | 3 | Input error: see [Input contract](#input-contract) and [Root motion](#root-motion). |
-| 4 | Overflow: the subject does not fit a fixed cell and scale, or, with the depth map written, its depth does not fit the map's range. |
+| 4 | Overflow: the subject does not fit a fixed cell and scale; with the depth map written, its depth does not fit the map's range; or, under the perspective camera, a vertex is too near the camera to project (see [Camera and directions](#camera-and-directions)). |
 | 5 | Backend error: Blender missing, wrong version, or failed, including a frame with a stack of see-through surfaces deeper than the capture renders (see [Capture](#capture)). |
 | 6 | Output error: an output could not be written (a full disk, no permission, a failed rename). The message names the output and the reason; the earlier outputs are kept, and no usage synopsis or traceback is printed (owner decision 2026-10-03). |
 | 130 | Interrupted (Ctrl-C): `moskophoros: error: interrupted`, no traceback, nothing published (owner decision 2026-10-01). |
@@ -592,9 +604,9 @@ All geometry is in glTF coordinates: +X right, +Y up, +Z toward the viewer at
 direction 0.
 
 **The camera is set once; each direction turns the subject in front of it**
-(projects and camera design D-3, D-7, D-8, D-10). The camera is orthographic
-and centered on the ground point. It looks along its direction, with a roll,
-and the light stays fixed to it.
+(projects and camera design D-3, D-7, D-8, D-10). The camera's projection is
+`orthographic`, the default, or `perspective` (see *Perspective* below). It
+looks along its direction, with a roll, and the light stays fixed to it.
 
 **Basis.** Let `f` be the normalised `camera.direction`, the way the camera
 looks, in subject coordinates.
@@ -611,10 +623,12 @@ looks, in subject coordinates.
   point at the top of the picture is now at its right. Roll −1 and +1 give the
   same picture.
 - The rolled `r` and `u` are used for everything that makes the picture: the
-  render transform, the measured bounds and the orthographic framing. Only
-  the reference heading for each direction's turn uses `f` alone.
-- `camera.position` is unused by the orthographic camera. It is recorded as
-  given, with no warning (D-16).
+  render transform, the measured bounds, the orthographic framing, the
+  perspective camera space and its lens shift. Only the reference heading
+  for each direction's turn uses `f` alone.
+- `camera.position` is unused by the orthographic camera, which is
+  centred on the ground point. It is recorded as given, with no warning
+  (D-16).
 
 **Pitch is a shorthand.** Pitch `p`, the angle between the viewing direction
 and the ground (0° looks horizontally, 90° straight down), sets the direction
@@ -672,6 +686,42 @@ changes: at `roll = 1` the picture is upside down, so `east` (90°), facing
 `f = (0, 1, 0)`, `r = +X` and `u = (0, 0, 1)`, so `south` (0°), facing +Z,
 faces up the screen and keeps its name. Directions appear in the sheet in
 index order.
+
+**Perspective** (projects and camera design D-3, D-10, D-12, D-16; spikes 1
+and 2). The perspective camera stands at the ground point plus
+`camera.position`, in meters, and looks along `f` with the rolled `r` and `u`;
+a perspective camera without a position is a usage error.
+
+- **Camera space.** A point `p`, after the subject's turn for its direction
+  about the ground point, has `x_c = (p − c)·r`, `y_c = (p − c)·u` and depth
+  `z_c = (p − c)·f`, with `c` the camera's position. The ground point's are
+  `(x_g, y_g, d)`, with `d = −position · f`. A `d` of 0 or less, the ground
+  point beside or behind the camera, is a usage error before Blender runs.
+  Since each direction's turn is measured from the camera's heading, the
+  tool works in the subject's frame at `θ = 0`, where the position is turned
+  by the heading's opposite with the axes; `d` is unchanged by the turn.
+- **Projection, relative to the ground point.** A point lands at sheet
+  position `(gx + ppm·X, gy − ppm·Y)`, with `X = d·x_c/z_c − x_g` and
+  `Y = d·y_c/z_c − y_g`. So the ground point projects to `(0, 0)`, on its
+  pixel corner, and `ppm` holds for a surface at the ground point's depth:
+  nearer surfaces are larger, farther ones smaller. The field of view is no
+  setting; it follows from the scale and `d` (D-12).
+- **Too near to project.** A vertex with `z_c ≤ 1e-4` m, at, behind or too
+  near the camera to clip, is an overflow (exit 4), found while measuring.
+  Nothing is rendered or published, and the message names the source file
+  and, for each such frame, its clip, direction and sample time and its
+  nearest vertex depth:
+
+  ```
+  moskophoros: error: hero.glb: a vertex is too near the perspective camera to project, 0.0001 m from it or nearer, or behind it; move the camera's position farther from the subject:
+    clip 'walk', direction 0, time 0.25 s: nearest vertex depth -0.2 m
+  ```
+- **Fitting** works on the projected extents exactly as for the
+  orthographic camera (see [Scale and ground point](#scale-and-ground-point)).
+- **The maps** stay those of the sheet's 2D sprite (D-13): the normal map is
+  in the camera's space, and the depth map holds `(d − z_c)·ppm` sheet pixels
+  toward the viewer, today's encoding at the ground point's scale (see
+  [Normal and depth maps](#normal-and-depth-maps)).
 
 ### Presets
 
@@ -795,6 +845,16 @@ relative to the projected ground point, in meters on the screen plane:
 
 Each is 0 or more. The margin is `m = 1` pixel.
 
+Under the perspective camera these are the same quantities of the projected
+points, on the plane through the ground point facing the camera:
+`L = max(0, −min X)`, `R = max(0, max X)`, `U = max(0, max Y)` and
+`D = max(0, −min Y)`, with `X` and `Y` as under
+[Camera and directions](#camera-and-directions), *Perspective*. They do not
+depend on `ppm`, which holds at the ground point's depth, so the three cases
+below, `--ground-px` and the overflow check apply unchanged (projects and
+camera design D-12). A frame with a vertex too near the camera has no bounds:
+it is an overflow before fitting.
+
 **Resolution.** Scale and cell are resolved in this order:
 
 1. **Both `--ppm` and `--cell` given (fixed).**
@@ -853,7 +913,7 @@ every recorded setting that affects the output (owner decisions 2026-10-11,
 settings design D-15, D-16, D-19 and D-28):
 
 - view and model yaw
-- the camera, `settings.camera`: its direction, roll and position
+- the camera, `settings.camera`: its projection, direction, roll and position
 - fps and supersample
 - ppm, cell, ground point and ground pixel
 - root-motion mode
@@ -872,7 +932,8 @@ This makes scale, cell and ground pixel fixed. Options given explicitly, and
 project values, override the reused values; the global file, whether the user
 file or a `--config` file, and the shipped defaults never do (projects and
 camera design D-11). A project's `ppm`, `ground`, `ground_px`, `model_yaw`,
-`camera.roll`, `camera.position`, `supersample`, `reduce` and `root_motion`
+`camera.projection`, `camera.roll`, `camera.position`, `supersample`,
+`reduce` and `root_motion`
 replace the reused values as their options do; `ppm: auto` or `--ppm auto`, and `ground_px: auto` or
 `--ground-px auto`, drop the reused scale or ground pixel and fit them again
 in the cell in force. The app settings, `blender` and `any_blender`, are
@@ -962,10 +1023,13 @@ The reused `settings` are checked strictly. Every reused field must be
 present with a value its option would accept, and `pixels_per_meter`, `cell`
 and `ground_px` must be set. `view` must be an object with exactly `preset`,
 `directions` and `start_angle_deg`. `camera` must be an object with exactly
-`projection`, which must be `orthographic`; `direction`, a list of three
-numbers, never booleans, each from −1 to 1, normalised: its length within
-`1e-12` of 1, and it is kept exactly as recorded; `roll`, a number from −1 to
-1; and `position`, `null` or a list of three finite numbers.
+`projection`, which must be `orthographic` or `perspective`; `direction`, a
+list of three numbers, never booleans, each from −1 to 1, normalised: its
+length within `1e-12` of 1, and it is kept exactly as recorded; `roll`, a
+number from −1 to 1; and `position`, `null` or a list of three finite
+numbers. A reloaded perspective camera, with whatever overrides it, is
+checked as any other: it needs a position with the ground point in front of
+it.
 `cell` is the fitted `{width, height}` record, never `auto`. `previews`,
 `normals` and `depth` must be `true` or `false`. `light` must be an object
 with exactly `position`, `null` or a list of three numbers, never booleans,
@@ -1118,6 +1182,42 @@ Blender writes a manifest JSON listing each frame's address and file.
 `blender_script.py` uses only `bpy` and the Python standard library, and is the
 only module that imports `bpy`. It is never imported by the rest of the
 package.
+
+**The camera** (see [Camera and directions](#camera-and-directions)). For
+each frame the script places the camera as if the subject were turned for
+the frame's direction: it turns the camera the opposite way about the
+vertical through the ground point, which gives the same image, since the
+colour is flat and unlit. `W` and `H` below are the rendered frame's width
+and height, the supersampled image's, or the larger frame whose corner it is
+when that is under 4 pixels (below).
+
+- *Orthographic:* the view is `W / (ppm·s)` meters wide, centred so the
+  ground point lands on pixel corner `(gx·s, gy·s)`. The camera stands 1 m
+  clear of the subject's reach along its viewing axis, its near plane
+  halfway there and its far plane beyond the subject.
+- *Perspective* (projects and camera design, *Calibration* and *Clipping*;
+  spike 2): the camera stands at the ground point plus its position, with a
+  horizontal sensor fit.
+  - **Focal length:** `ppm·d·s` image pixels, so
+    `lens / sensor_width = ppm·d·s / W`. When 36 times that ratio is at least
+    1, the sensor is 36 mm and the lens `36·ratio` mm; otherwise the lens is
+    1 mm and the sensor `1/ratio` mm. Neither falls below Blender's 1 mm
+    minimum, so nothing is clamped.
+  - **Lens shift** puts the ground point's projection on pixel corner
+    `(gx·s, gy·s)`: `x = (W/2 + ppm·s·x_g − gx·s) / W` and
+    `y = (gy·s − H/2 + ppm·s·y_g) / W`, in units of the image width, the
+    sensor-fit side, for portrait and landscape images alike. In units of
+    the larger side, spike 2's first run failed for portrait images.
+  - **Clipping:** the near plane is half the nearest measured vertex depth
+    over every frame, and the far plane twice the farthest plus 1 m. The
+    caller computes both from the measure result and passes them, with the
+    measured range, in the render job's `clipping`. Rendered surfaces are
+    triangles between measured vertices, so their depths lie within that
+    range.
+  - **Read back:** the script reads Blender's stored lens, sensor width,
+    their ratio and the shift, and refuses any more than `1e-6` relative
+    from the one asked for, and stored clipping planes that do not enclose
+    the measured range: a script error, exit 5, with nothing published.
 
 **What is rendered:** only the mesh objects created from the glTF scene.
 Everything else, including objects the importer adds itself (such as bone
@@ -1381,9 +1481,12 @@ Blender never leaves it outside the workspace.
 - *Depth:* the surface's depth toward the viewer from the ground point,
   `ground_view_z − view_z` in meters, where `view_z` is the distance along
   the camera's viewing axis (*View Z Depth*) and `ground_view_z` the ground
-  point's, taken per frame, since the camera's distance changes per frame
-  (it stands clear of the subject's reach). Positive is nearer the viewer
-  than the ground point, like the normal's z (D-10). `ground_view_z` comes
+  point's, taken per frame, since the orthographic camera's distance changes
+  per frame (it stands clear of the subject's reach). Under the perspective
+  camera, *View Z Depth* is likewise along the viewing axis, the surface's
+  `z_c`, not its distance along the camera ray, and `ground_view_z` is `d`,
+  so the depth is `d − z_c` (projects and camera design D-13). Positive is
+  nearer the viewer than the ground point, like the normal's z (D-10). `ground_view_z` comes
   from the camera transform Blender stores, in single precision, the camera
   Cycles measures from. Cycles works in single precision, so a depth is as
   precise as the float32 spacing of the surface's coordinates: about
@@ -1434,14 +1537,15 @@ keys, missing required fields and invalid numeric values are rejected.
 
 | Field | Meaning |
 |---|---|
-| `schema` | Exactly `moskophoros.capture-job/2`. |
+| `schema` | Exactly `moskophoros.capture-job/3` (`/2` had no `clipping` and only the orthographic camera; `/1` recorded the view's `projection` and `pitch_deg` in place of `camera`). |
 | `mode` | `measure` or `render`. |
 | `source` | Absolute `path` to the original GLB, its `sha256` and the selected original glTF `scene` index. |
 | `subject`, `variant` | Input stem and `default`, matching every requested frame address. |
-| `settings` | The accepted sheet settings, using resolved option values, with the global frame count `frames` and each clip entry's own `frames` as given, which the script checks (a count, `auto`, or for a clip `null`); the job's `frames` list already holds the times they sample, so Blender never resamples, and `time_scale` is not in the job. In measure mode, `pixels_per_meter`, `cell` and `ground_px` are null: fitting belongs to the caller. In render mode all three are resolved, fixed values. `view` holds exactly `preset`, `directions` and `start_angle_deg`, and `camera`, after it, exactly `projection` (`orthographic`), `direction` (three finite numbers each from −1 to 1, normalised to within `1e-12` of length 1), `roll` (a finite number from −1 to 1) and `position` (three finite numbers, or null), as the sheet records them (projects and camera design D-14, D-16); both the launcher and the script check them strictly, and the script projects and frames with the rolled screen axes (see [Camera and directions](#camera-and-directions)). `shade` carries the shade's capture values, exactly `ao_distance_m` (finite, greater than 0), `ao_samples` (an integer, 1 to 128), `occlusion_weight` and `convexity_weight` (finite, 0 or greater), and `materials`: for each glTF material whose library entry gives its own `ao_distance_m`, `occlusion_weight` or `convexity_weight`, in ascending material order, exactly `material` (its glTF index) and its three resolved capture values, each its own or the global. Both the launcher and the script check them. Of the style, the job carries only those per-material values (owner decision 2026-10-11, settings design D-36, amending the rule below): the sheet's ramps, generated or listed, palette, reduction, default ramp, `previews` and shade ranges, the library's own `shade` included, are left out, as they act after capture, so the job and its `job_sha256` are the same whatever they are (owner decisions 2026-10-04, 2026-10-12). |
+| `settings` | The accepted sheet settings, using resolved option values, with the global frame count `frames` and each clip entry's own `frames` as given, which the script checks (a count, `auto`, or for a clip `null`); the job's `frames` list already holds the times they sample, so Blender never resamples, and `time_scale` is not in the job. In measure mode, `pixels_per_meter`, `cell` and `ground_px` are null: fitting belongs to the caller. In render mode all three are resolved, fixed values. `view` holds exactly `preset`, `directions` and `start_angle_deg`, and `camera`, after it, exactly `projection` (`orthographic` or `perspective`), `direction` (three finite numbers each from −1 to 1, normalised to within `1e-12` of length 1), `roll` (a finite number from −1 to 1) and `position` (three finite numbers, or null; for `perspective` three numbers with the ground point in front of the camera), as the sheet records them (projects and camera design D-14, D-16); both the launcher and the script check them strictly, and the script projects and frames with the rolled screen axes (see [Camera and directions](#camera-and-directions)). `shade` carries the shade's capture values, exactly `ao_distance_m` (finite, greater than 0), `ao_samples` (an integer, 1 to 128), `occlusion_weight` and `convexity_weight` (finite, 0 or greater), and `materials`: for each glTF material whose library entry gives its own `ao_distance_m`, `occlusion_weight` or `convexity_weight`, in ascending material order, exactly `material` (its glTF index) and its three resolved capture values, each its own or the global. Both the launcher and the script check them. Of the style, the job carries only those per-material values (owner decision 2026-10-11, settings design D-36, amending the rule below): the sheet's ramps, generated or listed, palette, reduction, default ramp, `previews` and shade ranges, the library's own `shade` included, are left out, as they act after capture, so the job and its `job_sha256` are the same whatever they are (owner decisions 2026-10-04, 2026-10-12). |
 | `clips` | Selected clips in sheet order. Each carries its original `animation_index`, `name`, `t0_s`, `t1_s` and candidate `roots`. The synthetic `static` clip has a null animation index, zero endpoints and no animated roots. |
 | `clips[].roots` | Each candidate root's original `node_index` and optional original `node_name`, determined using the accepted ancestry rule. Indices identify nodes; names are diagnostics, never assumed unique. |
 | `frames` | The exact requested samples in sheet order: clip, direction, then sample. Each carries an `address`, sample `index` and direction `angle_deg`. The address has `subject`, `variant`, `clip`, `direction` and `time_s`. |
+| `clipping` | A perspective render job's clipping planes, exactly `near_m` and `far_m`, and `depth_m`, the nearest and farthest measured vertex depths over every frame, two numbers with `0 < near_m < depth_m[0] ≤ depth_m[1] < far_m` (see [Capture](#capture), *The camera*). Null in a measure job and in an orthographic render job. Both the launcher and the script check it. |
 | `output_dir` | Absolute path to this mode's own initially empty output directory. |
 
 The caller owns selection, sample times, direction enumeration and fitting.
@@ -1465,13 +1569,14 @@ never interprets human-readable stdout as a manifest.
 
 | Field | Meaning |
 |---|---|
-| `schema` | Exactly `moskophoros.capture-result/3`, for measure and render results alike (`/2` had no front buffers, alpha design ALPHA-4; `/1` recorded Workbench's renderer and studio light, ALPHA-1). |
+| `schema` | Exactly `moskophoros.capture-result/4`, for measure and render results alike (`/3` had no perspective `depth_m` or null `bounds_m`; `/2` had no front buffers, alpha design ALPHA-4; `/1` recorded Workbench's renderer and studio light, ALPHA-1). |
 | `mode` | Must match the submitted job. |
 | `job_sha256` | Hash of the submitted job encoded as canonical JSON with sorted keys, compact separators, ASCII escapes and non-finite numbers forbidden. This binds a result to its complete request, not just its source. |
 | `source_sha256` | Must match the job's source digest. |
 | `backend` | Actual Blender version, and nothing else in a measure result. Render results also record, in this order, `renderer`, the renderer's name (`"cycles"`); `color`, exactly the colour's technique and its fixed parameters (`technique`, `samples_per_pixel`, `seed`, `pixel_filter`, `filter_width_px`, `min_transparent_bounces`, `transparent_max_bounces`, `pass_alpha_threshold`: a nonempty name, a whole number 1 or more, whole numbers 0 or more for the seed and the two bounce limits, a name, and numbers greater than 0 for the width and the threshold); and `shade`, exactly the shade technique and its fixed parameters (`technique`, `samples_per_pixel`, `seed`, `pixel_filter`, `filter_width_px`), whose capture values are the job's. There is no studio light. The version is parsed according to the owning supported-version contract. |
 | `frames` | Exactly one record per requested address, in request order. No missing, duplicate or unexpected address is accepted. |
-| `frames[].bounds_m` | Measure only: finite, nonnegative `L`, `R`, `U`, `D` as defined by the product design. |
+| `frames[].bounds_m` | Measure only: finite, nonnegative `L`, `R`, `U`, `D` as defined by the product design. Under the perspective camera it is null exactly when the frame's `depth_m[0]` is `1e-4` m or less, a vertex too near the camera to project, which the caller turns into an overflow (exit 4) before anything is rendered (see [Camera and directions](#camera-and-directions)). |
+| `frames[].depth_m` | Measure only, and only under the perspective camera: the nearest and farthest `z_c` of the frame's vertices, exactly two finite numbers, never booleans, nearest first. Under the orthographic camera a frame has no `depth_m`. |
 | `frames[].height_m` | Measure only: evaluated subject height along the glTF vertical axis, for the accepted unit warning. |
 | `roots` | Measure only: one entry per requested clip/root pair, with `clip`, `node_index`, `node_name` and nonnegative finite `travel_m`. Include zero travel. Evaluate the clip endpoints, even when the loop's render samples omit its endpoint. |
 | `frames[].buffers` | Render only: map from buffer name to relative file path. `color`, `matid`, `shade`, `normal`, `depth`, `front_color`, `front_alpha`, `front_matid` and `front_shade` are mandatory; extra named buffers can be described without changing the frame structure. |
@@ -1494,6 +1599,10 @@ absolute, contain parent traversal or escape through a symlink.
 
 The launcher also rejects, as a backend error (exit 5):
 
+- a measure frame's `bounds_m` that is null under the orthographic camera,
+  null with a `depth_m[0]` above `1e-4`, or an object with a `depth_m[0]` of
+  `1e-4` or less; or a perspective frame's `depth_m` that is missing, not
+  two finite numbers, or not nearest first;
 - a render phase the script ended with an error, Blender's failure: among
   them a frame whose stack of see-through surfaces is deeper than the
   capture renders, the [count render](#capture)'s refusal naming the input,
@@ -2268,7 +2377,14 @@ Depths from −2047.9375 to +2047.9375 encode, as codes 1 to 65535; one beyond
 is an [overflow](#scale-and-ground-point). Every other pixel, transparent in
 the colour sheet or in an unused cell, is 0, which means "no surface". A
 game recovers `depth = (code − 32768) / 16` and, with the pixel's position,
-`pixels_per_meter` and `ground_px`, its position in camera space. It is
+`pixels_per_meter` and `ground_px`, its position in camera space: for the
+orthographic camera, the surface's own position; for the perspective camera,
+the position of the 2D sprite's pixel, on screen with its depth at the
+ground point's scale, not the surface's original 3D position, which the
+tool does not reconstruct (projects and camera design D-13). Under the
+perspective camera a pixel's depth is `(d − z_c)·ppm`: its distance along
+the viewing axis, nearer than the ground point's `d` by that much, at the
+ground point's scale, with this encoding and range. It is
 published with the other outputs, rolled back with them, and named in an
 output error (exit 6) when it cannot be written.
 
@@ -2362,10 +2478,11 @@ output error (exit 6) when it cannot be written.
   export nor capture (owner decisions 2026-10-04, 2026-10-07).
 - `settings.view` records the view: `preset`, the preset's name or `custom`,
   `directions` and `start_angle_deg`. `settings.camera`, directly after it,
-  records the camera: `projection`, `"orthographic"`; `direction`, the
-  normalised direction, three numbers; `roll`, a number; and `position`,
-  three numbers or `null`, recorded unused by the orthographic camera. The
-  pitch is not recorded: the direction holds it. Both are inside the
+  records the camera: `projection`, `"orthographic"` or `"perspective"`;
+  `direction`, the normalised direction, three numbers; `roll`, a number;
+  and `position`, three numbers or `null`: the perspective camera's
+  position, recorded unused by the orthographic camera. The pitch is not
+  recorded: the direction holds it. Both are inside the
   fingerprint (projects and camera design D-14, D-16).
 - `settings.frames` records the global frame count as given, `auto` or a
   count, directly after `settings.fps`; each `settings.clips` entry runs
@@ -2545,7 +2662,11 @@ which is what a game reading the exported maps computes:
 
 No step produces a NaN or infinity for any finite light. The lit preview
 uses encoded depth, so a covered depth beyond the depth map's range is an
-[overflow](#scale-and-ground-point) whenever lit previews are written.
+[overflow](#scale-and-ground-point) whenever lit previews are written. Under
+the perspective camera the computation is the same: it lights the sprite
+the 2D way, from each pixel's pixel-centre position and encoded depth, as a
+game's shader lights the flat sprite, and does not reconstruct perspective
+positions (projects and camera design D-13).
 
 Previews exist for review in motion (V-12) and are not part of the sheet
 contract.
@@ -2660,7 +2781,6 @@ Decided later, each when its trigger arrives:
 | Root-motion extraction (keeping travel as data rather than rendering it) | A consumer needs it. |
 | Variants (bone-attached props, palette swaps) | The owner requests them. |
 | Other sheet formats and per-frame output | A consumer needs them. |
-| Perspective projection | A view needs it. |
 | Vertex-color rendering | A model needs it. |
 | `CUBICSPLINE` animation and mesh morph-weight animation pointers, rejected for now (owner decision 2026-10-02) | A model needs them. |
 

@@ -37,6 +37,7 @@ def test_the_schema_holds_this_slices_settings():
     assert list(settings.SCHEMA) == [
         "view",
         "pitch",
+        "camera.projection",
         "camera.direction",
         "camera.roll",
         "camera.position",
@@ -97,8 +98,9 @@ def test_the_defaults_file_and_the_schema_table_agree():
         # (projects and camera design D-12, D-16): today's option defaults.
         "view": "iso",
         "pitch": None,
-        # The camera (projects and camera design D-7, D-16): the view's
-        # direction, no roll, and no position.
+        # The camera (projects and camera design D-3, D-7, D-16):
+        # orthographic, the view's direction, no roll, and no position.
+        "camera.projection": "orthographic",
         "camera.direction": None,
         "camera.roll": 0.0,
         "camera.position": None,

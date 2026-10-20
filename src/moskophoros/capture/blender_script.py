@@ -50,8 +50,9 @@ from array import array
 
 import bpy
 
-JOB_SCHEMA = "moskophoros.capture-job/2"
-RESULT_SCHEMA = "moskophoros.capture-result/3"
+JOB_SCHEMA = "moskophoros.capture-job/3"
+RESULT_SCHEMA = "moskophoros.capture-result/4"
+PROJECTIONS = ("orthographic", "perspective")
 NODE_NAME = "moskophoros.node.{}"
 ANIMATION_NAME = "moskophoros.animation.{}"
 # Not ending in digits: Blender would read those as its own ".001" suffix
@@ -71,6 +72,12 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 # A camera direction within this of length 1 is normalised, as
 # moskophoros.views.UNIT_TOLERANCE says.
 UNIT_TOLERANCE = 1e-12
+# A vertex this near the perspective camera or nearer cannot be projected,
+# as moskophoros.views.NEAR_LIMIT says.
+NEAR_LIMIT = 1e-4
+# How far a stored lens, sensor or shift may be from the one asked for,
+# relative to it (design §Capture, Perspective calibration).
+CALIBRATION_TOLERANCE = 1e-6
 _GLB_HEADER = struct.Struct("<4sII")
 _CHUNK_HEADER = struct.Struct("<II")
 _JSON_CHUNK = 0x4E4F534A
@@ -161,6 +168,7 @@ def check_job(job):
             "settings",
             "clips",
             "frames",
+            "clipping",
             "output_dir",
         ],
         "top level",
@@ -214,7 +222,7 @@ def check_job(job):
         ["projection", "direction", "roll", "position"],
         "settings.camera",
     )
-    _require(camera["projection"] == "orthographic", "the projection")
+    _require(camera["projection"] in PROJECTIONS, "the projection")
     direction = camera["direction"]
     _require(
         isinstance(direction, list)
@@ -237,6 +245,14 @@ def check_job(job):
         ),
         "settings.camera.position",
     )
+    perspective = camera["projection"] == "perspective"
+    if perspective:
+        _require(position is not None, "the perspective camera has no position")
+        _require(
+            perspective_frame(camera)[2][2] > 0,
+            "the ground point is not in front of the perspective camera",
+        )
+    _check_clipping(job["clipping"], perspective and job["mode"] == "render")
     _require(
         _is_int(view["directions"]) and 1 <= view["directions"] <= 64,
         "settings.view.directions",
@@ -434,6 +450,29 @@ def check_job(job):
             f"clip {clip_name!r} direction {direction}'s samples are not indexed "
             "0, 1, 2, ... in time order",
         )
+
+
+def _check_clipping(clipping, wanted):
+    """A perspective render job's clipping, which the launcher computes from
+    the measured depths: `near_m` and `far_m` enclosing `depth_m`, the
+    nearest and farthest measured vertex depths. Every other job has none."""
+    if not wanted:
+        _require(
+            clipping is None, "clipping is set, but only a perspective render clips"
+        )
+        return
+    _fields(clipping, ["near_m", "far_m", "depth_m"], "clipping")
+    depth = clipping["depth_m"]
+    _require(
+        isinstance(depth, list) and len(depth) == 2 and all(map(_is_number, depth)),
+        "clipping.depth_m is not two numbers",
+    )
+    near, far = clipping["near_m"], clipping["far_m"]
+    _require(
+        _is_number(near) and _is_number(far) and 0 < near < depth[0] <= depth[1] < far,
+        f"clipping planes {near!r} to {far!r} do not enclose the measured depths "
+        f"{depth!r}",
+    )
 
 
 def _wrap(degrees):
@@ -921,7 +960,11 @@ def measure(job, document, statics):
     scene = bpy.context.scene
     fps = scene.render.fps / scene.render.fps_base
     settings = job["settings"]
-    axes = measure_axes(settings["camera"])
+    perspective = settings["camera"]["projection"] == "perspective"
+    if perspective:
+        camera_frame = perspective_frame(settings["camera"])
+    else:
+        axes = measure_axes(settings["camera"])
     yaw = settings["model_yaw_deg"]
     ground = tuple(settings["ground_m"][axis] for axis in "xyz")
     check_node_names()
@@ -965,18 +1008,23 @@ def measure(job, document, statics):
             for direction, angle in angles[time_s].items():
                 # Reduce first: a huge yaw would swallow the angle.
                 rotation = (angle % 360 + yaw % 360) % 360
-                measured[(clip["name"], direction, time_s)] = (
-                    bounds(points, ground, rotation, axes),
-                    height,
-                )
+                if perspective:
+                    box, depth = perspective_bounds(
+                        points, ground, rotation, camera_frame
+                    )
+                    record = {"bounds_m": box, "height_m": height, "depth_m": depth}
+                else:
+                    record = {
+                        "bounds_m": bounds(points, ground, rotation, axes),
+                        "height_m": height,
+                    }
+                measured[(clip["name"], direction, time_s)] = record
 
     frames = []
     for frame in job["frames"]:
         address = frame["address"]
-        box, height = measured[
-            (address["clip"], address["direction"], address["time_s"])
-        ]
-        frames.append({"address": address, "bounds_m": box, "height_m": height})
+        record = measured[(address["clip"], address["direction"], address["time_s"])]
+        frames.append({"address": address, **record})
     return frames, roots
 
 
@@ -2078,6 +2126,192 @@ def measure_axes(camera):
     return right, up
 
 
+def perspective_frame(camera):
+    """The perspective camera in the subject's frame at θ = 0, as
+    moskophoros.views.perspective gives it: its right, up and forward, its
+    position from the ground point, and the ground point's camera space
+    (x_g, y_g, d), with d its depth (design §Camera and directions,
+    Perspective).
+
+    Each direction's turn is measured from the camera's heading, so the
+    position turns with the axes `subject_axes` gives: by the turn taking
+    the heading −(f_x, 0, f_z) to +Z.
+    """
+    _, right, up = subject_axes(camera)
+    fx, fy, fz = camera["direction"]
+    level = _level(fx, fz)
+    forward = (0.0, fy, 0.0 - level)
+    px, py, pz = (float(value) for value in camera["position"])
+    if level != 0:
+        sin, cos = fx / level, 0.0 - fz / level
+        px, pz = px * cos + pz * sin, pz * cos - px * sin
+    position = (px, py, pz)
+    axes = (right, up, forward)
+    ground = tuple(0.0 - _dot(position, axis) for axis in axes)
+    return axes, position, ground
+
+
+def _dot(a, b):
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def perspective_bounds(points, ground, rotation_deg, frame):
+    """One frame's perspective measurement: L, R, U, D from the projected
+    ground point, or None when a vertex is too near the camera to project,
+    and the nearest and farthest vertex depths [near, far], with the subject
+    turned by `rotation_deg` about the vertical axis through `ground` and
+    `frame` from `perspective_frame`.
+
+    A vertex p has camera space x_c, y_c, z_c along the camera's right, up
+    and forward from it, and lands at X = d·x_c/z_c − x_g and
+    Y = d·y_c/z_c − y_g on the ground point's plane, so the ground point
+    lands at (0, 0) (design §Camera and directions, Perspective).
+    """
+    axes, position, (xg, yg, d) = frame
+    right, up, forward = axes
+    sin_a, cos_a = _sin_cos(rotation_deg)
+    gx, gy, gz = ground
+    px, py, pz = position
+    xs = []
+    ys = []
+    depths = []
+    for x, y, z in points:
+        dx, dy, dz = x - gx, y - gy, z - gz
+        relative = (
+            dx * cos_a + dz * sin_a - px,
+            dy - py,
+            dz * cos_a - dx * sin_a - pz,
+        )
+        depth = _dot(relative, forward)
+        depths.append(depth)
+        if depth > NEAR_LIMIT:
+            xs.append(d * _dot(relative, right) / depth - xg)
+            ys.append(d * _dot(relative, up) / depth - yg)
+    if not depths:
+        # Nothing to project: the ground point's own depth.
+        return {"L": 0.0, "R": 0.0, "U": 0.0, "D": 0.0}, [d, d]
+    near = min(depths)
+    if near <= NEAR_LIMIT:
+        return None, [near, max(depths)]
+    return {
+        "L": max(0.0, -min(xs)),
+        "R": max(0.0, *xs),
+        "U": max(0.0, *ys),
+        "D": max(0.0, -min(ys)),
+    }, [near, max(depths)]
+
+
+def calibration(ppm, depth, supersample, width):
+    """The lens and sensor width, in millimeters, for a horizontal sensor
+    fit: lens / sensor = ppm·d·s / W, with a 36 mm sensor when the lens is
+    then at least 1 mm, and otherwise a 1 mm lens, so neither falls below
+    Blender's 1 mm minimum (design §Capture, Perspective calibration)."""
+    ratio = ppm * depth * supersample / width
+    if 36 * ratio >= 1:
+        return 36 * ratio, 36.0
+    return 1.0, 1 / ratio
+
+
+def lens_shift(ppm, supersample, ground, size, ground_px):
+    """The lens shift putting the ground point's projection on pixel corner
+    `ground_px` · s of the rendered `size` (W, H), in units of the image
+    width, the sensor-fit side, for portrait and landscape images alike;
+    `ground` is the ground point's camera space (x_g, y_g, d)."""
+    width, height = size
+    xg, yg, _ = ground
+    gx, gy = (coordinate * supersample for coordinate in ground_px)
+    return (
+        (width / 2 + ppm * supersample * xg - gx) / width,
+        (gy - height / 2 + ppm * supersample * yg) / width,
+    )
+
+
+def _calibrated(name, held, asked):
+    if abs(held - asked) > CALIBRATION_TOLERANCE * abs(asked):
+        raise ScriptError(
+            f"Blender holds the perspective camera's {name} as {held!r}, not {asked!r}"
+        )
+
+
+def place_perspective(camera, settings, clipping, rotation_deg):
+    """Put the perspective camera at the ground point plus its position,
+    looking along its direction, as if the subject were turned by
+    `rotation_deg`, with its lens, sensor and shift putting the ground point
+    on pixel corner (gx·s, gy·s) at the pixels per meter asked for at the
+    ground point's depth, and its clipping planes from `clipping`; return
+    the ground point's camera depth (design §Capture, Perspective
+    calibration).
+
+    As for `place_camera`, the camera turns by −a around the subject in
+    place of the subject turning by a. Blender's stored lens, sensor, shift
+    and clipping planes are read back, and any not as asked is refused.
+    """
+    sin_a, cos_a = _sin_cos(-rotation_deg)
+    axes, position, ground_space = perspective_frame(settings["camera"])
+    right, up, forward = (_turn(axis, sin_a, cos_a) for axis in axes)
+    toward = tuple(0.0 - value for value in forward)
+    offset = _turn(position, sin_a, cos_a)
+    ground = tuple(settings["ground_m"][axis] for axis in "xyz")
+    center = tuple(ground[i] + offset[i] for i in range(3))
+    camera.matrix_world = [
+        (*_blender(right), 0.0),
+        (*_blender(up), 0.0),
+        (*_blender(toward), 0.0),
+        (*_blender(center), 1.0),
+    ]
+    scale = settings["supersample"]
+    ppm = settings["pixels_per_meter"]
+    _, _, width, height = frame_size(settings)
+    lens, sensor = calibration(ppm, ground_space[2], scale, width)
+    shift_x, shift_y = lens_shift(
+        ppm,
+        scale,
+        ground_space,
+        (width, height),
+        (settings["ground_px"]["x"], settings["ground_px"]["y"]),
+    )
+    data = camera.data
+    data.type = "PERSP"
+    data.sensor_fit = "HORIZONTAL"
+    data.lens_unit = "MILLIMETERS"
+    data.sensor_width = sensor
+    data.lens = lens
+    data.shift_x = shift_x
+    data.shift_y = shift_y
+    data.clip_start = clipping["near_m"]
+    data.clip_end = clipping["far_m"]
+    data.dof.use_dof = False
+    _calibrated("lens", data.lens, lens)
+    _calibrated("sensor width", data.sensor_width, sensor)
+    _calibrated("lens to sensor ratio", data.lens / data.sensor_width, lens / sensor)
+    _calibrated("horizontal shift", data.shift_x, shift_x)
+    _calibrated("vertical shift", data.shift_y, shift_y)
+    nearest, farthest = clipping["depth_m"]
+    if not data.clip_start < nearest or not data.clip_end > farthest:
+        raise ScriptError(
+            f"Blender holds the clipping planes as {data.clip_start!r} to "
+            f"{data.clip_end!r} m, which do not enclose the measured depths "
+            f"{nearest!r} to {farthest!r} m"
+        )
+    return _ground_depth(camera, ground)
+
+
+def _ground_depth(camera, ground):
+    """The ground point's distance along the viewing axis, the camera depth
+    the depth buffer is relative to (lighting sheet design D-10). It is
+    taken from the transform Blender stores, in single precision, which is
+    the camera Cycles measures View Z Depth from, not from the one asked
+    for."""
+    stored = camera.matrix_world
+    axis = [stored[row][2] for row in range(3)]
+    length = math.sqrt(sum(value * value for value in axis))
+    position = [stored[row][3] for row in range(3)]
+    return sum(
+        (position[i] - target) * axis[i] / length
+        for i, target in enumerate(_blender(ground))
+    )
+
+
 def place_camera(camera, settings, rotation_deg, reach):
     """Put the orthographic camera where the ground point lands on pixel
     corner (gx·s, gy·s), as if the subject were turned by `rotation_deg`, and
@@ -2123,18 +2357,7 @@ def place_camera(camera, settings, rotation_deg, reach):
     data.clip_start = CLEARANCE / 2
     data.clip_end = distance + reach + CLEARANCE
     data.dof.use_dof = False
-    # The ground point's distance along the viewing axis, the camera depth
-    # the depth buffer is relative to (lighting sheet design D-10). It is
-    # taken from the transform Blender stores, in single precision, which is
-    # the camera Cycles measures View Z Depth from, not from `center`.
-    stored = camera.matrix_world
-    axis = [stored[row][2] for row in range(3)]
-    length = math.sqrt(sum(value * value for value in axis))
-    position = [stored[row][3] for row in range(3)]
-    return sum(
-        (position[i] - target) * axis[i] / length
-        for i, target in enumerate(_blender(ground))
-    )
+    return _ground_depth(camera, ground)
 
 
 def reach(objects, depsgraph, ground):
@@ -2207,9 +2430,14 @@ def render_frames(job, document, statics):
             for ordinal, frame in requested:
                 depsgraph = evaluate(scene, fps, frame["address"]["time_s"])
                 rotation = (frame["angle_deg"] % 360 + yaw % 360) % 360
-                ground_view_z = place_camera(
-                    camera, settings, rotation, reach(objects, depsgraph, ground)
-                )
+                if settings["camera"]["projection"] == "perspective":
+                    ground_view_z = place_perspective(
+                        camera, settings, job["clipping"], rotation
+                    )
+                else:
+                    ground_view_z = place_camera(
+                        camera, settings, rotation, reach(objects, depsgraph, ground)
+                    )
                 relative = {name: f"{name}/{ordinal:06d}.png" for name in BUFFERS}
                 address = frame["address"]
                 render_frame(

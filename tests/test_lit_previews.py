@@ -786,3 +786,25 @@ def test_production_reconstruction_from_the_exported_files(setup, capsys):
     for preview in rebuilt:
         written = (setup.out / f"hero-lit.{preview.clip}.gif").read_bytes()
         assert written == preview.gif, preview.clip
+
+
+def test_the_lit_preview_is_the_same_under_perspective():
+    # The 2D way (projects and camera design D-13): from each pixel's
+    # pixel-centre position and encoded depth, whatever the projection.
+    perspective = Settings(
+        **{
+            **SETTINGS.__dict__,
+            "projection": "perspective",
+            "position": (0.0, 1.5, 2.5),
+        }
+    )
+    given = frames()
+    light = export.Light((7.0, 9.0, 20.0), 1.3, 0.2)
+    (lit,) = export.lit_previews(
+        given,
+        subject="hero",
+        settings=perspective,
+        selected_clips=(WALK,),
+        light=light,
+    )
+    assert lit.gif == lit_preview(given, light).gif

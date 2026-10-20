@@ -419,3 +419,97 @@ def test_large_integers_are_written_in_scientific_notation(value, text):
     from moskophoros.fit import _int
 
     assert _int(value) == text
+
+
+# The perspective camera (projects and camera design D-12, D-16): fitting
+# takes the ground-relative projected extents, so today's three cases and the
+# overflow check apply unchanged.
+
+
+def animated_cube(time_s):
+    """A cube that rises, grows and drifts sideways over its clip."""
+    size = 0.3 + 0.2 * time_s
+    x0, y0, z0 = -0.2 + 0.3 * time_s, 0.4 * time_s, -0.1
+    return [
+        (x0 + dx * size, y0 + dy * size, z0 + dz * size)
+        for dx in (0, 1)
+        for dy in (0, 1)
+        for dz in (0, 1)
+    ]
+
+
+def perspective_measurements():
+    """Four directions and three samples of the animated cube, seen by a
+    rolled perspective camera off the ground point's axis; with each frame's
+    sheet-plane points, `(X, Y)` from the projected ground point."""
+    from moskophoros import views
+
+    camera = views.perspective(
+        views.normalise((0.3, -0.6, -0.7)), 0.3, (-1.5, 2.25, 2.0)
+    )
+    ground = (0.1, 0.2, -0.05)
+    assert camera.ground[0] != 0 and camera.ground[1] != 0
+    measured, projected = {}, {}
+    for direction in range(4):
+        for time_s in (0.0, 0.5, 1.0):
+            points = animated_cube(time_s)
+            rotation = 22.5 + 90.0 * direction
+            bounds, _ = views.perspective_bounds(camera, points, ground, rotation)
+            where = address(direction=direction, time_s=time_s)
+            measured[where] = Measurement(Bounds(*bounds), 1.0)
+            projected[where] = [
+                views.project(camera, point, ground, rotation)[:2] for point in points
+            ]
+    return measured, projected
+
+
+def sheet_extents(result, projected):
+    """The left, right, top and bottom of every point on the fitted sheet,
+    each at (gx + ppm·X, gy − ppm·Y)."""
+    gx, gy = result.ground_px
+    xs = [gx + result.ppm * x for points in projected.values() for x, _ in points]
+    ys = [gy - result.ppm * y for points in projected.values() for _, y in points]
+    return min(xs), max(xs), min(ys), max(ys)
+
+
+def test_perspective_bounds_fit_automatically_with_the_margin():
+    measured, projected = perspective_measurements()
+    # The extents differ from frame to frame, so the fit takes them all.
+    assert len({measurement.bounds for measurement in measured.values()}) == 12
+    result = resolve(measured)
+    width, height = result.cell
+    assert (width, height) == (64, 64)
+    left, right, top, bottom = sheet_extents(result, projected)
+    tolerance = 1e-9
+    assert left >= 1 - tolerance and right <= width - 1 + tolerance
+    assert top >= 1 - tolerance and bottom <= height - 1 + tolerance
+    # The scale is the largest that keeps the margin: one side touches it.
+    assert min(left - 1, width - 1 - right, top - 1, height - 1 - bottom) < 1
+
+
+def test_perspective_bounds_fit_a_fixed_scale_with_the_margin():
+    measured, projected = perspective_measurements()
+    result = resolve(measured, ppm=40.0)
+    width, height = result.cell
+    left, right, top, bottom = sheet_extents(result, projected)
+    assert left >= 1 and right <= width - 1
+    assert top >= 1 and bottom <= height - 1
+    # The cell is the smallest holding the margin on its limiting sides.
+    assert min(left, width - right) < 2
+    assert height - bottom < 2
+
+
+def test_perspective_bounds_fit_a_fixed_scale_and_cell():
+    measured, projected = perspective_measurements()
+    automatic = resolve(measured, ppm=40.0)
+    result = resolve(measured, ppm=40.0, cell=automatic.cell)
+    width, height = result.cell
+    left, right, top, bottom = sheet_extents(result, projected)
+    assert 0 <= left and right <= width and 0 <= top and bottom <= height
+
+
+def test_perspective_bounds_overflow_a_cell_too_small():
+    measured, _ = perspective_measurements()
+    with pytest.raises(CellOverflow) as raised:
+        resolve(measured, ppm=40.0, cell=(8, 8))
+    assert len(raised.value.frames) == 12

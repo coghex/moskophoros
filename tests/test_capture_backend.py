@@ -152,9 +152,9 @@ def expected_settings(ppm, cell, ground_px):
     }
 
 
-def expected_job(mode, settings, output_dir):
+def expected_job(mode, settings, output_dir, clipping=None):
     return {
-        "schema": "moskophoros.capture-job/2",
+        "schema": "moskophoros.capture-job/3",
         "mode": mode,
         "source": {"path": "/models/hero.glb", "sha256": SHA, "scene": 0},
         "subject": "hero",
@@ -162,6 +162,7 @@ def expected_job(mode, settings, output_dir):
         "settings": settings,
         "clips": EXPECTED_CLIPS,
         "frames": EXPECTED_FRAMES,
+        "clipping": clipping,
         "output_dir": output_dir,
     }
 
@@ -431,7 +432,7 @@ def test_a_malformed_job_is_an_internal_error(change, message):
 
 def measure_document(job):
     return {
-        "schema": "moskophoros.capture-result/3",
+        "schema": "moskophoros.capture-result/4",
         "mode": "measure",
         "job_sha256": independent_sha256(job),
         "source_sha256": SHA,
@@ -559,6 +560,203 @@ def test_a_measure_result_is_rejected(tmp_path, name):
     assert raised.value.exit_code == 5
 
 
+# Perspective measure results (projects and camera design D-16, C-5, C-12)
+
+PERSPECTIVE_SETTINGS = replace(
+    MEASURE_SETTINGS, projection="perspective", position=(0.0, 1.5, 2.5)
+)
+
+
+def perspective_job(output_dir="/work/measure"):
+    return build_job(
+        "measure", SOURCE, "hero", PERSPECTIVE_SETTINGS, CLIPS, frames(), output_dir
+    )
+
+
+def perspective_document(job):
+    """Every frame with its depths, the farthest equal to the nearest in
+    frame 4; frame 1 has a vertex behind the camera, so no bounds."""
+    document = measure_document(job)
+    for k, frame in enumerate(document["frames"]):
+        frame["depth_m"] = [2.0, 2.0] if k == 4 else [2.0, 3.0 + 0.1 * k]
+    document["frames"][1] |= {"bounds_m": None, "depth_m": [-0.2, 3.1]}
+    return document
+
+
+def test_a_valid_perspective_measure_result(tmp_path):
+    job = perspective_job(str(tmp_path))
+    result = validate_result(job, tmp_path, encode(perspective_document(job)))
+    addresses = [sampling.FrameAddress(**frame["address"]) for frame in EXPECTED_FRAMES]
+    assert list(result.depths) == addresses
+    assert result.depths[addresses[1]] == (-0.2, 3.1)
+    assert result.depths[addresses[4]] == (2.0, 2.0)
+    assert result.measurements[addresses[1]] == fit.Measurement(None, 1.75)
+    assert result.measurements[addresses[2]] == fit.Measurement(
+        fit.Bounds(0.5, 0.5, 1.5, 0.0), 1.75
+    )
+
+
+def test_an_orthographic_measure_result_has_no_depths(tmp_path):
+    job = measure_job(str(tmp_path))
+    assert validate_result(job, tmp_path, encode(measure_document(job))).depths is None
+
+
+@pytest.mark.parametrize(
+    ("depth", "near"),
+    [
+        ([-0.2, 3.1], True),
+        ([0.0, 3.1], True),
+        ([5e-5, 3.1], True),
+        ([1e-4, 3.1], True),
+        ([1.0000000000000002e-4, 3.1], False),
+        ([0.5, 3.1], False),
+    ],
+)
+def test_bounds_are_null_exactly_when_a_vertex_is_too_near(tmp_path, depth, near):
+    job = perspective_job(str(tmp_path))
+    for bounds in (None, {"L": 0.5, "R": 0.25, "U": 1.5, "D": 0.0}):
+        document = perspective_document(job)
+        document["frames"][1] |= {"bounds_m": bounds, "depth_m": depth}
+        if (bounds is None) == near:
+            validate_result(job, tmp_path, encode(document))
+            continue
+        with pytest.raises(BackendError, match="frame 1 ") as raised:
+            validate_result(job, tmp_path, encode(document))
+        assert raised.value.exit_code == 5
+
+
+PERSPECTIVE_REJECTIONS = {
+    "no depths": (_delete(["frames", 2, "depth_m"]), "frame 2 is missing depth_m"),
+    "null depths": (_set(["frames", 2, "depth_m"], None), "frame 2 depth_m"),
+    "one depth": (_set(["frames", 2, "depth_m"], [2.0]), "frame 2 depth_m"),
+    "three depths": (_set(["frames", 2, "depth_m"], [2.0, 2.5, 3.0]), "depth_m"),
+    "reversed depths": (_set(["frames", 2, "depth_m"], [3.0, 2.0]), "nearest first"),
+    "a boolean depth": (_set(["frames", 2, "depth_m"], [True, 3.0]), "depth_m"),
+    "a string depth": (_set(["frames", 2, "depth_m"], ["2", 3.0]), "depth_m"),
+    "an object of depths": (
+        _set(["frames", 2, "depth_m"], {"near": 2.0, "far": 3.0}),
+        "frame 2 depth_m",
+    ),
+    "a non-finite depth": (
+        _set(["frames", 2, "depth_m"], [float("nan"), 3.0]),
+        "non-finite",
+    ),
+    "an infinite depth": (
+        _set(["frames", 2, "depth_m"], [2.0, float("inf")]),
+        "non-finite",
+    ),
+    "null bounds with a far depth": (
+        _set(["frames", 2, "bounds_m"], None),
+        "frame 2 bounds_m is null",
+    ),
+    "bounds with a near depth": (
+        _set(["frames", 1, "bounds_m"], {"L": 0.5, "R": 0.0, "U": 1.5, "D": 0.0}),
+        "frame 1 has bounds_m",
+    ),
+    "a missing height beside null bounds": (
+        _delete(["frames", 1, "height_m"]),
+        "frame 1 is missing height_m",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", list(PERSPECTIVE_REJECTIONS))
+def test_a_perspective_measure_result_is_rejected(tmp_path, name):
+    change, message = PERSPECTIVE_REJECTIONS[name]
+    job = perspective_job(str(tmp_path))
+    document = perspective_document(job)
+    change(document)
+    with pytest.raises(BackendError, match=message) as raised:
+        validate_result(job, tmp_path, encode(document))
+    assert raised.value.exit_code == 5
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        (_set(["frames", 2, "bounds_m"], None), "frame 2 bounds_m is null"),
+        (_set(["frames", 2, "depth_m"], [-0.2, 3.1]), "unknown depth_m"),
+    ],
+    ids=["null bounds", "depths"],
+)
+def test_an_orthographic_frame_has_bounds_and_no_depths(tmp_path, change, message):
+    job = measure_job(str(tmp_path))
+    document = measure_document(job)
+    change(document)
+    with pytest.raises(BackendError, match=message) as raised:
+        validate_result(job, tmp_path, encode(document))
+    assert raised.value.exit_code == 5
+
+
+# Perspective jobs and their clipping
+
+
+def test_the_clipping_planes_enclose_every_frame_s_depths():
+    from moskophoros.capture.backend import Clipping, clipping
+
+    depths = [(2.5, 3.0), (1.25, 2.0), (2.0, 2.0), (3.0, 4.5)]
+    assert clipping(depths) == Clipping(0.625, 10.0, (1.25, 4.5))
+    assert clipping([(2.0, 2.0)]) == Clipping(1.0, 5.0, (2.0, 2.0))
+    with pytest.raises(ValueError, match="cannot be clipped"):
+        clipping([(2.0, 3.0), (1e-4, 3.0)])
+
+
+def test_a_perspective_render_job_carries_its_clipping():
+    from moskophoros.capture.backend import Clipping
+
+    settings = replace(PERSPECTIVE_SETTINGS, ppm=10.0, cell=(4, 3), ground_px=(2, 2))
+    job = build_job(
+        "render",
+        SOURCE,
+        "hero",
+        settings,
+        CLIPS,
+        frames(),
+        "/work/render",
+        Clipping(0.625, 10.0, (1.25, 4.5)),
+    )
+    assert job["schema"] == "moskophoros.capture-job/3"
+    assert job["clipping"] == {"near_m": 0.625, "far_m": 10.0, "depth_m": [1.25, 4.5]}
+    assert job["settings"]["camera"] == {
+        "projection": "perspective",
+        "direction": list(views.pitch_direction(30.0)),
+        "roll": 0.0,
+        "position": [0.0, 1.5, 2.5],
+    }
+    assert perspective_job()["clipping"] is None
+
+
+def test_clipping_belongs_to_a_perspective_render_job_alone():
+    from moskophoros.capture.backend import Clipping
+
+    planes = Clipping(0.625, 10.0, (1.25, 4.5))
+    perspective = replace(PERSPECTIVE_SETTINGS, ppm=10.0, cell=(4, 3), ground_px=(2, 2))
+    cases = [
+        ("render", perspective, None, "needs clipping"),
+        ("render", RENDER_SETTINGS, planes, "only a perspective render"),
+        ("measure", PERSPECTIVE_SETTINGS, planes, "only a perspective render"),
+        ("render", perspective, Clipping(1.25, 10.0, (1.25, 4.5)), "do not enclose"),
+        ("render", perspective, Clipping(0.5, 4.5, (1.25, 4.5)), "do not enclose"),
+    ]
+    for mode, settings, clip, message in cases:
+        with pytest.raises(MalformedJob, match=message):
+            build_job(mode, SOURCE, "hero", settings, CLIPS, frames(), "/w", clip)
+
+
+@pytest.mark.parametrize(
+    ("position", "message"),
+    [
+        (None, "the perspective camera has no position"),
+        ((0.0, -1.5, -2.5), "the ground point is not in front of the camera"),
+        ((1.0, 0.0, 0.0), "the ground point is not in front of the camera"),
+    ],
+)
+def test_a_perspective_job_needs_the_ground_point_in_front(position, message):
+    settings = replace(PERSPECTIVE_SETTINGS, position=position)
+    with pytest.raises(MalformedJob, match=message):
+        build_job("measure", SOURCE, "hero", settings, CLIPS, frames(), "/w")
+
+
 @pytest.mark.parametrize(
     ("text", "message"),
     [
@@ -655,7 +853,7 @@ def render_document(job, phase_dir):
         paths |= write_front(phase_dir, ordinal, (8, 6))
         records.append({"address": dict(frame["address"]), "buffers": paths})
     return {
-        "schema": "moskophoros.capture-result/3",
+        "schema": "moskophoros.capture-result/4",
         "mode": "render",
         "job_sha256": independent_sha256(job),
         "source_sha256": SHA,

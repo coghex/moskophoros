@@ -1636,9 +1636,14 @@ def test_the_shipped_defaults_give_both_spellings_of_the_direction():
             "expected [x, y, z], three finite numbers, or null, got [0, 1, -inf]",
         ),
         (
-            "camera:\n  projection: orthographic\n",
+            "camera:\n  projection: fisheye\n",
             "camera.projection",
-            "unknown key",
+            "expected orthographic or perspective, got 'fisheye'",
+        ),
+        (
+            "camera:\n  projection: Perspective\n",
+            "camera.projection",
+            "expected orthographic or perspective, got 'Perspective'",
         ),
     ],
 )

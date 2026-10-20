@@ -28,7 +28,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 from moskophoros import views, yamlfile
-from moskophoros.capture.backend import MAX_AO_SAMPLES
+from moskophoros.capture.backend import MAX_AO_SAMPLES, PROJECTIONS
 from moskophoros.imageops import EDGES
 
 VERSION = 1
@@ -453,6 +453,13 @@ SCHEMA = MappingProxyType(
             None,
             _nullable(_within(0, 90), "a finite number from 0 to 90"),
         ),
+        "camera.projection": Setting(
+            "the camera's projection: orthographic or perspective, which looks "
+            "from camera.position",
+            None,
+            PROJECTIONS[0],
+            _one_of(*PROJECTIONS),
+        ),
         "camera.direction": Setting(
             "the way the camera looks, [x, y, z] in subject coordinates, each "
             "-1 to 1, not all 0, normalised, or null: the view's",
@@ -469,7 +476,8 @@ SCHEMA = MappingProxyType(
         ),
         "camera.position": Setting(
             "the camera's position from the ground point, [x, y, z], or null; "
-            "unused by the orthographic camera",
+            "the perspective camera needs it, and the orthographic camera "
+            "leaves it unused",
             "meters",
             None,
             _check_light_position,
