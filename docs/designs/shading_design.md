@@ -182,6 +182,30 @@ These opaque/cutout probes do not validate translucent composition,
 perspective or camera roll. No repository tests were run. The page asks
 three contract questions below; none is a decision until the owner answers.
 
+### Probe 3: material-ramp versus whole-palette snap
+
+Prepared on 2026-10-20 to clarify D-18's requested setting, using Probe 1's
+unchanged raw captures and brightness formula. No Blender invocation,
+production edit or owner-configuration change:
+
+- Page: `file:///Users/vincentcoghlan/.local/share/moskophoros-acceptance/shading-design/probe-3/page/index.html`.
+  SHA-256: `a817e019a90ca277f556a7e7c0c6afa243e5ab2d111e44fb8a4814971e919515`.
+- Prototype: `~/.local/share/moskophoros-acceptance/shading-design/probe-3/snap.py`.
+  SHA-256: `1c273a915c5e11285f878abb7db752270e5ee50897a12bcb857722332ddf33db`.
+- Manifest: `~/.local/share/moskophoros-acceptance/shading-design/probe-3/manifest.json`.
+  SHA-256: `ef3b390093e746f6496470bd89f30e0be1b468478c9e4eae4438433b7c0db109`.
+
+Each subject has three labelled PNGs: no snap, nearest colour in the winning
+material's own ramp, and nearest colour in the whole palette. Both snaps
+use the current OKLab distance and earlier-entry tie rule without dithering.
+The two snap targets differ at 4,044 visible robot pixels and 2,563 visible
+shrub pixels. Alpha equality and material-ramp membership were checked;
+representative PNGs were inspected. Probe 1's page/manifest and Probe 2's
+page hashes remain unchanged. These static opaque/cutout examples clarify
+the target using existing short ramps; they do not decide a project look,
+test longer authored ramps, or verify translucent behaviour. No repository
+tests were run.
+
 ## Desired experience and settled scope
 
 The owner chooses project settings to generate either:
@@ -669,6 +693,13 @@ arc. They are not implied by “baked light”. Once these boundaries and the
 previous questions are resolved, propose one-PR delivery slices and their
 dependencies for owner signoff.
 
+**Batch 6 proposal, not decided:** A (recommended) leaves cast shadows,
+coloured lights, multiple key lights, specular highlights and a command to
+recolour retained captures outside this arc. Deliver the agreed scalar
+key/sky/ground shading, modes, dithering and snap controls first. B includes
+any of those capabilities the owner names, requiring their design before
+slicing. Outlines remain deferred by D-13 in either option.
+
 ### Q-11. What colour is shaded when ramp selection is off or unavailable?
 
 D-14 settles the base: last/lightest ramp entry for mapped materials, model
@@ -692,6 +723,25 @@ additional required snap option. Probe 2 displays the opaque/cutout
 difference for snapping to the whole palette; its images do not validate
 translucent composition or selecting only a material's ramp. Missing-ramp
 policy and the exact optional snap contract remain open.
+
+**Batch 6, snap-target proposal, not decided:** A (recommended) offers off
+or each material's own ramp: snap that layer's brightness result before
+composition, so a translucent blend may fall outside either ramp. B offers
+off or the entire palette after composition, potentially selecting another
+material's colours. C offers both targets alongside off. Off remains the
+default in every option. Probe 3 labels these targets; choosing one defines
+the control, not a project look or final dithering interaction.
+
+**Batch 6, missing-ramp proposal, not decided:** preserve the ordinary
+material path when ramp mode has no resolved ramp; in both mode, apply only
+brightness to that ordinary colour. Do not manufacture a ramp or discard
+textures. A (recommended) reports a material-specific validation error if
+the user additionally requests material-ramp snap without a resolved ramp.
+B uses the same ordinary-mode behaviour but falls back to the whole palette
+for that snap (and errors if there is no palette). The normal library
+default can supply a resolved ramp; an explicitly broken ramp reference is
+still an error. These choices apply when material-ramp snap is included by
+the preceding question; whole-palette snap requires a palette.
 
 ## Verification strategy
 
