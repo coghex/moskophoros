@@ -560,6 +560,12 @@ normal retention. D-17 to D-19 record the answers: pattern catalogue A,
 off-palette default A with an additional required snap setting, and per-layer
 normal retention A. The snap target and composition rules remain open.
 
+Batch 6 was posted on 2026-10-20 at 20:19:21 UTC in `#moskophoros`,
+message `4swxhvrx6gwizmkgdv42qjviqi`, under the same request, against
+draft `7bd4f74b00` and Probe 3's page hash above. It asks Q-11's snap target,
+Q-11's ordinary/missing-ramp behaviour, and Q-10's exclusions. These remain
+proposals pending the owner's answers.
+
 ### Q-1. Does a mode route all shading or only the added light?
 
 Resolved by D-5: option A, with neither as the fourth mode. The rejected
