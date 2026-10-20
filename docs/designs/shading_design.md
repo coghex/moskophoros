@@ -692,6 +692,12 @@ shading clarification, Q-4's sky/ground frame and any narrow V-7 exception,
 and Q-4's brightness range. D-23 to D-25 record A/C/A: snap fallback only,
 selectable sky frame with the explicit narrow exception, and bounded gain.
 
+Batch 8 was posted on 2026-10-20 at 20:53:39 UTC in `#moskophoros`,
+message `t34mq5fvgajcxfzw9yngjqqm2a`, under the same request, against
+draft `5d95e390fe`. It asks Q-4's strength formula and ambient bypass,
+Q-6's dithering scope, and Q-5's snap ownership/composition precedence.
+These remain proposals pending the owner's answers.
+
 ### Q-1. Does a mode route all shading or only the added light?
 
 Resolved by D-5: option A, with neither as the fourth mode. The rejected
