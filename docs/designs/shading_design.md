@@ -14,13 +14,13 @@ concrete precondition
 
 - [ ] EPIC. Support configurable baked shading alongside live-lit sprites
 
-No delivery slices are settled yet. The mode and output contracts must be
+No delivery slices are settled yet. The remaining behaviour and scope must be
 answered before decomposition. This document is not ready for issue processing.
 
 ## Epic contract
 
 - **Goal:** express the owner's two uses through generic project settings,
-  with ramp-only shading, brightness-only shading and their combination.
+  with four settings-controlled modes: ramp, brightness, both and neither.
 - **Done when:** the owner has accepted the implemented behaviours on both
   uses, including sheets and motion, and the agreed mechanical contracts
   pass verification. The precise review and delivery boundaries remain open.
@@ -114,8 +114,9 @@ The owner chooses project settings to generate either:
 2. Straight-on panels with lighting baked into material ramps, without an
    additional brightness multiplication for that project.
 
-The tool also supports brightness shading and the combination for other
-uses. These are generic controls, not game-specific code or shipped presets.
+The tool also supports brightness shading, the combination, and neither
+shading operation. All four modes belong in settings (D-5). These are generic
+controls, not game-specific code or shipped presets.
 The already accepted camera capability is reused, not redesigned.
 
 The present assignment writes this design only: no production code, repository
@@ -142,10 +143,8 @@ Owner, 2026-10-19 16:41 UTC, same arrival and provenance as D-1:
 
 > "yes, and there are multiple ways i want to do it. for the second game, there should be no brightness changes, all shading is color ramp, but the ability to shade objects with both, is something i would like to include for other purposes."
 
-The dispatch asks this design to settle three ways: ramp only, brightness
-only, and both. The exact interpretation, especially whether a mode routes
-all shade or only the newly added light, is Q-1. The earlier worker's reading
-is not promoted to an owner decision.
+The dispatch initially named three ways. D-5 settles their routing and adds
+the fourth, neither. The earlier worker's reading was not itself a decision.
 
 ### D-3. Rendering settings and palettes belong to projects
 
@@ -170,11 +169,68 @@ Provenance: `relay-camera-batch1.md`, SHA-256
 cmux relay `bbba403e-cdfe-496c-8ae3-b473c9b871e6`.
 This is settled and is not being reopened.
 
+### D-5. Four modes route the complete chosen shading signal
+
+Owner, about 2026-10-20 19:37 UTC, typed directly in the manager's terminal;
+relayed by mosk-manager in cmux message
+`ae3ad3ce-e442-4abd-92fb-f51fb3f858de`, answering batch 1 message
+`w8y5pdsiqbn56f33gpftcxhsmi`:
+
+> "1) A, but i want to make sure you know that we need to support all 4 modes, ramp, brightness, both, and neither, its all needs to be in the settings."
+
+This resolves Q-1's routing, with the owner's addition:
+
+| Mode | Operation on the complete chosen shading signal |
+|---|---|
+| Ramp | Choose ramp entries without multiplying their RGB |
+| Brightness | Scale an unshaded base colour, without shade-driven ramp selection |
+| Both | Choose a ramp entry, then scale its RGB |
+| Neither | Apply neither shade-driven ramp selection nor brightness scaling |
+
+Ambient form and optional light are included in the selected routing; this
+is not a switch for the added light alone. All four modes must be expressible
+in settings. The setting name, shipped value, per-material overrides, base
+colour, missing-ramp behaviour and numerical formula are not yet decided.
+In particular, neither is not a name for today's ambient ramp look: that
+look already uses ramp shading. Palette mapping and model texture handling
+must be specified separately from these shading operations (Q-11).
+
+### D-6. Bake controls and preview light are separate
+
+Same date, time, arrival and relay as D-5. The owner's answer to Q-2 was:
+
+> "2) A"
+
+- Bake controls are separate from today's `--light`.
+- The regular preview shows the exported colour result, subject to the
+  existing preview scaling, background blending and GIF colour limits.
+- `--light` explicitly adds a live-light simulation over that result, even
+  when it already contains baked shading. This deliberate combination is
+  allowed; baking does not silently request it.
+- Normal and depth maps remain geometry, unaffected by the lighting controls.
+
+This resolves Q-2. Existing map output switches remain independent.
+
+### D-7. Update the existing sheets with the settings update
+
+Same date, time, arrival and relay as D-5. The owner's answer to Q-3 was:
+
+> "3) i shouldnt have very many sheets, you can update them all with the settings update for now"
+
+The owner authorises updating the existing sheets with the settings update.
+The answer does not explicitly select a regeneration procedure, JSON-only
+conversion, old-schema loading support or the exact default-image guarantee.
+Those details remain open in Q-3. No sheet is changed during this design turn.
+
+The manager separately suggested reading this as no migration code plus
+regeneration at the schema bump, and explicitly marked that interpretation
+non-binding. It is the recommendation in the follow-up, not an owner decision.
+
 ## Proposals and open questions
 
-Every recommendation below is a proposal, not an approved decision. The
-first batch asks Q-1 to Q-3 only. Later questions wait for those answers;
-no dependent design or slice ordering is adopted in the meantime.
+Unresolved recommendations below are proposals, not approved decisions.
+Batch 1's accepted answers are D-5 to D-7. No dependent formula or slice
+ordering is adopted while its blocking questions remain open.
 
 Batch 1 was posted on 2026-10-20 at 16:52:53 UTC in `#moskophoros`,
 message `w8y5pdsiqbn56f33gpftcxhsmi`, request
@@ -183,56 +239,41 @@ It explicitly asks for independent answers to Q-1, Q-2 and Q-3.
 
 ### Q-1. Does a mode route all shading or only the added light?
 
-Two plausible readings of D-2:
-
-- **A, recommended:** route the complete chosen shading signal, including
-  ambient form and optional light, through the selected mode. Ramp only
-  chooses ramp entries without multiplying their RGB; brightness only shades
-  an unshaded base colour; both chooses a ramp entry and then scales its RGB.
-  This makes “brightness only” literal, but requires an explicit definition
-  of the base colour for authored ramps and of how the two effects combine.
-- **B:** keep today's ambient ramp colour in every mode, and route only the
-  added light through ramp changes, RGB scaling, or both. This is simpler to
-  add, but “brightness only” still includes ambient ramp shading.
-
-This is a behaviour question, not approval of a particular look or formula.
-After choosing A or B, settle missing-ramp behaviour, palette membership,
-light/ambient combination, clamping and the strength of each effect with
-labelled evidence where appearance is at issue.
+Resolved by D-5: option A, with neither as the fourth mode. The rejected
+option B kept today's ambient ramp colour in every mode and routed only the
+added light. Base-colour and missing-ramp details continue as Q-11; the
+formula remains in Q-4. The answer does not approve a particular look.
 
 ### Q-2. How should baked light and preview light relate?
 
-- **A, recommended:** separate bake controls from today's `--light`.
-  The regular preview shows exactly the exported colour sheet. `--light`
-  remains an explicit additional live-light simulation over that sheet,
-  including over a baked sheet when deliberately requested. Map exports
-  remain geometry, unaffected by either lighting control.
-- **B:** use one light configuration for both, with an explicit destination
-  selecting preview or bake. Existing `--light` commands must still mean
-  preview unless that destination is changed.
-- **C:** separate controls but refuse an additional lit preview when baking.
-  This avoids a compounded result, but prevents deliberately reviewing
-  hybrid assets under live lighting.
-
-The choice affects settings, command-line meaning, regular and lit previews,
-and how a user deliberately combines baked and live lighting. Independently,
-map output switches can already disable files; no project-specific map
-default needs to be invented.
+Resolved by D-6: option A. Alternatives not selected were one shared light
+with a preview/bake destination, and separate controls that forbid an
+additional lit preview while baking. The accepted separation preserves
+existing `--light` meaning and deliberate hybrid lighting.
 
 ### Q-3. What remains identical, and what happens to reused sheets?
 
-- **A, recommended:** baking is opt-in. With all new effects off and existing
-  resolved settings unchanged, preserve every image byte: colour sheet,
+- **A, recommended follow-up to D-7:** retain today's default look, with new
+  directional terms off and existing settings unchanged; preserve every image
+  byte: colour sheet,
   maps, regular previews and lit previews, including the ordinary look.
   New recorded settings change the JSON and fingerprint. Bump the sheet
   schema and retain the existing current-schema-only loading policy;
-  old sheets need regeneration, while a new sheet reloads byte-identically.
-- **B:** the same image guarantee, but add migration for older sheet schemas.
+  regenerate the owner's existing working sheets once when implementation
+  lands, while a new sheet reloads byte-identically. Inventory those sheets
+  and their reproducible inputs before that work; keep historical acceptance
+  artifacts as evidence. This proposes no automatic edit of the owner's
+  project files during design.
+- **B:** the same image guarantee, but convert existing sheet JSON once
+  instead of regenerating; this needs its own conversion and verification
+  contract and is not assumed safe by merely changing the schema string.
 - **C:** allow the default images to change; this would need a separate
   explicit look decision and visual acceptance.
 
 The precise schema version and library changes follow the settled design,
-not an assumed number here. There is no request to change the owner's files.
+not an assumed number here. Old-schema loading was an alternative in batch 1
+but was not explicitly selected. D-7 authorises the sheet update; this
+follow-up clarifies its method and the still-unconfirmed image guarantee.
 
 ### Q-4. Which light terms, in which frame, and how are they combined?
 
@@ -242,6 +283,12 @@ live-lit project wants any sky term. Preserve D-4's camera-fixed key.
 Define term weights, ambient combination, clamp order, and whether intensity
 can brighten beyond the base. Present labelled probes before a look choice.
 
+**Batch 2 asks availability only:** A, recommended, independently switchable
+key, sky and ground terms alongside the existing ambient form; B, key only
+in this arc and sky/ground later; or C, another explicitly named subset.
+This selects the controls to design, not strengths, coordinates or a look for
+either project. Those remain for subsequent questions and labelled probes.
+
 ### Q-5. Which controls may materials override?
 
 Settle project-level controls and material-level response, including whether
@@ -249,6 +296,14 @@ mode varies by material. Today's material entries override ambient values
 and ranges, and their own values beat global options. Define ordinary
 materials, textured materials, library defaults, inheritance, warnings,
 validation and inline reuse before choosing schemas or syntax.
+
+**Batch 2 asks ownership:** A, recommended, the project supplies a default
+mode and shared light arrangement, and each material may override its mode
+and shading-response strengths; B, all new controls apply to the whole
+subject, with no material overrides. A permits an unshaded glow beside a
+shaded body without giving each material a different light position.
+It follows today's library ownership of material-specific appearance.
+The exact response fields depend on Q-4 and will be enumerated before signoff.
 
 ### Q-6. What dithering belongs in this arc?
 
@@ -275,7 +330,7 @@ silently widen the deferred retained-capture recolouring command.
 
 ### Q-9. What evidence completes the arc?
 
-Settle a distinct owner visual-review slice covering both uses, the three
+Settle a distinct owner visual-review slice covering both uses, the four
 modes, relevant camera settings and motion. Choose review inputs and
 configuration at that point, without treating the not-yet-authored Codekarl
 palette as an available dependency. Mechanical verification must cover
@@ -289,6 +344,17 @@ arc. They are not implied by “baked light”. Once these boundaries and the
 previous questions are resolved, propose one-PR delivery slices and their
 dependencies for owner signoff.
 
+### Q-11. What colour is shaded when ramp selection is off or unavailable?
+
+D-5 settles routing, not the base colour. Define the base for brightness and
+neither: the model's unlit colour/texture, a library-authored base, or a
+specified ramp entry. Also define ramp/both on an ordinary or unmapped
+material; whether missing ramps are errors or use an explicit fallback;
+whether brightness may leave the palette; and how palette mapping,
+translucent composition and dithering interact. These choices must not
+silently discard textures or invent a ramp. Present labelled examples for
+colour choices before adopting a contract.
+
 ## Verification strategy
 
 Existing requirements are determinism, explicit validation, addressed stage
@@ -299,7 +365,7 @@ this document-only exploration runs no repository tests.
 
 ## Delivery plan
 
-No slices yet: Q-1 to Q-10 remain open. The processing ledger contains only
+No slices yet: Q-1 and Q-2 are resolved; Q-3 to Q-11 remain open. The processing ledger contains only
 the proposed umbrella, matching that state. Final readiness requires the
 owner's explicit signoff on behaviour, scope and dependency-ordered slices.
 Codex review and tracker processing follow on the manager's instruction.
@@ -341,4 +407,6 @@ Codex review and tracker processing follow on the manager's instruction.
   `--re moskophoros-20261020-1`. The manager relays the owner's answers;
   direct answers in this designer's pane also count. Each accepted answer
   will retain its date/time, exact words and relay ID or pane provenance.
-  No new answer or readiness signoff has been received yet.
+  Batch 1 was answered through cmux relay
+  `ae3ad3ce-e442-4abd-92fb-f51fb3f858de`; D-5 to D-7 preserve the exact
+  answers and their limits. No readiness signoff has been received.
