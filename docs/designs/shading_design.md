@@ -152,6 +152,36 @@ behaviour or an owner-approved look.** No production code or tests changed.
   the mechanical checks. The owner judges the motion. Production sampling,
   formulas, settings and error contracts remain open until selected below.
 
+### Probe 2: selectable patterns and brightness palette policy
+
+Local comparison prepared on 2026-10-20, reusing Probe 1's unchanged captures
+and function definitions without rerunning Blender or changing production code:
+
+- Page: `file:///Users/vincentcoghlan/.local/share/moskophoros-acceptance/shading-design/probe-2/page/index.html`.
+  SHA-256: `6d8dd0afbdedb4a1894cae81da2f789878bcd322aac3bd86de1d4b05feed4e17`.
+- Prototype: `~/.local/share/moskophoros-acceptance/shading-design/probe-2/patterns.py`.
+  SHA-256: `fcf44a52eee91d9290d4f24e6f80b15d419b2f995dfd44525a409cf93385039c`.
+- Manifest: `~/.local/share/moskophoros-acceptance/shading-design/probe-2/manifest.json`.
+  SHA-256: `a8ade30cfe8f048d975ae6c0d8ad1793cd695dbd1896603096dc82fbff7b7003`.
+
+Six fixed threshold tiles are compared: ordered 2×2, 4×4 and 8×8, clustered
+4×4, diagonal 4×4, and shuffled 8×8. The last is one recorded permutation,
+not blue noise or fresh randomness. Every tile contains each threshold rank
+once; exact matrices are in the manifest. The page offers strengths 0.5 and
+1.0, a no-dither reference, twelve robot Walking samples and a static shrub,
+all at direction 0. Cell-pixel anchoring and all earlier numerical settings
+are unchanged. Each robot pattern animation was checked to have twelve
+frames. The earlier prototype, page and manifest were checked unchanged.
+
+The brightness pair compares calculated colours against a final palette
+snap. That snap changes 4,966 visible robot pixels and 4,141 visible shrub
+pixels in the first sample. PNGs carry the prototype colours; GIF palette
+limitations remain as in Probe 1. Static links and generated image files
+were checked, and representative PNGs inspected; no browser was opened.
+These opaque/cutout probes do not validate translucent composition,
+perspective or camera roll. No repository tests were run. The page asks
+three contract questions below; none is a decision until the owner answers.
+
 ## Desired experience and settled scope
 
 The owner chooses project settings to generate either:
@@ -529,6 +559,14 @@ The robot GIFs compare no dithering, both patterns at strength 0.5, and
 arithmetic and ranges remain to specify. The half-strength recommendation
 is an example, not a shipped default; D-12 keeps dithering off by default.
 
+**Batch 5 proposal, not decided:** A (recommended) offers all six Probe 2
+patterns as named settings, plus off, strength and per-material overrides;
+further named patterns can be added later. B adds user-supplied threshold
+tile files in this arc. C selects a subset or requests another pattern.
+Approval includes the displayed cell-pixel anchoring: moving surfaces pass
+through the fixed pattern. This is a catalogue/control choice, not selection
+of a project's default. Dithering remains off by default under D-12.
+
 ### Q-7. Do outlines belong in this arc?
 
 Resolved by D-13: defer outlines to a separate style arc. Including optional
@@ -558,6 +596,14 @@ then replaces the covered back values with the front values before writing
 the one normal buffer. Retaining the two values is a data-output extension,
 not inherently another ray-traced render. Its format, validation and default
 image compatibility still need verification.
+
+**Batch 5 proposal, not decided:** A (recommended) retains the already
+computed back/front normals, shades each colour layer before existing
+composition, and preserves the accepted combined front approximation using
+its front-most material/direction. Alpha and exported geometry maps stay
+unchanged. B defers that extension and rejects new directional baking on
+translucent inputs until a later arc, while preserving the current default.
+This is a data/behaviour decision; the chest must verify the result later.
 
 ### Q-9. What evidence completes the arc?
 
@@ -592,6 +638,15 @@ teal assignment to make the rules distinguishable: the existing gold ramp's
 last colour and the palette-mapped model colour happened to look alike.
 This choice does not approve teal as a look, generated-ramp base handling
 beyond the resolved entry, or any missing-ramp/palette-composition policy.
+
+**Batch 5 proposal, not decided:** A (recommended) lets brightness and both
+produce off-palette colours, while ramp-only and neither retain existing
+palette rules. In mixed translucent pixels, retain the off-palette composite
+whenever a contributing layer uses brightness/both; otherwise retain the
+existing palette snap. Alpha and maps stay unchanged. B snaps the final
+brightness result back to the palette, removing some brightness variation.
+Probe 2 displays the opaque/cutout difference; its images do not validate
+the proposed translucent rule. Missing-ramp policy remains open separately.
 
 ## Verification strategy
 
