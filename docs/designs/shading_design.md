@@ -482,6 +482,13 @@ family A, and an owner choice of patterns rather than one fixed pattern.
 The probe's illustrative weights, brightness endpoints and project look are
 not proposed defaults.
 
+Batch 5 was posted on 2026-10-20 at 20:11:17 UTC in `#moskophoros`,
+message `jjbdta8qj7fjkd5xp6gqfvzc2s`, under the same request, against
+draft `80402faf04` and Probe 2's page hash above. It asks Q-6's pattern
+catalogue/anchoring, Q-11's brightness palette policy, and Q-8's per-layer
+normal retention. All three recommendations remain proposals pending the
+owner's answers.
+
 ### Q-1. Does a mode route all shading or only the added light?
 
 Resolved by D-5: option A, with neither as the fourth mode. The rejected
