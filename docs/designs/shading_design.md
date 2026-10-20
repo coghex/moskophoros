@@ -116,7 +116,9 @@ The owner chooses project settings to generate either:
 
 The tool also supports brightness shading, the combination, and neither
 shading operation. All four modes belong in settings (D-5). These are generic
-controls, not game-specific code or shipped presets.
+controls, not game-specific code or shipped presets. Key, sky and ground
+terms are independently switchable (D-9); a project supplies defaults and
+materials can override their mode and shading response (D-10).
 The already accepted camera capability is reused, not redesigned.
 
 The present assignment writes this design only: no production code, repository
@@ -189,8 +191,10 @@ This resolves Q-1's routing, with the owner's addition:
 
 Ambient form and optional light are included in the selected routing; this
 is not a switch for the added light alone. All four modes must be expressible
-in settings. The setting name, shipped value, per-material overrides, base
-colour, missing-ramp behaviour and numerical formula are not yet decided.
+in settings. D-10 subsequently approves per-material overrides. The setting
+name, exact shipped value, base colour, missing-ramp behaviour and numerical
+formula are not yet decided; D-8 constrains the defaults to preserve today's
+images.
 In particular, neither is not a name for today's ambient ramp look: that
 look already uses ramp shading. Palette mapping and model texture handling
 must be specified separately from these shading operations (Q-11).
@@ -218,18 +222,77 @@ Same date, time, arrival and relay as D-5. The owner's answer to Q-3 was:
 > "3) i shouldnt have very many sheets, you can update them all with the settings update for now"
 
 The owner authorises updating the existing sheets with the settings update.
-The answer does not explicitly select a regeneration procedure, JSON-only
+This answer alone did not select a regeneration procedure, JSON-only
 conversion, old-schema loading support or the exact default-image guarantee.
-Those details remain open in Q-3. No sheet is changed during this design turn.
+D-8 settles those details after an explicit follow-up. No sheet is changed
+during design.
 
 The manager separately suggested reading this as no migration code plus
 regeneration at the schema bump, and explicitly marked that interpretation
-non-binding. It is the recommendation in the follow-up, not an owner decision.
+non-binding. It became an owner decision only through D-8's explicit approval.
+
+### D-8. Preserve default images and regenerate working sheets once
+
+Owner, about 2026-10-20 19:42 UTC, typed directly in the manager's terminal;
+relayed by mosk-manager in cmux message
+`d44ba361-bf3c-4e8e-91a2-e59e2aeccd33`, answering batch 2 message
+`67tefmibchfh673kt62jphjyq6`. The full answer was:
+
+> "3) A, 4) A, 5) A"
+
+The first answer approves Q-3's follow-up recommendation and resolves Q-3:
+
+- New directional terms are off by default. Existing resolved settings keep
+  today's look and byte-identical colour sheets, maps, regular previews and
+  lit previews, including ordinary materials.
+- New recorded settings change the JSON and fingerprint and require a sheet
+  schema bump. Only the current schema loads; no older-schema loader or
+  one-off JSON conversion is added.
+- Regenerate all the owner's existing working sheets once when the new
+  settings/schema land. First inventory them and their reproducible inputs;
+  preserve historical acceptance artifacts as evidence. Assign this work in
+  the delivery plan, rather than assuming it has happened.
+- A new sheet must reproduce byte-identically through `--settings-from`.
+- There is no automatic project-file edit during design.
+
+The exact schema number and library changes follow the complete design.
+Preserving today's look does not equate its ambient ramp shading with neither.
+
+### D-9. Key, sky and ground are independently available
+
+Same date, time, arrival and relay as D-8. The owner's “4) A” approves
+Q-4's availability recommendation:
+
+- Support key light, sky and ground terms, each independently switchable,
+  alongside existing occlusion and curvature.
+- A project need not enable every term.
+- This selects available controls, not their weights, coordinate frames,
+  formulas or final appearance, nor whether the live-lit project uses sky.
+
+Q-4 remains open for those details. Key-only was not selected as the arc's
+scope. The key stays fixed to the camera under D-4.
+
+### D-10. Project defaults with material response overrides
+
+Same date, time, arrival and relay as D-8. The owner's “5) A” approves
+Q-5's ownership recommendation:
+
+- The project supplies a default mode and shared light arrangement.
+- Each material may override its mode and shading-response strengths in its
+  library entry. Thus a glow can stay unshaded beside a shaded body.
+- The light arrangement is shared; this does not introduce separate light
+  positions for each material.
+- Enumerate the exact response fields after settling the terms. Inheritance,
+  validation, ordinary-material entries and inline reuse remain to specify.
+
+This resolves Q-5's ownership choice, not its full schema. Uniform-only
+controls were not selected.
 
 ## Proposals and open questions
 
 Unresolved recommendations below are proposals, not approved decisions.
-Batch 1's accepted answers are D-5 to D-7. No dependent formula or slice
+Batch 1's accepted answers are D-5 to D-7; batch 2's are D-8 to D-10.
+No dependent formula or slice
 ordering is adopted while its blocking questions remain open.
 
 Batch 1 was posted on 2026-10-20 at 16:52:53 UTC in `#moskophoros`,
@@ -239,9 +302,10 @@ It explicitly asks for independent answers to Q-1, Q-2 and Q-3.
 
 Batch 2 was posted on 2026-10-20 at 19:40:03 UTC in `#moskophoros`,
 message `67tefmibchfh673kt62jphjyq6`, under the same request, against
-draft `cc0496073d`. It asks Q-3's update/default follow-up, Q-4's term
-availability and Q-5's setting ownership. Answers are pending; no look or
-numerical formula is proposed for approval in this batch.
+draft `cc0496073d`. It asked Q-3's update/default follow-up, Q-4's term
+availability and Q-5's setting ownership. The owner approved all three A
+recommendations through D-8 to D-10; no look or numerical formula was
+proposed for approval in this batch.
 
 ### Q-1. Does a mode route all shading or only the added light?
 
@@ -259,57 +323,37 @@ existing `--light` meaning and deliberate hybrid lighting.
 
 ### Q-3. What remains identical, and what happens to reused sheets?
 
-- **A, recommended follow-up to D-7:** retain today's default look, with new
-  directional terms off and existing settings unchanged; preserve every image
-  byte: colour sheet,
-  maps, regular previews and lit previews, including the ordinary look.
-  New recorded settings change the JSON and fingerprint. Bump the sheet
-  schema and retain the existing current-schema-only loading policy;
-  regenerate the owner's existing working sheets once when implementation
-  lands, while a new sheet reloads byte-identically. Inventory those sheets
-  and their reproducible inputs before that work; keep historical acceptance
-  artifacts as evidence. This proposes no automatic edit of the owner's
-  project files during design.
-- **B:** the same image guarantee, but convert existing sheet JSON once
-  instead of regenerating; this needs its own conversion and verification
-  contract and is not assumed safe by merely changing the schema string.
-- **C:** allow the default images to change; this would need a separate
-  explicit look decision and visual acceptance.
-
-The precise schema version and library changes follow the settled design,
-not an assumed number here. Old-schema loading was an alternative in batch 1
-but was not explicitly selected. D-7 authorises the sheet update; this
-follow-up clarifies its method and the still-unconfirmed image guarantee.
+Resolved by D-8: option A, preserve default images and regenerate working
+sheets once, keeping historical acceptance artifacts. Alternatives not
+selected were a one-time JSON conversion, or changing the default look.
+Old-schema loading was also offered in batch 1 and is not being added.
 
 ### Q-4. Which light terms, in which frame, and how are they combined?
 
-Settle a camera-fixed key, sky and ground terms; a point versus distant key;
+Availability resolved by D-9. Still settle a point versus distant key;
 whether sky/ground track world up or screen up under camera roll; whether the
 live-lit project wants any sky term. Preserve D-4's camera-fixed key.
 Define term weights, ambient combination, clamp order, and whether intensity
 can brighten beyond the base. Present labelled probes before a look choice.
 
-**Batch 2 asks availability only:** A, recommended, independently switchable
-key, sky and ground terms alongside the existing ambient form; B, key only
-in this arc and sky/ground later; or C, another explicitly named subset.
-This selects the controls to design, not strengths, coordinates or a look for
-either project. Those remain for subsequent questions and labelled probes.
+**Batch 3 asks the key's control type:** A, recommended, one distant key set
+by a direction vector in camera coordinates; B, one point key set by a
+position; C, one key selectable between direction and position. A gives the
+same incoming direction across the subject and avoids a distance to tune.
+C offers both spatial behaviours but adds a type, units and position contract.
+This is the bake key; D-6 leaves today's preview point light available in all
+cases. It does not settle a vector convention, intensity or final look.
 
 ### Q-5. Which controls may materials override?
 
-Settle project-level controls and material-level response, including whether
-mode varies by material. Today's material entries override ambient values
+Ownership resolved by D-10: project defaults and material mode/response
+overrides, with a shared light arrangement. Today's material entries override ambient values
 and ranges, and their own values beat global options. Define ordinary
 materials, textured materials, library defaults, inheritance, warnings,
 validation and inline reuse before choosing schemas or syntax.
 
-**Batch 2 asks ownership:** A, recommended, the project supplies a default
-mode and shared light arrangement, and each material may override its mode
-and shading-response strengths; B, all new controls apply to the whole
-subject, with no material overrides. A permits an unshaded glow beside a
-shaded body without giving each material a different light position.
-It follows today's library ownership of material-specific appearance.
-The exact response fields depend on Q-4 and will be enumerated before signoff.
+The exact response fields depend on Q-4 and will be enumerated before
+signoff; inheritance and the remaining schema details stay open.
 
 ### Q-6. What dithering belongs in this arc?
 
@@ -319,11 +363,23 @@ pattern and strength, and its behaviour through motion, rotation, alpha
 edges and mixed materials. Labelled comparisons are needed. Determinism
 alone does not establish visual stability.
 
+**Batch 3 asks timing only:** A, recommended, include optional dithering in
+this arc, off by default to preserve D-8; B, deliver shading first and design
+dithering as a later arc. A addresses the owner's naturalness request in
+this arc and requires motion comparisons; it approves no pattern or colour
+rule. Those follow through labelled probes.
+
 ### Q-7. Do outlines belong in this arc?
 
 The live-lit use explicitly has none. Settle whether the baked use wants
 outlines now or leaves them for a later arc; do not infer that from “works
 of art”. Similarly distinguish dithering from later authored wood texture.
+
+**Batch 3 asks scope only:** A, recommended, defer outlines to a separate
+style arc and keep this arc focused on shading/dithering; B, include optional
+outlines in this arc, with their own design and visual review. The live-lit
+use remains outline-free in either case. No outline algorithm or look is
+chosen by this question.
 
 ### Q-8. Where does the new operation sit in the pipeline?
 
@@ -365,13 +421,14 @@ colour choices before adopting a contract.
 
 Existing requirements are determinism, explicit validation, addressed stage
 outputs, both edge rules, aligned maps and owner visual judgment. Proposed
-new mechanical checks and a distinct visual review are Q-3 and Q-9. The
+new mechanical checks and a distinct visual review follow D-8 and Q-9. The
 current [validation contract](../validation.md) will govern implementation;
 this document-only exploration runs no repository tests.
 
 ## Delivery plan
 
-No slices yet: Q-1 and Q-2 are resolved; Q-3 to Q-11 remain open.
+No slices yet: Q-1 to Q-3 are resolved; Q-4 and Q-5 are partly resolved;
+their remaining details and Q-6 to Q-11 remain open.
 The processing ledger contains only
 the proposed umbrella, matching that state. Final readiness requires the
 owner's explicit signoff on behaviour, scope and dependency-ordered slices.
@@ -416,4 +473,6 @@ Codex review and tracker processing follow on the manager's instruction.
   will retain its date/time, exact words and relay ID or pane provenance.
   Batch 1 was answered through cmux relay
   `ae3ad3ce-e442-4abd-92fb-f51fb3f858de`; D-5 to D-7 preserve the exact
-  answers and their limits. No readiness signoff has been received.
+  answers and their limits. Batch 2 was answered through cmux relay
+  `d44ba361-bf3c-4e8e-91a2-e59e2aeccd33`; D-8 to D-10 preserve its exact
+  answer and the approved recommendations. No readiness signoff has been received.
