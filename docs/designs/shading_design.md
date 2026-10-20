@@ -176,6 +176,11 @@ Every recommendation below is a proposal, not an approved decision. The
 first batch asks Q-1 to Q-3 only. Later questions wait for those answers;
 no dependent design or slice ordering is adopted in the meantime.
 
+Batch 1 was posted on 2026-10-20 at 16:52:53 UTC in `#moskophoros`,
+message `w8y5pdsiqbn56f33gpftcxhsmi`, request
+`moskophoros-20261020-1`, against this draft at `07a7180c79`.
+It explicitly asks for independent answers to Q-1, Q-2 and Q-3.
+
 ### Q-1. Does a mode route all shading or only the added light?
 
 Two plausible readings of D-2:
@@ -315,11 +320,23 @@ Codex review and tracker processing follow on the manager's instruction.
   written by mosk-solver-23 on 2026-10-19. Its owner quotes are source
   material; its interpretations and ten questions are not decisions.
 - Owner, 2026-10-19 16:31 UTC, in that earlier worker's pane:
-  “the trunk … looks like a rectangle, not a column” is the handoff's
-  surrounding description and quoted fragment; the exact quoted fragment
-  is “looks like a rectangle, not a column”. For the pot, the handoff quotes
+  the handoff quotes “looks like a rectangle, not a column” about the trunk.
+  For the pot, it quotes
   “should be the darkest part and have a little shade into the pot color”
   about the line under the rim, and “the rim should be the brightest part”.
+- In that same 16:31 UTC answer the owner explained the live-lit use:
+  “objects need ambient shading baked in so that the objects have some color
+  shift and dithering/naturalness.” This is a requirement to settle dithering,
+  not approval of a particular pattern.
+- The dispatch describes the second project in the owner's words:
+  “a 2d top down map game … procedurally generated … moskophoros is going to
+  be used for me to generate 2d art panels to accompany text to the player”.
+  Its timestamp is not supplied; the ellipses are in the dispatch.
+- Owner after the alpha review, quoted in the dispatch and
+  `docs/acceptance/alpha.md`: “the wood could honestly have more shading, and
+  perhaps some more texture to it, but we can do that later”. The acceptance
+  record dates the answer to about 2026-10-19 03:05 UTC and identifies the
+  manager's relay as `a51e81e0-8190-47be-ab85-99ff495d2e59`.
 - Questions go to `#moskophoros` as `question` posts with
   `--re moskophoros-20261020-1`. The manager relays the owner's answers;
   direct answers in this designer's pane also count. Each accepted answer
