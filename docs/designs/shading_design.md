@@ -392,10 +392,13 @@ draft `2a5e2eb2e7`. It asked Q-4's key control type, Q-6's dithering timing
 and Q-7's outline scope. D-11 to D-13 record approval of all three A
 recommendations; the batch approved no rendered look.
 
-Batch 4 is prepared against Probe 1. Its three questions are Q-11's base
-colour rule, Q-4's combination family and Q-6's ordered pattern/anchoring.
-All recommendations are still proposals. The probe's illustrative weights,
-brightness endpoints and project look are not proposed defaults.
+Batch 4 was posted on 2026-10-20 at 19:55:23 UTC in `#moskophoros`,
+message `2rnvusxti2arq8azwejcumt8z2`, under the same request, against
+draft `74c8293a75` and Probe 1's page hash above. Its three questions are
+Q-11's base colour rule, Q-4's combination family and Q-6's ordered
+pattern/anchoring. Answers are pending; all recommendations remain proposals.
+The probe's illustrative weights, brightness endpoints and project look are
+not proposed defaults.
 
 ### Q-1. Does a mode route all shading or only the added light?
 
