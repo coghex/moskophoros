@@ -592,12 +592,54 @@ deferred under D-13. Existing ambient occlusion remains in scope; excluding
 new cast shadows does not remove it. Delivery order still needs signoff once
 the remaining behaviour and verification contracts are settled.
 
+### D-23. Whole-palette fallback applies to snap, not an invented shading ramp
+
+Owner, about 2026-10-20 20:50 UTC, typed directly in the manager's terminal
+after viewing Probe 4; relayed by mosk-manager in cmux message
+`066ddb06-09d7-4668-b1eb-1ea044eb7fa2`, answering batch 7 message
+`44ggxjrpc5r923cgqn8t7vq5en`. The complete answer was:
+
+> "1) A, 2) C, 3) A"
+
+The first answer resolves the extent of D-21: whole-palette fallback applies
+only to snap. Without a resolved material ramp, ramp mode retains ordinary
+colour/texture, both applies brightness to that ordinary colour, and either
+enabled snap target uses the whole palette. Do not treat the palette as an
+ordered shading ramp. This preserves the ordinary path rather than
+manufacturing ramps or discarding texture. Missing-palette validation
+remains to state in the settings contract.
+
+### D-24. Selectable camera/world sky frame, defaulting to camera
+
+Same answer and provenance as D-23. The second answer selects C: sky/ground
+frame is selectable between camera screen-up/down and subject/world up/down,
+with camera as the default. Camera-frame terms follow camera roll; world
+terms do not. The key stays camera-fixed under D-4 in either case.
+
+The choice explicitly approves a narrow exception to V-7's camera-fixed
+lighting principle when sky/ground use world frame. That exception must be
+recorded in the owning vision/implementation contracts during delivery;
+this design-only assignment does not change those documents. Neither a
+camera-only nor a world-only interface was selected. This does not select
+sky/ground strengths or enable either term for a particular project.
+
+### D-25. Brightness gain stays between zero and the base colour
+
+Same answer and provenance as D-23. The third answer selects A: configurable
+brightness floor and ceiling both lie in `[0,1]`, with floor no greater
+than ceiling. Scale linear RGB; brightness can darken or restore the base
+but cannot brighten beyond it. These gain controls affect brightness/both;
+ramp selection still selects its existing entries. A ceiling above 1, shown
+with 2 and proposed up to 4, was not selected. Exact interpolation, shipped
+endpoint values and inheritance remain for the complete settings contract.
+
 ## Proposals and open questions
 
 Unresolved recommendations below are proposals, not approved decisions.
 Batch 1's accepted answers are D-5 to D-7; batch 2's are D-8 to D-10;
 batch 3's are D-11 to D-13; batch 4's are D-14 to D-16;
-batch 5's are D-17 to D-19; batch 6's are D-20 to D-22.
+batch 5's are D-17 to D-19; batch 6's are D-20 to D-22;
+batch 7's are D-23 to D-25.
 No dependent formula or slice
 ordering is adopted while its blocking questions remain open.
 
@@ -647,8 +689,8 @@ Batch 7 was posted on 2026-10-20 at 20:48:30 UTC in `#moskophoros`,
 message `44ggxjrpc5r923cgqn8t7vq5en`, under the same request, against
 draft `3048600136` and Probe 4's page hash above. It asks Q-11's ordinary
 shading clarification, Q-4's sky/ground frame and any narrow V-7 exception,
-and Q-4's brightness range. These remain proposals pending the owner's
-answers.
+and Q-4's brightness range. D-23 to D-25 record A/C/A: snap fallback only,
+selectable sky frame with the explicit narrow exception, and bounded gain.
 
 ### Q-1. Does a mode route all shading or only the added light?
 
@@ -673,9 +715,9 @@ Old-schema loading was also offered in batch 1 and is not being added.
 
 ### Q-4. Which light terms, in which frame, and how are they combined?
 
-Availability resolved by D-9 and the distant key by D-11. Still settle
-whether sky/ground track world up or screen up under camera roll; whether the
-live-lit project wants any sky term. Preserve D-4's camera-fixed key.
+Availability resolved by D-9, the distant key by D-11 and selectable
+sky/ground frame by D-24. Still settle whether the live-lit project wants
+any sky term. Preserve D-4's camera-fixed key.
 Define term weights, ambient combination, clamp order, and whether intensity
 can brighten beyond the base. Present labelled probes before a look choice.
 
@@ -693,23 +735,9 @@ Weights and bounds will be specified separately, with a zero-new-terms path
 preserving D-8 exactly. Selecting a family does not select these weights or
 the live-lit project's sky setting.
 
-**Batch 7, sky-frame proposal, not decided:** A (recommended) makes sky
-camera screen-up and ground screen-down, following camera roll. This
-preserves V-7's camera-fixed lighting rule. B makes these terms follow
-subject/world up and its opposite; this needs the owner's explicit narrow
-exception to V-7 for sky/ground. C offers both frames with camera as default
-and the same explicit exception when world is selected. The key remains
-camera-fixed under D-4 in all options. Probe 4 illustrates the difference;
-no vision amendment is made before the owner decides.
-
-**Batch 7, brightness-range proposal, not decided:** expose a floor and
-ceiling for the linear RGB gain. A (recommended) keeps both in `[0,1]`,
-with floor no greater than ceiling, so brightness only darkens or restores
-the base. B permits a ceiling up to 4, still at least the floor, with the
-floor in `[0,1]`; output channels clip at white. Ramp selection remains
-limited to its entries; these gain controls affect brightness/both only.
-Probe 4 illustrates ceilings 1 and 2. Defaults, exact formula and material
-inheritance remain for the later complete settings contract.
+Sky frame resolved by D-24 (batch 7 C); brightness range resolved by D-25
+(batch 7 A). Probe 4 illustrates those choices. Defaults, exact formula and
+material inheritance remain for the complete settings contract.
 
 ### Q-5. Which controls may materials override?
 
@@ -827,21 +855,11 @@ translucent composition or selecting only a material's ramp. Missing-ramp
 policy and the exact optional snap contract remain open.
 
 Snap targets resolved by D-20, choosing batch 6's C. Single-target choices
-A/B were not selected. Missing-ramp snap fallback is recorded in D-21, but
-the reach of "either way" into ordinary shading remains open. The batch 6
-proposal preserved ordinary colour/texture without a resolved ramp, with
-brightness alone in both mode; it must not silently become a decision.
-Treating the entire palette as a shading ramp would be a different policy
-and needs its own definition, especially for texture and colour ordering.
-
-**Batch 7 clarification, not decided:** A (recommended) reads "the whole
-palette, either way" as snap fallback only: without a resolved ramp, ramp
-mode keeps ordinary colour/texture, both adds brightness to it, and either
-enabled snap target uses the whole palette. B also requests new shading
-through the whole palette for materials without ramps; that requires a
-separate ordering/texture policy and an opt-in compatibility rule before
-adoption. The question asks the extent of the answer, not whether the
-already accepted whole-palette snap fallback is allowed.
+A/B were not selected. Missing-ramp snap fallback is D-21, clarified by
+D-23: preserve ordinary colour/texture in ramp mode and apply brightness
+to it in both mode; enabled snap uses the whole palette when there is no
+ramp. Treating the entire palette as an ordered shading ramp was not
+selected. Mixed-material precedence and dithering interactions remain open.
 
 ## Verification strategy
 
@@ -909,4 +927,6 @@ Codex review and tracker processing follow on the manager's instruction.
   `20dc14aa-e207-4c00-8fcb-33c26f9ca4ec`; D-17 to D-19 preserve it.
   Batch 6 was answered through cmux relay
   `f31db19c-e69e-4355-b089-675413f7601b`; D-20 to D-22 preserve it.
+  Batch 7 was answered through cmux relay
+  `066ddb06-09d7-4668-b1eb-1ea044eb7fa2`; D-23 to D-25 preserve it.
   No readiness signoff has been received.
