@@ -307,6 +307,11 @@ availability and Q-5's setting ownership. The owner approved all three A
 recommendations through D-8 to D-10; no look or numerical formula was
 proposed for approval in this batch.
 
+Batch 3 was posted on 2026-10-20 at 19:44:15 UTC in `#moskophoros`,
+message `5eijvs26h8vy3b9iqnyztgwh4i`, under the same request, against
+draft `2a5e2eb2e7`. It asks Q-4's key control type, Q-6's dithering timing
+and Q-7's outline scope. Answers are pending; it approves no rendered look.
+
 ### Q-1. Does a mode route all shading or only the added light?
 
 Resolved by D-5: option A, with neither as the fourth mode. The rejected
