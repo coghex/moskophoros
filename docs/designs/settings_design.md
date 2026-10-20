@@ -425,6 +425,15 @@ The owner's review asked these to be explicit. The owner signed them off
      normalised direction, roll, position) after `settings.view`, which no
      longer records `projection` or `pitch_deg`; `--settings-from` loads
      `/14` only.
+   - *Extended by CAM-4* (#131, projects and camera design D-3, D-10 and
+     D-16): `camera.projection`, `orthographic` (the shipped default) or
+     `perspective`, is an ordinary setting in the same `camera` mapping,
+     with the option `--projection NAME`, recorded in
+     `settings.camera.projection` and reloaded by `--settings-from`. It is
+     no view value: it changes no preset marker. Once the layers are
+     merged, a perspective camera without `camera.position`, or with the
+     ground point not in front of it, is a usage error before Blender runs,
+     whichever layers set the projection, the direction and the position.
 
 ### Files and errors (D-17, D-30)
 
