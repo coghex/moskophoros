@@ -105,6 +105,53 @@ silently. This draft changes no current contract document. Changes to
   request for a rounder trunk and a darker line beneath the pot rim initiated
   this design; it is preserved in the handoff quoted below.
 
+### Probe 1: colour routing, term combination and dithering
+
+Prepared on 2026-10-20 for batch 4. **Experimental evidence, not shipped
+behaviour or an owner-approved look.** No production code or tests changed.
+
+- Review page:
+  `file:///Users/vincentcoghlan/.local/share/moskophoros-acceptance/shading-design/probe-1/page/index.html`.
+  Its SHA-256 is
+  `658528cf4b9707e8d7ba658a0cd9241c101717ecdf656895fb554a6c32c4029f`.
+- The folder holds `capture.sh`, `settings.yaml`, `compare.py`, input
+  palette/library snapshots, raw captures and a complete hash manifest.
+  `manifest.json` SHA-256:
+  `09e3634d6a0f7663ba4fb6f9fae8a6ba3aea57aec9f2aea547c50b9522b630b3`.
+  `compare.py` SHA-256:
+  `5419eecaf16078e2a8bb2d3eb7ad570ab0af61ce31218ce42e4ab1ed3c7befc1`.
+- Capture uses repository code unchanged from `6c5f47a1293cc8a99b25d5e6e360bfd3536ab320`,
+  through the existing acceptance environment (NumPy 2.5.3, Pillow 12.3.0).
+  Both commands ran under the shared Blender lock with a local settings
+  file replacing the user configuration. The backend ran headless.
+- Fresh robot capture: Walking, 12 samples × 4 directions, 96×128 cells at
+  supersample 4. Fresh shrub capture: one Sway sample and direction, same
+  cell and supersampling. Both commands exited 0 without warnings. The first
+  preflight attempt failed on absent output directories, before rendering;
+  its log is retained and the command script creates the directories now.
+- Inputs are the existing acceptance robot and shrub, and snapshots of the
+  owner's palette and their review libraries. No input/configuration changed.
+  For Q-11 only, the robot's Main material is deliberately assigned a teal
+  ramp `[50,52,53]` in the prototype to distinguish library-base and model-base
+  colour. Other panels use its original library. Bark and soil use a
+  probe-only range `[110,190]` to expose form; these are not proposed project
+  settings or a continuation of the parked shrub-library tuning task.
+- The probe selects a winning material per output pixel, averages its
+  captured shade and normal-facing terms, then applies the candidate colour
+  rule. Key direction points toward `(-.6,.7,.7)` in camera coordinates,
+  normalised. Sky/ground use subject up transformed through the unrolled
+  30-degree camera; that coordinate choice is an experiment, not a decision.
+- Verified locally: 48 robot frames and one shrub frame; no translucent
+  fronts; unchanged alpha across variants; ramp/dither colours stay in the
+  palette; motion GIFs have 12 frames; local page references exist. Sampled
+  motion frames and the colour comparisons were visually inspected. GIFs use
+  one palette per animation, no GIF dithering, and 100 ms/sample for review;
+  the exact prototype colours are in the PNGs.
+- Limits: no translucent-layer demonstration, no texture fallback exercise,
+  no perspective or roll comparison, and no proof of animation quality from
+  the mechanical checks. The owner judges the motion. Production sampling,
+  formulas, settings and error contracts remain open until selected below.
+
 ## Desired experience and settled scope
 
 The owner chooses project settings to generate either:
@@ -345,6 +392,11 @@ draft `2a5e2eb2e7`. It asked Q-4's key control type, Q-6's dithering timing
 and Q-7's outline scope. D-11 to D-13 record approval of all three A
 recommendations; the batch approved no rendered look.
 
+Batch 4 is prepared against Probe 1. Its three questions are Q-11's base
+colour rule, Q-4's combination family and Q-6's ordered pattern/anchoring.
+All recommendations are still proposals. The probe's illustrative weights,
+brightness endpoints and project look are not proposed defaults.
+
 ### Q-1. Does a mode route all shading or only the added light?
 
 Resolved by D-5: option A, with neither as the fourth mode. The rejected
@@ -377,6 +429,18 @@ can brighten beyond the base. Present labelled probes before a look choice.
 Batch 3 selected the distant key. Alternatives not selected were a point
 bake key, and a key selectable between direction and position.
 
+**Batch 4 asks combination family:** A, recommended, multiply the normalised
+ambient-form signal by a lighting factor, retaining dark creases under a
+strong key; B, a weighted average of ambient form and the light terms, which
+can lift a low ambient value. Probe 1 illustrates A with
+`e = a * clamp(.20 + .50*k + .20*s + .10*g, 0, 1)` and B with
+`e = (a + k + .4*s + .2*g) / 2.6`. `a` is the range-normalised shade;
+`k`, `s` and `g` are nonnegative key, sky and ground facing terms. These
+weights have different meanings and are not equal-energy comparisons.
+Weights and bounds will be specified separately, with a zero-new-terms path
+preserving D-8 exactly. Selecting a family does not select these weights or
+the live-lit project's sky setting.
+
 ### Q-5. Which controls may materials override?
 
 Ownership resolved by D-10: project defaults and material mode/response
@@ -399,6 +463,18 @@ alone does not establish visual stability.
 Deferring dithering to a later arc was not selected. Pattern and colour
 rules follow through labelled probes.
 
+**Batch 4 asks pattern and anchoring:** A, recommended, 4×4 ordered dithering
+with configurable strength; B, 2×2 ordered dithering with configurable
+strength; C, neither is suitable, investigate another pattern/anchoring.
+Both candidates choose adjacent ramp entries at output resolution and are
+fixed to cell pixel coordinates. They leave alpha and geometry unchanged.
+Packing does not shift the pattern, but moving surfaces pass through it.
+The robot GIFs compare no dithering, both patterns at strength 0.5, and
+4×4 at strength 1.0. The illustrated coordinate is `N*e`, perturbed by
+`strength*(.5-threshold)` before flooring/clamping to the ramp. Exact
+arithmetic and ranges remain to specify. The half-strength recommendation
+is an example, not a shipped default; D-12 keeps dithering off by default.
+
 ### Q-7. Do outlines belong in this arc?
 
 Resolved by D-13: defer outlines to a separate style arc. Including optional
@@ -413,6 +489,14 @@ for some choices, but that has not been established for all modes,
 perspective, material boundaries or the combined translucent front layer.
 Respect V-4/V-8/V-10; keep pure colour operations outside Blender and do not
 silently widen the deferred retained-capture recolouring command.
+
+**Verified limitation:** design §Frames into stylize and
+`capture.backend.decode_normal_depth` supply the front-most normal, the
+front layer's where present, rather than a normal for each colour layer.
+The existing shade has separate front/back values. Correctly applying
+directional shading to both layers cannot simply reuse that single normal
+for both: decide the required new capture data before finalising Q-8.
+Probe 1 avoids translucent fronts and therefore does not resolve this.
 
 ### Q-9. What evidence completes the arc?
 
@@ -440,6 +524,16 @@ whether brightness may leave the palette; and how palette mapping,
 translucent composition and dithering interact. These choices must not
 silently discard textures or invent a ramp. Present labelled examples for
 colour choices before adopting a contract.
+
+**Batch 4 asks the base rule:** A, recommended, a material with a ramp uses
+its last/lightest palette entry as its unshaded base for brightness and
+neither; an ordinary material retains its captured unlit colour/texture.
+B, always take the model's captured base when ramp selection is off, even
+when a library assigns a different material colour. Probe 1 uses an explicit
+teal assignment to make the rules distinguishable: the existing gold ramp's
+last colour and the palette-mapped model colour happened to look alike.
+This choice does not approve teal as a look, generated-ramp base handling
+beyond the resolved entry, or any missing-ramp/palette-composition policy.
 
 ## Verification strategy
 
