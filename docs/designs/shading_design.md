@@ -516,12 +516,59 @@ captured data and validation, without inherently requiring another render.
 Buffer formats, sampling and verification remain to specify in Q-8. The
 chest must exercise the result; opaque/cutout probes are not that evidence.
 
+### D-20. Offer both snap targets, with off as the default
+
+Owner, about 2026-10-20 20:44 UTC, typed directly in the manager's terminal
+after viewing Probe 3; relayed by mosk-manager in cmux message
+`f31db19c-e69e-4355-b089-675413f7601b`, answering batch 6 message
+`4swxhvrx6gwizmkgdv42qjviqi`. The complete answer was:
+
+> "1) C, i like both 2) the whole palette, either way, 3) A"
+
+The first answer selects C: offer off, material-ramp snap and whole-palette
+snap. Off remains the default. Material-ramp snap selects from the layer's
+own ramp after brightness and before composition; translucent blending can
+leave those ramps. Whole-palette snap applies after composition and may
+select any palette entry. This settles the targets and their basic
+placement, not mixed material override precedence or dithering with snap.
+The owner viewed examples with existing short ramps; no project ramp size
+or colour scheme is being selected here.
+
+### D-21. Use the whole palette when snapping without a material ramp
+
+Same answer and provenance as D-20. The second answer is:
+
+> "2) the whole palette, either way"
+
+Use the whole palette as the snap target when a material has no resolved
+ramp, whether material-ramp or whole-palette snap was requested. The
+material-specific missing-ramp error proposed as batch 6's A is not the
+requested behaviour. Do not infer that the whole palette is itself an
+ordered shading ramp: the answer may reach beyond snap fallback into
+ordinary shading, and Q-11 asks that distinction explicitly before adopting
+the earlier ordinary-mode proposal. Existing library defaults can supply a
+resolved ramp. Validation when no palette exists also remains to state.
+
+The manager suggested reading the answer as B, and explicitly marked that
+interpretation non-binding. The original words and the unresolved extent
+of "either way" are preserved here rather than treating that suggestion as
+an additional owner decision.
+
+### D-22. Keep the arc to the agreed shading, dithering and snap controls
+
+Same answer and provenance as D-20. The third answer selects A: cast
+shadows, coloured lights, multiple key lights, specular highlights and a
+command to recolour retained captures are outside this arc. Outlines remain
+deferred under D-13. Existing ambient occlusion remains in scope; excluding
+new cast shadows does not remove it. Delivery order still needs signoff once
+the remaining behaviour and verification contracts are settled.
+
 ## Proposals and open questions
 
 Unresolved recommendations below are proposals, not approved decisions.
 Batch 1's accepted answers are D-5 to D-7; batch 2's are D-8 to D-10;
 batch 3's are D-11 to D-13; batch 4's are D-14 to D-16;
-batch 5's are D-17 to D-19.
+batch 5's are D-17 to D-19; batch 6's are D-20 to D-22.
 No dependent formula or slice
 ordering is adopted while its blocking questions remain open.
 
@@ -563,8 +610,9 @@ normal retention A. The snap target and composition rules remain open.
 Batch 6 was posted on 2026-10-20 at 20:19:21 UTC in `#moskophoros`,
 message `4swxhvrx6gwizmkgdv42qjviqi`, under the same request, against
 draft `7bd4f74b00` and Probe 3's page hash above. It asks Q-11's snap target,
-Q-11's ordinary/missing-ramp behaviour, and Q-10's exclusions. These remain
-proposals pending the owner's answers.
+Q-11's ordinary/missing-ramp behaviour, and Q-10's exclusions. D-20 to D-22
+record both snap targets, whole-palette fallback and the exclusions. The
+extent of "either way" for ordinary shading still needs clarification.
 
 ### Q-1. Does a mode route all shading or only the added light?
 
@@ -693,25 +741,19 @@ reproduction, compatibility, alpha/map alignment, settings and errors.
 
 ### Q-10. What other boundaries and delivery order should be explicit?
 
-Confirm whether cast shadows, coloured lights, multiple key lights,
-specular highlights and retained-capture recolouring remain outside this
-arc. They are not implied by “baked light”. Once these boundaries and the
-previous questions are resolved, propose one-PR delivery slices and their
-dependencies for owner signoff.
-
-**Batch 6 proposal, not decided:** A (recommended) leaves cast shadows,
-coloured lights, multiple key lights, specular highlights and a command to
-recolour retained captures outside this arc. Deliver the agreed scalar
-key/sky/ground shading, modes, dithering and snap controls first. B includes
-any of those capabilities the owner names, requiring their design before
-slicing. Outlines remain deferred by D-13 in either option.
+Exclusions resolved by D-22: no cast shadows, coloured lights, multiple key
+lights, specular highlights or retained-capture recolouring command in this
+arc. Batch 6's alternative of adding named capabilities was not selected.
+Once the remaining behaviour questions are resolved, propose one-PR
+delivery slices and their dependencies for owner signoff. Ordering remains
+open; outlines are separately deferred by D-13.
 
 ### Q-11. What colour is shaded when ramp selection is off or unavailable?
 
 D-14 settles the base: last/lightest ramp entry for mapped materials, model
 colour/texture for ordinary materials. Still define ramp/both on an ordinary or unmapped
 material; whether missing ramps are errors or use an explicit fallback;
-the optional snap target and placement; and how palette mapping,
+mixed-material snap precedence; and how palette mapping,
 translucent composition and dithering interact. These choices must not
 silently discard textures or invent a ramp. Present labelled examples for
 colour choices before adopting a contract.
@@ -730,24 +772,13 @@ difference for snapping to the whole palette; its images do not validate
 translucent composition or selecting only a material's ramp. Missing-ramp
 policy and the exact optional snap contract remain open.
 
-**Batch 6, snap-target proposal, not decided:** A (recommended) offers off
-or each material's own ramp: snap that layer's brightness result before
-composition, so a translucent blend may fall outside either ramp. B offers
-off or the entire palette after composition, potentially selecting another
-material's colours. C offers both targets alongside off. Off remains the
-default in every option. Probe 3 labels these targets; choosing one defines
-the control, not a project look or final dithering interaction.
-
-**Batch 6, missing-ramp proposal, not decided:** preserve the ordinary
-material path when ramp mode has no resolved ramp; in both mode, apply only
-brightness to that ordinary colour. Do not manufacture a ramp or discard
-textures. A (recommended) reports a material-specific validation error if
-the user additionally requests material-ramp snap without a resolved ramp.
-B uses the same ordinary-mode behaviour but falls back to the whole palette
-for that snap (and errors if there is no palette). The normal library
-default can supply a resolved ramp; an explicitly broken ramp reference is
-still an error. These choices apply when material-ramp snap is included by
-the preceding question; whole-palette snap requires a palette.
+Snap targets resolved by D-20, choosing batch 6's C. Single-target choices
+A/B were not selected. Missing-ramp snap fallback is recorded in D-21, but
+the reach of "either way" into ordinary shading remains open. The batch 6
+proposal preserved ordinary colour/texture without a resolved ramp, with
+brightness alone in both mode; it must not silently become a decision.
+Treating the entire palette as a shading ramp would be a different policy
+and needs its own definition, especially for texture and colour ordering.
 
 ## Verification strategy
 
@@ -813,4 +844,6 @@ Codex review and tracker processing follow on the manager's instruction.
   `ba055c23-a81e-43c6-b64e-8e3ab9b60301`; D-14 to D-16 preserve it.
   Batch 5 was answered through cmux relay
   `20dc14aa-e207-4c00-8fcb-33c26f9ca4ec`; D-17 to D-19 preserve it.
+  Batch 6 was answered through cmux relay
+  `f31db19c-e69e-4355-b089-675413f7601b`; D-20 to D-22 preserve it.
   No readiness signoff has been received.
