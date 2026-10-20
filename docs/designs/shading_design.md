@@ -633,13 +633,57 @@ ramp selection still selects its existing entries. A ceiling above 1, shown
 with 2 and proposed up to 4, was not selected. Exact interpolation, shipped
 endpoint values and inheritance remain for the complete settings contract.
 
+### D-26. Directional strengths share a unit budget; ambient form can be bypassed
+
+Owner, about 2026-10-20 21:55 UTC, typed directly in the manager's terminal;
+relayed by mosk-manager in cmux message
+`18e15fc0-f95f-4d00-a1fd-99a49ef236b6`, answering batch 8 message
+`t34mq5fvgajcxfzw9yngjqqm2a`. The complete answer was:
+
+> "1) A, 2) B, 3) A"
+
+The first answer selects A: nonnegative key/sky/ground strengths `K/S/G`
+each at most 1, with total at most 1. Zero disables that term; the remaining
+budget supplies uniform light. For nonnegative facing terms `k/s/g` in
+`[0,1]`, `L=(1-K-S-G)+K*k+S*s+G*g`. Defaults are all zero, giving `L=1`.
+Reject an excessive total rather than silently normalising it. A separate
+uniform-floor control with independently saturating weights was not selected.
+
+Keep `e=a*L`. An ambient-form on/off control defaults on; off substitutes
+`a=1`, allowing directional shading without ambient form. Brightness gain
+is `floor+(ceiling-floor)*e`, with D-25's bounds. Sampling, precision and
+the exact legacy-compatible ramp path still need specification. The formula
+does not authorise changing default image bytes under D-8.
+
+### D-27. Dither snap quantisation, without dithering the intermediate ramp too
+
+Same answer and provenance as D-26. The second answer selects B: include
+dithering of optional snap quantisation. With snap enabled, dither the final
+colour choice instead of both intermediate ramp selection and its later
+snap. Without snap, shade-driven ramp selection remains the dither target.
+Continuous brightness without snap and neither mode receive no artificial
+noise. Ramp-only dithering with always-undithered snapping was not selected.
+
+This is a capability decision. The promised labelled snap-algorithm
+comparison and material-override rule for composited pixels are still needed
+before selecting that algorithm or declaring a look accepted.
+
+### D-28. Snap target is shared by the export/project
+
+Same answer and provenance as D-26. The third answer selects A: one snap
+target setting inherited through the normal export/project settings layers,
+with no per-material target override. Already approved material mode,
+response and dither overrides remain available. The alternative of a
+material's whole-palette request forcing the final composite to snap was
+not selected. File syntax and missing-palette validation remain to specify.
+
 ## Proposals and open questions
 
 Unresolved recommendations below are proposals, not approved decisions.
 Batch 1's accepted answers are D-5 to D-7; batch 2's are D-8 to D-10;
 batch 3's are D-11 to D-13; batch 4's are D-14 to D-16;
 batch 5's are D-17 to D-19; batch 6's are D-20 to D-22;
-batch 7's are D-23 to D-25.
+batch 7's are D-23 to D-25; batch 8's are D-26 to D-28.
 No dependent formula or slice
 ordering is adopted while its blocking questions remain open.
 
@@ -696,7 +740,9 @@ Batch 8 was posted on 2026-10-20 at 20:53:39 UTC in `#moskophoros`,
 message `t34mq5fvgajcxfzw9yngjqqm2a`, under the same request, against
 draft `5d95e390fe`. It asks Q-4's strength formula and ambient bypass,
 Q-6's dithering scope, and Q-5's snap ownership/composition precedence.
-These remain proposals pending the owner's answers.
+D-26 to D-28 record A/B/A: unit-budget lighting, snap dithering and a shared
+snap target. The numerical snap algorithm and composite dither ownership
+remain open.
 
 ### Q-1. Does a mode route all shading or only the added light?
 
@@ -745,7 +791,7 @@ Sky frame resolved by D-24 (batch 7 C); brightness range resolved by D-25
 (batch 7 A). Probe 4 illustrates those choices. Defaults, exact formula and
 material inheritance remain for the complete settings contract.
 
-**Batch 8, light-strength proposal, not decided:** A (recommended) uses
+**Resolved by D-26 (batch 8 A):** use
 three nonnegative strengths `K`, `S`, `G`, each at most 1, with their sum
 at most 1. Zero disables the corresponding key, sky or ground term. With
 nonnegative facing terms `k`, `s`, `g`, each in `[0,1]`, define
@@ -756,13 +802,13 @@ its illustrated `.2` floor exactly. Invalid totals are errors, not silently
 normalised. This makes turning on a term immediately reduce light on faces
 pointing away from it without requiring a second floor control.
 
-B offers independently adjustable nonnegative weights and an explicit
+The rejected B offered independently adjustable nonnegative weights and an explicit
 uniform floor, with `L=clamp(floor+K*k+S*s+G*g,0,1)`. Its compatible default
 is floor 1 and all weights zero, so the floor must be lowered before adding
 a positive weight can change the image. B permits saturation and additional
 tuning combinations; the owner would still need to approve its bounds.
 
-For either choice, retain D-15's `e=a*L`, with a separate ambient-form
+The accepted proposal retains D-15's `e=a*L`, with a separate ambient-form
 on/off control: on uses the existing range-normalised form signal `a`,
 off supplies `a=1` so directional shading can operate alone. Default on
 preserves today's form shading. Brightness gain is
@@ -782,11 +828,11 @@ validation and inline reuse before choosing schemas or syntax.
 The exact response fields depend on Q-4 and will be enumerated before
 signoff; inheritance and the remaining schema details stay open.
 
-**Batch 8, snap ownership proposal, not decided:** A (recommended) makes
+**Resolved by D-28 (batch 8 A):** make
 the snap target one setting shared by the export/project, inherited through
 the normal settings layers, with no material override. Mode, response and
 dither overrides already approved remain available. This gives the final
-composite one unambiguous snap policy. B also allows per-material target
+composite one unambiguous snap policy. The rejected B allowed per-material target
 overrides: if either contributing layer requests whole-palette snap, snap
 the final composite; otherwise each layer may request own-ramp snap or off
 before composition. In B a whole-palette request can change an overlapping
@@ -821,16 +867,11 @@ Custom threshold files (B) and a different/subset catalogue (C) were not
 selected. Exact strength limits, arithmetic and interaction with the new
 optional brightness snap remain open.
 
-**Batch 8, dithering scope proposal, not decided:** A (recommended) dithers
-shade-driven ramp selection only; optional post-brightness snap uses nearest
-colour without dithering. Brightness-only with snap therefore remains
-undithered. B additionally supports dithering the snap quantisation; when
-snap is enabled, dither that final colour choice rather than dithering both
-the intermediate ramp selection and its subsequent snap. B requires a
-further labelled algorithm comparison and rules for material overrides at
-composited pixels. Continuous brightness without snap and neither mode
-receive no artificial noise in either option. This is a capability boundary,
-not approval of an unseen snap-dithering algorithm or rendered look.
+Scope resolved by D-27 (batch 8 B): include snap dithering, applied to the
+final colour choice rather than also dithering its intermediate ramp.
+The ramp-only alternative was not selected. A labelled algorithm comparison
+and composite material-override rule remain necessary; this capability
+decision does not approve an unseen algorithm or rendered look.
 
 ### Q-7. Do outlines belong in this arc?
 
@@ -983,4 +1024,6 @@ Codex review and tracker processing follow on the manager's instruction.
   `f31db19c-e69e-4355-b089-675413f7601b`; D-20 to D-22 preserve it.
   Batch 7 was answered through cmux relay
   `066ddb06-09d7-4668-b1eb-1ea044eb7fa2`; D-23 to D-25 preserve it.
+  Batch 8 was answered through cmux relay
+  `18e15fc0-f95f-4d00-a1fd-99a49ef236b6`; D-26 to D-28 preserve it.
   No readiness signoff has been received.
