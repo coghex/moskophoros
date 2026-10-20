@@ -237,6 +237,12 @@ message `w8y5pdsiqbn56f33gpftcxhsmi`, request
 `moskophoros-20261020-1`, against this draft at `07a7180c79`.
 It explicitly asks for independent answers to Q-1, Q-2 and Q-3.
 
+Batch 2 was posted on 2026-10-20 at 19:40:03 UTC in `#moskophoros`,
+message `67tefmibchfh673kt62jphjyq6`, under the same request, against
+draft `cc0496073d`. It asks Q-3's update/default follow-up, Q-4's term
+availability and Q-5's setting ownership. Answers are pending; no look or
+numerical formula is proposed for approval in this batch.
+
 ### Q-1. Does a mode route all shading or only the added light?
 
 Resolved by D-5: option A, with neither as the fourth mode. The rejected
@@ -365,7 +371,8 @@ this document-only exploration runs no repository tests.
 
 ## Delivery plan
 
-No slices yet: Q-1 and Q-2 are resolved; Q-3 to Q-11 remain open. The processing ledger contains only
+No slices yet: Q-1 and Q-2 are resolved; Q-3 to Q-11 remain open.
+The processing ledger contains only
 the proposed umbrella, matching that state. Final readiness requires the
 owner's explicit signoff on behaviour, scope and dependency-ordered slices.
 Codex review and tracker processing follow on the manager's instruction.
