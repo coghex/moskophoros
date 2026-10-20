@@ -447,11 +447,57 @@ The manager suggested a user-selectable pattern setting and explicitly
 marked that reading non-binding. Batch 5 makes that proposed interface and
 its offered patterns explicit rather than treating one pattern as accepted.
 
+### D-17. Six selectable dither patterns, strength and material overrides
+
+Owner, about 2026-10-20 20:16 UTC, typed directly in the manager's terminal
+after viewing Probe 2; relayed by mosk-manager in cmux message
+`20dc14aa-e207-4c00-8fcb-33c26f9ca4ec`, answering batch 5 message
+`jjbdta8qj7fjkd5xp6gqfvzc2s`. The complete answer was:
+
+> "1) A, 2) A is default but i want a color ramp snap option in the settings, i feel like it could look good with a much larger color ramp than these examples 3) A"
+
+The first answer approves all six named Probe 2 patterns: ordered 2×2,
+4×4 and 8×8, clustered 4×4, diagonal 4×4 and fixed shuffled 8×8. Offer
+off, configurable strength and material overrides. Keep the displayed
+cell-pixel anchoring; moving surfaces pass through the fixed pattern.
+Dithering remains off by default. Further named patterns can be added
+later; custom threshold-tile files are outside this arc. This settles
+D-16's catalogue question, not a project's chosen pattern or strength.
+
+### D-18. Off-palette brightness by default, with an optional snap setting
+
+Same answer and provenance as D-17. The second answer approves A as the
+default: brightness and both may produce off-palette colours; ramp-only
+and neither keep the existing palette rules. Mixed translucent composites
+remain off-palette when a contributing layer uses brightness/both, with
+the existing palette snap otherwise. Alpha and geometry maps stay unchanged.
+
+The owner additionally requires a "color ramp snap option in the settings"
+and suggests that a much larger ramp could look good. Record that capability
+as required, without interpreting it as a selected look, a specific ramp
+size, or approval of the whole-palette snap displayed in Probe 2. Q-11 must
+clarify the snap's target (material ramp versus whole palette), placement,
+mixed-layer behaviour and handling of materials without ramps. The earlier
+B-only alternative is not the default; optional snapping is now in scope.
+
+### D-19. Retain each layer's normal and shade before composition
+
+Same answer and provenance as D-17. The third answer approves retaining
+the already-computed back and front normals, shading each colour layer
+separately, then using existing composition. Preserve the accepted combined
+front approximation represented by its front-most material/direction,
+alpha and exported geometry maps. Deferring this extension and rejecting
+directional baking on translucent input was not selected. This extends
+captured data and validation, without inherently requiring another render.
+Buffer formats, sampling and verification remain to specify in Q-8. The
+chest must exercise the result; opaque/cutout probes are not that evidence.
+
 ## Proposals and open questions
 
 Unresolved recommendations below are proposals, not approved decisions.
 Batch 1's accepted answers are D-5 to D-7; batch 2's are D-8 to D-10;
-batch 3's are D-11 to D-13; batch 4's are D-14 to D-16.
+batch 3's are D-11 to D-13; batch 4's are D-14 to D-16;
+batch 5's are D-17 to D-19.
 No dependent formula or slice
 ordering is adopted while its blocking questions remain open.
 
@@ -486,8 +532,9 @@ Batch 5 was posted on 2026-10-20 at 20:11:17 UTC in `#moskophoros`,
 message `jjbdta8qj7fjkd5xp6gqfvzc2s`, under the same request, against
 draft `80402faf04` and Probe 2's page hash above. It asks Q-6's pattern
 catalogue/anchoring, Q-11's brightness palette policy, and Q-8's per-layer
-normal retention. All three recommendations remain proposals pending the
-owner's answers.
+normal retention. D-17 to D-19 record the answers: pattern catalogue A,
+off-palette default A with an additional required snap setting, and per-layer
+normal retention A. The snap target and composition rules remain open.
 
 ### Q-1. Does a mode route all shading or only the added light?
 
@@ -566,13 +613,10 @@ The robot GIFs compare no dithering, both patterns at strength 0.5, and
 arithmetic and ranges remain to specify. The half-strength recommendation
 is an example, not a shipped default; D-12 keeps dithering off by default.
 
-**Batch 5 proposal, not decided:** A (recommended) offers all six Probe 2
-patterns as named settings, plus off, strength and per-material overrides;
-further named patterns can be added later. B adds user-supplied threshold
-tile files in this arc. C selects a subset or requests another pattern.
-Approval includes the displayed cell-pixel anchoring: moving surfaces pass
-through the fixed pattern. This is a catalogue/control choice, not selection
-of a project's default. Dithering remains off by default under D-12.
+Catalogue, controls and anchoring resolved by D-17, selecting batch 5's A.
+Custom threshold files (B) and a different/subset catalogue (C) were not
+selected. Exact strength limits, arithmetic and interaction with the new
+optional brightness snap remain open.
 
 ### Q-7. Do outlines belong in this arc?
 
@@ -604,13 +648,10 @@ the one normal buffer. Retaining the two values is a data-output extension,
 not inherently another ray-traced render. Its format, validation and default
 image compatibility still need verification.
 
-**Batch 5 proposal, not decided:** A (recommended) retains the already
-computed back/front normals, shades each colour layer before existing
-composition, and preserves the accepted combined front approximation using
-its front-most material/direction. Alpha and exported geometry maps stay
-unchanged. B defers that extension and rejects new directional baking on
-translucent inputs until a later arc, while preserving the current default.
-This is a data/behaviour decision; the chest must verify the result later.
+Per-layer normal retention and operation placement resolved by D-19,
+selecting batch 5's A. Remaining pipeline details include sampling,
+addressed buffer contracts and compatibility verification. The chest must
+exercise the new path before visual acceptance.
 
 ### Q-9. What evidence completes the arc?
 
@@ -633,7 +674,7 @@ dependencies for owner signoff.
 D-14 settles the base: last/lightest ramp entry for mapped materials, model
 colour/texture for ordinary materials. Still define ramp/both on an ordinary or unmapped
 material; whether missing ramps are errors or use an explicit fallback;
-whether brightness may leave the palette; and how palette mapping,
+the optional snap target and placement; and how palette mapping,
 translucent composition and dithering interact. These choices must not
 silently discard textures or invent a ramp. Present labelled examples for
 colour choices before adopting a contract.
@@ -646,14 +687,11 @@ last colour and the palette-mapped model colour happened to look alike.
 This choice does not approve teal as a look, generated-ramp base handling
 beyond the resolved entry, or any missing-ramp/palette-composition policy.
 
-**Batch 5 proposal, not decided:** A (recommended) lets brightness and both
-produce off-palette colours, while ramp-only and neither retain existing
-palette rules. In mixed translucent pixels, retain the off-palette composite
-whenever a contributing layer uses brightness/both; otherwise retain the
-existing palette snap. Alpha and maps stay unchanged. B snaps the final
-brightness result back to the palette, removing some brightness variation.
-Probe 2 displays the opaque/cutout difference; its images do not validate
-the proposed translucent rule. Missing-ramp policy remains open separately.
+Default palette policy resolved by D-18, selecting batch 5's A with an
+additional required snap option. Probe 2 displays the opaque/cutout
+difference for snapping to the whole palette; its images do not validate
+translucent composition or selecting only a material's ramp. Missing-ramp
+policy and the exact optional snap contract remain open.
 
 ## Verification strategy
 
@@ -717,4 +755,6 @@ Codex review and tracker processing follow on the manager's instruction.
   relay `35757489-cc29-456a-a840-3a702ec80cb3`; D-11 to D-13 preserve it.
   Batch 4 was answered through cmux relay
   `ba055c23-a81e-43c6-b64e-8e3ab9b60301`; D-14 to D-16 preserve it.
+  Batch 5 was answered through cmux relay
+  `20dc14aa-e207-4c00-8fcb-33c26f9ca4ec`; D-17 to D-19 preserve it.
   No readiness signoff has been received.
