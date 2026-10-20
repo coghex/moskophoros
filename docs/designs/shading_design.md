@@ -643,6 +643,13 @@ Q-11's ordinary/missing-ramp behaviour, and Q-10's exclusions. D-20 to D-22
 record both snap targets, whole-palette fallback and the exclusions. The
 extent of "either way" for ordinary shading still needs clarification.
 
+Batch 7 was posted on 2026-10-20 at 20:48:30 UTC in `#moskophoros`,
+message `44ggxjrpc5r923cgqn8t7vq5en`, under the same request, against
+draft `3048600136` and Probe 4's page hash above. It asks Q-11's ordinary
+shading clarification, Q-4's sky/ground frame and any narrow V-7 exception,
+and Q-4's brightness range. These remain proposals pending the owner's
+answers.
+
 ### Q-1. Does a mode route all shading or only the added light?
 
 Resolved by D-5: option A, with neither as the fourth mode. The rejected
