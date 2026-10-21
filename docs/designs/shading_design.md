@@ -710,13 +710,70 @@ response and dither overrides remain available. The alternative of a
 material's whole-palette request forcing the final composite to snap was
 not selected. File syntax and missing-palette validation remain to specify.
 
+### D-29. Two-nearest-colour snap dithering and a unit strength range
+
+Owner, about 2026-10-21 00:48 UTC, typed directly in the manager's terminal
+after viewing Probe 5; relayed by mosk-manager in cmux message
+`8587a525-f617-4a48-81da-289fe90cd6f7`, answering batch 9 message
+`ms3nau3wnydkdw35azsub3hr62`. The complete answer was:
+
+> "A on all three"
+
+The first approval selects Probe 5's two-nearest-colour algorithm. Use
+OKLab distance to choose the two nearest distinct allowed colours, project
+the desired colour onto their segment and clamp the second-colour fraction
+to `[0,1]`. Choose that second colour where the selected tile's threshold
+is less than `strength*fraction`; otherwise choose the nearest. Stable
+ties follow target order. Deduplicate identical colours by first occurrence;
+a one-colour target remains constant. The best-partner-segment search was
+not selected.
+
+Dither strength is finite `[0,1]`, default 1 when a pattern is chosen;
+the pattern stays off by default. Strength zero uses the undithered path.
+This selects the algorithm and strength contract, not a project's chosen
+look. Shade-driven ramp sampling still needs its complete specification.
+
+### D-30. The visibly dominant layer controls composite dithering
+
+Same answer and provenance as D-29. For whole-palette snap at a pixel with
+both layers, choose the layer with the greater visible contribution using
+the existing front and transmitted-back weights summed over the output
+pixel; tie to front. Use that layer's winning material, pattern, strength
+and mode's no-dither rule, including neither. One-layer pixels use their
+own material controls. Always-front and project-only mixed-pixel rules were
+not selected.
+
+Own-ramp snap remains per layer. A missing-ramp fallback changes its allowed
+colour set to the whole palette, not its placement. This ownership contract
+must still be verified on translucent evidence; opaque/cutout probes do
+not establish its visual quality.
+
+### D-31. Separate owner visual review, then regenerate working sheets
+
+Same answer and provenance as D-29. Reserve a separate owner visual-review
+slice after mechanical validation. Use the robot for motion, shrub for
+cutouts and chest for translucency. Cover the live-lit eight-direction
+isometric use and straight-on baked panels, including perspective/roll,
+four modes and representative dithering/snap combinations. Include a longer
+generic ramp example to exercise D-18 without depending on the second
+game's not-yet-authored palette.
+
+Actual live-lit sky strength and other project look values are deliberately
+open until that review, which must stop for the owner's visual acceptance.
+Preserve current project settings until review; neither passing tests nor
+these design probes select project tuning. After acceptance, inventory and
+regenerate working sheets under D-8 while preserving historical evidence.
+Detailed delivery boundaries and ordering still need signoff after the
+remaining data/settings contracts are settled.
+
 ## Proposals and open questions
 
 Unresolved recommendations below are proposals, not approved decisions.
 Batch 1's accepted answers are D-5 to D-7; batch 2's are D-8 to D-10;
 batch 3's are D-11 to D-13; batch 4's are D-14 to D-16;
 batch 5's are D-17 to D-19; batch 6's are D-20 to D-22;
-batch 7's are D-23 to D-25; batch 8's are D-26 to D-28.
+batch 7's are D-23 to D-25; batch 8's are D-26 to D-28;
+batch 9's are D-29 to D-31.
 No dependent formula or slice
 ordering is adopted while its blocking questions remain open.
 
@@ -781,8 +838,7 @@ Batch 9 was posted on 2026-10-20 at 22:00:16 UTC in `#moskophoros`,
 message `ms3nau3wnydkdw35azsub3hr62`, under the same request, against
 draft `42e2e75f1b` and Probe 5's page hash above. It asks Q-6's snap
 algorithm/strength, Q-6/Q-11's composite ownership and fallback placement,
-and Q-9's visual-review boundary. These remain proposals pending the
-owner's answers.
+and Q-9's visual-review boundary. D-29 to D-31 record all three A approvals.
 
 ### Q-1. Does a mode route all shading or only the added light?
 
@@ -913,7 +969,7 @@ The ramp-only alternative was not selected. A labelled algorithm comparison
 and composite material-override rule remain necessary; this capability
 decision does not approve an unseen algorithm or rendered look.
 
-**Batch 9, snap algorithm proposal, not decided:** A (recommended) uses
+**Resolved by D-29 (batch 9 A):** use
 Probe 5's two-nearest-colour algorithm; B uses its nearest-anchor/best-segment
 partner search. A keeps both candidates close to the target; B can improve
 the segment approximation using a more distant, visibly contrasting partner.
@@ -925,7 +981,7 @@ path. This chooses a numerical algorithm and strength contract, not a
 project's pattern or strength. The existing shade-driven ramp arithmetic
 still needs its final compatibility/sampling specification.
 
-**Batch 9, composite ownership proposal, not decided:** for whole-palette
+**Resolved by D-30 (batch 9 A):** for whole-palette
 snap of a pixel containing both layers, A (recommended) takes the dither
 pattern/strength from the layer with the larger visible contribution (the
 existing front weight versus transmitted back weight, summed over the
@@ -981,7 +1037,7 @@ configuration at that point, without treating the not-yet-authored Codekarl
 palette as an available dependency. Mechanical verification must cover
 reproduction, compatibility, alpha/map alignment, settings and errors.
 
-**Batch 9, review-boundary proposal, not decided:** A (recommended) reserves
+**Resolved by D-31 (batch 9 A):** reserve
 a separate owner visual-review slice after mechanical validation. Use the
 existing robot for motion, shrub for cutouts and chest for translucent
 layers; cover the live-lit eight-direction isometric use and straight-on
@@ -1108,4 +1164,6 @@ Codex review and tracker processing follow on the manager's instruction.
   `066ddb06-09d7-4668-b1eb-1ea044eb7fa2`; D-23 to D-25 preserve it.
   Batch 8 was answered through cmux relay
   `18e15fc0-f95f-4d00-a1fd-99a49ef236b6`; D-26 to D-28 preserve it.
+  Batch 9 was answered through cmux relay
+  `8587a525-f617-4a48-81da-289fe90cd6f7`; D-29 to D-31 preserve it.
   No readiness signoff has been received.
