@@ -150,7 +150,7 @@ def test_a_library_without_a_shade_records_none(setup, capsys):
     [
         (
             document(schema=materials.LEGACY_SCHEMA),
-            'ramps["gold"]: a generated ramp needs schema',
+            'ramps["gold"]: a generated ramp needs moskophoros.materials/3 or later',
         ),
         (
             document(ramps={"gold": {"base": "red", "bands": 4}}),
@@ -172,7 +172,7 @@ def test_a_library_without_a_shade_records_none(setup, capsys):
                 materials={},
                 shade={"range": [1, 2]},
             ),
-            "shade: a library's own shade needs schema",
+            "shade: a library's own shade needs moskophoros.materials/3 or later",
         ),
     ],
 )

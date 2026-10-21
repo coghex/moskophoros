@@ -58,12 +58,26 @@ PLAIN = {
     "materials": None,
 }
 RANGE = (84, 191)
+# The default `settings.shade` of a sheet, in the order it is recorded
+# (shading design contract 1), the key direction as `views.normalise` gives it.
 SHADE_RECORD = {
     "ao_distance_m": 0.3,
     "ao_samples": 64,
     "occlusion_weight": 0.25,
     "convexity_weight": 1.0,
     "range": [84, 191],
+    "mode": "ramp",
+    "ambient_form": True,
+    "key": {
+        "direction": [-0.5183210553488161, 0.604707897906952, 0.604707897906952],
+        "strength": 0.0,
+    },
+    "sky": {"strength": 0.0},
+    "ground": {"strength": 0.0},
+    "sky_ground_frame": "camera",
+    "brightness": {"floor": 0.3, "ceiling": 1.0},
+    "snap": "off",
+    "dither": {"pattern": "off", "strength": 1.0},
 }
 
 # Sample times worked out by hand from design §Clips and sampling:
@@ -90,8 +104,13 @@ CANONICAL = (
     '"model_yaw_deg":0.0,"normals":true,"pixels_per_meter":24.5,"previews":true,'
     '"ramp":{"chroma_fade":0.3,"hue_shift_deg":-12.0,"lightness_step":0.12},'
     '"root_motion":"error",'
-    '"shade":{"ao_distance_m":0.3,"ao_samples":64,"convexity_weight":1.0,'
-    '"occlusion_weight":0.25,"range":[84,191]},'
+    '"shade":{"ambient_form":true,"ao_distance_m":0.3,"ao_samples":64,'
+    '"brightness":{"ceiling":1.0,"floor":0.3},"convexity_weight":1.0,'
+    '"dither":{"pattern":"off","strength":1.0},"ground":{"strength":0.0},'
+    '"key":{"direction":[-0.5183210553488161,0.604707897906952,'
+    '0.604707897906952],"strength":0.0},"mode":"ramp","occlusion_weight":0.25,'
+    '"range":[84,191],"sky":{"strength":0.0},"sky_ground_frame":"camera",'
+    '"snap":"off"},'
     '"style":{"edges":"hard","materials":null,"palette":null,"reduce":"plain"},'
     '"supersample":4,"view":{"directions":2,"preset":"side",'
     '"start_angle_deg":90.0}},'
@@ -174,7 +193,7 @@ EXPECTED_FRAMES = ",\n".join(
 
 EXPECTED_JSON = (
     """{
-  "schema": "moskophoros.sheet/14",
+  "schema": "moskophoros.sheet/15",
   "generator": {
     "tool": "moskophoros",
     "version": "0.1.0",
@@ -244,7 +263,33 @@ EXPECTED_JSON = (
       "range": [
         84,
         191
-      ]
+      ],
+      "mode": "ramp",
+      "ambient_form": true,
+      "key": {
+        "direction": [
+          -0.5183210553488161,
+          0.604707897906952,
+          0.604707897906952
+        ],
+        "strength": 0.0
+      },
+      "sky": {
+        "strength": 0.0
+      },
+      "ground": {
+        "strength": 0.0
+      },
+      "sky_ground_frame": "camera",
+      "brightness": {
+        "floor": 0.3,
+        "ceiling": 1.0
+      },
+      "snap": "off",
+      "dither": {
+        "pattern": "off",
+        "strength": 1.0
+      }
     },
     "ramp": {
       "lightness_step": 0.12,
@@ -468,7 +513,19 @@ def test_previews_normals_shade_and_the_style_record_sit_just_before_clips(
         "occlusion_weight",
         "convexity_weight",
         "range",
+        "mode",
+        "ambient_form",
+        "key",
+        "sky",
+        "ground",
+        "sky_ground_frame",
+        "brightness",
+        "snap",
+        "dither",
     ]
+    assert list(settings["shade"]["key"]) == ["direction", "strength"]
+    assert list(settings["shade"]["brightness"]) == ["floor", "ceiling"]
+    assert list(settings["shade"]["dither"]) == ["pattern", "strength"]
     rest = {
         k: v
         for k, v in settings.items()
@@ -476,7 +533,8 @@ def test_previews_normals_shade_and_the_style_record_sit_just_before_clips(
     }
     job = settings_document(SIDE, (RUN,))
     capture = {key: value for key, value in job["shade"].items() if key != "materials"}
-    assert rest == job | {"shade": capture | {"range": [84, 191]}}
+    assert rest == job | {"shade": SHADE_RECORD}
+    assert {k: SHADE_RECORD[k] for k in capture} == capture
 
 
 def test_the_sheet_records_the_shade_values_used_and_fingerprints_them():
@@ -484,7 +542,7 @@ def test_the_sheet_records_the_shade_values_used_and_fingerprints_them():
     sheet = json.loads(
         _encode_side(settings=replace(SIDE, shade=shade), shade_range=(120, 255)).json
     )
-    assert sheet["settings"]["shade"] == {
+    assert sheet["settings"]["shade"] == SHADE_RECORD | {
         "ao_distance_m": 1.2,
         "ao_samples": 128,
         "occlusion_weight": 0.5,

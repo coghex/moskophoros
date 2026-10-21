@@ -1020,7 +1020,24 @@ def test_129_samples_from_a_file_is_exit_2_naming_file_key_line_and_limit(
     assert setup.calls() == []
 
 
-def test_the_jobs_carry_the_capture_values_and_the_sheet_records_all_five(
+# The shading members of `settings.shade` at their shipped defaults, in order.
+NEW_SHADE = {
+    "mode": "ramp",
+    "ambient_form": True,
+    "key": {
+        "direction": [-0.5183210553488161, 0.604707897906952, 0.604707897906952],
+        "strength": 0.0,
+    },
+    "sky": {"strength": 0.0},
+    "ground": {"strength": 0.0},
+    "sky_ground_frame": "camera",
+    "brightness": {"floor": 0.3, "ceiling": 1.0},
+    "snap": "off",
+    "dither": {"pattern": "off", "strength": 1.0},
+}
+
+
+def test_the_jobs_carry_the_capture_values_and_the_sheet_records_every_shade_value(
     setup, capsys, tmp_path
 ):
     work = setup.tmp_path / "work"
@@ -1043,7 +1060,7 @@ def test_the_jobs_carry_the_capture_values_and_the_sheet_records_all_five(
         job = json.loads((work / mode / "job.json").read_text())
         assert job["settings"]["shade"] == capture | {"materials": []}
     sheet = json.loads(setup.json.read_text())
-    assert sheet["settings"]["shade"] == capture | {"range": [120, 188]}
+    assert sheet["settings"]["shade"] == capture | {"range": [120, 188]} | NEW_SHADE
     assert list(sheet["settings"])[-9:] == [
         "root_motion",
         "previews",
@@ -1207,7 +1224,7 @@ def test_an_older_sheet_is_exit_2_naming_its_schema_and_the_supported_one(
     forbid_blender(monkeypatch)
     status, _, err = run(capsys, reload(setup, sheet))
     assert status == 2
-    assert "moskophoros.sheet/3" in err and "moskophoros.sheet/14" in err
+    assert "moskophoros.sheet/3" in err and "moskophoros.sheet/15" in err
 
 
 def test_a_reloaded_sheet_without_previews_writes_none(setup, capsys):
@@ -1255,7 +1272,17 @@ EQUIVALENTS = [
 ]
 # What a file and options may differ in once resolved: where values came
 # from, never what they are.
-PROVENANCE = {"explicit", "origins", "preset", "config", "project", "no_user_config"}
+PROVENANCE = {
+    "explicit",
+    "origins",
+    "preset",
+    "config",
+    "project",
+    "no_user_config",
+    # The resolved shading and where it came from are derived, not settings.
+    "shading",
+    "shading_origins",
+}
 
 
 def comparable(options):

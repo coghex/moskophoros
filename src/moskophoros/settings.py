@@ -439,6 +439,28 @@ DIRECTION = ("pitch", "camera.direction")
 # no part of its fingerprint (projects and camera design D-16).
 APP_SETTINGS = ("blender", "any_blender")
 
+
+def _leaf(check):
+    """A shading leaf's check as a setting's: `shading.Bad` becomes `_Bad`,
+    worded with this module's way of showing a value."""
+
+    def leaf(value):
+        try:
+            return check(value)
+        except shading_model.Bad as error:
+            raise _Bad(error.problem(_shown_list)) from None
+
+    return leaf
+
+
+# The shading settings (shading design contract 1), second-level paths under
+# `shade`, in the settings table's order.
+SHADING_SETTINGS = {
+    f"shade.{leaf.path}": Setting(leaf.what, None, leaf.default, _leaf(leaf.check))
+    for leaf in shading_model.LEAVES
+}
+
+
 SCHEMA = MappingProxyType(
     {
         "view": Setting(
@@ -654,6 +676,7 @@ SCHEMA = MappingProxyType(
             [84, 191],
             _check_range,
         ),
+        **SHADING_SETTINGS,
         "ramp.lightness_step": Setting(
             "how much OKLab lightness each shade of a generated ramp drops, 0 to 1",
             None,
@@ -697,36 +720,7 @@ DEFAULTS = MappingProxyType(
 )
 
 
-def _leaf(check):
-    """A shading leaf's check as a setting's: `shading.Bad` becomes `_Bad`,
-    worded with this module's way of showing a value."""
-
-    def leaf(value):
-        try:
-            return check(value)
-        except shading_model.Bad as error:
-            raise _Bad(error.problem(_shown_list)) from None
-
-    return leaf
-
-
-# The shading settings (shading design contract 1), second-level paths under
-# `shade`. They are no part of `SCHEMA`, the shipped defaults, `GROUPS` or the
-# command line until SHD-6; `read_bytes` takes them only with `shading=True`,
-# which no public path passes.
-SHADING_SCHEMA = MappingProxyType(
-    {
-        f"shade.{leaf.path}": Setting(leaf.what, None, leaf.default, _leaf(leaf.check))
-        for leaf in shading_model.LEAVES
-    }
-)
-# Each shading setting's default, as the command holds it.
-SHADING_DEFAULTS = MappingProxyType(
-    {name: setting.check(setting.default) for name, setting in SHADING_SCHEMA.items()}
-)
-
-
-def read_bytes(data, *, source, directory, shipped=False, shading=False):
+def read_bytes(data, *, source, directory, shipped=False):
     """The layer the settings file `data` gives, read from `directory`.
 
     `source` names the file in errors. Paths resolve against `directory`,
@@ -735,13 +729,11 @@ def read_bytes(data, *, source, directory, shipped=False, shading=False):
     direction, `pitch` and `camera.direction`, with any values, is refused,
     except the `shipped` defaults, which set the view's initial state.
 
-    With `shading`, an internal gate no public path passes, the file may also
-    give the shading settings of `SHADING_SCHEMA`, whose second-level groups
-    under `shade` are mappings read leaf by leaf (shading design contract 1).
-    Without it, they are unknown keys.
+    A group such as `shade` is a mapping of settings. Inside `shade`, the
+    second-level groups `key`, `sky`, `ground`, `brightness` and `dither` are
+    mappings read leaf by leaf, each leaf named by its dotted path, such as
+    `shade.key.strength` (shading design contract 1).
     """
-    schema = {**SCHEMA, **SHADING_SCHEMA} if shading else SCHEMA
-    subgroups = shading_model.SUBGROUPS if shading else ()
     try:
         document, marks = yamlfile.load_located(data)
     except yamlfile.YamlError as error:
@@ -789,7 +781,7 @@ def read_bytes(data, *, source, directory, shipped=False, shading=False):
                     f"{key}: the key {_shown(member)} is not a setting name at "
                     f"line {line}, column {column}",
                 )
-            if key == "shade" and member in subgroups:
+            if key == "shade" and member in shading_model.SUBGROUPS:
                 entries.extend(
                     _read_subgroup((key, member), member_value, refuse, marks, source)
                 )
@@ -798,7 +790,7 @@ def read_bytes(data, *, source, directory, shipped=False, shading=False):
     layer = Layer()
     for path, value in entries:
         key = ".".join(path)
-        setting = schema.get(key)
+        setting = SCHEMA.get(key)
         if setting is None:
             refuse(path, "unknown key")
         try:

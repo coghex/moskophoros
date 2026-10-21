@@ -44,12 +44,34 @@ light:           # a point light for lit previews (<stem>-lit.<clip>.gif)
                          # x right, y up, z toward the viewer; null: no light
   intensity: 1.0         # 0 or greater
   ambient: 0.3           # a surface facing away from the light, 0 to 1
-shade:           # the material ramps' shade (design §Capture, Shade)
+shade:           # the shade and what is done with it (design §Capture, Shade)
   ao_distance_m: 0.3     # how far occlusion looks, meters, greater than 0
   ao_samples: 64         # samples per pixel, 1 to 128
   occlusion_weight: 0.25 # 0 or greater
   convexity_weight: 1.0  # 0 or greater
   range: [84, 191]       # the shade values a ramp spans, 0 <= lo < hi <= 255
+  mode: ramp             # ramp, brightness, both or neither: what the shading
+                         # signal changes (a material may override it)
+  ambient_form: true     # false: the ambient form term is 1 everywhere
+  key:                   # one distant key light, fixed to the camera
+    direction: [-0.6, 0.7, 0.7]  # toward the light in the camera's frame, x
+                         # right, y up, z toward the viewer; each -1 to 1, not
+                         # all 0; normalised
+    strength: 0          # 0 to 1; key + sky + ground at most 1
+  sky:
+    strength: 0          # 0 to 1
+  ground:
+    strength: 0          # 0 to 1
+  sky_ground_frame: camera  # camera: the picture's up; world: the subject's up
+  brightness:            # the brightness gain, floor + (ceiling - floor) * e
+    floor: 0.3           # 0 to 1, at most the ceiling
+    ceiling: 1           # 0 to 1
+  snap: off              # off, ramp or palette: snap brightness and both to
+                         # the material's ramp or the whole palette
+  dither:
+    pattern: off         # off, ordered2, ordered4, ordered8, clustered4,
+                         # diagonal4 or shuffled8
+    strength: 1          # 0 to 1
 ramp:            # how a library's generated ramps are made (setting B)
   lightness_step: 0.12   # OKLab lightness lost per shade, 0 to 1
   hue_shift_deg: -12     # hue turned per shade, degrees, -180 to 180

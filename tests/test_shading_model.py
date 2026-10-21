@@ -90,12 +90,15 @@ def test_settings_of_nothing_is_the_defaults():
     )
 
 
-def test_the_shading_settings_are_not_in_the_public_schema():
-    assert not any(name.startswith("shade.key") for name in settings.SCHEMA)
-    assert set(settings.SHADING_SCHEMA).isdisjoint(settings.SCHEMA)
-    assert set(settings.SHADING_DEFAULTS) == {
+def test_the_shading_settings_are_in_the_public_schema_after_the_range():
+    names = list(settings.SCHEMA)
+    start = names.index("shade.range") + 1
+    assert names[start : start + len(model.DEFAULTS)] == [
         f"shade.{path}" for path in model.DEFAULTS
-    }
+    ]
+    assert {
+        f"shade.{path}": settings.DEFAULTS[f"shade.{path}"] for path in model.DEFAULTS
+    } == {f"shade.{path}": value for path, value in model.DEFAULTS.items()}
 
 
 # The key direction (contract 1)

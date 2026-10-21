@@ -2,10 +2,9 @@
 models (shading design contracts 1 and 2; D-10, D-24 to D-26, D-29, D-32,
 D-33, D-39).
 
-Nothing here is public yet. The leaves are not in `settings.SCHEMA`, the
-shipped defaults or the command line, and a library may not give them until
-SHD-6 turns the gate on; the readers in `settings` and `materials` take them
-only through an explicit internal parameter, which direct tests use.
+These are the public shading settings: `settings.SCHEMA` and the shipped
+defaults hold the leaves, the command exposes each as an option, and a `/4`
+material library may override those marked `Leaf.response`.
 
 A leaf is named by its path under `shade`, such as `key.strength`. The
 leaves a material or a library may override (`Leaf.response`) make up a

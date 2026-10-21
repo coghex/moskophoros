@@ -1,4 +1,4 @@
-"""The sheet PNG, its normal and depth maps, its `moskophoros.sheet/14` JSON
+"""The sheet PNG, its normal and depth maps, its `moskophoros.sheet/15` JSON
 and the animated previews, flat and lit, following design §Export.
 
 `encode` lays the reduced frames out on the sheet and its maps, describes
@@ -28,9 +28,10 @@ from PIL import Image
 
 import moskophoros
 from moskophoros import imageops, sampling, views
+from moskophoros import shading as shading_model
 from moskophoros.capture.backend import settings_document
 
-SCHEMA = "moskophoros.sheet/14"
+SCHEMA = "moskophoros.sheet/15"
 # The global formula of generated ramps, in its recorded order, at the
 # shipped defaults (material styling design D-30, D-33).
 DEFAULT_RAMP = MappingProxyType(
@@ -172,6 +173,36 @@ def fingerprint(generator, settings, source_sha256):
     return "sha256:" + hashlib.sha256(canonical).hexdigest()
 
 
+def shading_record(shading=None):
+    """The shading members of the sheet's `settings.shade`, after the five
+    capture and range members, in the settings table's order (shading design
+    contract 1): the resolved global settings `shading`, a `shading.Settings`,
+    or the shipped defaults for None. Numbers are floats, the key direction
+    is recorded exactly as resolved, and every value is recorded."""
+    given = shading_model.settings_of({}) if shading is None else shading
+    response = given.response
+    return {
+        "mode": response.mode,
+        "ambient_form": response.ambient_form,
+        "key": {
+            "direction": [float(component) for component in given.key_direction],
+            "strength": float(response.key_strength),
+        },
+        "sky": {"strength": float(response.sky_strength)},
+        "ground": {"strength": float(response.ground_strength)},
+        "sky_ground_frame": given.sky_ground_frame,
+        "brightness": {
+            "floor": float(response.brightness_floor),
+            "ceiling": float(response.brightness_ceiling),
+        },
+        "snap": given.snap,
+        "dither": {
+            "pattern": response.dither_pattern,
+            "strength": float(response.dither_strength),
+        },
+    }
+
+
 def sheet_settings(
     settings,
     selected_clips,
@@ -183,15 +214,19 @@ def sheet_settings(
     depth=False,
     light=NO_LIGHT,
     ramp=DEFAULT_RAMP,
+    shading=None,
 ):
     """The sheet's `settings` object: the capture job's settings, fitted, then
     `previews`, whether the animated previews are written, `normals` and
     `depth`, whether the normal and depth maps are written, `light`, the
     preview light's record whether or not one is placed, `shade`, the
-    capture's shade values with the shade range `[lo, hi]` stylize used,
-    `ramp`, the global formula of generated ramps (`lightness_step`,
-    `hue_shift_deg`, `chroma_fade`) whether or not a library is used, and
-    `style` recorded as given, just before `clips`.
+    capture's shade values with the shade range `[lo, hi]` stylize used and
+    the resolved global shading settings `shading` (a `shading.Settings`;
+    the shipped defaults when None), every one recorded whether or not the
+    mode makes it effective (`shade_record`), `ramp`, the global formula of
+    generated ramps (`lightness_step`, `hue_shift_deg`, `chroma_fade`)
+    whether or not a library is used, and `style` recorded as given, just
+    before `clips`.
 
     `style` is the record the command resolved, written and fingerprinted as
     it is: export does not know which reductions or palettes exist.
@@ -210,6 +245,7 @@ def sheet_settings(
             "convexity_weight",
         )
     } | {"range": [int(bound) for bound in shade_range]}
+    shade |= shading_record(shading)
     return document | {
         "previews": previews,
         "normals": normals,
@@ -241,6 +277,7 @@ def encode(
     depth=False,
     light=NO_LIGHT,
     ramp=DEFAULT_RAMP,
+    shading=None,
 ):
     """Lay out and describe the sheet, returning its PNG, JSON and, with
     `normals` and `depth`, its normal and depth maps' bytes.
@@ -253,7 +290,8 @@ def encode(
     takes, `selected_clips` are `gltf.SelectedClip`s in selection order,
     `image_path` is where the PNG will be written; only its base name is
     recorded, as is the source's and the normal map's; `shade_range` is the
-    shade range stylize used, recorded in `settings.shade`; `previews`
+    shade range stylize used, recorded in `settings.shade` with the resolved
+    global shading settings `shading` (see `sheet_settings`); `previews`
     records whether the animated previews are written; `normals` and
     `depth` whether the normal and depth maps are; and `light` is the preview
     light, recorded in `settings.light`.
@@ -345,6 +383,7 @@ def encode(
         depth=depth,
         light=light,
         ramp=ramp,
+        shading=shading,
     )
     description = {
         "schema": SCHEMA,
