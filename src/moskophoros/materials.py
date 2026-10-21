@@ -198,12 +198,13 @@ class Library:
     default: str | None
     materials: MappingProxyType
     shade: Shade | None = None
-    # Where the library came from, for diagnostics, and the `(line, column)`
-    # of each shading leaf it gave, by path from the document's root, such as
-    # `("materials", "Painted", "shade", "key", "strength")`. Only a library
-    # read through the internal gate from file bytes has positions. Neither
-    # takes part in comparing libraries.
+    # Where the library came from, for diagnostics, its schema, and the
+    # `(line, column)` of each shading value it gave, by path from the
+    # document's root, such as `("materials", "Painted", "shade", "key",
+    # "strength")`. Only a library read through the internal gate from file
+    # bytes has positions. None of the three takes part in comparing libraries.
     source: object = field(default=None, compare=False, repr=False)
+    schema: str | None = field(default=None, compare=False, repr=False)
     where: MappingProxyType = field(
         default=MappingProxyType({}), compare=False, repr=False
     )
@@ -350,6 +351,7 @@ def validate_library(
         MappingProxyType(materials),
         shade,
         source=source,
+        schema=document["schema"],
         where=MappingProxyType(reading.where),
     )
 
@@ -630,19 +632,16 @@ def library_shade_warnings(records, library, explicit):
     """The warning for a global shade range given explicitly that the
     library's own range beats (D-35, D-36; settings design D-23): one,
     naming the library's value, when a material in use takes it."""
-    if (
-        "range" not in explicit
-        or library.shade is None
-        or library.shade.range is None
-        or (
-            all(own for _, _, own in _in_use(records, library))
-            and all(
-                entry.shade.range is not None
-                for _, _, entry in _taken(records, library)
-                if entry.ramp is None and entry.uses is None
-            )
-        )
-    ):
+    if "range" not in explicit or library.shade is None or library.shade.range is None:
+        return []
+    if library.schema == SCHEMA_V4:
+        # Every class of part takes the library's range where it has none of
+        # its own: ordinary entries, materials without an entry and parts
+        # without an identity too.
+        reached = _takes_library(records, library, "range")
+    else:
+        reached = not all(own for _, _, own in _in_use(records, library))
+    if not reached:
         return []
     return [
         f"the material library gives shade.range {_shown(list(library.shade.range))} "
@@ -750,7 +749,11 @@ def _takes_library(records, library, name):
     for record in records:
         if record.material_index is None or record.name is None:
             return True
-        entry = taken.get(record.name)
+        # A part of an alpha mode glTF does not define takes the ordinary
+        # look whatever other parts of its name do.
+        entry = (
+            taken.get(record.name) if record.alpha_mode in RAMP_ALPHA_MODES else None
+        )
         if entry is None or entry.shade is None or getattr(entry.shade, name) is None:
             return True
     return False
@@ -775,13 +778,15 @@ def _named(mapping, location, source):
         yield name, mapping[name]
 
 
-def _check_keys(mapping, source, location=None):
+def _check_keys(mapping, source, location=None, reading=None, path=()):
     # An unquoted YAML key such as `1` or `true` is not a string, and an
-    # already-parsed library might hold any key.
+    # already-parsed library might hold any key. With `reading`, through the
+    # internal gate, the message gives the key's position.
     for key in mapping:
         if not isinstance(key, str):
             where = f"{location}: " if location else ""
-            raise LibraryError(source, f"{where}key {_shown(key)} is not a string")
+            at = "" if reading is None else reading.at((*path, key))
+            raise LibraryError(source, f"{where}key {_shown(key)} is not a string{at}")
 
 
 @dataclass(frozen=True)
@@ -944,20 +949,27 @@ def _entry(value, location, ramps, reading, path):
         raise LibraryError(
             source,
             f'{location}: expected {{"ramp": [...]}}, {{"uses": NAME}} or '
-            f'"{ORDINARY}", got {_shown(value)}',
+            f'"{ORDINARY}", got {_shown(value)}{reading.at(path)}',
         )
-    _check_keys(value, source, location)
+    _check_keys(value, source, location, reading, path)
     mapping = ("ramp", "uses", "shade", *(("ordinary",) if reading.response else ()))
     unknown = sorted(key for key in value if key not in mapping)
     if unknown:
-        raise LibraryError(source, f"{location}: unknown field {_name(unknown[0])}")
+        raise LibraryError(
+            source,
+            f"{location}: unknown field {_name(unknown[0])}"
+            f"{reading.at((*path, unknown[0]))}",
+        )
     forms = [form for form in ("ramp", "uses", "ordinary") if form in value]
     if len(forms) != 1:
         raise LibraryError(
             source,
-            f'{location}: expected exactly one of "ramp", "uses" and "ordinary"'
-            if reading.response
-            else f'{location}: expected exactly one of "ramp" and "uses"',
+            (
+                f'{location}: expected exactly one of "ramp", "uses" and "ordinary"'
+                if reading.response
+                else f'{location}: expected exactly one of "ramp" and "uses"'
+            )
+            + reading.at(path),
         )
     if forms == ["ordinary"] and value["ordinary"] is not True:
         raise LibraryError(
@@ -1004,9 +1016,10 @@ def _shade(value, location, reading, path, library=False):
     if not isinstance(value, dict):
         raise LibraryError(
             source,
-            f"{location}: expected a mapping of shading values, got {_shown(value)}",
+            f"{location}: expected a mapping of shading values, got {_shown(value)}"
+            f"{reading.at(path)}",
         )
-    _check_keys(value, source, location)
+    _check_keys(value, source, location, reading, path)
     if library:
         for name in (*CAPTURE_VALUES, "ao_samples"):
             if name in value:
@@ -1014,13 +1027,15 @@ def _shade(value, location, reading, path, library=False):
                     source,
                     f"{location}.{name}: a library's own shade gives only "
                     f"{'range and the shading response' if reading.response else 'range'}"
-                    f"; give {name} in a material's own shade, or as a global setting",
+                    f"; give {name} in a material's own shade, or as a global setting"
+                    f"{reading.at((*path, name))}",
                 )
     elif "ao_samples" in value:
         raise LibraryError(
             source,
             f"{location}.ao_samples: AO samples is a global setting only; set it "
-            "with --ao-samples or shade.ao_samples in a settings file",
+            "with --ao-samples or shade.ao_samples in a settings file"
+            f"{reading.at((*path, 'ao_samples'))}",
         )
     known = [*CAPTURE_VALUES, "range"]
     if reading.shading:
@@ -1028,7 +1043,11 @@ def _shade(value, location, reading, path, library=False):
         known += [name for name in _RESPONSE_TOP if name in value]
     unknown = sorted(key for key in value if key not in known)
     if unknown:
-        raise LibraryError(source, f"{location}: unknown field {_name(unknown[0])}")
+        raise LibraryError(
+            source,
+            f"{location}: unknown field {_name(unknown[0])}"
+            f"{reading.at((*path, unknown[0]))}",
+        )
     given = {}
     for name in (*CAPTURE_VALUES, "range"):
         if name not in value:
@@ -1036,7 +1055,7 @@ def _shade(value, location, reading, path, library=False):
         here = f"{location}.{name}"
         item = value[name]
         if name == "range":
-            given[name] = _shade_range(item, here, source)
+            given[name] = _shade_range(item, here, source, reading.at((*path, name)))
         else:
             number = _finite(item)
             if number is None or (
@@ -1045,7 +1064,8 @@ def _shade(value, location, reading, path, library=False):
                 wanted = "greater than 0" if name == "ao_distance_m" else "0 or greater"
                 raise LibraryError(
                     source,
-                    f"{here}: expected a finite number {wanted}, got {_shown(item)}",
+                    f"{here}: expected a finite number {wanted}, got {_shown(item)}"
+                    f"{reading.at((*path, name))}",
                 )
             given[name] = number
         reading.note((*path, name))
@@ -1096,7 +1116,7 @@ def _response(value, location, reading, path):
                     f"{location}.{name}: expected a mapping of shading values, got "
                     f"{_shown(item)}{reading.at((*path, name))}",
                 )
-            _check_keys(item, source, f"{location}.{name}")
+            _check_keys(item, source, f"{location}.{name}", reading, (*path, name))
             for leaf in sorted(item):
                 leaf_path = f"{name}.{leaf}"
                 if leaf_path == "key.direction":
@@ -1158,7 +1178,7 @@ def _finite(value):
     return number if math.isfinite(number) else None
 
 
-def _shade_range(value, location, source):
+def _shade_range(value, location, source, at=""):
     if (
         isinstance(value, list | tuple)
         and len(value) == 2
@@ -1171,7 +1191,7 @@ def _shade_range(value, location, source):
     raise LibraryError(
         source,
         f"{location}: expected [lo, hi], two integers with 0 <= lo < hi <= 255, "
-        f"got {_shown(value)}",
+        f"got {_shown(value)}{at}",
     )
 
 

@@ -16,7 +16,7 @@ is pure.
 
 import json
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from types import MappingProxyType
 
 from moskophoros import views
@@ -286,9 +286,13 @@ def _label(path, item):
 
 def strength_total(*strengths):
     """The sum of `strengths` as a `Decimal`, exact on the decimal values the
-    floats print as, so the result never depends on the order and 0.1, 0.2
-    and 0.7 add to exactly 1."""
-    return sum((Decimal(repr(strength)) for strength in strengths), Decimal(0))
+    floats print as, so the result never depends on the order or on the
+    ambient `Decimal` context, and 0.1, 0.2 and 0.7 add to exactly 1."""
+    with localcontext() as context:
+        # Wide enough for the sum of any three floats to be exact, however
+        # far apart their magnitudes are.
+        context.prec = 1200
+        return sum((Decimal(repr(strength)) for strength in strengths), Decimal(0))
 
 
 def budget_problem(key, sky, ground):

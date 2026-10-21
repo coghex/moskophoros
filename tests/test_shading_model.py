@@ -4,6 +4,7 @@ or the command (shading design contracts 1 and 2; D-25, D-26, D-29, D-32)."""
 import itertools
 import math
 from dataclasses import fields
+from decimal import Decimal, localcontext
 from fractions import Fraction
 
 import pytest
@@ -324,3 +325,18 @@ def test_the_shading_error_keeps_its_problems_in_order():
     error = model.ShadingError(["first", "second"])
     assert error.problems == ("first", "second")
     assert str(error) == "first\nsecond"
+
+
+@pytest.mark.parametrize("order", list(itertools.permutations((1.0, 3e-28, 3e-28))))
+def test_the_sum_is_exact_whatever_the_magnitudes_and_the_order(order):
+    # A default 28-digit context rounds 1 + 3e-28 + 3e-28 by the order added.
+    assert model.strength_total(*order) == Decimal("1.0000000000000000000000000006")
+    assert model.budget_problem(*map(sourced, order)) is not None
+
+
+def test_the_sum_does_not_depend_on_the_ambient_decimal_context():
+    with localcontext() as context:
+        context.prec = 5
+        assert model.strength_total(1.0, 3e-28, 3e-28) > 1
+        assert model.strength_total(0.1, 0.2, 0.7) == 1
+    assert model.strength_total(5e-324, 1.0, 0.0) > 1

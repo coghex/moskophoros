@@ -318,3 +318,68 @@ def test_a_resolved_global_the_library_only_shares_is_not_a_warning_event():
     )
     # Every part takes the library's value, but nothing was set explicitly.
     assert shadow_warnings([record(0, "A")], library, {}, {}) == []
+
+
+def range_library(entries):
+    return gated(
+        f"schema: {V4}\nramps: {{metal: [1, 2]}}\nshade: {{range: [10, 20]}}\n"
+        f"materials:\n{entries}"
+    )
+
+
+RANGE_WARNING = (
+    "the material library gives shade.range [10, 20] to its materials without "
+    "their own; the global [84, 191] does not reach them"
+)
+
+
+@pytest.mark.parametrize(
+    ("entries", "records"),
+    [
+        ("  A: {ordinary: true}\n", [record(0, "A")]),
+        ("  A: ordinary\n", [record(0, "A")]),
+        ("  A: {ordinary: true, shade: {mode: both}}\n", [record(0, "A")]),
+        ("  A: {uses: metal}\n", [record(0, "Unlisted")]),
+        ("  A: {uses: metal}\n", [record(0, None)]),
+        ("  A: {uses: metal}\n", [record(0, "A", "SPECULAR")]),
+    ],
+)
+def test_a_v4_library_range_warns_for_every_class_that_inherits_it(entries, records):
+    library = range_library(entries)
+    assert shadow_warnings(records, library, {"range": (84, 191)}, {}) == [
+        RANGE_WARNING
+    ]
+
+
+def test_a_v4_library_range_every_part_overrides_warns_nothing():
+    library = range_library(
+        "  A: {ordinary: true, shade: {range: [1, 2]}}\n"
+        "  B: {uses: metal, shade: {range: [3, 4]}}\n"
+    )
+    records = [record(0, "A"), record(1, "B")]
+    # Both entries are named; the library's own range reaches no part.
+    messages = shadow_warnings(records, library, {"range": (84, 191)}, {})
+    assert len(messages) == 2 and RANGE_WARNING not in messages
+    assert shadow_warnings([], library, {"range": (84, 191)}, {}) == []
+
+
+def test_a_shared_name_of_mixed_alpha_modes_takes_each_parts_own_class():
+    library = gated(
+        f"schema: {V4}\nramps: {{}}\nshade: {{mode: both}}\n"
+        "materials:\n  A: {ordinary: true, shade: {mode: neither}}\n"
+    )
+    mixed = [record(0, "A"), record(1, "A", "SPECULAR")]
+    # The SPECULAR part has the ordinary look, so it takes the library's mode.
+    assert shadow_warnings(mixed, library, {"mode": "ramp"}, {}) == [
+        'material "A" keeps its own shade.mode, "neither" (library.yaml line 5, '
+        'column 31), from the material library; the global "ramp" applies to '
+        "materials without their own",
+        'the material library gives shade.mode "both" (library.yaml line 3, '
+        'column 9) to its materials without their own; the global "ramp" does '
+        "not reach them",
+    ]
+    assert shadow_warnings(mixed[:1], library, {"mode": "ramp"}, {}) == [
+        'material "A" keeps its own shade.mode, "neither" (library.yaml line 5, '
+        'column 31), from the material library; the global "ramp" applies to '
+        "materials without their own"
+    ]

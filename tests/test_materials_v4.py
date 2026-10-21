@@ -715,3 +715,82 @@ def test_the_response_leaves_are_those_of_the_contract():
     assert [field for field in Shade.__dataclass_fields__][4:] == list(
         materials.RESPONSE_NAMES
     )
+
+
+HEAD = "schema: moskophoros.materials/4\nramps: {m: [1, 2]}\n"
+
+
+@pytest.mark.parametrize(
+    ("body", "problem"),
+    [
+        (
+            "materials:\n  A:\n    ordinary: true\n    shade:\n      key: {1: 0.5}\n",
+            'materials["A"].shade.key: key 1 is not a string at line 7, column 13',
+        ),
+        (
+            "materials:\n  A:\n    ordinary: true\n    shade:\n      range: [9, 1]\n",
+            'materials["A"].shade.range: expected [lo, hi], two integers with '
+            "0 <= lo < hi <= 255, got [9, 1] at line 7, column 7",
+        ),
+        (
+            "materials:\n  A:\n    ordinary: true\n    shade:\n      ao_distance_m: 0\n",
+            'materials["A"].shade.ao_distance_m: expected a finite number greater '
+            "than 0, got 0 at line 7, column 7",
+        ),
+        (
+            "materials:\n  A:\n    ordinary: true\n    shade:\n      glow: 1\n",
+            'materials["A"].shade: unknown field "glow" at line 7, column 7',
+        ),
+        (
+            "materials:\n  A:\n    ordinary: true\n    shade: 3\n",
+            'materials["A"].shade: expected a mapping of shading values, got 3 at '
+            "line 6, column 5",
+        ),
+        (
+            "materials:\n  A: {ordinary: true, uses: m}\n",
+            'materials["A"]: expected exactly one of "ramp", "uses" and "ordinary" '
+            "at line 4, column 3",
+        ),
+        (
+            "materials:\n  A: {glow: 1}\n",
+            'materials["A"]: unknown field "glow" at line 4, column 7',
+        ),
+        (
+            "materials:\n  A: 5\n",
+            'materials["A"]: expected {"ramp": [...]}, {"uses": NAME} or '
+            '"ordinary", got 5 at line 4, column 3',
+        ),
+        (
+            "materials:\n  A:\n    uses: m\n    shade:\n      ao_samples: 4\n",
+            'materials["A"].shade.ao_samples: AO samples is a global setting only; '
+            "set it with --ao-samples or shade.ao_samples in a settings file at "
+            "line 7, column 7",
+        ),
+        (
+            "shade:\n  ao_distance_m: 1\nmaterials: {}\n",
+            "shade.ao_distance_m: a library's own shade gives only range and the "
+            "shading response; give ao_distance_m in a material's own shade, or as "
+            "a global setting at line 4, column 3",
+        ),
+        (
+            "shade:\n  1: 2\nmaterials: {}\n",
+            "shade: key 1 is not a string at line 4, column 3",
+        ),
+    ],
+)
+def test_every_gated_error_about_a_shade_or_an_entry_gives_its_position(body, problem):
+    with pytest.raises(LibraryError) as raised:
+        read(HEAD + body)
+    assert raised.value.problem == problem
+
+
+def test_the_same_errors_carry_no_position_without_positions():
+    document = {
+        "schema": V4,
+        "ramps": {"m": [1, 2]},
+        "materials": {"A": {"ordinary": True, "shade": {"range": [9, 1]}}},
+    }
+    assert refused(document) == (
+        'materials["A"].shade.range: expected [lo, hi], two integers with '
+        "0 <= lo < hi <= 255, got [9, 1]"
+    )

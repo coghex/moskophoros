@@ -525,3 +525,19 @@ def test_a_resolved_error_reports_the_budget_and_the_order_together():
         "shade.brightness.floor 1.0 (shipped default) exceeds "
         "shade.brightness.ceiling 0.0 (shipped default)",
     ]
+
+
+@pytest.mark.parametrize(
+    "strengths", [(1.0, 3e-28, 3e-28), (3e-28, 3e-28, 1.0), (3e-28, 1.0, 3e-28)]
+)
+def test_a_tiny_excess_is_refused_through_the_reader_in_any_order(strengths):
+    text = (
+        f"shade:\n  key: {{strength: {strengths[0]!r}}}\n"
+        f"  sky: {{strength: {strengths[1]!r}}}\n"
+        f"  ground: {{strength: {strengths[2]!r}}}\n"
+    )
+    layer = read_bytes(text.encode(), source="s.yaml", directory=".", shading=True)
+    errors = problems(values() | dict(layer), has_palette=False)
+    assert len(errors) == 1 and errors[0].endswith(
+        "= 1.0000000000000000000000000006, exceeds 1"
+    )
