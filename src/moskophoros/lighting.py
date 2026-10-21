@@ -279,20 +279,48 @@ def _entries(weight, shade, terms, signal, ramp, size, response, shade_range, by
     return _voted(weight, shade, terms, signal, ramp, response, shade_range)
 
 
+# The most block-by-entry (and block-by-sample) cells a vote holds at once.
+_VOTE_BATCH = 1 << 18
+
+
 def _voted(weight, shade, terms, signal, ramp, response, shade_range):
     """The palette index of each block's most voted ramp entry, every sample
     voting with its weight for the entry of its own band. Entries a ramp
     repeats pool their votes. A tie goes to the entry with a band centre
     `(k + ½) / N` nearest the block's plain `signal`, counting every band the
-    entry has, then to the lower palette index."""
-    bands = len(ramp)
+    entry has, then to the lower palette index.
+
+    The blocks go in batches, so the working arrays, each of a block's
+    entries or bands or samples, stay a fixed size however large the image."""
+    entries, unit = np.unique(ramp, return_inverse=True)
+    width = max(len(entries), len(ramp), weight.shape[1])
+    step = max(1, _VOTE_BATCH // width)
+    chosen = np.empty(len(weight), dtype=np.int64)
+    for start in range(0, len(weight), step):
+        part = slice(start, start + step)
+        chosen[part] = _voted_batch(
+            weight[part],
+            shade[part],
+            None if terms is None else terms[part],
+            signal[part],
+            ramp,
+            entries,
+            unit,
+            response,
+            shade_range,
+        )
+    return chosen
+
+
+def _voted_batch(
+    weight, shade, terms, signal, ramp, entries, unit, response, shade_range
+):
+    bands, kinds = len(ramp), len(entries)
     terms = np.zeros((*shade.shape, 3)) if terms is None else terms
     sample = form_term(shade, shade_range, response) * light_factor(
         response, terms[..., 0], terms[..., 1], terms[..., 2]
     )
     band = band_of(sample, bands)
-    entries, unit = np.unique(ramp, return_inverse=True)
-    kinds = len(entries)
     voting = weight > 0
     block = np.broadcast_to(np.arange(len(weight))[:, np.newaxis], weight.shape)
     votes = np.bincount(

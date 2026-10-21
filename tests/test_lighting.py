@@ -4,6 +4,7 @@ on addressed sample arrays, with no Blender, file or command."""
 
 import dataclasses
 import math
+import tracemalloc
 import warnings
 
 import numpy as np
@@ -891,3 +892,38 @@ def test_blocks_refuse_a_ramp_outside_the_palette_and_a_bad_range():
         shade([50], ramp=())
     with pytest.raises(ValueError, match="shade range"):
         shade([50], shade_range=(5, 5))
+
+
+def test_the_mode_vote_memory_is_bounded_by_batches_not_by_blocks_times_entries():
+    size = 128
+    rng = np.random.default_rng(5)
+    palette = tuple((i, 255 - i, (i * 7) % 256) for i in range(255))
+    shades = rng.integers(0, 256, (size, size)).astype(np.uint8)
+    inputs = (
+        np.full((size, size, 4), 255, dtype=np.uint8),
+        np.zeros((size, size), dtype=np.int64),
+        shades,
+        None,
+        np.full((size, size), FULL),
+        1,
+    )
+    look = Look(response(ambient_form=False), (0, 254), 0.3, 0.25, 1.0)
+
+    def peak(entries):
+        tracemalloc.start()
+        try:
+            lighting.shade_layer(
+                *inputs,
+                ramps=[tuple(range(entries))],
+                palette=palette,
+                looks=[look],
+                lights=LIGHTS,
+                by_mode=True,
+            )
+            return tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+
+    # One dense block-by-entry array alone would be 33 MB here (16384 blocks,
+    # 255 entries, 8 bytes); the vote works in batches of a fixed size.
+    assert peak(255) < 16 * 2**20
