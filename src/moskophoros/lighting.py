@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from moskophoros import imageops, views
+from moskophoros import dither, imageops, views
 from moskophoros.palette import validate_colors
 from moskophoros.shading import FRAMES
 
@@ -190,6 +190,10 @@ def shade_blocks(
     shade_range,
     lights,
     by_mode,
+    pattern="off",
+    strength=1.0,
+    rows=None,
+    columns=None,
 ):
     """The shaded colour of each block of one winning identity, by the
     response's mode (contract 3's table).
@@ -214,6 +218,18 @@ def shade_blocks(
     | neither    | the last entry              | the base             |
 
     A block always scales by the plain signal, after its colour is chosen.
+
+    `pattern` and `strength` select band dithering (`dither`), and `rows` and
+    `columns` hold the output cell pixel row and column of each block, `(B,)`
+    integer arrays. It is effective only for a pattern other than `off`, a
+    strength above 0, mode `ramp` or `both` and a ramp; then every band,
+    including each sample's vote in mode reduction, takes the block's one
+    threshold, and the tie reference and the brightness gain still use the
+    unperturbed signal. Otherwise the undithered path above runs, `rows` and
+    `columns` are not read, and nothing about the result differs from calling
+    without them. A caller that suppresses dithering, such as under snap,
+    passes `off`.
+
     Returns a new `uint8` array of shape `(B, 3)`; no input is changed.
     """
     base = np.asarray(base)
@@ -241,6 +257,18 @@ def shade_blocks(
                 f"a ramp must be non-empty indices into the {len(palette_array)}-colour "
                 f"palette, not {tuple(ramp)}"
             )
+    threshold = None
+    if (
+        dither.is_effective(pattern, strength)
+        and ramp is not None
+        and response.mode in ("ramp", "both")
+    ):
+        threshold = dither.thresholds(pattern, rows, columns)
+        if threshold.shape != (len(base),):
+            raise ValueError(
+                f"rows and columns must hold one cell for each of the "
+                f"{len(base)} blocks, not shape {threshold.shape}"
+            )
     terms = facing_terms(normals, weight, lights, response)
     signal = plain_signal(weight, shade, terms, response, (lo, hi))
 
@@ -257,6 +285,8 @@ def shade_blocks(
             response,
             (lo, hi),
             by_mode,
+            threshold,
+            strength,
         )
         colour = palette_array[entries]
     else:
@@ -266,29 +296,54 @@ def shade_blocks(
     return colour
 
 
-def _entries(weight, shade, terms, signal, ramp, size, response, shade_range, by_mode):
-    """The palette index of each block's ramp entry."""
+def _entries(
+    weight,
+    shade,
+    terms,
+    signal,
+    ramp,
+    size,
+    response,
+    shade_range,
+    by_mode,
+    threshold=None,
+    strength=1.0,
+):
+    """The palette index of each block's ramp entry; `threshold`, a block's
+    dither threshold, is None where the bands are not dithered."""
     lo, hi = shade_range
-    if response.ambient_form and not (
-        response.key_strength or response.sky_strength or response.ground_strength
+    if (
+        threshold is None
+        and response.ambient_form
+        and not (
+            response.key_strength or response.sky_strength or response.ground_strength
+        )
     ):
         # Nothing the integer arithmetic does not already do: keep it exactly.
         return imageops._ramp_entries(weight, shade, ramp, lo, hi, size, by_mode)
     if not by_mode:
-        return ramp[band_of(signal, len(ramp))]
-    return _voted(weight, shade, terms, signal, ramp, response, shade_range)
+        if threshold is None:
+            return ramp[band_of(signal, len(ramp))]
+        return ramp[dither.dithered_band(signal, len(ramp), threshold, strength)]
+    return _voted(
+        weight, shade, terms, signal, ramp, response, shade_range, threshold, strength
+    )
 
 
 # The most block-by-entry (and block-by-sample) cells a vote holds at once.
 _VOTE_BATCH = 1 << 18
 
 
-def _voted(weight, shade, terms, signal, ramp, response, shade_range):
+def _voted(
+    weight, shade, terms, signal, ramp, response, shade_range, threshold, strength
+):
     """The palette index of each block's most voted ramp entry, every sample
     voting with its weight for the entry of its own band. Entries a ramp
     repeats pool their votes. A tie goes to the entry with a band centre
     `(k + ½) / N` nearest the block's plain `signal`, counting every band the
-    entry has, then to the lower palette index.
+    entry has, then to the lower palette index. With a `threshold` for each
+    block, every sample's band is dithered by that one value; the tie
+    reference stays the unperturbed `signal`.
 
     The blocks go in batches, so the working arrays, each of a block's
     entries or bands or samples, stay a fixed size however large the image."""
@@ -308,19 +363,34 @@ def _voted(weight, shade, terms, signal, ramp, response, shade_range):
             unit,
             response,
             shade_range,
+            None if threshold is None else threshold[part],
+            strength,
         )
     return chosen
 
 
 def _voted_batch(
-    weight, shade, terms, signal, ramp, entries, unit, response, shade_range
+    weight,
+    shade,
+    terms,
+    signal,
+    ramp,
+    entries,
+    unit,
+    response,
+    shade_range,
+    threshold,
+    strength,
 ):
     bands, kinds = len(ramp), len(entries)
     terms = np.zeros((*shade.shape, 3)) if terms is None else terms
     sample = form_term(shade, shade_range, response) * light_factor(
         response, terms[..., 0], terms[..., 1], terms[..., 2]
     )
-    band = band_of(sample, bands)
+    if threshold is None:
+        band = band_of(sample, bands)
+    else:
+        band = dither.dithered_band(sample, bands, threshold[:, np.newaxis], strength)
     voting = weight > 0
     block = np.broadcast_to(np.arange(len(weight))[:, np.newaxis], weight.shape)
     votes = np.bincount(
@@ -328,7 +398,9 @@ def _voted_batch(
         weights=weight[voting],
         minlength=len(weight) * kinds,
     ).reshape(len(weight), kinds)
-    gaps = np.abs(signal[:, np.newaxis] - (np.arange(bands) + 0.5) / bands)
+    # Distances on the band-coordinate scale, `|N·e − (k + ½)|`: dividing the
+    # centres by N would round two centres equally far from the signal apart.
+    gaps = np.abs(bands * signal[:, np.newaxis] - (np.arange(bands) + 0.5))
     distance = np.stack([gaps[:, unit == k].min(axis=1) for k in range(kinds)], axis=1)
     distance = np.where(votes == votes.max(axis=1, keepdims=True), distance, np.inf)
     # `entries` ascends, so the first of equal distances is the lower index.
