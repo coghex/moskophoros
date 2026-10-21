@@ -444,6 +444,23 @@ def test_a_tie_uses_the_unperturbed_signal_and_every_band_an_entry_holds():
     assert entries(got) == [0, 0, 0, 0]
 
 
+def test_a_tie_between_equally_distant_centres_goes_to_the_lower_index():
+    # Five bands, shades 30 and 70: the plain signal .5 is exactly between the
+    # centres of bands 1 and 3 (.3 and .7), but (1 + ½) / 5 and (3 + ½) / 5
+    # are not equally far from .5 once rounded. Both samples stay in those
+    # bands at the cell's threshold, so the lower palette index must win.
+    ramp = (0, 1, 2, 3, 4)
+    assert abs(0.5 - 1.5 / 5) != abs(0.5 - 3.5 / 5)
+    got = shade_all(
+        [[30, 70]], [0], [0], ramp=ramp, by_mode=True, pattern="ordered2", strength=1.0
+    )
+    assert entries(got) == [1]
+    assert entries(shade_all([[30, 70]], ramp=ramp, by_mode=True)) == [1]
+    # The continuous path without dither has the same tie.
+    got = shade_all([[30, 70]], ramp=ramp, by_mode=True, key_strength=1.0)
+    assert entries(got) == [1]
+
+
 def test_brightness_gain_still_comes_from_the_unperturbed_signal():
     rows, columns = cell("ordered2")
     for by_mode in (False, True):
@@ -561,7 +578,7 @@ def centre_gap(entry, plain, ramp):
     """How far the unperturbed `plain` signal is from the nearest band centre of
     any band `entry` holds in `ramp`."""
     return min(
-        abs(plain - (band + 0.5) / len(ramp))
+        abs(len(ramp) * plain - (band + 0.5))
         for band in range(len(ramp))
         if ramp[band] == entry
     )

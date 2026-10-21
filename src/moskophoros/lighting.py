@@ -398,7 +398,9 @@ def _voted_batch(
         weights=weight[voting],
         minlength=len(weight) * kinds,
     ).reshape(len(weight), kinds)
-    gaps = np.abs(signal[:, np.newaxis] - (np.arange(bands) + 0.5) / bands)
+    # Distances on the band-coordinate scale, `|N·e − (k + ½)|`: dividing the
+    # centres by N would round two centres equally far from the signal apart.
+    gaps = np.abs(bands * signal[:, np.newaxis] - (np.arange(bands) + 0.5))
     distance = np.stack([gaps[:, unit == k].min(axis=1) for k in range(kinds)], axis=1)
     distance = np.where(votes == votes.max(axis=1, keepdims=True), distance, np.inf)
     # `entries` ascends, so the first of equal distances is the lower index.
