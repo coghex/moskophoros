@@ -2127,11 +2127,14 @@ lighting of vision V-7. The same basis serves both projections.
   nearest distinct allowed colours in OKLab, or the second where the pattern's
   threshold is below `strength` times the fraction that projects the colour
   onto their segment; a one-colour target stays constant.
-- *Composition.* The layers composite once, as step 3. A composite keeps its
-  possibly off-palette colour where a contributing layer uses `brightness` or
-  `both` and snap is off, and otherwise maps to the palette as step 4. Alpha,
-  coverage and the reduced maps are never touched, and a pixel of alpha 0 is
-  `(0, 0, 0, 0)`.
+- *Composition.* The layers composite once, as step 3. Where a contributing
+  layer uses `brightness` or `both`, the composite keeps its possibly
+  off-palette colour unless the snap target is `palette`, which snaps the
+  composite itself: with snap `off` the layers are unsnapped, and with snap
+  `ramp` each layer is on its ramp but a blend of two layers can still leave
+  the palette (D-18). Where neither contributing layer does, the composite maps
+  to the palette as step 4. Alpha, coverage and the reduced maps are never
+  touched, and a pixel of alpha 0 is `(0, 0, 0, 0)`.
 - *The exact path.* With the ambient form on, every strength 0 and no effective
   dithering, the integer ramp selection and tie arithmetic of
   [Material ramps](#material-ramps) is kept as it is, not replaced by the
@@ -2261,7 +2264,8 @@ The four fixed looks are (owner decisions 2026-10-04, D-6 and D-7):
 Coverage and mode tie rules stay as above. Every look has the same transparent
 pixels and binary output alpha; each opaque paletted output colour belongs to
 the palette, except where [baked shading](#baked-shading) scales a colour by
-brightness and snapping is off, which the default settings never do. Stages
+brightness and the snap target is not `palette` (with `ramp`, a blend of two
+layers can still leave the palette), which the default settings never do. Stages
 keep addresses, frame order and metadata. The command
 processes one supersampled frame at a time. Palette data never enters capture
 settings or jobs. Without a palette, both reductions produce the same bytes

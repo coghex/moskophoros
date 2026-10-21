@@ -85,14 +85,24 @@ def view_of(subject):
     return ISO if subject == "opaque" else FRONT
 
 
-def render(found, models, inputs, tmp_path, subject, name, *options, library=True):
+def render(
+    found,
+    models,
+    inputs,
+    tmp_path,
+    subject,
+    name,
+    *options,
+    library=True,
+    palette=True,
+):
     out = tmp_path / name
     out.mkdir()
     argv = [
         *["--no-user-config", "--blender", str(found.path)],
         *["--supersample", "2", "--fps", "4", "--no-preview"],
         *view_of(subject),
-        *["--palette", str(inputs / "palette.hex")],
+        *(["--palette", str(inputs / "palette.hex")] if palette else []),
         *(["--materials", str(inputs / "materials.yaml")] if library else []),
         *options,
         str(models[subject]),
@@ -194,25 +204,36 @@ def test_snapped_brightness_stays_on_the_palette(
 def test_a_palette_free_brightness_run_shades_the_ordinary_colour(
     capsys, found, models, inputs, tmp_path, subject
 ):
-    plain = render(found, models, inputs, tmp_path, subject, "plain", library=False)
-    out = render(
-        found,
-        models,
-        inputs,
-        tmp_path,
-        subject,
-        "bright",
-        "--shade-mode",
-        "brightness",
-        "--bake-key-strength",
-        "0.8",
-        "--brightness-floor",
-        "0.1",
-        library=False,
-    )
-    assert (out / "sheet.png").read_bytes() != (plain / "sheet.png").read_bytes()
+    # No palette and no library at all: the ordinary colour is scaled, a ramp
+    # mode has nothing to select, and `both` falls back to brightness.
+    bare = {"library": False, "palette": False}
+    plain = render(found, models, inputs, tmp_path, subject, "plain", **bare)
+    shading = ["--bake-key-strength", "0.8", "--brightness-floor", "0.1"]
+    runs = {
+        mode: render(
+            found,
+            models,
+            inputs,
+            tmp_path,
+            subject,
+            mode,
+            "--shade-mode",
+            mode,
+            *shading,
+            **bare,
+        )
+        for mode in MODES
+    }
+    for name, out in {"plain": plain, **runs}.items():
+        record = json.loads((out / "sheet.json").read_text())["settings"]["style"]
+        assert record["palette"] is None and record["materials"] is None, name
+    sheet = {name: (out / "sheet.png").read_bytes() for name, out in runs.items()}
+    assert sheet["brightness"] != (plain / "sheet.png").read_bytes()
+    assert sheet["both"] == sheet["brightness"]
+    assert sheet["ramp"] == sheet["neither"] == (plain / "sheet.png").read_bytes()
     assert np.array_equal(
-        pixels(out / "sheet.png")[..., 3], pixels(plain / "sheet.png")[..., 3]
+        pixels(runs["brightness"] / "sheet.png")[..., 3],
+        pixels(plain / "sheet.png")[..., 3],
     )
 
 
