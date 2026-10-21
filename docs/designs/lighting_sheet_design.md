@@ -781,7 +781,7 @@ contract](#epic-contract)'s goal and done condition, and the design as ready
 for issue processing. Each slice is one issue and one pull request, except
 LIT-6, a documentation-only acceptance step with no pull request, as
 material styling MAT-7 was: its renders stay outside the repository, and its
-only repository artifact is `docs/acceptance/lighting-sheet.md`, published
+only repository artifact is `docs/archive/acceptance/lighting-sheet.md`, published
 with `docs-push`. LIT-4 and LIT-5 may land in either order after LIT-3.
 
 ### D-21. Depth outside the encodable range is an overflow error
@@ -1398,7 +1398,7 @@ delivers, in its own pull request, since tests read the design.
 ### LIT-6. Review normal maps and lit previews with the owner
 
 - **Outcome:** the owner's verdict on the arc's output, recorded in
-  `docs/acceptance/lighting-sheet.md`.
+  `docs/archive/acceptance/lighting-sheet.md`.
 - **Scope:** renders of RobotExpressive under the owner's look (their user
   settings) at their cell size, 48 × 48, and a smaller one; each colour
   sheet beside its normal map, depth map and an overlay showing their

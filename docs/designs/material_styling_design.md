@@ -841,7 +841,7 @@ request, except MAT-7.
 `xw77kpgu6p5468n94ddnec8u9s`):* MAT-7 is a documentation-only owner
 acceptance step with no pull request. Its review library and its renders are
 review inputs and outputs kept outside the repository (D-16, `AGENTS.md`
-§Files). Its only repository artifact is `docs/acceptance/material-styling.md`,
+§Files). Its only repository artifact is `docs/archive/acceptance/material-styling.md`,
 published with `docs-push`. The issue is complete when that record holds the
 owner's verdict. The exception changes how MAT-7 is delivered and nothing
 else: the owner's library sign-off and visual verdict are still required.

@@ -3,7 +3,7 @@
 **Approved by the owner on 2026-10-04 and ready for issue processing.** The
 owner decided every design question ([Decisions](#decisions), D-1 to D-16)
 and authorized readiness. This document owns the arc's delivery; the product
-contracts stay in [the design](../design.md) and [the vision](../vision.md),
+contracts stay in [the design](../../design.md) and [the vision](../../vision.md),
 and each slice amends the design sections it implements, as its decisions
 require. Approving the design is not a visual verdict: the owner still judges
 every rendered look (V-12).
@@ -100,7 +100,7 @@ process ran for this design.
   "the first style pass that needs them", and style passes and their
   configuration until "the owner starts style work". This arc is that start.
 - **Guide.** The slice 1 guide review
-  ([report](../guide/2026-10-04T175222Z-c93605c.md)) found no defect, read
+  ([report](../../guide/2026-10-04T175222Z-c93605c.md)) found no defect, read
   every vision principle as aligned, and recommends carrying the accepted
   plain baseline into the next arc.
 - **Tracker.** No open pull request; open issues are #43 (deferred by the
@@ -759,7 +759,7 @@ none. Affects SP1-5.
   sheet reuses as plain with no palette. A test asserts the capture job's
   bytes are the same with and without style options.
 - **Determinism:** two runs with each style give byte-identical PNG and JSON
-  (the Blender test group, run locally per [validation](../validation.md)).
+  (the Blender test group, run locally per [validation](../../validation.md)).
 - **Visual quality** is the owner's judgement only (V-12), from the sheets and
   previews in SP1-5. No test or metric stands in for it; E-1's statistics,
   if the owner asks for them, inform choices, not acceptance.
@@ -849,7 +849,7 @@ owner's review.
   looping and `Jump` one-shot) once per look, with `vince-128.gpl` for the
   paletted looks, checking that each sheet's JSON records the palette's
   SHA-256 `d7fc8fef…ca586`; an acceptance record like
-  `docs/acceptance/slice-1.md`, with the exact reproducing commands, output
+  `docs/archive/acceptance/slice-1.md`, with the exact reproducing commands, output
   hashes and the [Vince128 provenance](#acceptance-input-vince128); design
   §Deferred updated for what the arc settled.
 - **Phase:** 4.

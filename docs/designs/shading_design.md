@@ -111,12 +111,12 @@ boundary and leaves later style experiments in stylize, consistent with V-8.
 
 ### What the owner has actually judged
 
-- [Material styling](../acceptance/material-styling.md): qualified proof of
+- [Material styling](../archive/acceptance/material-styling.md): qualified proof of
   concept on 2026-10-08; generated ramps separately accepted on 2026-10-14.
   Neither is blanket approval of every future shading look.
-- [Settings](../acceptance/settings.md): accepted 2026-10-13. The owner wanted
+- [Settings](../archive/acceptance/settings.md): accepted 2026-10-13. The owner wanted
   a look between the two shade trials; that did not change shipped defaults.
-- [Lighting](../acceptance/lighting-sheet.md): accepted 2026-10-14, including
+- [Lighting](../archive/acceptance/lighting-sheet.md): accepted 2026-10-14, including
   a dark rear light. This judged preview lighting.
 - [Alpha](../acceptance/alpha.md): both hard and soft edges accepted;
   the combined translucent front layer and present occlusion approximation

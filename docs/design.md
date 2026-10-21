@@ -2020,7 +2020,7 @@ Both are pure functions in `imageops`, `reduce_normal_depth` and
 `palette.read_palette(path)` library function returns an immutable ordered
 sequence of 8-bit RGB triples and only reads the named file (owner decisions
 2026-10-04, D-4, D-5 and D-10 in
-[the style design](designs/style_pass_1_design.md#decisions)).
+[the style design](archive/designs/style_pass_1_design.md#decisions)).
 
 The suffix chooses the format, ignoring case:
 

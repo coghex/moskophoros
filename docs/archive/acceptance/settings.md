@@ -1,7 +1,7 @@
 # Settings acceptance
 
 This records the owner's acceptance of the settings arc, following
-[the settings design](../designs/settings_design.md) and vision V-12. The arc
+[the settings design](../../designs/settings_design.md) and vision V-12. The arc
 is epic #83. Its slices were delivered with #82 (PR #88), #84 (PR #89), #85
 (PR #90), #86 (PR #91) and #87 (PR #92), and the last one merged at
 `05fd2db`.

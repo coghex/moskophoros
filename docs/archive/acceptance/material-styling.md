@@ -259,7 +259,7 @@ This record holds the owner's verdict (qualified acceptance of the proof of conc
 
 ## MAT-8: generated ramps
 
-This section records the owner's visual acceptance of MAT-8 (#107), required by the issue's approval review (comment 6160971420) before PR #108 merges. The design is [`docs/designs/material_styling_design.md`](../designs/material_styling_design.md), decisions D-28 to D-36.
+This section records the owner's visual acceptance of MAT-8 (#107), required by the issue's approval review (comment 6160971420) before PR #108 merges. The design is [`docs/designs/material_styling_design.md`](../../designs/material_styling_design.md), decisions D-28 to D-36.
 
 ### Verdict
 

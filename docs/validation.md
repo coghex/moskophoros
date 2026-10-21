@@ -4,7 +4,7 @@ How moskophoros decides which checks a change needs, and the image they are
 to run in. Test groups are declared once in a catalog, and a planner compares
 two revisions and explains, for every group, whether the change selects it and
 why. The decisions behind this are in the
-[CI foundation design](designs/ci_foundation_design.md) (D-3 to D-7, D-10 to
+[CI foundation design](archive/designs/ci_foundation_design.md) (D-3 to D-7, D-10 to
 D-17, D-19 to D-21).
 
 This describes the catalog, the planner and its checks, the

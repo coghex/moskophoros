@@ -35,11 +35,11 @@ anything newer than the date below.
   - alpha: 2026-10-19, cutouts judged separately on a shrub the same day;
   - projects and camera: 2026-10-20.
 - **Settings arc** ([design](docs/designs/settings_design.md)): accepted
-  by the owner on 2026-10-13 ([record](docs/acceptance/settings.md)); epic
+  by the owner on 2026-10-13 ([record](docs/archive/acceptance/settings.md)); epic
   #83 closed. Layered YAML settings (user file, reused sheet, `--config`,
   options), the shading values, per-material shading and clip frame counts.
   Libraries are YAML (`moskophoros.materials/3`, with `/2` still supported).
-- **Lighting sheet** ([record](docs/acceptance/lighting-sheet.md)): every run
+- **Lighting sheet** ([record](docs/archive/acceptance/lighting-sheet.md)): every run
   writes `<stem>.normal.png`; `--depth` adds a depth map and `--light X,Y,Z`
   lit previews. Known cost: normal and depth encoding roughly doubles a test
   render's time.
