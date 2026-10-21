@@ -17,7 +17,7 @@ concrete precondition
 - [x] SHD-2. Model and resolve shading settings and library responses — [#139]
 - [x] SHD-3. Implement pure lighting and four-mode colour operations — [#140]
 - [x] SHD-4. Implement deterministic ramp and snap dithering — [#141]
-- [ ] SHD-5. Integrate shading into the addressed-frame pipeline
+- [x] SHD-5. Integrate shading into the addressed-frame pipeline — [#142]
 - [ ] SHD-6. Expose shading controls and reproducible sheet settings
 - [ ] SHD-7. Obtain owner visual acceptance for both uses
 - [ ] SHD-8. Regenerate the inventoried working sheets
