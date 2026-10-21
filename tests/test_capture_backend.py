@@ -432,7 +432,7 @@ def test_a_malformed_job_is_an_internal_error(change, message):
 
 def measure_document(job):
     return {
-        "schema": "moskophoros.capture-result/4",
+        "schema": "moskophoros.capture-result/5",
         "mode": "measure",
         "job_sha256": independent_sha256(job),
         "source_sha256": SHA,
@@ -818,7 +818,7 @@ MATID = (0, 1, 0, 255)
 SHADED = (137, 137, 137, 255)
 # A surface's flat colour: a capture's colour is opaque or empty.
 OPAQUE = (200, 100, 50, 255)
-BUFFER_NAMES = ("color", "matid", "shade", "normal", "depth")
+BUFFER_NAMES = ("color", "matid", "shade", "back_normal", "normal", "depth")
 COLOR = {
     "technique": "cycles-flat-emission",
     "samples_per_pixel": 1,
@@ -848,12 +848,13 @@ def render_document(job, phase_dir):
             phase_dir / _parent(phase_dir, paths["shade"])
         )
         covered = np.ones((6, 8), dtype=bool)
+        write_normal(phase_dir / paths["back_normal"], covered)
         write_normal(phase_dir / paths["normal"], covered)
         write_depth(phase_dir / paths["depth"], covered, 0.5)
         paths |= write_front(phase_dir, ordinal, (8, 6))
         records.append({"address": dict(frame["address"]), "buffers": paths})
     return {
-        "schema": "moskophoros.capture-result/4",
+        "schema": "moskophoros.capture-result/5",
         "mode": "render",
         "job_sha256": independent_sha256(job),
         "source_sha256": SHA,
@@ -879,10 +880,14 @@ def _clear(phase_dir, ordinal, pixel):
     """Make `pixel` of frame `ordinal` no surface in every buffer."""
     for name in ("color", "matid", "shade"):
         _paint(phase_dir / f"{name}/{ordinal:06d}.png", pixel, (0, 0, 0, 0))
-    for name, write in (("normal", write_normal), ("depth", write_depth)):
+    for name, write in (
+        ("back_normal", write_normal),
+        ("normal", write_normal),
+        ("depth", write_depth),
+    ):
         covered = np.ones((6, 8), dtype=bool)
         covered[pixel[1], pixel[0]] = False
-        args = (covered,) if name == "normal" else (covered, 0.5)
+        args = (covered, 0.5) if name == "depth" else (covered,)
         write(phase_dir / f"{name}/{ordinal:06d}.png", *args)
 
 

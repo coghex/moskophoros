@@ -57,11 +57,12 @@ def corner(value):
 
 
 def uncover_corner(document, tmp_path):
-    """Make pixel (0, 0) of frame 0's colour, normal and depth buffers
+    """Make pixel (0, 0) of frame 0's colour, normals and depth buffers
     background."""
     paint("color", corner((0, 0, 0, 0)))(document, tmp_path)
     covered = np.ones((6, 8), dtype=bool)
     covered[0, 0] = False
+    write_normal(tmp_path / "back_normal/000000.png", covered)
     write_normal(tmp_path / "normal/000000.png", covered)
     write_depth(tmp_path / "depth/000000.png", covered, 0.5)
 
@@ -422,10 +423,16 @@ def test_stylize_receives_decoded_identity_and_shade_arrays(setup, capsys, monke
     "config",
     [
         {"bad_aux": 3},
+        {"bad_back_normal": 3},
         {"code": 1, "materials": [{"id": 1, "material": 0}]},
         {"materials": [{"id": 0, "material": None}]},
     ],
-    ids=["shade-disagrees", "not-a-material-of-the-model", "maps-background"],
+    ids=[
+        "shade-disagrees",
+        "back-normal-coverage",
+        "not-a-material-of-the-model",
+        "maps-background",
+    ],
 )
 def test_invalid_auxiliary_data_leaves_earlier_outputs_untouched(setup, capsys, config):
     earlier = earlier_outputs(setup, *EARLIER)
@@ -477,3 +484,7 @@ def test_the_script_and_the_launcher_agree_on_the_encoding_and_shade_fields():
     assert script["NO_MATERIAL_ID"] == backend.NO_MATERIAL_ID
     assert list(script["SHADE"]) == list(backend.SHADE_FIELDS)
     assert list(script["COLOR"]) == list(backend.COLOR_FIELDS)
+    # The result schema and every buffer the script writes, in the launcher's
+    # order, so a buffer one side names and the other does not is caught here.
+    assert script["RESULT_SCHEMA"] == backend.RESULT_SCHEMA
+    assert list(script["BUFFERS"]) == ["color", *backend.AUXILIARY_BUFFERS]

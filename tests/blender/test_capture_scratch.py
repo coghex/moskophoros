@@ -193,6 +193,7 @@ def test_a_successful_run_leaves_no_intermediates_or_copies(
         "result.json",
     ]
     assert sorted(p.name for p in (work / "render").iterdir()) == [
+        "back_normal",
         "color",
         "depth",
         "front_alpha",

@@ -298,6 +298,7 @@ def test_a_valid_result_with_background_pixels(tmp_path):
         matid_background_corner(document, tmp_path)
         covered = COVERED.copy()
         covered[0, 0] = False
+        write_normal(tmp_path / "back_normal/000000.png", covered)
         write_normal(tmp_path / "normal/000000.png", covered)
         write_depth(tmp_path / "depth/000000.png", covered, 0.0)
 
@@ -348,6 +349,7 @@ def test_a_covered_depth_of_zero_is_not_background(tmp_path):
         matid_background_corner(document, tmp_path)
         covered = COVERED.copy()
         covered[0, 0] = False
+        write_normal(tmp_path / "back_normal/000000.png", covered)
         write_normal(tmp_path / "normal/000000.png", covered)
         write_depth(tmp_path / "depth/000000.png", covered, 0.0)
 

@@ -1433,12 +1433,15 @@ def _load_frame(address, paths, metadata, lookup):
     """The captured frame at `address` with every named buffer in `paths`:
     `color` as its pixels, `matid` and `shade` decoded through `lookup` into
     its identity and shade arrays, `normal` and `depth` into its normal and
-    depth arrays, the front buffers into its front arrays, and each other
-    buffer under its own name."""
+    depth arrays, `back_normal` into its back-normal array, the front buffers
+    into its front arrays and the front-normal array derived from the normal
+    and the front's presence, and each other buffer under its own name."""
     pixels = imageops.load_png(paths["color"])
     identity, shade = backend.decode_frame(paths, lookup)
     normal, depth = backend.decode_normal_depth(paths)
+    back_normal = backend.decode_back_normal(paths)
     front = backend.decode_front(paths, lookup)
+    front_normal = backend.derive_front_normal(paths, normal, front[2])
     buffers = {
         name: imageops.load_png(path)
         for name, path in paths.items()
@@ -1448,6 +1451,8 @@ def _load_frame(address, paths, metadata, lookup):
     buffers[sampling.SHADE] = shade
     buffers[sampling.NORMAL] = normal
     buffers[sampling.DEPTH] = depth
+    buffers[sampling.BACK_NORMAL] = back_normal
+    buffers[sampling.FRONT_NORMAL] = front_normal
     for name, array in zip(
         (
             sampling.FRONT_COLOR,

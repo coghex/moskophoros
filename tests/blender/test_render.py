@@ -514,6 +514,8 @@ def test_the_result_records_the_renderer_and_both_techniques(found, tmp_path):
     listing = sorted(p.relative_to(phase).as_posix() for p in phase.rglob("*"))
     # No scratch render, TGA or OpenEXR, is left in the phase directory.
     assert listing == [
+        "back_normal",
+        "back_normal/000000.png",
         "color",
         "color/000000.png",
         "depth",
