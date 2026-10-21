@@ -527,6 +527,24 @@ def light_factors(normal_bytes, depth_codes, ground_px, position, intensity, amb
     return np.minimum(1.0, ambient + (1 - ambient) * float(intensity) * diffuse)
 
 
+def scale_srgb(rgb, gain):
+    """The `uint8` sRGB colours `rgb` scaled in linear light by `gain`: each
+    byte decoded with the fixed table, multiplied by the `float64` gain of its
+    pixel, and encoded again as `min(255, floor(255 · s + ½))` with
+    `s = 12.92 · x` for `x ≤ 0.0031308`, else `1.055 · x^(1/2.4) − 0.055`.
+
+    `rgb` has the three channels on its last axis and `gain` its other axes.
+    Returns a new `uint8` array of `rgb`'s shape."""
+    gain = np.asarray(gain, dtype=np.float64)
+    linear = _SRGB_LINEAR[np.asarray(rgb)] * gain[..., np.newaxis]
+    encoded = np.where(
+        linear <= 0.0031308,
+        12.92 * linear,
+        1.055 * np.power(linear, 1 / 2.4) - 0.055,
+    )
+    return np.minimum(255, np.floor(255 * encoded + 0.5)).astype(np.uint8)
+
+
 def light_pixels(
     pixels, normal_bytes, depth_codes, ground_px, position, intensity, ambient
 ):
@@ -542,13 +560,7 @@ def light_pixels(
     factors = light_factors(
         normal_bytes, depth_codes, ground_px, position, intensity, ambient
     )
-    linear = _SRGB_LINEAR[pixels[..., :3]] * factors[..., np.newaxis]
-    encoded = np.where(
-        linear <= 0.0031308,
-        12.92 * linear,
-        1.055 * np.power(linear, 1 / 2.4) - 0.055,
-    )
-    rgb = np.minimum(255, np.floor(255 * encoded + 0.5)).astype(np.uint8)
+    rgb = scale_srgb(pixels[..., :3], factors)
     lit = np.zeros(pixels.shape, dtype=np.uint8)
     lit[covered, :3] = rgb[covered]
     lit[covered, 3] = pixels[covered, 3]
@@ -664,27 +676,13 @@ def map_ramps(
     mapped = np.zeros(count, dtype=bool)
 
     # Identity: each pixel with an identity votes with its colour alpha.
-    voting = (alpha > 0) & (ident >= 0)
     if weights is None:
         alphas = _alpha_bytes(alpha, edges)
     else:
         alphas = np.where(alpha.sum(axis=1) > 0, 255, 0).astype(np.uint8)
     covered = alphas > 0
-    if voting.any():
-        block = np.broadcast_to(np.arange(count)[:, np.newaxis], ident.shape)
-        keys = block[voting] * identities + ident[voting]
-        order = np.argsort(keys, kind="stable")
-        keys, weights = keys[order], alpha[voting][order]
-        starts = np.flatnonzero(np.diff(keys, prepend=-1))
-        votes = np.add.reduceat(weights, starts)
-        keys = keys[starts]
-        owner, candidate = keys // identities, keys % identities
-        # By block, then most votes, then the smallest identity index.
-        ranked = np.lexsort((candidate, -votes, owner))
-        first = ranked[np.flatnonzero(np.diff(owner[ranked], prepend=-1))]
-        winner = np.full(count, -1, dtype=np.int64)
-        winner[owner[first]] = candidate[first]
-        winner[~covered] = -1
+    winner = _winners(alpha, ident, identities, covered)
+    if (winner >= 0).any():
         for index, ramp in enumerate(ramps):
             if ramp is None:
                 continue
@@ -704,6 +702,32 @@ def map_ramps(
             result[chosen, 3] = alphas[chosen]
             mapped[chosen] = True
     return result.reshape(rows, columns, 4), mapped.reshape(rows, columns)
+
+
+def _winners(alpha, ident, identities, covered):
+    """The identity each block takes, or -1 for a block of no vote or one
+    that is not `covered`: by block, the most votes, each pixel of an
+    identity voting with its weight `alpha`, then the smallest identity index.
+    `alpha` and `ident` hold, for each block, the weight and identity of each
+    of its pixels."""
+    count = len(alpha)
+    winner = np.full(count, -1, dtype=np.int64)
+    voting = (alpha > 0) & (ident >= 0)
+    if voting.any():
+        block = np.broadcast_to(np.arange(count)[:, np.newaxis], ident.shape)
+        keys = block[voting] * identities + ident[voting]
+        order = np.argsort(keys, kind="stable")
+        keys, weights = keys[order], alpha[voting][order]
+        starts = np.flatnonzero(np.diff(keys, prepend=-1))
+        votes = np.add.reduceat(weights, starts)
+        keys = keys[starts]
+        owner, candidate = keys // identities, keys % identities
+        # By block, then most votes, then the smallest identity index.
+        ranked = np.lexsort((candidate, -votes, owner))
+        first = ranked[np.flatnonzero(np.diff(owner[ranked], prepend=-1))]
+        winner[owner[first]] = candidate[first]
+        winner[~covered] = -1
+    return winner
 
 
 def _shade_range(lo, hi):

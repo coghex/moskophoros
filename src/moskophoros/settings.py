@@ -27,6 +27,7 @@ from importlib import resources
 from pathlib import Path
 from types import MappingProxyType
 
+from moskophoros import shading as shading_model
 from moskophoros import views, yamlfile
 from moskophoros.capture.backend import MAX_AO_SAMPLES, PROJECTIONS
 from moskophoros.imageops import EDGES
@@ -696,7 +697,36 @@ DEFAULTS = MappingProxyType(
 )
 
 
-def read_bytes(data, *, source, directory, shipped=False):
+def _leaf(check):
+    """A shading leaf's check as a setting's: `shading.Bad` becomes `_Bad`,
+    worded with this module's way of showing a value."""
+
+    def leaf(value):
+        try:
+            return check(value)
+        except shading_model.Bad as error:
+            raise _Bad(error.problem(_shown_list)) from None
+
+    return leaf
+
+
+# The shading settings (shading design contract 1), second-level paths under
+# `shade`. They are no part of `SCHEMA`, the shipped defaults, `GROUPS` or the
+# command line until SHD-6; `read_bytes` takes them only with `shading=True`,
+# which no public path passes.
+SHADING_SCHEMA = MappingProxyType(
+    {
+        f"shade.{leaf.path}": Setting(leaf.what, None, leaf.default, _leaf(leaf.check))
+        for leaf in shading_model.LEAVES
+    }
+)
+# Each shading setting's default, as the command holds it.
+SHADING_DEFAULTS = MappingProxyType(
+    {name: setting.check(setting.default) for name, setting in SHADING_SCHEMA.items()}
+)
+
+
+def read_bytes(data, *, source, directory, shipped=False, shading=False):
     """The layer the settings file `data` gives, read from `directory`.
 
     `source` names the file in errors. Paths resolve against `directory`,
@@ -704,7 +734,14 @@ def read_bytes(data, *, source, directory, shipped=False):
     and line of the first problem. A file giving both spellings of the
     direction, `pitch` and `camera.direction`, with any values, is refused,
     except the `shipped` defaults, which set the view's initial state.
+
+    With `shading`, an internal gate no public path passes, the file may also
+    give the shading settings of `SHADING_SCHEMA`, whose second-level groups
+    under `shade` are mappings read leaf by leaf (shading design contract 1).
+    Without it, they are unknown keys.
     """
+    schema = {**SCHEMA, **SHADING_SCHEMA} if shading else SCHEMA
+    subgroups = shading_model.SUBGROUPS if shading else ()
     try:
         document, marks = yamlfile.load_located(data)
     except yamlfile.YamlError as error:
@@ -752,11 +789,16 @@ def read_bytes(data, *, source, directory, shipped=False):
                     f"{key}: the key {_shown(member)} is not a setting name at "
                     f"line {line}, column {column}",
                 )
+            if key == "shade" and member in subgroups:
+                entries.extend(
+                    _read_subgroup((key, member), member_value, refuse, marks, source)
+                )
+                continue
             entries.append(((key, member), member_value))
     layer = Layer()
     for path, value in entries:
         key = ".".join(path)
-        setting = SCHEMA.get(key)
+        setting = schema.get(key)
         if setting is None:
             refuse(path, "unknown key")
         try:
@@ -780,6 +822,25 @@ def read_bytes(data, *, source, directory, shipped=False):
     if clips:
         layer["clips"] = clips
     return layer
+
+
+def _read_subgroup(path, value, refuse, marks, source):
+    """The `(path, value)` entries of the second-level group at `path`, such
+    as `shade.key`: a mapping whose keys are settings of their own."""
+    group = ".".join(path)
+    if not isinstance(value, dict):
+        refuse(path, f"expected a mapping of settings, got {_shown(value)}")
+    entries = []
+    for member, member_value in value.items():
+        if not isinstance(member, str):
+            line, column = yamlfile.locate(marks, (*path, member))
+            raise SettingsError(
+                source,
+                f"{group}: the key {_shown(member)} is not a setting name at "
+                f"line {line}, column {column}",
+            )
+        entries.append(((*path, member), member_value))
+    return entries
 
 
 def _read_clips(value, refuse, marks, source):
@@ -869,6 +930,27 @@ def project_file(environ, name):
     if not is_project_name(name):
         raise ValueError(f"not a project name: {name!r}")
     return config_dir(environ) / PROJECTS_DIR / f"{name}{PROJECT_SUFFIX}"
+
+
+def origins(sources):
+    """Where each setting of the merged `sources` came from, for errors that
+    name every value they involve: `(label, layer)` pairs, lowest first, as
+    `merge` takes the layers. A setting maps to its highest source's label and
+    the line and column it is written at, such as `config.yaml line 12,
+    column 3`, or just the label when the layer has no position for it. A
+    setting no source sets is absent: the shipped default."""
+    found = {}
+    for label, layer in sources:
+        for name in layer:
+            if name == "clips":
+                continue
+            where = getattr(layer, "where", {}).get(name)
+            found[name] = (
+                label
+                if where is None
+                else f"{label} line {where[0]}, column {where[1]}"
+            )
+    return found
 
 
 def merge(*layers):
