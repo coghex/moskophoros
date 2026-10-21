@@ -136,6 +136,12 @@ this repository:
 - Do not commit large binaries (models, renders) without the owner's approval.
 - Owner-supplied `.glb` models are inputs, not missing art. A generated sprite
   is this tool's product, never a placeholder that needs an artist.
+- `docs/archive/` is history: closed designs, owner acceptance records and
+  evidence. Read it only when asked or when tracing why something was decided,
+  and never treat it as current behavior. `.ignore` hides it and the guide's
+  reports from search (`rg --no-ignore` reaches them). Once an arc's epic has
+  closed and no open issue cites a document by path, move it there with
+  `git mv` and land it with `docs-push`.
 
 ## Keeping these documents healthy
 

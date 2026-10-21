@@ -1,0 +1,5 @@
+# Hidden from search, kept for tools and history (ripgrep and fd read this file; git does not).
+# docs/archive/ is history; the guide reads its reports in place. See AGENTS.md.
+docs/archive/
+docs/guide/*
+!docs/guide/CURSOR.md
