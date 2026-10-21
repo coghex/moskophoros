@@ -242,6 +242,10 @@ def test_only_the_internal_modules_name_the_gate():
         "shading_resolve.py",
         "settings.py",
         "materials.py",
+        # The stage takes the resolved shading as an argument; the command
+        # passes none until SHD-6, and neither module ever passes `True`.
+        "stylize.py",
+        "shade_layers.py",
     }
     for path in sorted(SRC.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -311,3 +315,14 @@ def test_the_default_command_still_writes_a_current_sheet(setup, capsys, tmp_pat
         "convexity_weight",
         "range",
     ]
+
+
+def test_the_command_passes_no_resolved_shading_to_stylize():
+    # SHD-5 gives stylize the arguments; SHD-6 wires them. Until then the
+    # command's reductions carry neither, so its output cannot change.
+    tree = ast.parse((SRC / "cli.py").read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.keyword):
+            assert node.arg not in {"shading", "lights"}, node.lineno
+        if isinstance(node, ast.Attribute | ast.Name):
+            assert getattr(node, "attr", getattr(node, "id", None)) != "shade_layers"

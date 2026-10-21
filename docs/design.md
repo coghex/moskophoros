@@ -1169,6 +1169,28 @@ the front layer and the two layer normals, with this interface:
   `back_normal` is a 16-bit buffer, so it never takes the generic route that
   loads any other named buffer as an 8-bit image.
 
+**Resolved shading (internal until SHD-6).** `stylize.plain` and
+`stylize.mode` also take, as keyword-only arguments given together, `shading`,
+a `shading_resolve.Resolved` (each identity's resolved response and shade
+range, and the global snap target), and `lights`, a `lighting.Lights` (the
+key, sky and ground unit vectors in camera coordinates, which the caller makes
+with `lighting.light_vectors`; the world-up sky vector is the projection of
+the subject's +Y by `views.subject_basis`, never inferred from pixels or
+exported map bytes). `shade_range`, the global range, is passed whether or not
+a library is: it must be the range `shading` resolved. Stylize reads these
+values and the addressed arrays above only, never a Blender object, a file, a
+setting or a frame name, and the command passes none of them yet: the public
+settings, options, library activation, sheet records and warnings stay SHD-6's,
+and without `shading` the reduction is the one specified in this document. A
+frame in a shaded reduction carries the identity and shade arrays of each layer
+it reduces and, where a contributing layer's response has a nonzero key, sky or
+ground strength, that layer's normals (`back_normal`; `front_normal` for a front
+layer); a missing array, or a sample with weight whose normal is zero or not
+finite, is a `ValueError` naming the frame's address and the buffer. Stylize
+shades from a normalised `float64` working copy of the layer normals and
+changes no input array; the exported maps still reduce the original `normal`
+and `depth` arrays, independently of how a layer is shaded.
+
 Frames are loaded one at a time, as stylize reduces them. Stylize returns a
 reduced colour frame carrying only its reduced normal and depth maps, and
 releases a frame's supersampled colour and every other buffer once it is
@@ -1890,6 +1912,53 @@ and so is a block with no front sample in a frame with one.
    of weight 32768 over a back of `(100, 100, 100)` with transmitted weight
    32767 maps the back to white first, composites to 188 and snaps to white,
    not black.
+
+**Shading response** (shading design contract 3; D-14, D-18 to D-21, D-23,
+D-27 to D-30, D-34, D-36, D-37; internal until SHD-6, `shade_layers`). Given
+`shading` and `lights` ([Frames into stylize](#frames-into-stylize)), the
+material step of step 2 and the palette step of step 4 are replaced by one
+response step that runs with or without a library. Without a library every
+identity, the no-identity class included, is ordinary under the global
+response and range; a palette is needed only by a snap target other than
+`off`. A reduction with no library and no mode `brightness` or `both` has no
+step at all, and is exactly the reduction above.
+
+- *Per layer.* Each layer keeps step 2's ordinary colour, its own weights (`uᵢ`
+  for the front, `tᵢ` for the back, the colour alpha for a frame without a
+  front layer) and its own identity, shade and normal arrays. A layer whose
+  total weight over the output pixel is 0 contributes nothing, snap eligibility
+  included. The winner is chosen as for the ramps; its look gives the response,
+  and the ramp is the library's, if any. The shade mean or vote and the facing
+  terms use only the samples of the winning identity, at the layer's weights.
+- *Four modes.* The winner's mode acts through `lighting.shade_blocks`: `ramp`
+  selects a band, `brightness` scales the last ramp entry, `both` selects a
+  band and scales it, `neither` keeps the last entry; with no ramp, `ramp` and
+  `neither` keep the ordinary colour and `brightness` and `both` scale it. A
+  block with no winner keeps its ordinary colour.
+- *Band dithering* applies to a layer with mode `ramp` or `both`, a ramp, a
+  pattern other than `off` and a strength above 0, from the output cell's own
+  row and column in the reduced frame, with nothing added for frame,
+  direction or packing. A snap suppresses it where the snap makes the final
+  choice instead: under `ramp` on a `brightness` or `both` layer, under
+  `palette` on both layers of a pixel where either contributing layer uses
+  `brightness` or `both`. It never runs on both a band and its snap.
+- *Snap.* The target is global. Under `ramp`, each contributing `brightness`
+  or `both` layer snaps its rounded bytes to its own ramp (the whole palette
+  where it has none) with its material's pattern and strength, before the
+  layers composite. Under `palette`, when some contributing layer uses
+  `brightness` or `both`, the composite's rounded bytes snap once to the whole
+  palette, with the pattern and strength of the layer of greater visible
+  weight (the front on a tie; a one-layer pixel uses its own); a controller
+  with mode `neither`, or none, snaps without dithering. Snap is
+  `dither.snap`.
+- *Composition.* The layers composite once, as step 3. A composite keeps its
+  possibly off-palette colour where a contributing layer uses `brightness` or
+  `both`, and otherwise maps to the palette as step 4. Alpha, coverage and the
+  reduced maps are never touched, and a pixel of alpha 0 is `(0, 0, 0, 0)`.
+- *Lifetime.* Every auxiliary and working array is released when the frame is
+  reduced, before the next is asked for, and the reduced frame holds none.
+
+Public activation of all of this remains SHD-6's.
 
 #### Normal and depth maps
 
