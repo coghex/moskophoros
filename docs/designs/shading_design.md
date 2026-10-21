@@ -14,7 +14,7 @@ concrete precondition
 
 - [x] EPIC. Support configurable baked shading alongside live-lit sprites — [#137]
 - [x] SHD-1. Preserve addressed normals for both capture layers — [#138]
-- [ ] SHD-2. Model and resolve shading settings and library responses
+- [x] SHD-2. Model and resolve shading settings and library responses — [#139]
 - [ ] SHD-3. Implement pure lighting and four-mode colour operations
 - [ ] SHD-4. Implement deterministic ramp and snap dithering
 - [ ] SHD-5. Integrate shading into the addressed-frame pipeline
