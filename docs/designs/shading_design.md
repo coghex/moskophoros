@@ -24,8 +24,9 @@ concrete precondition
 
 The owner approved the eight delivery slices, their dependencies and design
 readiness in D-35. D-36 to D-39 resolve review round 1's four owner questions
-and approve the revised contracts and slice boundaries. Readiness is restored;
-re-review and issue processing await the manager's instruction.
+and approve the revised contracts and slice boundaries. Round 2 returned
+READY; D-40 and the precision fixes below address its three minor findings.
+The manager has directed issue processing, with separate signoff for each draft.
 
 ## Epic contract
 
@@ -910,6 +911,25 @@ restoring the document to ready, landing revision 1 and reporting status.
 Independent re-review is still required by the approved process; readiness
 does not authorise tracker creation or implementation.
 
+### D-40. Keep the shared signal and document its brightness cap
+
+Owner, about 2026-10-21 02:20 UTC, typed directly in the manager's terminal;
+relayed by mosk-manager in cmux message
+`7539e167-f7ee-4d84-acf4-9029abe13103`. The exact answer to S-20 was:
+
+> "A"
+
+The manager presented A as keeping D-36 unchanged, stating that brightness
+gain tops out below the ceiling while ambient form is on, and adding a
+narrow-range SHD-3 fixture. B would normalise gain separately. The owner
+selected A: no separate gain normalisation. With ambient form on,
+`a <= (hi-lo)/(hi-lo+1)` and `L <= 1`, so maximum gain is
+`floor+(ceiling-floor)*(hi-lo)/(hi-lo+1)`. This is below the ceiling when
+floor < ceiling, with a gap of `(ceiling-floor)/(hi-lo+1)`; equal endpoints
+remain constant. Ambient bypass can reach the ceiling at `L=1`. This
+clarifies D-25's restoration wording; it does not raise the allowed ceiling.
+SHD-3 verifies a narrow-range brightness case as well as long-ramp bands.
+
 ## Question history and resolution
 
 Behaviour contracts were approved through D-34 and the delivery plan through
@@ -1134,7 +1154,7 @@ It authorises the following non-owner clarifications and additive evidence
 obligations. Those clarifications are review dispositions, not new owner D
 decisions. The four owner-reserved findings were subsequently approved in
 D-36 to D-39 through relay `97680a2f-1e3c-483a-994f-ff214e08ff1b`.
-All 19 findings are addressed in this revision, subject to independent re-review.
+All 19 findings were addressed and independently confirmed resolved by round 2.
 
 | Finding | Disposition in this revision |
 |---|---|
@@ -1158,12 +1178,37 @@ All 19 findings are addressed in this revision, subject to independent re-review
 | S-18 | Fixed: explicit-source warning convention includes ordinary overrides; false ordinary flag rejected |
 | S-19 | Fixed: resolved references, reviewer identity, timezone and V-4/V-8 explanation |
 
+## Review round 2 and processing handoff
+
+Claude's round 2 review of `6359cb19a5` returned **READY for issue
+processing**, with S-1 to S-19 resolved, no blockers or should-fix findings,
+and three minor findings. Review file
+`~/.local/share/moskophoros-acceptance/shading-design/review-claude-2.md`,
+SHA-256 `632470e3db709d59e22b0baa53b79388d6966c0dfbf5e9960792a139b566480a`.
+
+- **S-20:** resolved by D-40. Keep D-36, state the brightness cap and add
+  SHD-3's narrow-range brightness fixture; do not normalise gain separately.
+- **S-21:** fixed by making the whole-palette dither-suppression sentence
+  explicitly conditional on effective snap (a contributing brightness/both layer).
+- **S-22:** fixed by specifying SHD-2's internal gate and public-path
+  rejection tests for new settings and `/4` file/inline library records.
+
+The manager relayed D-40 and the processing direction in cmux message
+`7539e167-f7ee-4d84-acf4-9029abe13103`. The process brief is
+`~/.local/state/project-manager/moskophoros/dispatch-process-shading.md`,
+SHA-256 `cf9838d671c0eaa4f8ae350957df5ffc26336ffe59d2a1fbee747c584b2fdafd`.
+Publish these final clarifications, retain readiness, then process the epic
+and one dependency-ready child per invocation. Each complete draft requires
+the manager's or owner's explicit signoff before creation. Child readiness
+review and solving are outside this processing assignment.
+
 ## Implementation contracts
 
 The base contracts were approved in full by D-32 through D-34 from batch
 10's immutable review copy. This text incorporates the non-owner precision
 fixes authorised by the revision brief above and the owner's amendments
-D-36 to D-39; the immutable original approved copy is unchanged.
+D-36 to D-40 and round 2's precision fixes; the immutable original approved
+copy is unchanged.
 These are implementation requirements, not claims of shipped
 behaviour. No project look is selected here; D-31 reserves that for rendered
 acceptance.
@@ -1390,6 +1435,13 @@ dot product. Ramp index is `clamp(floor(N*e),0,N-1)`; RGB brightness gain is
 `floor+(ceiling-floor)*e` in linear colour, followed by sRGB encoding and
 half-up byte rounding.
 
+As D-40 confirms, ambient form on caps `e` below 1. At `L=1`, maximum
+gain is `floor+(ceiling-floor)*(hi-lo)/(hi-lo+1)`, below the ceiling unless
+the endpoints are equal. For `[100,101]` with floor 0.3 and ceiling 1.0,
+the cap is 0.65, even when raw shade exceeds 101. Ambient form off gives
+gain 1.0 in that example at `L=1`. No separate brightness normalisation is
+applied; this range-dependent cap is intentional.
+
 For mode reduction, clamp each winning-material sample's raw shade to
 `[lo,hi]` before the same normalisation, evaluate its range signal and light
 product, select its band and use the existing weighted palette
@@ -1412,8 +1464,9 @@ with one pattern/strength control.
 Effective band dithering requires a pattern other than `off`, strength
 greater than zero, mode `ramp` or `both`, a resolved ramp, and no effective
 snap suppressing that layer's intermediate dithering. Otherwise use the
-undithered band path. Whole-palette snap suppresses intermediate dithering
-on both contributing layers, including a ramp-only layer. D-29 snap receives
+undithered band path. Effective whole-palette snap (some contributing layer
+uses brightness/both) suppresses intermediate dithering on both contributing
+layers, including a ramp-only layer. D-29 snap receives
 the 8-bit sRGB bytes after brightness half-up rounding (own-ramp snap) or
 composition (whole-palette snap). Distinct target colours mean distinct RGB
 byte triples. Deduplicate by first target occurrence, select nearest and
@@ -1632,6 +1685,9 @@ processing await the manager's instruction after these revisions.
   Apply the shared baseline precondition if this slice merges first.
   Keep these foundations internal until SHD-6 wires the public loaders and
   CLI; do not accept unsupported user-facing fields in this intermediate step.
+  The gate is an explicit internal parameter or schema injection used by
+  direct tests, unreachable from public command options, settings files or
+  sheet records until SHD-6 activation.
 - **Phase:** 1, configuration foundation.
 - **Depends on:** none.
 - **Ordering:** critical path; independent of SHD-1 and can land first.
@@ -1640,6 +1696,10 @@ processing await the manager's instruction after these revisions.
   equivalence, ordinary entries, precedence, shadow warnings and cross-field
   validation, including inactive and unused entries; public behaviour stays
   at its pre-activation contract.
+  Public-path tests assert the unchanged pre-arc rejection messages for a
+  `/4` library passed through `--materials`, a `/4` library embedded in a
+  current sheet's inline record, and new nested settings keys such as
+  `shade.key.strength`. No public option or file can enable the internal gate.
 - **Out of scope:** public flags, sheet schema activation, rendering or
   owner-config edits.
 - **Documentation and pinned tests:** none public; add direct internal
@@ -1659,7 +1719,7 @@ processing await the manager's instruction after these revisions.
 - **Phase:** 2, colour mathematics.
 - **Depends on:** SHD-2.
 - **Ordering:** critical path.
-- **Relevant decisions:** D-5, D-14, D-15, D-23 to D-26, D-32, D-34, D-36.
+- **Relevant decisions:** D-5, D-14, D-15, D-23 to D-26, D-32, D-34, D-36, D-40.
 - **Acceptance signals:** exact fixtures distinguish averaging normals from
   averaging facing terms, mean from vote, ambient bypass, camera/world
   roll, ordinary fallback and repeated ramp entries; zero-new-term kernels
@@ -1668,6 +1728,10 @@ processing await the manager's instruction after these revisions.
   `[100,101]` with 3 bands, checking raw shades below, at and above each
   range endpoint under plain and mode reduction. The continuous mapping
   clamps raw shade first; retain exact legacy arithmetic on its own path.
+  Add the narrow-range brightness fixture `[100,101]`, floor 0.3,
+  ceiling 1.0 and `L=1`: at or above the high endpoint, gain is 0.65 with
+  ambient form on and 1.0 with it off, for plain and mode reduction.
+  Verify the resulting linear-RGB scaling and half-up encoded bytes.
 - **Out of scope:** dither/snap quantisation, capture changes, stage wiring
   and public settings.
 - **Documentation and pinned tests:** no public `docs/design.md` or schema
