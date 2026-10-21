@@ -348,7 +348,9 @@ def recorded_schema(record):
     off the record, and a reused library behaves as the library it was."""
     response = {*_RESPONSE_TOP, *_GLOBAL_ONLY}
     shades = [record.get("shade")]
-    for entry in (record.get("materials") or {}).values():
+    entries = record.get("materials")
+    # A record that is not well formed is `validate_library`'s to refuse.
+    for entry in entries.values() if isinstance(entries, dict) else ():
         if isinstance(entry, dict):
             if ORDINARY in entry:
                 return SCHEMA_V4

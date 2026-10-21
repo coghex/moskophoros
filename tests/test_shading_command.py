@@ -1076,3 +1076,45 @@ def test_the_old_libraries_warn_as_they_did(setup, capsys):
         "the material library gives shade.range [10, 250] to its materials "
         "without their own; the global [20, 200] does not reach them",
     ]
+
+
+# A malformed inline library record is a usage error, never a crash
+
+NOT_MAPPINGS = [[1], "bad", 1, True, 1.5, [], [{}]]
+
+
+@pytest.mark.parametrize("value", NOT_MAPPINGS, ids=repr)
+@pytest.mark.parametrize("member", ["materials", "ramps", "shade"])
+@pytest.mark.parametrize("option", [(), ("--no-materials",)])
+def test_a_malformed_inline_library_container_is_exit_2_not_a_crash(
+    setup, capsys, monkeypatch, tmp_path, value, member, option
+):
+    go(setup, capsys, "--no-preview", document=SUPPLIED)
+    document = json.loads(setup.json.read_text())
+    document["settings"]["style"]["materials"][member] = value
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps(document))
+    forbid_blender(monkeypatch)
+    status, _, err = run(capsys, setup.argv("--settings-from", str(path), *option))
+    assert status == 2, err
+    assert "Traceback" not in err
+    assert "settings.style.materials" in err
+    assert err.splitlines()[-1].startswith(
+        f"moskophoros: error: --settings-from {str(path)!r}: "
+    )
+
+
+@pytest.mark.parametrize("value", NOT_MAPPINGS, ids=repr)
+def test_a_malformed_inline_library_entry_is_exit_2_not_a_crash(
+    setup, capsys, monkeypatch, tmp_path, value
+):
+    go(setup, capsys, "--no-preview", document=SUPPLIED)
+    document = json.loads(setup.json.read_text())
+    entries = document["settings"]["style"]["materials"]["materials"]
+    entries["steel"]["shade"] = value
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps(document))
+    forbid_blender(monkeypatch)
+    status, _, err = run(capsys, setup.argv("--settings-from", str(path)))
+    assert status == 2, err
+    assert "Traceback" not in err
