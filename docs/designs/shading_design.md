@@ -766,14 +766,57 @@ regenerate working sheets under D-8 while preserving historical evidence.
 Detailed delivery boundaries and ordering still need signoff after the
 remaining data/settings contracts are settled.
 
-## Proposals and open questions
+### D-32. Settings names, defaults, validation and persistence
 
-Unresolved recommendations below are proposals, not approved decisions.
+Owner, about 2026-10-21 00:57 UTC, typed directly in the manager's terminal;
+relayed by mosk-manager in cmux message
+`c7d58503-9365-4b09-88be-2c82dbc04920`, answering batch 10 message
+`znwjdat3za8bvp872zif42y8ra`. The complete answer was:
+
+> "A, A, A"
+
+The approval names the reviewed contracts file
+`~/.local/share/moskophoros-acceptance/shading-design/batch-10-contracts.md`,
+SHA-256 `e8aa954b2bd86bdcec0ae81d8699fb0cc81f292753d33eec34450485f7b180c2`.
+The manager summarised it beforehand, specifically calling out snap applying
+only to brightness/both and library values taking precedence over CLI values.
+
+The first A approves contract 1 in full, reproduced under *Implementation
+contracts*: exact settings/CLI names, defaults, direction convention, strict
+validation, palette requirements and recorded reuse. Earlier provisional
+defaults are superseded by this table. Current-schema-only sheet loading
+and unchanged default image bytes remain required.
+
+### D-33. Library version 4 and response inheritance
+
+Same answer and provenance as D-32. The second A approves contract 2 in
+full: `/4` library shape, continued `/2` and `/3` reading, ordinary entries
+with response overrides, material > library > global response precedence,
+cross-field validation and warnings. Retain the existing palette prerequisite
+for libraries. This amends the older rule that ordinary entries cannot
+carry shading values, without changing what old libraries render by default.
+
+### D-34. Sampling, snap applicability and addressed layer normals
+
+Same answer and provenance as D-32. The third A approves contract 3 in
+full: optional snap operates only on brightness/both, the specified
+mean/vote and dither arithmetic, exact integer compatibility path, layer
+composition rules, addressed normal buffers and validation. Ramp-only
+retains ramp dithering; neither stays unshaded and undithered. Shading never
+changes alpha or exported geometry maps. D-31's later visual acceptance
+remains mandatory; this contract approval is not acceptance of unimplemented
+output or readiness signoff on the delivery plan.
+
+## Question history and resolution
+
+All behaviour contracts are approved through D-34. The delivery plan below
+is proposed and still needs owner signoff. Actual project look values are
+deliberately deferred to the owner-review slice under D-31.
 Batch 1's accepted answers are D-5 to D-7; batch 2's are D-8 to D-10;
 batch 3's are D-11 to D-13; batch 4's are D-14 to D-16;
 batch 5's are D-17 to D-19; batch 6's are D-20 to D-22;
 batch 7's are D-23 to D-25; batch 8's are D-26 to D-28;
-batch 9's are D-29 to D-31.
+batch 9's are D-29 to D-31; batch 10's are D-32 to D-34.
 No dependent formula or slice
 ordering is adopted while its blocking questions remain open.
 
@@ -861,7 +904,7 @@ draft `ae411e59d3`. It requests separate signoff on the three enumerated
 implementation contracts embedded below. The review copy is
 `~/.local/share/moskophoros-acceptance/shading-design/batch-10-contracts.md`,
 SHA-256 `e8aa954b2bd86bdcec0ae81d8699fb0cc81f292753d33eec34450485f7b180c2`.
-All three remain proposals pending the owner's answers.
+D-32 to D-34 record all three A approvals against that exact file hash.
 
 ### Q-1. Does a mode route all shading or only the added light?
 
@@ -1117,13 +1160,12 @@ to it in both mode; enabled snap uses the whole palette when there is no
 ramp. Treating the entire palette as an ordered shading ramp was not
 selected. Mixed-material precedence and dithering interactions remain open.
 
-## Batch 10: proposed implementation contracts
+## Implementation contracts
 
-These are proposals for owner signoff, not settled decisions or implemented
-behaviour. They complete the settings and pixel-operation details around
-D-1 through D-31. Answer each numbered contract separately: **A approves
-the proposed contract; B names changes required before approval.** No new
-project look is selected here; D-31 reserves that for rendered acceptance.
+Approved in full by D-32 through D-34 from batch 10's immutable review
+copy. These are implementation requirements, not claims of shipped
+behaviour. No project look is selected here; D-31 reserves that for rendered
+acceptance. References below to the proposal describe the approved choice.
 
 ### 1. Settings, defaults and validation (Q-4/Q-5/Q-11)
 
@@ -1383,4 +1425,6 @@ Codex review and tracker processing follow on the manager's instruction.
   `18e15fc0-f95f-4d00-a1fd-99a49ef236b6`; D-26 to D-28 preserve it.
   Batch 9 was answered through cmux relay
   `8587a525-f617-4a48-81da-289fe90cd6f7`; D-29 to D-31 preserve it.
+  Batch 10 was answered through cmux relay
+  `c7d58503-9365-4b09-88be-2c82dbc04920`; D-32 to D-34 preserve it.
   No readiness signoff has been received.
