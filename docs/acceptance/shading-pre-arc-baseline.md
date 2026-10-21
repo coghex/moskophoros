@@ -86,6 +86,16 @@ ramps, per-material and library-wide shade values, options and a `--config`
 giving shade values, the normal and depth maps, lit previews and a perspective
 camera with roll.
 
+## SHD-3 against the baseline
+
+SHD-3 (#140) adds the pure lighting module and two small helpers in
+`imageops` (`scale_srgb`, which `light_pixels` now calls, and `_winners`,
+which `map_ramps` now calls) and wires nothing into a command. The same
+twenty-four commands, with the pinned copy's recorded hashes and with
+SHD-3's head `81b3875813bd3a4cfbe7559e2c55f82600758c90`: **all 103 files per
+side are byte-identical, sheet JSON included; there is no allowed difference.**
+Every run exited 0. The inputs are the ones above, with the same sha256.
+
 ## Local evidence
 
 `~/.local/share/moskophoros-acceptance/shading-pre-arc/shd2/` (SHD-2's own
@@ -94,3 +104,9 @@ scripts (`tools/make_inputs.py`, `tools/run_matrix.py`, `run_both.sh`), the inst
 package list, `hashes-base.json`, `hashes-head-58a6108.json` and the baseline's
 renders (`out-base/`). Reproduce a side with
 `run_matrix.py <moskophoros> <inputs> <output root> <label>`.
+
+SHD-3's subdirectory `shd3/` of the same folder holds a copy of the inputs and
+scripts, `hashes-base.json` (the baseline's, unchanged), `hashes-head-81b3875.json`
+and the head's renders (`out-head/`). It was run with
+`lockf ~/.local/state/project-manager/moskophoros/blender.lock <worktree>/.venv/bin/python tools/run_matrix.py <worktree>/.venv/bin/moskophoros <absolute inputs> <absolute output root> head`;
+the output root must be an absolute path, because each case runs in the inputs directory.
