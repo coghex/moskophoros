@@ -12,12 +12,14 @@ from test_command import Setup, run, speckled_argv
 from moskophoros import cleanup, imageops, stylize
 from moskophoros.capture import backend
 from moskophoros.sampling import (
+    BACK_NORMAL,
     BACKGROUND,
     DEPTH,
     DEPTH_MAP,
     FRONT_ALPHA,
     FRONT_COLOR,
     FRONT_IDENTITY,
+    FRONT_NORMAL,
     FRONT_PRESENT,
     FRONT_SHADE,
     IDENTITY,
@@ -183,6 +185,8 @@ def test_an_extra_capture_buffer_reaches_stylize_intact(setup, capsys, monkeypat
             SHADE,
             NORMAL,
             DEPTH,
+            BACK_NORMAL,
+            FRONT_NORMAL,
             FRONT_COLOR,
             FRONT_ALPHA,
             FRONT_PRESENT,
@@ -252,12 +256,26 @@ def test_the_command_loads_frames_lazily_and_releases_each_before_the_next(
         held[frame] += [weakref.ref(normal), weakref.ref(depth)]
         return normal, depth
 
+    def decode_back_normal(paths):
+        # And the decoded back normal.
+        back = real_decode_back_normal(paths)
+        events.append(("decode", "back_normal"))
+        held[int(Path(paths["back_normal"]).stem)].append(weakref.ref(back))
+        return back
+
     def decode_front(paths, lookup):
         # And the decoded front arrays.
         arrays = real_decode_front(paths, lookup)
         frame = int(Path(paths["front_alpha"]).stem)
         held[frame] += [weakref.ref(array) for array in arrays]
         return arrays
+
+    def derive_front_normal(paths, normal, present):
+        # And the derived front normal.
+        derived = real_derive_front_normal(paths, normal, present)
+        events.append(("derive", "front_normal"))
+        held[int(Path(paths["normal"]).stem)].append(weakref.ref(derived))
+        return derived
 
     def reduce_blocks(pixels, factor, edges):
         events.append("reduce")
@@ -277,7 +295,11 @@ def test_the_command_loads_frames_lazily_and_releases_each_before_the_next(
     real_decode = backend.decode_frame
     real_decode_normal_depth = backend.decode_normal_depth
     real_decode_front = backend.decode_front
+    real_decode_back_normal = backend.decode_back_normal
+    real_derive_front_normal = backend.derive_front_normal
     monkeypatch.setattr(backend, "decode_front", decode_front)
+    monkeypatch.setattr(backend, "decode_back_normal", decode_back_normal)
+    monkeypatch.setattr(backend, "derive_front_normal", derive_front_normal)
     monkeypatch.setattr(imageops, "load_png", load)
     monkeypatch.setattr(backend, "decode_frame", decode_frame)
     monkeypatch.setattr(backend, "decode_normal_depth", decode_normal_depth)
@@ -290,7 +312,9 @@ def test_the_command_loads_frames_lazily_and_releases_each_before_the_next(
     loads = [
         *(("load", name) for name in ("color", "matid", "shade")),
         ("decode", "normal", "depth"),
+        ("decode", "back_normal"),
         *(("load", name) for name in ("front_color", "front_matid", "front_shade")),
+        ("derive", "front_normal"),
         ("load", "extra"),
     ]
     assert events == [*loads, "reduce"] * frames
