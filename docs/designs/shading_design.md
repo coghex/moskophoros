@@ -4,7 +4,7 @@ Moskophoros must serve both sprites lit by their consumer from exported face
 maps and art panels whose lighting is baked into their colours. This design
 settles that capability with the owner before implementation.
 
-Design state: `exploring`
+Design state: `ready for issue processing`
 
 Status legend: `[ ]` unprocessed · `[#N]` linked to issue N · `[no-issue]`
 reviewed and deliberately not tracked separately · `[deferred]` blocked on a
@@ -22,9 +22,9 @@ concrete precondition
 - [ ] SHD-7. Obtain owner visual acceptance for both uses
 - [ ] SHD-8. Regenerate the inventoried working sheets
 
-The eight delivery slices are proposals awaiting owner signoff. Behaviour
-is settled through D-34; the design is not ready for issue processing until
-the owner approves the slice plan and readiness.
+The owner approved the eight delivery slices, their dependencies and design
+readiness in D-35. Behaviour is settled through D-34. Design review comes
+next; issue processing awaits the manager's instruction.
 
 ## Epic contract
 
@@ -820,20 +820,47 @@ composition rules, addressed normal buffers and validation. Ramp-only
 retains ramp dithering; neither stays unshaded and undithered. Shading never
 changes alpha or exported geometry maps. D-31's later visual acceptance
 remains mandatory; this contract approval is not acceptance of unimplemented
-output or readiness signoff on the delivery plan.
+output or readiness signoff on the delivery plan. D-35 subsequently supplies
+the delivery-plan and readiness signoff.
+
+### D-35. Delivery plan and design readiness
+
+Owner, about 2026-10-21 01:49 UTC, typed directly in the manager's terminal;
+relayed by mosk-manager in cmux message
+`793d365b-4cca-4173-aab7-47d98d33ee46`, answering batch 11 message
+`wnjw5kij527hz293d6w7amz2ke`. The exact answer was:
+
+> "sounds good to me, i approve this plan"
+
+The approval names the reviewed delivery plan
+`~/.local/share/moskophoros-acceptance/shading-design/batch-11-delivery.md`,
+SHA-256 `58f448621c2bb523fdd98acf2f05ff4e67d28fefd880280641a12881d764f990`.
+The manager summarised the eight slices beforehand and explained the next
+steps: design review, then `process-design-doc` for the epic and children,
+then child approvals, with no solving without the owner's word.
+
+The owner approves SHD-1 through SHD-8, their stated dependencies and
+readiness for issue processing. The manager directs recording the signoff,
+marking the design ready, publishing it and reporting completion. This
+completes the design assignment. Design review comes next; later processing
+requires the manager's instruction, with the epic and then one child per
+invocation receiving separate approvals. Actual project look values remain
+deliberately deferred to owner visual acceptance in SHD-7, followed by
+SHD-8's regeneration. No implementation or tracker mutation is authorised
+by this design signoff.
 
 ## Question history and resolution
 
-All behaviour contracts are approved through D-34. The delivery plan below
-is proposed and still needs owner signoff. Actual project look values are
+All behaviour contracts are approved through D-34. D-35 approves the
+delivery plan and readiness. Actual project look values are
 deliberately deferred to the owner-review slice under D-31.
 Batch 1's accepted answers are D-5 to D-7; batch 2's are D-8 to D-10;
 batch 3's are D-11 to D-13; batch 4's are D-14 to D-16;
 batch 5's are D-17 to D-19; batch 6's are D-20 to D-22;
 batch 7's are D-23 to D-25; batch 8's are D-26 to D-28;
-batch 9's are D-29 to D-31; batch 10's are D-32 to D-34.
+batch 9's are D-29 to D-31; batch 10's are D-32 to D-34; batch 11's is D-35.
 The Q entries after the dated batch history give the current resolution.
-Only delivery-slice boundaries and readiness await design signoff.
+No design-signoff questions remain open.
 
 Batch 1 was posted on 2026-10-20 at 16:52:53 UTC in `#moskophoros`,
 message `w8y5pdsiqbn56f33gpftcxhsmi`, request
@@ -914,7 +941,8 @@ and their dependencies and declare the design ready, or name required
 changes. The exact review copy is
 `~/.local/share/moskophoros-acceptance/shading-design/batch-11-delivery.md`,
 SHA-256 `58f448621c2bb523fdd98acf2f05ff4e67d28fefd880280641a12881d764f990`.
-The plan and readiness remain unapproved pending the owner's answer.
+D-35 records the owner's approval of this plan and readiness against that
+exact file hash.
 
 ### Q-1. Does a mode route all shading or only the added light?
 
@@ -976,16 +1004,16 @@ validation, frame-at-a-time memory and an exact legacy path.
 
 Behavioural review boundary resolved by D-31: robot/shrub/chest, both uses,
 motion, perspective/roll, the modes, representative dithering/snapping and
-a longer generic ramp. Tests cannot approve looks. The proposed delivery
+a longer generic ramp. Tests cannot approve looks. The approved delivery
 plan assigns that owner review and subsequent regeneration distinct slices;
-their boundaries/order still need signoff.
+their boundaries and order are approved by D-35.
 
 ### Q-10. What other boundaries and delivery order should be explicit?
 
 Exclusions resolved by D-22. Cast shadows, coloured lights, multiple keys,
 specular and retained-capture recolouring are outside this arc.
-Delivery-slice boundaries and dependency order below are the remaining
-design signoff; no tracker artifact is authorised by approving this design.
+Delivery-slice boundaries and dependency order below are approved by D-35;
+no tracker artifact is authorised by approving this design.
 
 ### Q-11. What colour is shaded when ramp selection is off or unavailable?
 
@@ -1259,8 +1287,8 @@ is claimed.
 
 ## Delivery plan
 
-**Proposed for owner signoff.** Behaviour is settled; these boundaries and
-dependencies are not yet approved. The processing ledger mirrors this
+**Approved by the owner in D-35.** Behaviour, boundaries and dependencies
+are settled. The processing ledger mirrors this
 order. SHD-1 and SHD-2 can be developed independently; the remaining slices
 follow the stated dependencies. Public controls activate only in SHD-6,
 after their entire behaviour exists: earlier foundations must not accept
@@ -1293,7 +1321,7 @@ issue processing still await the manager's instruction after readiness.
   and default image bytes match the recorded baseline; required checks pass.
 - **Out of scope:** shading controls, colour maths, owner-config edits or
   regeneration of working sheets.
-- **Open questions:** none about behaviour; this slice boundary is proposed.
+- **Open questions:** none.
 
 ### SHD-2. Model and resolve shading settings and library responses
 
@@ -1314,7 +1342,7 @@ issue processing still await the manager's instruction after readiness.
   at its pre-activation contract.
 - **Out of scope:** public flags, sheet schema activation, rendering or
   owner-config edits.
-- **Open questions:** none about behaviour; this slice boundary is proposed.
+- **Open questions:** none.
 
 ### SHD-3. Implement pure lighting and four-mode colour operations
 
@@ -1334,7 +1362,7 @@ issue processing still await the manager's instruction after readiness.
   preserve legacy results; gain rounding/bounds are verified.
 - **Out of scope:** dither/snap quantisation, capture changes, stage wiring
   and public settings.
-- **Open questions:** none about behaviour; this slice boundary is proposed.
+- **Open questions:** none.
 
 ### SHD-4. Implement deterministic ramp and snap dithering
 
@@ -1353,7 +1381,7 @@ issue processing still await the manager's instruction after readiness.
   ties, duplicates and one-colour targets follow the signed rules; packing
   and frame order do not alter the pattern.
 - **Out of scope:** public options, configuration files or visual acceptance.
-- **Open questions:** none about behaviour; this slice boundary is proposed.
+- **Open questions:** none.
 
 ### SHD-5. Integrate shading into the addressed-frame pipeline
 
@@ -1373,7 +1401,7 @@ issue processing still await the manager's instruction after readiness.
   exact fixtures; alpha/maps are invariant; default bytes match; one-frame
   memory discipline and both reductions/edge rules are covered.
 - **Out of scope:** CLI/schema activation, owner project tuning and review.
-- **Open questions:** none about behaviour; this slice boundary is proposed.
+- **Open questions:** none.
 
 ### SHD-6. Expose shading controls and reproducible sheet settings
 
@@ -1397,7 +1425,7 @@ issue processing still await the manager's instruction after readiness.
   passing planned checks and default byte comparisons at the delivered head.
 - **Out of scope:** editing owner project values, second-game palette work,
   visual acceptance or bulk sheet replacement.
-- **Open questions:** none about behaviour; this slice boundary is proposed.
+- **Open questions:** none.
 
 ### SHD-7. Obtain owner visual acceptance for both uses
 
@@ -1501,4 +1529,5 @@ issue processing still await the manager's instruction after readiness.
   `8587a525-f617-4a48-81da-289fe90cd6f7`; D-29 to D-31 preserve it.
   Batch 10 was answered through cmux relay
   `c7d58503-9365-4b09-88be-2c82dbc04920`; D-32 to D-34 preserve it.
-  No readiness signoff has been received.
+  Batch 11's delivery-plan and readiness signoff was relayed through cmux
+  message `793d365b-4cca-4173-aab7-47d98d33ee46`; D-35 preserves it.
