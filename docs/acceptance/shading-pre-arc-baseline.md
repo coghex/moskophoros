@@ -96,6 +96,18 @@ SHD-3's head `81b3875813bd3a4cfbe7559e2c55f82600758c90`: **all 103 files per
 side are byte-identical, sheet JSON included; there is no allowed difference.**
 Every run exited 0. The inputs are the ones above, with the same sha256.
 
+## SHD-4 against the baseline
+
+SHD-4 (#141) adds the pure `dither` module (the six threshold tiles, the
+dithered band coordinate and the two-nearest snap) and gives
+`lighting.shade_blocks` an optional pattern, strength and output-cell
+coordinates; with none given, or `off`, or strength 0, it takes the path it took
+before. It wires nothing into a command. The same twenty-four commands, with the
+pinned copy's recorded hashes and with SHD-4's head
+`b0ec41f6e6fca373e1e02cd7fc29f7721463a308`: **all 103 files per side are
+byte-identical, sheet JSON included; there is no allowed difference.** Every run
+exited 0. The inputs are the ones above, with the same sha256.
+
 ## Local evidence
 
 `~/.local/share/moskophoros-acceptance/shading-pre-arc/shd2/` (SHD-2's own
@@ -110,3 +122,7 @@ scripts, `hashes-base.json` (the baseline's, unchanged), `hashes-head-81b3875.js
 and the head's renders (`out-head/`). It was run with
 `lockf ~/.local/state/project-manager/moskophoros/blender.lock <worktree>/.venv/bin/python tools/run_matrix.py <worktree>/.venv/bin/moskophoros <absolute inputs> <absolute output root> head`;
 the output root must be an absolute path, because each case runs in the inputs directory.
+
+SHD-4's subdirectory `shd4/` holds a copy of the inputs and scripts,
+`hashes-base.json` (the baseline's, unchanged) and the head's renders and hashes
+(`out-head/`, hashes in `hashes-head-b0ec41f.json`), run as for `shd3/` with SHD-4's worktree.
