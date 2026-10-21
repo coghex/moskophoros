@@ -19,7 +19,6 @@ import numpy as np
 
 from moskophoros import imageops
 from moskophoros.palette import validate_colors
-from moskophoros.shading import PATTERNS
 
 
 def _ordered(side):
@@ -73,9 +72,12 @@ for _array in _ARRAYS.values():
 
 
 def check_pattern(pattern):
-    """`pattern`, or `ValueError` unless it is one of `shading.PATTERNS`."""
-    if not isinstance(pattern, str) or pattern not in PATTERNS:
-        raise ValueError(f"the dither pattern must be one of {PATTERNS}: {pattern!r}")
+    """`pattern`, or `ValueError` unless it is `off` or a pattern with a tile
+    (the names of `shading.PATTERNS`)."""
+    if not isinstance(pattern, str) or (pattern != "off" and pattern not in TILES):
+        raise ValueError(
+            f"the dither pattern must be one of off, {', '.join(TILES)}: {pattern!r}"
+        )
     return pattern
 
 

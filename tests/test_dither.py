@@ -69,6 +69,8 @@ def response(**changes):
 
 def test_the_tile_data_is_pinned_exactly_for_every_pattern():
     assert tuple(dither.TILES) == PATTERNS == tuple(EXPECTED)
+    # Every pattern the settings name, and only those, has a tile.
+    assert ("off", *dither.TILES) == shading.PATTERNS
     for name, rows in EXPECTED.items():
         assert dither.TILES[name] == rows
 
