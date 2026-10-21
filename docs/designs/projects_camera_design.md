@@ -366,6 +366,8 @@ The manager then asked whether the light stays with the camera or turns with the
 - `--directions`, `--start-angle` and the direction labels stay.
 - The presets become shorthands for camera settings.
 
+**Amended by [shading design](shading_design.md) D-24 (owner, 2026-10-20; implemented by #143, 2026-10-21):** the light stays fixed to the camera, and V-7's text is unchanged. The one narrow exception, recorded at [vision V-7](../vision.md#v-7-consistency-is-the-product), is the optional baked sky and ground terms in the `world` frame, which follow the subject's up and the camera's pitch rather than its roll. The key stays camera-fixed in either frame and camera is the default frame.
+
 ### D-9. Projects: one schema for the global file and project files, layered
 
 This resolves Q-3. The owner:

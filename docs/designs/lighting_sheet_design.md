@@ -525,6 +525,8 @@ ambient shading only, occlusion and curvature (material styling D-22,
 D-25). No point or directional light is baked by default, and the tool keeps
 this capability whatever else it gains.
 
+**Amended by [shading design](shading_design.md) D-5, D-6 and D-8 (owner, 2026-10-20; implemented by #143, 2026-10-21):** an optional baked colour is now possible beside the separate additional preview light (see D-4). By default the colour sheet is unchanged: flat ambient shading, byte-identical images, no light baked.
+
 ### D-2. The lighting sheet is a standard, camera-relative normal map
 
 Decided 2026-10-13 (material styling D-27; resolves material styling Q-11,
@@ -545,6 +547,8 @@ Decided 2026-10-13 (material styling D-27). An optional light is a preview.
 The tool lights the flat sprite with its own normal map, making the same
 calculation a game shader would, so the owner sees the sprite as the game
 will light it. The exported colour sheet stays flat.
+
+**Amended by [shading design](shading_design.md) D-6 and D-8 (owner, 2026-10-20; implemented by #143, 2026-10-21):** "never baked" now holds by default only. Baked shading is an option with its own controls, separate from `--light`. The regular preview shows the exported colour result, and `--light` deliberately adds a live-light simulation over it, even over already baked colour. Baking never requests the preview light, and the normal and depth maps remain geometry. The default images are preserved exactly.
 
 ### D-5. Flat by default; an optional flag places the light
 

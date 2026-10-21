@@ -94,6 +94,8 @@ and a defect in this principle outranks any visual improvement (owner decision
 - **Lighting fixed to the camera**, so shading reads the same in every
   direction.
 
+  *Note (owner, 2026-10-20, shading design D-24; implemented 2026-10-21):* one narrow, optional exception. A project may choose the `world` frame for baked sky and ground light, which follows the subject's up and the camera's pitch, not its roll. The key light stays fixed to the camera in either frame, the `camera` frame is the default, and shading still reads the same in every direction because rotating the subject about its vertical axis leaves world up unchanged. See [shading design](designs/shading_design.md) and [design §Stylize](design.md#baked-shading).
+
 ### V-8. Style comes later, and in the owner's hands
 
 Output is deliberately plain until the owner sets the look, one pass at a time

@@ -688,6 +688,8 @@ correct, i approve".
 - Not implied: quantising translucent composites to the palette. That is
   part of the palette question still to settle.
 
+**Amended by [shading design](shading_design.md) D-14, D-18, D-19, D-23 and D-30 (owner, 2026-10-20; implemented by #143, 2026-10-21):** the ordinary look may optionally have its colour scaled by brightness, with or without a library or palette, and a ramp-mapped material may be shaded per layer and composited, with the approved composite rules for translucent pixels. An ordinary material still keeps its captured flat, unlit colour or texture as its base, and capture is unchanged; by default nothing is scaled and this decision stands as written. Alpha and the geometry maps keep their meaning (D-11): no shading choice changes either.
+
 ### D-9. Edges are a setting, `edges: hard | soft`
 
 Decided 2026-10-17 by the owner in this design's session (Q-7), approving

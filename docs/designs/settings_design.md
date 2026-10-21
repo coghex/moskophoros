@@ -850,6 +850,8 @@ gives `range` only (material styling D-36), which comes between a material's
 own range and the global one, and materials taking the default ramp use it
 too. Capture values, and this design's D-36, are unchanged.
 
+**Amended by [shading design](shading_design.md) D-33 (owner, 2026-10-21; implemented by #143, 2026-10-21):** a `moskophoros.materials/4` ordinary entry may be a mapping, `{ordinary: true, shade: {...}}`, carrying the response overrides of that design's contract 2 and the existing per-material capture overrides (`ao_distance_m`, `occlusion_weight`, `convexity_weight`) and `range`. The string `"ordinary"` still carries none, and `/2` and `/3` libraries are unchanged. `ao_samples` stays global only.
+
 Affects SET-3.
 
 ### D-21. The slice plan, file shape, formats and options

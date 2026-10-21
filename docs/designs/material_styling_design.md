@@ -229,6 +229,7 @@ identity (D-1, D-2; [later arc](#later-arc-the-lighting-sheet)).
 - The **lighting sheet** for live engine lighting (normals or face weights):
   a later arc (D-1, D-4), recorded [below](#later-arc-the-lighting-sheet).
 - Dithering of any kind, including per-material dither patterns.
+  (Amended 2026-10-21: optional, off-by-default dithering was added by the shading design, see D-7.)
 - Eased or non-linear band spacing, and the reserved baked-versus-live range
   (D-2) beyond the band count.
 - Material-driven surface noise or roughness effects.
@@ -774,6 +775,8 @@ banded over instead; there is no longer one range for every material.
 **Amended by D-35 (owner, 2026-10-14):** a library's own `shade.range` comes
 between the material's and the global range.
 
+**Amended by [shading design](shading_design.md) D-12, D-17, D-27 and D-29 (owner, 2026-10-20; implemented by #143, 2026-10-21):** dithering is no longer excluded. Six fixed patterns (`ordered2`, `ordered4`, `ordered8`, `clustered4`, `diagonal4`, `shuffled8`), a strength from 0 to 1 and two-nearest-colour snap dithering are optional settings, off by default, with per-material pattern and strength overrides. Eased spacing stays deferred, and with the default settings the bands below are exactly as decided here.
+
 ### D-8. The library is a JSON file the tool only reads
 
 Decided 2026-10-07 (resolved Q-3). The library is a JSON file mapping
@@ -952,6 +955,8 @@ accepts flatter sprites until the lighting arc lands. What ambient light
 includes is D-25; how Blender produces it is D-10's spike. The colour buffer
 and the ordinary look are unchanged.
 
+**Amended by [shading design](shading_design.md) D-9, D-15, D-24 and D-26 (owner, 2026-10-20 and 2026-10-21; implemented by #143, 2026-10-21):** directional terms are now permitted, but only as optional settings, off by default. A project may give a key light (camera-fixed), a sky and a ground term (camera or world frame), combined with the ambient form multiplicatively (`e = a · L`), and may switch the ambient form off. The shade buffer is unchanged and still records non-directional ambient light; the directional terms are computed outside Blender from each layer's captured normal. With the default settings the colour sheet bakes no directional shading, as decided here, and its bytes are unchanged.
+
 ### D-23. Ties follow the model's material order; `mode` votes by palette entry
 
 Decided 2026-10-07 (resolves Q-22, as recommended; amends D-20's tie order).
@@ -998,6 +1003,8 @@ live. The sprite carries what live lighting cannot: each material's
 **hue-shifted ramp**, chosen by local form. Broad flat open surfaces take one
 band; the owner accepts that. How Blender produces occlusion and curvature
 deterministically is D-10's spike.
+
+**Amended by [shading design](shading_design.md) D-9, D-24 and D-26 (owner, 2026-10-20 and 2026-10-21; implemented by #143, 2026-10-21):** "ambient" in the shade buffer still means occlusion and curvature only. The sky, ground and key terms the owner declined to put in the shade buffer are now available as separate optional settings applied in stylize (see D-22's amendment); they are off by default, and the live-lit use keeps the default.
 
 ### D-26. `MASK` materials are captured opaque, with no cutouts
 
@@ -1066,6 +1073,8 @@ Open for the lighting-sheet design: the light flag's form and units; the
 depth encoding; how units facing 8 directions combine with the engine's 4
 camera rotations; whether materials perturb normals; and how the sheet's JSON
 describes the new maps.
+
+**Amended by [shading design](shading_design.md) D-5, D-6, D-14 and D-18 (owner, 2026-10-20; implemented by #143, 2026-10-21):** light may now also be baked into the colour sheet, as an option. Four modes (`ramp`, `brightness`, `both`, `neither`) choose what the shading signal does, and the live-lit use stays the default: the colour sheet is flat ambient shading, the normal and depth maps are geometry, and no light is baked unless a project asks. `--light` stays a separate additional preview light and is never requested by baking.
 
 ### D-28. A generated ramp's base colour is its lightest shade
 
