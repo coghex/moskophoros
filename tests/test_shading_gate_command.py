@@ -237,6 +237,7 @@ def test_no_shading_option_exists_yet(capsys):
 
 def test_only_the_internal_modules_name_the_gate():
     internal = {
+        "lighting.py",
         "shading.py",
         "shading_resolve.py",
         "settings.py",
