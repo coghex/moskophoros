@@ -42,7 +42,7 @@ pytestmark = pytest.mark.blender
 
 KEY = (0.6, 0.0, 0.8)
 LIGHTS = lighting.Lights(key=KEY, sky=(0.0, 1.0, 0.0), ground=(0.0, -1.0, 0.0))
-GLOBALS = {**settings.DEFAULTS, **settings.SHADING_DEFAULTS}
+GLOBALS = dict(settings.DEFAULTS)
 # Full-strength key, no ambient form, brightness from 0 to 1: a layer's gain is
 # its normal's facing term, so what each layer was given shows in its colour.
 LIT = {
@@ -201,7 +201,6 @@ def test_a_translucent_model_with_ramps_snaps_to_the_whole_palette(found, tmp_pa
         },
         PALETTE,
         source="test",
-        shading=True,
     )
     values = {"shade.mode": "both", "shade.snap": "palette"}
     plain = reduce(frame, identities, library=lib, palette=PALETTE)

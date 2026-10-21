@@ -418,7 +418,7 @@ def test_a_malformed_inline_override_is_an_error_whatever_overrides_the_library(
         (
             library_with(schema="moskophoros.materials/1"),
             'schema: "moskophoros.materials/1" libraries no longer load; change the '
-            'schema line to "moskophoros.materials/3"',
+            'schema line to "moskophoros.materials/4"',
         ),
         (
             library_with(

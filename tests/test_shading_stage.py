@@ -65,7 +65,7 @@ RANGE = (0, 99)
 KEY = (0.0, 0.0, 1.0)
 LIGHTS = lighting.Lights(key=KEY, sky=(0.0, 1.0, 0.0), ground=(0.0, -1.0, 0.0))
 V4 = materials.SCHEMA_V4
-GLOBALS = {**settings.DEFAULTS, **settings.SHADING_DEFAULTS, "shade.range": RANGE}
+GLOBALS = {**settings.DEFAULTS, "shade.range": RANGE}
 BACK_SHADE, FRONT_SHADE_VALUE = 50, 80  # signals 0.5 and 0.8 over RANGE
 OPAQUE = 65535
 
@@ -89,7 +89,7 @@ def library(entries=None, shade=None, ramps=None, default=None, palette=PALETTE)
         document["shade"] = shade
     if default is not None:
         document["default"] = default
-    return materials.validate_library(document, palette, source="test", shading=True)
+    return materials.validate_library(document, palette, source="test")
 
 
 def resolved(lib=None, **changes):

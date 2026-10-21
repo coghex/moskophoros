@@ -69,6 +69,18 @@ def test_the_schema_holds_this_slices_settings():
         "shade.occlusion_weight",
         "shade.convexity_weight",
         "shade.range",
+        "shade.mode",
+        "shade.ambient_form",
+        "shade.key.direction",
+        "shade.key.strength",
+        "shade.sky.strength",
+        "shade.ground.strength",
+        "shade.sky_ground_frame",
+        "shade.brightness.floor",
+        "shade.brightness.ceiling",
+        "shade.snap",
+        "shade.dither.pattern",
+        "shade.dither.strength",
         "ramp.lightness_step",
         "ramp.hue_shift_deg",
         "ramp.chroma_fade",
@@ -134,6 +146,24 @@ def test_the_defaults_file_and_the_schema_table_agree():
         "shade.occlusion_weight": 0.25,
         "shade.convexity_weight": 1.0,
         "shade.range": (84, 191),
+        # The shading controls (shading design contract 1): off by default,
+        # so the default command keeps today's images.
+        "shade.mode": "ramp",
+        "shade.ambient_form": True,
+        "shade.key.direction": (
+            -0.5183210553488161,
+            0.604707897906952,
+            0.604707897906952,
+        ),
+        "shade.key.strength": 0.0,
+        "shade.sky.strength": 0.0,
+        "shade.ground.strength": 0.0,
+        "shade.sky_ground_frame": "camera",
+        "shade.brightness.floor": 0.3,
+        "shade.brightness.ceiling": 1.0,
+        "shade.snap": "off",
+        "shade.dither.pattern": "off",
+        "shade.dither.strength": 1.0,
         "ramp.lightness_step": 0.12,
         "ramp.hue_shift_deg": -12.0,
         "ramp.chroma_fade": 0.3,
@@ -147,10 +177,11 @@ def test_the_defaults_file_gives_every_default_as_the_table_writes_it():
     document = yamlfile.load(text.encode("utf-8"))
     expected = {"version": 1}
     for name, setting in settings.SCHEMA.items():
-        group, _, member = name.rpartition(".")
-        (expected.setdefault(group, {}) if group else expected)[member] = (
-            setting.default
-        )
+        *groups, member = name.split(".")
+        target = expected
+        for group in groups:
+            target = target.setdefault(group, {})
+        target[member] = setting.default
     assert document == expected
 
 
@@ -540,7 +571,16 @@ def test_shade_values_merge_key_by_key_and_the_range_replaces_whole():
     config = layer("shade: {convexity_weight: 0.5, range: [100, 200]}\n")
     merged = merge(defaults, user, config)
     assert {
-        key: value for key, value in merged.items() if key.startswith("shade.")
+        key: value
+        for key, value in merged.items()
+        if key
+        in (
+            "shade.ao_distance_m",
+            "shade.ao_samples",
+            "shade.occlusion_weight",
+            "shade.convexity_weight",
+            "shade.range",
+        )
     } == {
         "shade.ao_distance_m": 1.2,
         "shade.ao_samples": 64,

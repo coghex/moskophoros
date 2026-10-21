@@ -2,6 +2,7 @@
 
 import copy
 import json
+import re
 import sys
 
 import pytest
@@ -77,7 +78,11 @@ def refused(tmp_path, text, colors=COLORS):
 
 
 def refused_document(tmp_path, document, colors=COLORS):
-    return refused(tmp_path, dump(document), colors)
+    """The problem with a library written from `document`, without the
+    position of the key a file's problem names (shading design contract 2):
+    these tests pin what the problem is."""
+    problem = refused(tmp_path, dump(document), colors)
+    return re.sub(r" at line \d+, column \d+$", "", problem)
 
 
 # Valid libraries
@@ -424,7 +429,7 @@ def test_a_missing_field(tmp_path, field):
 @pytest.mark.parametrize(
     ("schema", "shown"),
     [
-        ("moskophoros.materials/4", '"moskophoros.materials/4"'),
+        ("moskophoros.materials/5", '"moskophoros.materials/5"'),
         ("Moskophoros.materials/2", '"Moskophoros.materials/2"'),
         ("moskophoros.materials/2 ", '"moskophoros.materials/2 "'),
         (1, "1"),
@@ -437,8 +442,8 @@ def test_a_wrong_schema(tmp_path, schema, shown):
     document["schema"] = schema
     problem = refused_document(tmp_path, document)
     assert problem == (
-        'schema: expected "moskophoros.materials/3" or "moskophoros.materials/2", '
-        f"got {shown}"
+        'schema: expected "moskophoros.materials/4", "moskophoros.materials/3" or '
+        f'"moskophoros.materials/2", got {shown}'
     )
 
 
@@ -485,7 +490,7 @@ def test_maps_must_be_mappings(tmp_path, field, value):
         # A mapping is a generated ramp, which a /2 library cannot give.
         (
             {"0": 1},
-            'a generated ramp needs schema "moskophoros.materials/3"; this '
+            "a generated ramp needs moskophoros.materials/3 or later; this "
             'library is "moskophoros.materials/2"',
         ),
         ("1, 2", "expected a list of palette indices"),
@@ -782,7 +787,7 @@ def test_a_version_1_library_is_refused_with_the_schema_hint(tmp_path):
     text = LIBRARY_TEXT.replace("moskophoros.materials/2", "moskophoros.materials/1")
     assert refused(tmp_path, text) == (
         'schema: "moskophoros.materials/1" libraries no longer load; change the '
-        'schema line to "moskophoros.materials/3", the only edit the library needs'
+        'schema line to "moskophoros.materials/4", the only edit the library needs'
     )
 
 

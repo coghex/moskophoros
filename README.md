@@ -38,7 +38,7 @@ A run writes, beside each other:
   would, beside the flat one; the light is in sheet pixels from the ground
   point (x right, y up, z toward the viewer), `--light-intensity` and
   `--light-ambient` set its strength, and the sheet itself stays flat;
-- `hero.json`, the `moskophoros.sheet/14` description of every frame, the
+- `hero.json`, the `moskophoros.sheet/15` description of every frame, the
   settings and style used and a fingerprint of them, naming the maps;
 - `hero.<clip>.gif`, an animated preview of each clip in every direction,
   unless `--no-preview` is given.
@@ -79,10 +79,10 @@ not know takes its default ramp or the ordinary look, named in a warning.
 The library is recorded in the sheet's JSON and reused with `--settings-from`
 without the original file; `--materials FILE` replaces it and `--no-materials`
 drops it. See [docs/design.md](docs/design.md#material-libraries) for the file
-format. A library is `schema: moskophoros.materials/3`; a `/2` library still
-loads as before, and a `/1` library only needs that line changed.
+format. A library is `schema: moskophoros.materials/4`; `/3` and `/2` libraries
+still load as before, and a `/1` library only needs that line changed to `/4`.
 
-A `/3` library may give a ramp as properties instead of indices, a base
+A `/3` or later library may give a ramp as properties instead of indices, a base
 colour (its lightest shade) and a band count, and the tool generates the
 darker shades and snaps each to the palette. `--ramp-step L` (default 0.12),
 `--ramp-hue-shift DEG` (default −12) and `--ramp-fade F` (default 0.3) set how
@@ -92,7 +92,7 @@ exact control. A library may also give the shade range its materials fall
 back to:
 
 ```yaml
-schema: moskophoros.materials/3
+schema: moskophoros.materials/4
 ramps:
   stone: [133, 135, 137, 138, 139]
   gold: {base: "#ca9337", bands: 4}
@@ -123,6 +123,43 @@ materials:
     uses: stone
     shade: {range: [120, 255], convexity_weight: 0.5}
 ```
+
+Baked shading: by default a sprite's colour is flat apart from the ambient
+shade a library's ramps pick from. The shading options bake light into the colour as well, for
+art whose lighting is part of the picture rather than done live; the normal and
+depth maps stay geometry, and nothing changes unless you ask. Everything below
+is also a `shade` setting in a settings file or a library, and the sheet
+records it all, so `--settings-from` reproduces the look without the palette or
+library files.
+
+- `--shade-mode ramp|brightness|both|neither` chooses what the shading signal
+  does: select ramp entries (the default, today's look), scale the base
+  colour's brightness, select then scale, or neither. A material or the whole
+  library may override it, and the ordinary look (a material with no ramp) is
+  scaled in `brightness` and `both`.
+- `--bake-key-strength S` lights the sprite from one distant light, pointing
+  along `--bake-key-direction X,Y,Z` in the camera's frame (x right, y up, z
+  toward you, default `-0.6,0.7,0.7`); `--bake-sky-strength` and
+  `--bake-ground-strength` add light from above and below. The three are
+  shares from 0 to 1 that add to at most 1, all 0 by default.
+  `--bake-sky-ground-frame camera|world` follows the picture's up, or the
+  subject's up, which the camera's roll does not turn. `--no-ambient-form`
+  leaves the ambient shade out so only these terms shade.
+- `--brightness-floor` and `--brightness-ceiling` (0.3 and 1) bound the gain
+  that `brightness` and `both` apply; a colour is never brightened past its
+  base.
+- `--shade-snap ramp|palette` snaps the scaled colour to the material's ramp
+  or the whole palette (it needs a palette), and `--dither-pattern` (`ordered2`,
+  `ordered4`, `ordered8`, `clustered4`, `diagonal4`, `shuffled8`) with
+  `--dither-strength S` dithers ramp selection and snapping with a fixed
+  pattern.
+
+A `/4` library entry may give any of these, except the key direction, the
+frame and the snap target, in its `shade`, and an ordinary entry may be a
+mapping that carries one: `glow: {ordinary: true, shade: {mode: neither}}`.
+A material's value beats a global option, and an option you set that a
+library or material value overrides is named in a warning. `--light` stays an
+independent additional light for the lit previews; baking never requests it.
 
 `--frames N` samples every clip to N frames, retimed so each frame lasts
 `1/fps` (a one-shot still ends on its last pose; `--frames 1` makes a still);
@@ -195,6 +232,12 @@ shade:             # set any of them; the rest keep their defaults
   occlusion_weight: 0.5
   convexity_weight: 0.0
   range: [120, 188]
+  mode: both         # ramp (default), brightness, both or neither
+  key: {direction: [-0.6, 0.7, 0.7], strength: 0.4}
+  sky: {strength: 0.2}
+  brightness: {floor: 0.3, ceiling: 1}
+  snap: palette      # off (default), ramp or palette
+  dither: {pattern: ordered4, strength: 1}
 ramp:              # generated ramps: setting C, the high-contrast one
   lightness_step: 0.09
   hue_shift_deg: -35

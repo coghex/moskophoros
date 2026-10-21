@@ -1,7 +1,7 @@
-"""The `moskophoros.materials/4` library behind the internal gate of
-`validate_library` and `read_library_bytes`: the shading response, ordinary
-entries as mappings, version-aware errors and positions (shading design
-contract 2, D-33, D-39). Every library is generated here."""
+"""The `moskophoros.materials/4` library, read by `validate_library` and
+`read_library_bytes`: the shading response, ordinary entries as mappings,
+version-aware errors and positions (shading design contract 2, D-33, D-39).
+Every library is generated here."""
 
 import copy
 
@@ -28,7 +28,7 @@ def v4(**changes):
 
 
 def parse(document, **kwargs):
-    return validate_library(document, COLORS, source="lib", shading=True, **kwargs)
+    return validate_library(document, COLORS, source="lib", **kwargs)
 
 
 def refused(document, **kwargs):
@@ -42,16 +42,24 @@ def with_entry(entry, name="Painted"):
     return v4(materials={name: entry})
 
 
-# The gate
+# The schemas the readers take
 
 
-def test_a_v4_library_is_refused_without_the_gate_as_before():
-    with pytest.raises(LibraryError) as raised:
-        validate_library(v4(), COLORS, source="lib")
-    assert raised.value.problem == (
-        'schema: expected "moskophoros.materials/3" or "moskophoros.materials/2", '
-        'got "moskophoros.materials/4"'
+def test_a_v4_library_reads_without_any_switch():
+    parsed = validate_library(
+        v4(materials={"a": {"ordinary": True, "shade": {"mode": "both"}}}),
+        COLORS,
+        source="lib",
     )
+    assert parsed.schema == V4
+    assert parsed.materials["a"].shade == Shade(mode="both")
+
+
+def test_the_readers_have_no_internal_switch():
+    import inspect
+
+    for function in (validate_library, read_library_bytes):
+        assert "shading" not in inspect.signature(function).parameters
 
 
 @pytest.mark.parametrize(
@@ -68,11 +76,13 @@ def test_a_v4_library_is_refused_without_the_gate_as_before():
                 schema="moskophoros.materials/3",
                 materials={"a": {"uses": "metal", "shade": {"mode": "both"}}},
             ),
-            'materials["a"].shade: unknown field "mode"',
+            'materials["a"].shade.mode: the shading response needs '
+            f'{V4}; this library is "moskophoros.materials/3"',
         ),
         (
             library(schema="moskophoros.materials/3", shade={"key": {"strength": 0.5}}),
-            'shade: unknown field "key"',
+            f"shade.key: the shading response needs {V4}; this library is "
+            '"moskophoros.materials/3"',
         ),
         (
             library(
@@ -81,28 +91,13 @@ def test_a_v4_library_is_refused_without_the_gate_as_before():
                     "a": {"uses": "metal", "shade": {"dither": {"strength": 1}}}
                 },
             ),
-            'materials["a"].shade: unknown field "dither"',
-        ),
-        (
-            v4(materials={"a": {"ordinary": True}}),
-            'schema: expected "moskophoros.materials/3" or "moskophoros.materials/2", '
-            'got "moskophoros.materials/4"',
+            'materials["a"].shade.dither: the shading response needs '
+            f'{V4}; this library is "moskophoros.materials/2"',
         ),
     ],
 )
-def test_without_the_gate_the_new_fields_are_refused_as_before(document, problem):
-    with pytest.raises(LibraryError) as raised:
-        validate_library(document, COLORS, source="lib")
-    assert raised.value.problem == problem
-
-
-def test_the_gate_is_a_keyword_only_internal_parameter():
-    import inspect
-
-    for function in (validate_library, read_library_bytes):
-        parameter = inspect.signature(function).parameters["shading"]
-        assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
-        assert parameter.default is False
+def test_the_new_fields_in_an_old_library_are_refused(document, problem):
+    assert refused(document) == problem
 
 
 # Old schemas keep their meaning
@@ -111,7 +106,7 @@ def test_the_gate_is_a_keyword_only_internal_parameter():
 @pytest.mark.parametrize(
     "schema", ["moskophoros.materials/2", "moskophoros.materials/3"]
 )
-def test_old_libraries_read_the_same_through_the_gate(schema):
+def test_old_libraries_read_the_same_without_a_switch(schema):
     document = yaml.safe_load(LIBRARY_TEXT)
     document["schema"] = schema
     assert parse(document) == validate_library(document, COLORS, source="lib")
@@ -185,27 +180,17 @@ def test_a_v2_library_wide_shade_and_generated_ramps_need_v3_or_later():
         'ramps["gold"]: a generated ramp needs moskophoros.materials/3 or later; '
         'this library is "moskophoros.materials/2"'
     )
-    # Public readers keep the old wording.
-    with pytest.raises(LibraryError) as raised:
-        validate_library(library(shade={"range": [1, 2]}), COLORS, source="lib")
-    assert raised.value.problem == (
-        'shade: a library\'s own shade needs schema "moskophoros.materials/3"; '
-        'this library is "moskophoros.materials/2"'
-    )
 
 
-def test_a_v1_library_is_pointed_at_v4_through_the_gate_and_v3_otherwise():
+def test_a_v1_library_is_pointed_at_v4():
     document = library(schema="moskophoros.materials/1")
     assert refused(document) == (
         'schema: "moskophoros.materials/1" libraries no longer load; change the '
         f'schema line to "{V4}", the only edit the library needs'
     )
-    with pytest.raises(LibraryError) as raised:
-        validate_library(document, COLORS, source="lib")
-    assert 'change the schema line to "moskophoros.materials/3"' in raised.value.problem
 
 
-def test_the_gate_lists_the_schemas_it_reads():
+def test_the_reader_lists_the_schemas_it_reads():
     assert refused(library(schema="moskophoros.materials/5")) == (
         'schema: expected "moskophoros.materials/4", "moskophoros.materials/3" or '
         '"moskophoros.materials/2", got "moskophoros.materials/5"'
@@ -236,8 +221,12 @@ def test_every_entry_form_reads():
     assert parsed.materials["A"] == Entry(ramp=(1, 2))
     assert parsed.materials["B"] == Entry(uses="metal")
     assert parsed.materials["C"] == Entry()
-    assert parsed.materials["D"] == Entry()
-    assert parsed.materials["E"] == Entry(shade=Shade(mode="neither"))
+    # A mapping stays a mapping, so a sheet records it as it was given.
+    assert parsed.materials["D"] == Entry(ordinary_mapping=True)
+    assert parsed.materials["D"] != Entry()
+    assert parsed.materials["E"] == Entry(
+        shade=Shade(mode="neither"), ordinary_mapping=True
+    )
     assert parsed.materials["F"] == Entry(uses="gold", shade=Shade(key_strength=0.25))
     assert parsed.materials["G"] == Entry(
         ramp=(3,), shade=Shade(dither_pattern="ordered4")
@@ -620,9 +609,7 @@ materials:
 
 
 def read(text, **kwargs):
-    return read_library_bytes(
-        text.encode(), COLORS, source="library.yaml", shading=True
-    )
+    return read_library_bytes(text.encode(), COLORS, source="library.yaml")
 
 
 def test_a_library_read_from_bytes_keeps_the_position_of_every_shading_value():
@@ -685,7 +672,7 @@ def test_a_document_without_positions_names_the_source_key_path_and_material():
         ),
     ],
 )
-def test_a_gated_error_about_a_shading_value_names_its_line_and_column(edit, problem):
+def test_an_error_about_a_shading_value_names_its_line_and_column(edit, problem):
     with pytest.raises(LibraryError) as raised:
         read(YAML_TEXT.replace(*edit))
     assert raised.value.source == "library.yaml"
@@ -778,7 +765,7 @@ HEAD = "schema: moskophoros.materials/4\nramps: {m: [1, 2]}\n"
         ),
     ],
 )
-def test_every_gated_error_about_a_shade_or_an_entry_gives_its_position(body, problem):
+def test_every_error_about_a_shade_or_an_entry_gives_its_position(body, problem):
     with pytest.raises(LibraryError) as raised:
         read(HEAD + body)
     assert raised.value.problem == problem

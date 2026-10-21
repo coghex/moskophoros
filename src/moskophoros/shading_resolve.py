@@ -11,8 +11,8 @@ only, for the global response, then the library's, then every entry,
 unused ones included, and each failure names every contributing value and
 where it came from.
 
-This is internal until SHD-6 wires it to the command: nothing here is
-reachable from a public option, file or sheet record. It is pure.
+The command resolves the merged settings and its library with this before
+Blender runs, so every cross-field error is a usage error. It is pure.
 """
 
 from dataclasses import dataclass

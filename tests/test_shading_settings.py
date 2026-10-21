@@ -1,7 +1,6 @@
-"""The shading settings behind the internal gate of `settings.read_bytes`: the
-two-level reader, nested leaf merging and where each value came from (shading
-design contract 1, D-32, D-39), and the public readers, which still refuse them
-all."""
+"""The shading settings in `settings.read_bytes`: the two-level reader, nested
+leaf merging and where each value came from (shading design contract 1, D-32,
+D-39), and their place in the public schema and the shipped defaults."""
 
 import math
 from pathlib import Path
@@ -15,15 +14,15 @@ from moskophoros.settings import SettingsError, merge, read_bytes
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def gated(text, source="s.yaml"):
-    return read_bytes(text.encode(), source=source, directory="/settings", shading=True)
+def read(text, source="s.yaml"):
+    return read_bytes(text.encode(), source=source, directory="/settings")
 
 
 def public(text):
     return read_bytes(text.encode(), source="s.yaml", directory="/settings")
 
 
-def refused(text, reader=gated):
+def refused(text, reader=read):
     with pytest.raises(SettingsError) as raised:
         reader(text)
     assert raised.value.source == "s.yaml"
@@ -34,7 +33,7 @@ def refused(text, reader=gated):
 
 
 def test_every_shading_leaf_reads_from_its_nested_place():
-    layer = gated(
+    layer = read(
         """\
 shade:
   mode: both
@@ -66,17 +65,17 @@ shade:
 
 
 def test_a_direction_is_normalised_once_and_a_unit_one_is_kept():
-    assert gated("shade: {key: {direction: [-0.6, 0.7, 0.7]}}")[
+    assert read("shade: {key: {direction: [-0.6, 0.7, 0.7]}}")[
         "shade.key.direction"
     ] == (-0.5183210553488161, 0.604707897906952, 0.604707897906952)
-    unit = gated(
+    unit = read(
         "shade: {key: {direction: [-0.5183210553488161, 0.604707897906952, 0.604707897906952]}}"
     )
     assert unit["shade.key.direction"] == model.DEFAULTS["key.direction"]
 
 
 def test_the_existing_shade_settings_read_beside_the_new_ones():
-    layer = gated("shade:\n  range: [10, 20]\n  mode: neither\n  ao_samples: 8\n")
+    layer = read("shade:\n  range: [10, 20]\n  mode: neither\n  ao_samples: 8\n")
     assert dict(layer) == {
         "shade.range": (10, 20),
         "shade.mode": "neither",
@@ -85,8 +84,8 @@ def test_the_existing_shade_settings_read_beside_the_new_ones():
 
 
 def test_leaves_merge_independently_across_layers():
-    first = gated("shade: {brightness: {ceiling: 0.7}, key: {strength: 0.5}}")
-    second = gated("shade: {brightness: {floor: 0.1}, sky: {strength: 0.25}}")
+    first = read("shade: {brightness: {ceiling: 0.7}, key: {strength: 0.5}}")
+    second = read("shade: {brightness: {floor: 0.1}, sky: {strength: 0.25}}")
     merged = merge(first, second)
     # Setting a floor does not erase the ceiling an earlier layer set.
     assert dict(merged) == {
@@ -95,22 +94,22 @@ def test_leaves_merge_independently_across_layers():
         "shade.brightness.floor": 0.1,
         "shade.sky.strength": 0.25,
     }
-    third = gated("shade: {brightness: {ceiling: 0.6}}")
+    third = read("shade: {brightness: {ceiling: 0.6}}")
     assert merge(first, second, third)["shade.brightness.ceiling"] == 0.6
     assert merge(first, second, third)["shade.brightness.floor"] == 0.1
 
 
 def test_omitted_leaves_and_empty_groups_supply_nothing():
-    assert dict(gated("shade: {}")) == {}
+    assert dict(read("shade: {}")) == {}
     assert (
-        dict(gated("shade: {key: {}, sky: {}, ground: {}, brightness: {}, dither: {}}"))
+        dict(read("shade: {key: {}, sky: {}, ground: {}, brightness: {}, dither: {}}"))
         == {}
     )
-    assert dict(gated("shade:\n  key: {}\n  mode: both\n")) == {"shade.mode": "both"}
+    assert dict(read("shade:\n  key: {}\n  mode: both\n")) == {"shade.mode": "both"}
 
 
 def test_each_leaf_keeps_its_line_and_column():
-    layer = gated(
+    layer = read(
         """\
 shade:
   mode: both
@@ -128,8 +127,8 @@ shade:
 
 
 def test_origins_name_the_layer_line_and_column_of_each_setting():
-    first = gated("shade:\n  brightness: {ceiling: 0.7}\n")
-    second = gated("shade:\n  brightness:\n    floor: 0.1\n  ao_samples: 4\n")
+    first = read("shade:\n  brightness: {ceiling: 0.7}\n")
+    second = read("shade:\n  brightness:\n    floor: 0.1\n  ao_samples: 4\n")
     assert settings.origins([("config.yaml", first), ("--project 'look'", second)]) == {
         "shade.brightness.ceiling": "config.yaml line 2, column 16",
         "shade.brightness.floor": "--project 'look' line 3, column 5",
@@ -309,7 +308,7 @@ def test_a_group_that_is_not_a_mapping_is_reported_before_a_bad_value():
 def test_a_cross_field_relation_is_not_a_reader_error():
     # The sum and the order are checked on resolved values, never on a layer
     # that a later layer may correct.
-    layer = gated(
+    layer = read(
         "shade:\n  key: {strength: 0.9}\n  sky: {strength: 0.9}\n"
         "  brightness: {floor: 0.9, ceiling: 0.1}\n"
     )
@@ -332,40 +331,58 @@ def test_an_infinite_or_nan_number_is_never_a_leaf():
     assert not math.isfinite(float("1e999"))
 
 
-# The public readers are unchanged
+# The public settings carry them
+
+# Every shading leaf is a public setting, in the settings table's order after
+# the range, with its shipped default (contract 1).
+NEW_SETTINGS = [f"shade.{path}" for path in model.DEFAULTS]
 
 
-def test_public_settings_files_refuse_the_nested_keys_as_before():
-    assert refused("shade:\n  key:\n    strength: 0.5\n", public) == (
-        "shade.key: unknown key at line 2, column 3"
-    )
-    assert refused("shade: {sky: {strength: 0}}", public) == (
-        "shade.sky: unknown key at line 1, column 9"
-    )
-    assert refused("shade:\n  brightness: null\n", public) == (
-        "shade.brightness: unknown key at line 2, column 3"
-    )
-
-
-def test_public_settings_files_refuse_the_flat_new_keys_as_before():
-    for key in ("mode", "ambient_form", "snap", "sky_ground_frame"):
-        assert refused(f"shade:\n  {key}: off\n", public) == (
-            f"shade.{key}: unknown key at line 2, column 3"
-        )
-
-
-def test_the_public_schema_groups_and_shipped_defaults_do_not_change():
+def test_the_public_schema_holds_every_shading_leaf_after_the_range():
     assert settings.GROUPS == {"camera", "shade", "light", "ramp"}
-    assert not [name for name in settings.SCHEMA if name.count(".") > 1]
-    assert [name for name in settings.SCHEMA if name.startswith("shade.")] == [
+    shade = [name for name in settings.SCHEMA if name.startswith("shade.")]
+    assert shade == [
         "shade.ao_distance_m",
         "shade.ao_samples",
         "shade.occlusion_weight",
         "shade.convexity_weight",
         "shade.range",
+        *NEW_SETTINGS,
     ]
+    # The new sub-groups are no top-level groups.
+    assert not {"key", "sky", "ground", "brightness", "dither"} & settings.GROUPS
     shipped = settings.read_defaults()
     assert list(shipped) == list(settings.SCHEMA)
-    text = (ROOT / "src" / "moskophoros" / "defaults.yaml").read_text()
-    for leaf in ("brightness", "dither", "snap", "ambient_form", "sky_ground_frame"):
-        assert leaf not in text
+    for name in NEW_SETTINGS:
+        assert shipped[name] == settings.DEFAULTS[name]
+        assert shipped.where[name][0] > 0
+
+
+def test_the_shipped_defaults_leave_the_default_look_alone():
+    defaults = settings.DEFAULTS
+    assert defaults["shade.mode"] == "ramp"
+    assert defaults["shade.ambient_form"] is True
+    assert defaults["shade.snap"] == "off"
+    assert defaults["shade.dither.pattern"] == "off"
+    for name in ("key", "sky", "ground"):
+        assert defaults[f"shade.{name}.strength"] == 0.0
+
+
+def test_public_settings_files_read_the_nested_keys():
+    layer = public("shade:\n  key:\n    strength: 0.5\n")
+    assert dict(layer) == {"shade.key.strength": 0.5}
+    assert dict(public("shade: {sky: {strength: 0}}")) == {"shade.sky.strength": 0.0}
+    assert refused("shade:\n  brightness: null\n", public) == (
+        "shade.brightness: expected a mapping of settings, got null at line 2, column 3"
+    )
+
+
+def test_public_settings_files_read_the_flat_new_keys():
+    layer = public("shade:\n  mode: both\n  sky_ground_frame: world\n  snap: ramp\n")
+    assert dict(layer) == {
+        "shade.mode": "both",
+        "shade.sky_ground_frame": "world",
+        "shade.snap": "ramp",
+    }
+    for key in ("mode", "ambient_form", "snap", "sky_ground_frame"):
+        assert refused(f"shade:\n  {key}: wrong\n", public).startswith(f"shade.{key}: ")

@@ -235,7 +235,7 @@ def test_a_2_library_still_reads_exactly_as_before():
     [
         (
             {"ramps": {"gold": {"base": "#ca9337", "bands": 3}}, "default": None},
-            'ramps["gold"]: a generated ramp needs schema "moskophoros.materials/3"',
+            'ramps["gold"]: a generated ramp needs moskophoros.materials/3 or later',
         ),
         (
             {
@@ -243,11 +243,11 @@ def test_a_2_library_still_reads_exactly_as_before():
                 "default": None,
                 "materials": {"cloth": {"ramp": {"base": "#7a3b2e", "bands": 2}}},
             },
-            'materials["cloth"].ramp: a generated ramp needs schema',
+            'materials["cloth"].ramp: a generated ramp needs moskophoros.materials/3 or later',
         ),
         (
             {"ramps": {"m": [1]}, "default": None, "shade": {"range": [1, 2]}},
-            'shade: a library\'s own shade needs schema "moskophoros.materials/3"',
+            "shade: a library's own shade needs moskophoros.materials/3 or later",
         ),
     ],
 )

@@ -11,7 +11,7 @@ from moskophoros.settings import merge, read_bytes
 from moskophoros.shading_resolve import Look, resolve
 
 V4 = "moskophoros.materials/4"
-BASE = {**settings.DEFAULTS, **settings.SHADING_DEFAULTS}
+BASE = dict(settings.DEFAULTS)
 
 
 def values(**changes):
@@ -22,13 +22,11 @@ def values(**changes):
 
 
 def library(text):
-    return materials.read_library_bytes(
-        text.encode(), COLORS, source="library.yaml", shading=True
-    )
+    return materials.read_library_bytes(text.encode(), COLORS, source="library.yaml")
 
 
 def bare(document):
-    return materials.validate_library(document, COLORS, source="lib", shading=True)
+    return materials.validate_library(document, COLORS, source="lib")
 
 
 def problems(*args, **kwargs):
@@ -308,7 +306,6 @@ def test_a_floor_above_the_ceiling_names_both_values_and_where_they_came_from():
         b"shade:\n  brightness: {floor: 0.8}\n",
         source="config.yaml",
         directory=".",
-        shading=True,
     )
     flags = {"shade.brightness.ceiling": 0.5}
     origins = settings.origins([("config.yaml", first)]) | {
@@ -327,13 +324,11 @@ def test_a_partial_layer_a_later_layer_corrects_is_valid():
         b"shade:\n  brightness: {ceiling: 0.2}\n",
         source="a.yaml",
         directory=".",
-        shading=True,
     )
     late = read_bytes(
         b"shade:\n  brightness: {floor: 0.1}\n",
         source="b.yaml",
         directory=".",
-        shading=True,
     )
     both = values() | dict(merge(early, late))
     resolved = resolve(both, has_palette=False)
@@ -346,7 +341,6 @@ def test_the_earlier_layer_alone_names_the_default_it_conflicts_with():
         b"shade:\n  brightness: {ceiling: 0.2}\n",
         source="a.yaml",
         directory=".",
-        shading=True,
     )
     origins = settings.origins([("a.yaml", early)])
     assert problems(values() | dict(early), has_palette=False, origins=origins) == [
@@ -536,7 +530,7 @@ def test_a_tiny_excess_is_refused_through_the_reader_in_any_order(strengths):
         f"  sky: {{strength: {strengths[1]!r}}}\n"
         f"  ground: {{strength: {strengths[2]!r}}}\n"
     )
-    layer = read_bytes(text.encode(), source="s.yaml", directory=".", shading=True)
+    layer = read_bytes(text.encode(), source="s.yaml", directory=".")
     errors = problems(values() | dict(layer), has_palette=False)
     assert len(errors) == 1 and errors[0].endswith(
         "= 1.0000000000000000000000000006, exceeds 1"

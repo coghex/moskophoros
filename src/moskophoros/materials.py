@@ -12,7 +12,10 @@ A `moskophoros.materials/3` library may also give a ramp as properties, a
 base colour and a band count with optional formula values, which `generate`
 turns into palette indices (D-28, D-33, D-34), and a top-level `shade` giving
 the shade range its materials fall back to (D-35, D-36). A `/2` library still
-loads and reads exactly as before.
+loads and reads exactly as before. A `/4` library, the current one, may also
+give the shading response in the `shade` of an entry and of the library, and
+an ordinary entry as a mapping that carries a `shade` of its own (shading
+design contract 2, D-33); `/2` and `/3` libraries cannot.
 """
 
 import json
@@ -26,10 +29,11 @@ from types import MappingProxyType
 from moskophoros import ramps as generation
 from moskophoros import shading, yamlfile
 
+# The schema with generated ramps and a library shade, which still loads and
+# reads exactly as before.
 SCHEMA = "moskophoros.materials/3"
-# The schema with the shading response and ordinary entries as mappings
-# (shading design contract 2). It loads only through the internal gate
-# (`validate_library`'s `shading`) until SHD-6.
+# The current schema, with the shading response and ordinary entries as
+# mappings (shading design contract 2).
 SCHEMA_V4 = "moskophoros.materials/4"
 # The schema before generated ramps and a library shade, which still loads
 # and reads exactly as before (D-34).
@@ -76,9 +80,9 @@ class Shade:
     only.
 
     The fields after `range` are the shading response (shading design
-    contract 2), given only by a library read through the internal gate: the
-    leaves of `shading.Response`, named as it names them. A library-wide
-    shade gives `range` and those only.
+    contract 2), given only by a `/4` library: the leaves of
+    `shading.Response`, named as it names them. A library-wide shade gives
+    `range` and those only.
     """
 
     ao_distance_m: float | None = None
@@ -179,12 +183,14 @@ class Entry:
     """One material entry: its own `ramp`, the named ramp it `uses`, or
     neither, which is the `"ordinary"` look. `shade` holds its own shading
     values, or is None when it gives none; the string `"ordinary"` takes
-    none, and a `/4` ordinary mapping (`{ordinary: true, shade: ...}`, read
-    through the internal gate) may carry them."""
+    none, and a `/4` ordinary mapping (`{ordinary: true, shade: ...}`) may
+    carry them. `ordinary_mapping` says the entry was given as that mapping
+    rather than as the string, which a sheet records as it was given."""
 
     ramp: tuple[int, ...] | Generated | None = None
     uses: str | None = None
     shade: Shade | None = None
+    ordinary_mapping: bool = False
 
 
 @dataclass(frozen=True)
@@ -201,8 +207,8 @@ class Library:
     # Where the library came from, for diagnostics, its schema, and the
     # `(line, column)` of each shading value it gave, by path from the
     # document's root, such as `("materials", "Painted", "shade", "key",
-    # "strength")`. Only a library read through the internal gate from file
-    # bytes has positions. None of the three takes part in comparing libraries.
+    # "strength")`. Only a library read from file bytes has positions. None
+    # of the three takes part in comparing libraries.
     source: object = field(default=None, compare=False, repr=False)
     schema: str | None = field(default=None, compare=False, repr=False)
     where: MappingProxyType = field(
@@ -245,49 +251,37 @@ def read_library(path, colors):
     return read_library_bytes(data, colors, source=path)
 
 
-def read_library_bytes(data, colors, *, source, shading=False):
+def read_library_bytes(data, colors, *, source):
     """Parse a library snapshot, so its contents and digest describe the same
-    bytes. The bytes are one strict YAML document (`yamlfile.load`). `source`
-    only labels diagnostics; a caller reading a file checks its name first
-    (`check_path`).
+    bytes. The bytes are one strict YAML document (`yamlfile.load_located`).
+    `source` only labels diagnostics; a caller reading a file checks its name
+    first (`check_path`).
 
-    `shading` is the internal gate `validate_library` describes, which no
-    public path passes. With it the document is read with its positions, so
-    an error about a shading value names its line and column, and the
-    library keeps them for the errors the resolved values cause
-    (`Library.origin`).
+    The document is read with its positions, so an error about a shading
+    value names its line and column, and the library keeps them for the
+    errors the resolved values cause (`Library.origin`).
     """
     try:
-        if shading:
-            document, marks = yamlfile.load_located(data)
-        else:
-            document, marks = yamlfile.load(data), None
+        document, marks = yamlfile.load_located(data)
     except yamlfile.YamlError as error:
         raise LibraryError(source, error.problem) from None
-    return validate_library(
-        document, colors, source=source, shading=shading, marks=marks
-    )
+    return validate_library(document, colors, source=source, marks=marks)
 
 
-def validate_library(
-    document, colors, *, source, recorded=False, shading=False, marks=None
-):
+def validate_library(document, colors, *, source, recorded=False, marks=None):
     """Validate an already-parsed library against the palette `colors`.
 
     Applies every structural, value and reference check. `source` only labels
     diagnostics; nothing is read and `document` is not changed. A `/2`
-    library may not give generated ramps or a top-level `shade`. With
-    `recorded`, the document is a sheet's inline record: each generated ramp
-    must carry its `indices`, `bands` palette indices, which are kept as
-    recorded; otherwise no generated ramp may carry them.
+    library may not give generated ramps or a top-level `shade`, and a `/2`
+    or `/3` library may not give the shading response or an ordinary entry as
+    a mapping, which need `/4` (shading design contract 2). With `recorded`,
+    the document is a sheet's inline record: each generated ramp must carry
+    its `indices`, `bands` palette indices, which are kept as recorded;
+    otherwise no generated ramp may carry them.
 
-    `shading` is an internal gate, which no public path passes and no file,
-    option or sheet record can set (shading design D-39): it admits the
-    `/4` schema, a response in the `shade` of an entry and of the library,
-    and the mapping form of an ordinary entry, and words the errors about
-    older schemas by what they need. Without it a `/4` library, and any of
-    those, is refused as it always was. `marks` are the document's positions
-    (`yamlfile.load_located`), which only the gate uses.
+    `marks` are the document's positions (`yamlfile.load_located`), which
+    only a library read from file bytes has.
     """
     if not isinstance(document, dict):
         raise LibraryError(source, "expected a mapping")
@@ -298,27 +292,21 @@ def validate_library(
     for required in _REQUIRED:
         if required not in document:
             raise LibraryError(source, f"{required}: missing")
-    current = SCHEMA_V4 if shading else SCHEMA
     if document["schema"] == PREVIOUS_SCHEMA:
         raise LibraryError(
             source,
             f"schema: {_name(PREVIOUS_SCHEMA)} libraries no longer load; change "
-            f"the schema line to {_name(current)}, the only edit the library needs",
+            f"the schema line to {_name(SCHEMA_V4)}, the only edit the library "
+            "needs",
         )
-    accepted = (
-        (SCHEMA_V4, SCHEMA, LEGACY_SCHEMA) if shading else (SCHEMA, LEGACY_SCHEMA)
-    )
+    accepted = (SCHEMA_V4, SCHEMA, LEGACY_SCHEMA)
     if not isinstance(document["schema"], str) or document["schema"] not in accepted:
-        listed = " or ".join(_name(schema) for schema in accepted)
-        if shading:
-            listed = f"{_name(SCHEMA_V4)}, {_name(SCHEMA)} or {_name(LEGACY_SCHEMA)}"
+        listed = f"{_name(SCHEMA_V4)}, {_name(SCHEMA)} or {_name(LEGACY_SCHEMA)}"
         raise LibraryError(
             source,
             f"schema: expected {listed}, got {_shown(document['schema'])}",
         )
-    reading = _Reading(
-        len(colors), source, document["schema"], recorded, shading=shading, marks=marks
-    )
+    reading = _Reading(len(colors), source, document["schema"], recorded, marks=marks)
     ramps = {
         name: _ramp(value, f"ramps[{_name(name)}]", reading)
         for name, value in _named(document["ramps"], "ramps", source)
@@ -331,13 +319,8 @@ def validate_library(
         if not reading.current:
             raise LibraryError(
                 source,
-                (
-                    f"shade: a library's own shade needs {SCHEMA} or later; this "
-                    f"library is {_name(LEGACY_SCHEMA)}"
-                    if shading
-                    else f"shade: a library's own shade needs schema {_name(SCHEMA)}; "
-                    f"this library is {_name(LEGACY_SCHEMA)}"
-                ),
+                f"shade: a library's own shade needs {SCHEMA} or later; this "
+                f"library is {_name(LEGACY_SCHEMA)}",
             )
         shade = _library_shade(document["shade"], "shade", reading, ("shade",))
     materials = {}
@@ -354,6 +337,28 @@ def validate_library(
         schema=document["schema"],
         where=MappingProxyType(reading.where),
     )
+
+
+def recorded_schema(record):
+    """The schema a sheet's inline library `record`, a mapping with its
+    `materials` and optional `shade`, is read under: `/4` when it uses
+    anything only `/4` has, an ordinary entry given as a mapping or a shading
+    response in a `shade`, else `/3`, which a library of any older schema is
+    recorded as. A sheet does not record the schema line, so this reads it
+    off the record, and a reused library behaves as the library it was."""
+    response = {*_RESPONSE_TOP, *_GLOBAL_ONLY}
+    shades = [record.get("shade")]
+    entries = record.get("materials")
+    # A record that is not well formed is `validate_library`'s to refuse.
+    for entry in entries.values() if isinstance(entries, dict) else ():
+        if isinstance(entry, dict):
+            if ORDINARY in entry:
+                return SCHEMA_V4
+            shades.append(entry.get("shade"))
+    for shade in shades:
+        if isinstance(shade, dict) and response & set(shade):
+            return SCHEMA_V4
+    return SCHEMA
 
 
 def generate(library, colors, globals_, recorded=None):
@@ -505,8 +510,8 @@ def capture_overrides(records, library, globals_):
     value wins; one it does not give is the global. Materials sharing a name
     share their entry, translucent ones as any other (alpha design D-15); one
     taking the default ramp or the ordinary look, and one with no entry, take
-    the global values. An ordinary mapping entry (a `/4` library read through
-    the internal gate) overrides them like any other.
+    the global values. An ordinary mapping entry (in a `/4` library)
+    overrides them like any other.
     """
     overrides = []
     for index, _, entry in _taken(records, library):
@@ -535,10 +540,11 @@ def override_warnings(records, library, explicit):
     in the order `ao_distance_m`, `occlusion_weight`, `convexity_weight`,
     `range`.
 
-    `explicit` maps the name of each shading value a `--config` file or an
-    option set to that global value. Each material of the model taking its
-    entry's ramp is named once per value it overrides; a value the shipped
-    defaults, the user file or a loaded sheet gave warns nothing.
+    `explicit` maps the name of each shading value an option or a project file
+    set to that global value. Each material of the model taking its entry's
+    ramp is named once per value it overrides; a value the shipped defaults,
+    the global file (the user file or the one `--config` replaces it with) or
+    a loaded sheet gave warns nothing (shading design D-41).
     """
     messages = []
     named = set()
@@ -611,9 +617,10 @@ def ramp_warnings(records, library, explicit):
     """The warnings for global formula values given explicitly that a
     generated ramp in use keeps its own value over (D-33; settings design
     D-23): by ramp in the order the model first uses them, then in
-    `FORMULA`'s order. `explicit` maps each formula value a `--config` file
-    or an option set to that global value; the shipped defaults, the user
-    file and a loaded sheet set none."""
+    `FORMULA`'s order. `explicit` maps each formula value an option or a
+    project file set to that global value; the shipped defaults, the global
+    file (the user file or the one `--config` replaces it with) and a loaded
+    sheet set none (shading design D-41)."""
     messages = []
     for label, ramp, _ in _in_use(records, library):
         if not isinstance(ramp, Generated):
@@ -759,10 +766,6 @@ def _takes_library(records, library, name):
     return False
 
 
-def _shown(value):
-    return _shown(value)
-
-
 def _origin(origins, name):
     return f" ({origins[name]})" if name in origins else ""
 
@@ -780,8 +783,8 @@ def _named(mapping, location, source):
 
 def _check_keys(mapping, source, location=None, reading=None, path=()):
     # An unquoted YAML key such as `1` or `true` is not a string, and an
-    # already-parsed library might hold any key. With `reading`, through the
-    # internal gate, the message gives the key's position.
+    # already-parsed library might hold any key. With `reading`, the message
+    # gives the key's position.
     for key in mapping:
         if not isinstance(key, str):
             where = f"{location}: " if location else ""
@@ -792,15 +795,14 @@ def _check_keys(mapping, source, location=None, reading=None, path=()):
 @dataclass(frozen=True)
 class _Reading:
     """What validating one library needs: the palette size, the source for
-    diagnostics, its schema, whether it is a sheet's inline record, and,
-    through the internal gate, that gate, the document's positions and the
-    positions of the shading values read, by path."""
+    diagnostics, its schema, whether it is a sheet's inline record, and, for a
+    library read from file bytes, the document's positions and the positions
+    of the shading values read, by path."""
 
     size: int
     source: object
     schema: str
     recorded: bool
-    shading: bool = False
     marks: object = None
     where: dict = field(default_factory=dict)
 
@@ -843,13 +845,8 @@ def _generated(value, location, reading):
     if not reading.current:
         raise LibraryError(
             source,
-            (
-                f"{location}: a generated ramp needs {SCHEMA} or later; this "
-                f"library is {_name(LEGACY_SCHEMA)}"
-                if reading.shading
-                else f"{location}: a generated ramp needs schema {_name(SCHEMA)}; "
-                f"this library is {_name(LEGACY_SCHEMA)}"
-            ),
+            f"{location}: a generated ramp needs {SCHEMA} or later; this "
+            f"library is {_name(LEGACY_SCHEMA)}",
         )
     _check_keys(value, source, location)
     known = ("base", "bands", *FORMULA, *(("indices",) if reading.recorded else ()))
@@ -987,7 +984,7 @@ def _entry(value, location, ramps, reading, path):
         ramp = _ramp(value["ramp"], f"{location}.ramp", reading)
         return Entry(ramp=ramp, shade=shade)
     if "ordinary" in value:
-        return Entry(shade=shade)
+        return Entry(shade=shade, ordinary_mapping=True)
     uses = _reference(value["uses"], f"{location}.uses", ramps, source)
     return Entry(uses=uses, shade=shade)
 
@@ -1007,8 +1004,8 @@ def _shade(value, location, reading, path, library=False):
     `library`, the library's own, which give the range and the response
     only (D-36), never the capture values.
 
-    Through the internal gate, a `/4` library may also give the response
-    leaves (contract 2), nested as a settings file nests them; each leaf is
+    A `/4` library may also give the response leaves (contract 2), nested as
+    a settings file nests them; each leaf is
     checked on its own, whatever the value would resolve to, and its
     position is kept. Cross-field rules wait for the resolved values
     (`shading_resolve`)."""
@@ -1038,9 +1035,8 @@ def _shade(value, location, reading, path, library=False):
             f"{reading.at((*path, 'ao_samples'))}",
         )
     known = [*CAPTURE_VALUES, "range"]
-    if reading.shading:
-        _check_response_keys(value, location, reading, path)
-        known += [name for name in _RESPONSE_TOP if name in value]
+    _check_response_keys(value, location, reading, path)
+    known += [name for name in _RESPONSE_TOP if name in value]
     unknown = sorted(key for key in value if key not in known)
     if unknown:
         raise LibraryError(
@@ -1069,14 +1065,13 @@ def _shade(value, location, reading, path, library=False):
                 )
             given[name] = number
         reading.note((*path, name))
-    if reading.shading:
-        given |= _response(value, location, reading, path)
+    given |= _response(value, location, reading, path)
     return Shade(**given) if given else None
 
 
 def _library_shade(value, location, reading, path):
-    """A library's own shading values: the shade range (D-36), and through
-    the internal gate of a `/4` library the shading response."""
+    """A library's own shading values: the shade range (D-36), and in a `/4`
+    library the shading response."""
     return _shade(value, location, reading, path, library=True)
 
 

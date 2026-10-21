@@ -27,8 +27,9 @@ above.
 Given the resolved shading (`shading`, a `shading_resolve.Resolved`, and its
 `lights`; design §Stylize, Two layers), each layer is also shaded by its winning
 material's response, snapped, dithered and composited by `shade_layers`
-(shading design contract 3), with or without a library. Nothing public passes
-them yet: that is SHD-6. Without them the reductions are exactly as above.
+(shading design contract 3), with or without a library. The command passes
+them on every run; where they would change nothing, and without them, the
+reductions are exactly as above.
 
 Independently of the colour reduction, a frame carrying both normal and
 depth buffers (`NORMAL`, `DEPTH`) has them reduced to its reduced colour's

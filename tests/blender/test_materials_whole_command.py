@@ -204,13 +204,16 @@ def test_shading_values_from_a_project_are_used_recorded_and_reproduced(
     assert status == 0, err
 
     sheet = json.loads((shaded / "a.json").read_text())
-    assert sheet["settings"]["shade"] == {
+    shade = sheet["settings"]["shade"]
+    assert {key: shade[key] for key in list(shade)[:5]} == {
         "ao_distance_m": 1.2,
         "ao_samples": 128,
         "occlusion_weight": 0.5,
         "convexity_weight": 0.0,
         "range": [120, 188],
     }
+    # The shading settings the project did not give are at their defaults.
+    assert shade["mode"] == "ramp" and shade["snap"] == "off"
     assert list(sheet["generator"]["shade"]) == [
         "technique",
         "samples_per_pixel",
@@ -299,8 +302,10 @@ def test_without_a_library_the_sheet_and_previews_are_the_colour_only_output(
     real = getattr(stylize, look)
 
     def colour_only(frames, factor, **kwargs):
-        assert "library" not in kwargs and "shade_range" not in kwargs
-        kwargs.pop("identities", None)
+        # The default shading changes nothing, so it adds nothing to the colour.
+        for name in ("identities", "shade_range", "shading", "lights"):
+            kwargs.pop(name, None)
+        assert "library" not in kwargs
         bare = (ImageFrame(f.address, f.pixels, f.metadata) for f in frames)
         return real(bare, factor, **kwargs)
 

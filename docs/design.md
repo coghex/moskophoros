@@ -58,18 +58,27 @@ moskophoros [options] <infile.glb> <outfile.png>
 | `--edges RULE` | `hard` | How a pixel's alpha comes from its supersampled block: `hard`, a pixel shows when at least half its block shows a surface, at their mean alpha, so outlines stay crisp; or `soft`, its alpha is the block's mean alpha, so outlines and cut-out edges keep the partial alpha reducing the block gives (alpha design D-4, D-9). See [Stylize](#stylize). A [settings file](#settings-files) may set it. |
 | `--palette FILE` | none | Map colours to an ordered `.hex`, `.gpl` or `.png` palette. See [Stylize](#stylize). A [settings file](#settings-files) may set it. |
 | `--no-palette` | off | Use no palette, dropping a reused or configured one; cannot accompany `--palette`. |
-| `--materials FILE` | none | Draw each named material from the ramps of a YAML material library, a `.yaml` or `.yml` file, on the palette in force. Needs a palette. See [Material libraries](#material-libraries). A [settings file](#settings-files) may set it. |
+| `--materials FILE` | none | Draw each named material from the ramps of a YAML material library (`moskophoros.materials/4`; `/3` and `/2` still load), a `.yaml` or `.yml` file, on the palette in force. Needs a palette. See [Material libraries](#material-libraries). A [settings file](#settings-files) may set it. |
 | `--no-materials` | off | Use no material library, dropping a reused or configured one; cannot accompany `--materials`. |
 | `--ao-distance M` | `0.3` | How far the shade's ambient occlusion looks for other surfaces, in meters, greater than 0. See [Capture](#capture), *Shade*. A [settings file](#settings-files) may set it. |
 | `--ao-samples N` | `64` | Ambient occlusion samples per pixel, a whole number from 1 to 128, the most Blender's Ambient Occlusion node takes (settings design D-42). A [settings file](#settings-files) may set it. |
 | `--occlusion-weight W` | `0.25` | How much occlusion by other surfaces lightens the shade, finite and 0 or greater. A [settings file](#settings-files) may set it. |
 | `--convexity-weight W` | `1.0` | How much a surface's own convexity lightens the shade, finite and 0 or greater. A [settings file](#settings-files) may set it. |
 | `--shade-range LO,HI` | `84,191` | The 8-bit shade values a material's ramp spans, two integers with `0 ≤ LO < HI ≤ 255`. See [Material ramps](#material-ramps). A [settings file](#settings-files) may set it. |
+| `--shade-mode NAME` | `ramp` | What the shading signal does: `ramp` selects ramp entries without scaling their colour, `brightness` scales the unshaded base colour, `both` selects an entry then scales it, `neither` does neither. A material may override it. See [Stylize](#stylize), *Baked shading*. A [settings file](#settings-files) may set it as `shade.mode`. |
+| `--ambient-form`, `--no-ambient-form` | on | Whether the shade's ambient form term applies; `--no-ambient-form` makes it 1 everywhere, so a directional term shades alone. A material may override it. Cannot be given together. A settings file may set `shade.ambient_form`. |
+| `--bake-key-direction X,Y,Z` | `-0.6,0.7,0.7` | The direction toward the one distant key light, in the camera's frame: `X` screen right, `Y` screen up, `Z` toward the viewer; three finite numbers, each −1 to +1, not all 0, which the tool normalises once. The key stays fixed to the camera. Global only. A settings file may set `shade.key.direction`. |
+| `--bake-key-strength S`, `--bake-sky-strength S`, `--bake-ground-strength S` | `0` | The share of the light the key, the sky and the ground give, each a finite number from 0 to 1, the three adding to at most 1; the rest is uniform light. A material may override each. A settings file may set `shade.key.strength`, `shade.sky.strength` and `shade.ground.strength`. |
+| `--bake-sky-ground-frame NAME` | `camera` | The frame the sky and ground follow: `camera`, the picture's up and down, so they turn with the camera's roll, or `world`, the subject's up and down, which do not. Global only. A settings file may set `shade.sky_ground_frame`. |
+| `--brightness-floor G`, `--brightness-ceiling G` | `0.3`, `1` | The least and greatest brightness gain, finite numbers from 0 to 1 with the floor at most the ceiling. A material may override each. A settings file may set `shade.brightness.floor` and `shade.brightness.ceiling`. |
+| `--shade-snap TARGET` | `off` | `off`, `ramp` or `palette`: snap the colour brightness and both modes make to the material's ramp, or to the whole palette. Needs a palette whatever the mode. Global only. A settings file may set `shade.snap`. |
+| `--dither-pattern NAME` | `off` | `off`, `ordered2`, `ordered4`, `ordered8`, `clustered4`, `diagonal4` or `shuffled8`: the fixed pattern that dithers ramp selection and snapping. A material may override it. A settings file may set `shade.dither.pattern`. |
+| `--dither-strength S` | `1` | How far the pattern moves a pixel toward its second choice, a finite number from 0 to 1; 0 is no dithering. A material may override it. A settings file may set `shade.dither.strength`. |
 | `--ramp-step L` | `0.12` | How much OKLab lightness each shade of a library's [generated ramps](#generated-ramps) drops, finite, 0 to 1. A ramp's own value beats it. |
 | `--ramp-hue-shift DEG` | `-12` | How far each shade of a generated ramp turns the hue, in degrees, finite, −180 to 180. |
 | `--ramp-fade F` | `0.3` | How much chroma a generated ramp loses by its darkest shade, finite, 0 to 1. |
 | `--frames N` | `auto` | How many frames each clip is sampled to, a whole number 1 or more, retimed so every frame lasts `1/fps`; `auto` samples by duration. A clip's own count, set in a [settings file](#settings-files), beats it. See [Clips and sampling](#clips-and-sampling). |
-| `--settings-from FILE` | none | Load every recorded setting of an earlier `moskophoros.sheet/14` sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
+| `--settings-from FILE` | none | Load every recorded setting of an earlier `moskophoros.sheet/15` sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
 | `--config FILE` | the user file | Use FILE as the global settings file, in place of the user file. Given at most once. Its values are defaults, below a loaded sheet. See [Settings files](#settings-files). |
 | `--no-user-config` | off | Use no global settings file: skip the user file. Cannot accompany `--config`. |
 | `--project NAME` | none | Read the project file `projects/NAME.yaml` in the configuration directory. Given at most once. Its values act as the options would, over the global file and a loaded sheet. See [Settings files](#settings-files). |
@@ -147,7 +156,8 @@ Everything that shapes the picture is also a setting, which YAML settings
 files may set: the view, the model yaw, the scale, the cell, the ground point
 and ground pixel, supersampling, the reduction, root motion, `fps`, the
 palette, the material library, the edges rule, whether previews and the
-normal and depth maps are written, and the preview light. So are the two app
+normal and depth maps are written, the preview light, and the shading controls
+(shading design contract 1, D-5 to D-11, D-24 to D-26, D-28, D-29 and D-32). So are the two app
 settings, the Blender executable and whether another Blender version is
 allowed (owner decisions 2026-10-11, settings design D-2, D-5, D-8, D-14,
 D-17, D-22, D-28, D-30 and D-32; lighting sheet design D-18; alpha design
@@ -191,6 +201,18 @@ default; a test keeps the two in agreement.
 | `shade.occlusion_weight` | `--occlusion-weight W` | `0.25` | a finite number 0 or greater |
 | `shade.convexity_weight` | `--convexity-weight W` | `1.0` | a finite number 0 or greater |
 | `shade.range` | `--shade-range LO,HI` | `[84, 191]` | `[lo, hi]`, two integers with `0 ≤ lo < hi ≤ 255` |
+| `shade.mode` | `--shade-mode NAME` | `ramp` | `ramp`, `brightness`, `both` or `neither`; a material may override it |
+| `shade.ambient_form` | `--ambient-form`, `--no-ambient-form` | `true` | `true` or `false`; a material may override it |
+| `shade.key.direction` | `--bake-key-direction X,Y,Z` | `[-0.6, 0.7, 0.7]`, normalised | `[x, y, z]`, three finite numbers each from −1 to 1, not all 0, normalised once; toward the light in the camera's frame; global only |
+| `shade.key.strength` | `--bake-key-strength S` | `0` | a finite number from 0 to 1; a material may override it |
+| `shade.sky.strength` | `--bake-sky-strength S` | `0` | a finite number from 0 to 1; a material may override it |
+| `shade.ground.strength` | `--bake-ground-strength S` | `0` | a finite number from 0 to 1; a material may override it |
+| `shade.sky_ground_frame` | `--bake-sky-ground-frame NAME` | `camera` | `camera` or `world`; global only |
+| `shade.brightness.floor` | `--brightness-floor G` | `0.3` | a finite number from 0 to 1, at most the ceiling; a material may override it |
+| `shade.brightness.ceiling` | `--brightness-ceiling G` | `1` | a finite number from 0 to 1; a material may override it |
+| `shade.snap` | `--shade-snap TARGET` | `off` | `off`, `ramp` or `palette`; global only |
+| `shade.dither.pattern` | `--dither-pattern NAME` | `off` | `off`, `ordered2`, `ordered4`, `ordered8`, `clustered4`, `diagonal4` or `shuffled8`; a material may override it |
+| `shade.dither.strength` | `--dither-strength S` | `1` | a finite number from 0 to 1; a material may override it |
 | `ramp.lightness_step` | `--ramp-step L` | `0.12` | a finite number from 0 to 1 |
 | `ramp.hue_shift_deg` | `--ramp-hue-shift DEG` | `-12` | a finite number from −180 to 180, degrees |
 | `ramp.chroma_fade` | `--ramp-fade F` | `0.3` | a finite number from 0 to 1 |
@@ -215,7 +237,16 @@ its own: they merge key by key across the layers, so a file may set one and
 inherit the rest, while `shade.range`, a list, replaces whole (owner
 decisions 2026-10-11 and 2026-10-12, settings design D-3, D-9, D-12, D-22,
 D-30 and D-42). They are global values; each material may override them in
-its library entry.
+its library entry. Inside `shade`, `key`, `sky`, `ground`, `brightness` and
+`dither` are themselves mappings, and each of their leaves, such as
+`shade.key.strength` or `shade.brightness.floor`, is a setting of its own that
+merges by itself: a later `shade.brightness.floor` never erases an earlier
+`shade.brightness.ceiling`, an omitted leaf inherits, and an empty mapping sets
+nothing. These five are no top-level groups of a file; a `null`, a scalar or a
+list where one is expected, an unknown leaf under one, and a key that is not a
+string are errors naming the file, the full key path (`shade.key`) and the
+line and column. The key direction, the sky and ground frame and the snap
+target are global only: a material cannot override them.
 
 `clips` is a mapping keyed by clip name, each entry a mapping of that clip's
 own settings, so far only `frames` (owner decisions 2026-10-11, settings
@@ -274,6 +305,14 @@ identical resolved settings give identical bytes.
   whether the global file is the user file or a `--config` file. A loaded
   sheet records every one of these settings and sits above both, so they
   apply only without one.
+- A material or the library may override the shading response leaves marked so
+  in the table, and its value beats the resolved global one whichever layer
+  set that, an option included: within a response a material's own value
+  beats the library-wide `shade`, which beats the resolved global setting
+  (see [Material libraries](#material-libraries)). Only an explicit option or
+  a project file's value that a library or material value shadows draws a
+  warning; the shipped defaults, the global file, a `--config` file and a loaded
+  sheet never do (shading design D-41).
 - Per-clip frame counts merge by clip name: the global file's, then the
   loaded sheet's, then the project's.
 - The library is one setting, a path, and replaces whole. It is validated
@@ -397,6 +436,17 @@ shade:                  # set any of them; the rest fall through
   occlusion_weight: 0.5
   convexity_weight: 0.0
   range: [120, 188]
+  mode: both            # ramp, brightness, both or neither
+  ambient_form: true    # false: the ambient form is 1 everywhere
+  key:                  # one distant light, fixed to the camera
+    direction: [-0.6, 0.7, 0.7]  # toward the light, x right, y up, z toward you
+    strength: 0.4       # key + sky + ground at most 1; the rest is uniform
+  sky: {strength: 0.2}
+  ground: {strength: 0.1}
+  sky_ground_frame: camera  # or world: the subject's up
+  brightness: {floor: 0.3, ceiling: 1}
+  snap: off             # or ramp, or palette: needs a palette
+  dither: {pattern: off, strength: 1}  # ordered2 ... shuffled8
 ramp:                   # generated ramps' formula (setting B is shipped)
   lightness_step: 0.09
   hue_shift_deg: -35
@@ -458,6 +508,27 @@ decision 2026-10-01):
   `--occlusion-weight` or `--convexity-weight` not finite and 0 or greater; a
   `--shade-range` not two integers with `0 ≤ LO < HI ≤ 255`. The same limits
   apply to the `shade` settings in a [settings file](#settings-files).
+- A shading option or setting (shading design contract 1): `--shade-mode`,
+  `--bake-sky-ground-frame`, `--shade-snap` or `--dither-pattern` not one of
+  its listed names; `--bake-key-strength`, `--bake-sky-strength`,
+  `--bake-ground-strength`, `--brightness-floor`, `--brightness-ceiling` or
+  `--dither-strength` not a finite number from 0 to 1; `--bake-key-direction`
+  not three finite numbers each from −1 to 1, or all 0; `--ambient-form`
+  together with `--no-ambient-form`, or either option repeated. In a file or a
+  reused sheet the same values are refused, booleans and numeric strings being
+  no numbers and `null` no value for any of them. Every leaf is checked in
+  every layer, even one a later layer overrides and a term the mode leaves
+  inactive. These cross-field rules are checked once the layers are resolved,
+  on the global response, the library's, and every material's, those a
+  library never uses included: the key, sky and ground strengths add to at
+  most 1, and the brightness floor is at most the ceiling. A layer may give
+  only part of a pair that a later layer completes. A failure names every
+  contributing value and where it came from, such as
+  `shade.brightness.floor 0.8 (config.yaml line 12, column 3) exceeds
+  shade.brightness.ceiling 0.5 (--brightness-ceiling)`, with the material
+  named for an entry's. A `--shade-snap` other than `off`, in any layer,
+  needs a palette even when the mode leaves snap unused; a library always
+  needs one.
 - `--ramp-step` or `--ramp-fade` not a finite number from 0 to 1, or
   `--ramp-hue-shift` not one from −180 to 180; the same limits apply to the
   `ramp` settings in a settings file and a reused sheet (material styling
@@ -977,12 +1048,13 @@ loaded sheet, so it never changes a loaded sheet's ramps (material styling
 design D-33). The
 global formula reloads from `settings.ramp`.
 
-Only the current sheet schema, `moskophoros.sheet/14`, loads (owner decision
-2026-10-11, settings design D-24; projects and camera design D-14, D-17). A
-sheet of any other schema, `/1` to `/13` included, is a usage error naming
-its schema and the supported one. Nothing
-defaults a missing `settings.style.edges`. A file
-that is unreadable, or not a sheet document, is a usage error.
+Only the current sheet schema, `moskophoros.sheet/15`, loads (owner decision
+2026-10-11, settings design D-24; projects and camera design D-14, D-17;
+shading design D-8). A sheet of any other schema, `/1` to `/14` included, is a
+usage error naming its schema and the supported one: there is no loader for
+an older sheet and no conversion of its JSON, so it is generated again.
+Nothing defaults a missing `settings.style.edges` or a missing shading member.
+A file that is unreadable, or not a sheet document, is a usage error.
 
 The reused library follows the palette's pattern (owner decisions 2026-10-07,
 D-19 and D-24). It is applied without opening the original library file and
@@ -1039,14 +1111,48 @@ an object with exactly `name`, a nonempty string, `loop`, `true` or
 or more (never a boolean), `"auto"`, or `null` to take the global
 `settings.frames`; it is checked even when `--clip` replaces it. `shade` must be an
 object with exactly `ao_distance_m`, `ao_samples`, `occlusion_weight`,
-`convexity_weight` and `range`, each a value its option would accept:
-numbers, never booleans, and `ao_samples` an integer from 1 to 128.
-`style` must be an object with exactly `reduce`, a value
+`convexity_weight` and `range`, each a value its option would accept
+(numbers, never booleans, and `ao_samples` an integer from 1 to 128), then the
+shading members in this order and with these types (shading design contract 1),
+all of them present whether or not the mode makes them effective:
+
+```json
+{
+  "mode": "ramp",
+  "ambient_form": true,
+  "key": {"direction": [-0.5183210553488161, 0.604707897906952, 0.604707897906952],
+          "strength": 0.0},
+  "sky": {"strength": 0.0},
+  "ground": {"strength": 0.0},
+  "sky_ground_frame": "camera",
+  "brightness": {"floor": 0.3, "ceiling": 1.0},
+  "snap": "off",
+  "dither": {"pattern": "off", "strength": 1.0}
+}
+```
+
+(shown at the shipped defaults, the key direction being what `views.normalise`
+gives `(−0.6, 0.7, 0.7)`). `mode`, `sky_ground_frame`, `snap` and
+`dither.pattern` are strings its option accepts; `ambient_form` is `true` or
+`false`; every strength, the brightness floor and ceiling and `dither.strength`
+are numbers from 0 to 1, never booleans; `key`, `sky`, `ground`, `brightness`
+and `dither` are objects with exactly the members shown, and a missing,
+unknown or `null` member is an error naming its path. `key.direction` is a
+list of three numbers, never booleans, each from −1 to 1, within `1e-12` of
+unit length, and it is kept exactly as recorded and never normalised again, so
+a recorded vector that is not a unit vector is invalid. The strengths adding to
+at most 1 and the floor being at most the ceiling are checked on the resolved
+values, as for the options. `style` must be an object with exactly `reduce`, a value
 `--reduce` accepts, `edges`, a value `--edges` accepts, `palette`, either
 `null` or an object with exactly
 `source`, `sha256` and `colors`, `materials`, either `null` or an object with
 exactly `source`, `sha256`, `ramps`, `default` and `materials`, and the
-library's own `shade` after `default` when it gave one. The source is a nonempty base filename, never a path; the
+library's own `shade` after `default` when it gave one. A record's entries and
+its library-wide `shade` are the `/4` library's, as supplied (see
+[Material libraries](#material-libraries)): an ordinary entry is the string
+`"ordinary"` or the object `{"ordinary": true}` with its `shade` when it has
+one, and a `shade` holds only the leaves the library gave, never an inherited
+value. The source is a nonempty base filename, never a path; the
 digest is exactly 64 lowercase hexadecimal digits; colours are 1 to 255 unique
 canonical lowercase `#rrggbb` strings in their recorded order. The palette
 module applies its shared count, RGB and uniqueness checks. A library record's
@@ -1064,7 +1170,11 @@ floating-point numbers, with `0 ≤ lo < hi ≤ 255`; it is validated even when
 override, including `--reduce`, `--edges`, `--palette`, `--no-palette`, `--materials`,
 `--no-materials`, `--clip`, `--once`, `--preview`, `--no-preview`,
 `--normals`, `--no-normals`, `--depth`, `--no-depth`, `--light`,
-`--no-light`, `--light-intensity`, `--light-ambient` and the shading
+`--no-light`, `--light-intensity`, `--light-ambient`, `--shade-mode`,
+`--ambient-form`, `--no-ambient-form`, `--bake-key-direction`,
+`--bake-key-strength`, `--bake-sky-strength`, `--bake-ground-strength`,
+`--bake-sky-ground-frame`, `--brightness-floor`, `--brightness-ceiling`,
+`--shade-snap`, `--dither-pattern`, `--dither-strength` and the other shading
 options, and project values (owner decisions 2026-10-04,
 2026-10-07, 2026-10-11, 2026-10-12).
 A missing or invalid field, or an unknown field inside `settings`, is a usage
@@ -1169,19 +1279,29 @@ the front layer and the two layer normals, with this interface:
   `back_normal` is a 16-bit buffer, so it never takes the generic route that
   loads any other named buffer as an 8-bit image.
 
-**Resolved shading (internal until SHD-6).** `stylize.plain` and
-`stylize.mode` also take, as keyword-only arguments given together, `shading`,
-a `shading_resolve.Resolved` (each identity's resolved response and shade
+**Resolved shading.** `stylize.plain` and `stylize.mode` also take, as
+keyword-only arguments given together, `shading`, a
+`shading_resolve.Resolved` (each identity's resolved response and shade
 range, and the global snap target), and `lights`, a `lighting.Lights` (the
-key, sky and ground unit vectors in camera coordinates, which the caller makes
-with `lighting.light_vectors`; the world-up sky vector is the projection of
-the subject's +Y by `views.subject_basis`, never inferred from pixels or
-exported map bytes). `shade_range`, the global range, is passed whether or not
-a library is: it must be the range `shading` resolved. Stylize reads these
-values and the addressed arrays above only, never a Blender object, a file, a
-setting or a frame name, and the command passes none of them yet: the public
-settings, options, library activation, sheet records and warnings stay SHD-6's,
-and without `shading` the reduction is the one specified in this document. A
+key, sky and ground unit vectors in camera coordinates). The command resolves
+them from the merged settings and the library, before Blender, and passes
+them on every run, with or without a library or a palette. It makes `lights`
+with `lighting.light_vectors`: the key is the resolved `shade.key.direction`,
+toward the light in the camera's frame (+X right, +Y up, +Z toward the viewer)
+and fixed to the camera, so under the perspective camera too one direction
+holds across the whole image; the sky is the camera's up `(0, 1, 0)` in the
+`camera` frame, or in the `world` frame the subject's +Y in camera
+coordinates, `(b.right[1], b.up[1], −b.forward[1])` for
+`b = views.subject_basis(camera_direction, roll)`, never inferred from pixels
+or exported map bytes; the ground is the sky's opposite. Camera-frame terms
+therefore follow the camera's roll and world-frame terms do not, and turning
+the subject about +Y leaves the world sky unchanged between the directions of a
+sheet. `shade_range`, the global range, is passed whether or not a library is:
+it must be the range `shading` resolved. Stylize reads these values and the
+addressed arrays above only, never a Blender object, a file, a setting or a
+frame name. A run whose resolved response is the default and has no library
+takes no response step, so the reduction is exactly the one specified
+elsewhere in this document. A
 frame in a shaded reduction carries the identity and shade arrays of each layer
 it reduces and, where a contributing layer's response has a nonzero key, sky or
 ground strength, that layer's normals (`back_normal`; `front_normal` for a front
@@ -1913,8 +2033,14 @@ and so is a block with no front sample in a frame with one.
    32767 maps the back to white first, composites to 188 and snaps to white,
    not black.
 
-**Shading response** (shading design contract 3; D-14, D-18 to D-21, D-23,
-D-27 to D-30, D-34, D-36, D-37; internal until SHD-6, `shade_layers`). Given
+#### Baked shading
+
+Baked shading is the optional response that colours a layer by light as well
+as by its ramp (shading design contract 3; D-5 to D-9, D-14, D-15, D-18 to D-21,
+D-23 to D-30, D-34, D-36, D-37, D-40; `lighting`, `dither` and `shade_layers`).
+It is selected by the [shading settings](#settings-files) and off by default:
+with the shipped settings, no library response and no dithering, every sheet,
+map and preview is byte-identical to what the reductions above give. Given
 `shading` and `lights` ([Frames into stylize](#frames-into-stylize)), the
 material step of step 2 and the palette step of step 4 are replaced by one
 response step that runs with or without a library. Without a library every
@@ -1923,6 +2049,53 @@ response and range; a palette is needed only by a snap target other than
 `off`. A reduction with no library and no mode `brightness` or `both` has no
 step at all, and is exactly the reduction above.
 
+*The signal.* Per output pixel and layer, the winning material's raw shade is
+averaged with its weights (mode reduction votes per sample, below) and the
+facing term of each light is averaged separately from the winner's samples
+(`max(0, n · v)` for the unit normal `n` and the light's unit vector `v`),
+never from an averaged normal. With the range `[lo, hi]`, the ambient form is
+`a = (clamp(mean shade, lo, hi) − lo) / (hi − lo + 1)`, or `a = 1` with
+`shade.ambient_form` off. With the key, sky and ground facing terms `k`, `s`
+and `g` and their strengths `K`, `S` and `G`, the light factor is
+`L = (1 − K − S − G) + K·k + S·s + G·g`, so the strengths add to at most 1, the
+rest being uniform light, and with none `L = 1`. The shared signal is
+`e = a · L`. A ramp of `N` entries takes entry `clamp(⌊N · e⌋, 0, N − 1)`; the
+brightness gain is `floor + (ceiling − floor) · e` on linear RGB, followed by
+the sRGB encoding and a half-up byte. In mode reduction each sample's clamped
+shade gives its own `a`, band and weighted vote, repeated palette entries pool
+their votes, and a tie goes to the band nearest the unperturbed plain signal.
+
+*The ceiling.* With the ambient form on, `a ≤ (hi − lo) / (hi − lo + 1)`, so the
+gain never reaches the ceiling unless the endpoints are equal: at `L = 1` its
+greatest value is `floor + (ceiling − floor) · (hi − lo) / (hi − lo + 1)`.
+Over `[100, 101]` with floor 0.3 and ceiling 1 that is 0.65, however bright
+the raw shade; with the ambient form off it is 1. The gain is not normalised
+by the range, so the cap is intentional (owner decision D-40); the ceiling
+never exceeds 1, so a colour is never brightened beyond the base.
+
+*The four modes.* The winner's mode acts through `lighting.shade_blocks`:
+
+| Mode | With a ramp | Without a ramp (ordinary) |
+|---|---|---|
+| `ramp` | selects the entry by `e`, colour unscaled | the ordinary colour or texture, unchanged |
+| `brightness` | scales the ramp's last entry, the unshaded base, by the gain | scales the ordinary colour by the gain |
+| `both` | selects the entry, then scales it | scales the ordinary colour, as `brightness` |
+| `neither` | the last entry, unshaded | the ordinary colour, unchanged |
+
+An ordinary material keeps its reduced colour or texture and its usual palette
+mapping when a palette is present; ordinary is not `neither`, and a palette is
+never treated as an ordered ramp. A block with no winner keeps its ordinary
+colour. Alpha, coverage and the exported maps are never touched.
+
+*The frames.* The key points toward the light in the camera's frame and is
+fixed to the camera. The sky and ground follow `shade.sky_ground_frame`: in the
+`camera` frame, the default, the sky is the picture's up and turns with the
+camera's roll; in the `world` frame it is the subject's up, from the camera's
+pitch and not its roll, which is D-24's narrow exception to the camera-fixed
+lighting of vision V-7. The same basis serves both projections.
+
+*Layers, dithering and snap.* In detail:
+
 - *Per layer.* Each layer keeps step 2's ordinary colour, its own weights (`uᵢ`
   for the front, `tᵢ` for the back, the colour alpha for a frame without a
   front layer) and its own identity, shade and normal arrays. A layer whose
@@ -1930,35 +2103,48 @@ step at all, and is exactly the reduction above.
   included. The winner is chosen as for the ramps; its look gives the response,
   and the ramp is the library's, if any. The shade mean or vote and the facing
   terms use only the samples of the winning identity, at the layer's weights.
-- *Four modes.* The winner's mode acts through `lighting.shade_blocks`: `ramp`
-  selects a band, `brightness` scales the last ramp entry, `both` selects a
-  band and scales it, `neither` keeps the last entry; with no ramp, `ramp` and
-  `neither` keep the ordinary colour and `brightness` and `both` scale it. A
-  block with no winner keeps its ordinary colour.
 - *Band dithering* applies to a layer with mode `ramp` or `both`, a ramp, a
   pattern other than `off` and a strength above 0, from the output cell's own
   row and column in the reduced frame, with nothing added for frame,
-  direction or packing. A snap suppresses it where the snap makes the final
-  choice instead: under `ramp` on a `brightness` or `both` layer, under
-  `palette` on both layers of a pixel where either contributing layer uses
-  `brightness` or `both`. It never runs on both a band and its snap.
-- *Snap.* The target is global. Under `ramp`, each contributing `brightness`
-  or `both` layer snaps its rounded bytes to its own ramp (the whole palette
-  where it has none) with its material's pattern and strength, before the
-  layers composite. Under `palette`, when some contributing layer uses
-  `brightness` or `both`, the composite's rounded bytes snap once to the whole
-  palette, with the pattern and strength of the layer of greater visible
-  weight (the front on a tie; a one-layer pixel uses its own); a controller
-  with mode `neither`, or none, snaps without dithering. Snap is
-  `dither.snap`.
-- *Composition.* The layers composite once, as step 3. A composite keeps its
-  possibly off-palette colour where a contributing layer uses `brightness` or
-  `both`, and otherwise maps to the palette as step 4. Alpha, coverage and the
-  reduced maps are never touched, and a pixel of alpha 0 is `(0, 0, 0, 0)`.
+  direction or packing. The tile is one of six fixed ones (`ordered2`,
+  `ordered4`, `ordered8`, `clustered4`, `diagonal4`, `shuffled8`); the
+  threshold at a cell is `(rank + ½) / (width · height)`, and the band
+  coordinate `N · e` moves by `strength · (½ − threshold)` before flooring. A
+  snap suppresses it where the snap makes the final choice instead: under `ramp`
+  on a `brightness` or `both` layer, under `palette` on both layers of a pixel
+  where either contributing layer uses `brightness` or `both`. It never runs on
+  both a band and its snap.
+- *Snap* (`shade.snap`, global). It acts only on `brightness` and `both`
+  layers; `ramp` keeps its band dithering and `neither` stays unshaded and
+  undithered. Under `ramp`, each contributing `brightness` or `both` layer snaps
+  its rounded bytes to its own ramp (the whole palette where it has none) with
+  its material's pattern and strength, before the layers composite. Under
+  `palette`, when some contributing layer uses `brightness` or `both`, the
+  composite's rounded bytes snap once to the whole palette, with the pattern
+  and strength of the layer of greater visible weight (the front on a tie; a
+  one-layer pixel uses its own); a controller with mode `neither`, or none,
+  snaps without dithering. A snapped, dithered pixel is the nearer of the two
+  nearest distinct allowed colours in OKLab, or the second where the pattern's
+  threshold is below `strength` times the fraction that projects the colour
+  onto their segment; a one-colour target stays constant.
+- *Composition.* The layers composite once, as step 3. Where a contributing
+  layer uses `brightness` or `both`, the composite keeps its possibly
+  off-palette colour unless the snap target is `palette`, which snaps the
+  composite itself: with snap `off` the layers are unsnapped, and with snap
+  `ramp` each layer is on its ramp but a blend of two layers can still leave
+  the palette (D-18). Where neither contributing layer does, the composite maps
+  to the palette as step 4. Alpha, coverage and the reduced maps are never
+  touched, and a pixel of alpha 0 is `(0, 0, 0, 0)`.
+- *The exact path.* With the ambient form on, every strength 0 and no effective
+  dithering, the integer ramp selection and tie arithmetic of
+  [Material ramps](#material-ramps) is kept as it is, not replaced by the
+  continuous formula.
+- *The preview light.* `--light` is an independent additional light that only
+  the lit previews apply, over whatever colour the sheet holds, a baked one
+  included; baking never requests it, and the map output switches are
+  independent of the shading data.
 - *Lifetime.* Every auxiliary and working array is released when the frame is
   reduced, before the next is asked for, and the reduced frame holds none.
-
-Public activation of all of this remains SHD-6's.
 
 #### Normal and depth maps
 
@@ -2058,7 +2244,9 @@ Quantized colour extraction remains deferred.
 #### Palette mapping and composition
 
 `imageops.map_palette(pixels, colors)` maps each nontransparent pixel to the
-nearest palette entry by Euclidean distance in OKLab, with no dithering. Equal
+nearest palette entry by Euclidean distance in OKLab, itself with no
+dithering (the optional dithering of [baked shading](#baked-shading) is a
+separate step, off by default). Equal
 distances choose the earlier entry. It uses a fixed 256-entry sRGB-to-linear
 table and the [OKLab matrices](https://bottosson.github.io/posts/oklab/), with
 NumPy float64 elementwise arithmetic in a fixed operation order. Alpha is
@@ -2075,7 +2263,10 @@ The four fixed looks are (owner decisions 2026-10-04, D-6 and D-7):
 
 Coverage and mode tie rules stay as above. Every look has the same transparent
 pixels and binary output alpha; each opaque paletted output colour belongs to
-the palette. Stages keep addresses, frame order and metadata. The command
+the palette, except where [baked shading](#baked-shading) scales a colour by
+brightness and the snap target is not `palette` (with `ramp`, a blend of two
+layers can still leave the palette), which the default settings never do. Stages
+keep addresses, frame order and metadata. The command
 processes one supersampled frame at a time. Palette data never enters capture
 settings or jobs. Without a palette, both reductions produce the same bytes
 as before palette mapping was added.
@@ -2089,7 +2280,9 @@ into the shared palette, for reuse across subjects (owner decisions
 standalone `materials.read_library(path, colors)` library function reads only
 the named file and validates it against the palette `colors`.
 `materials.read_library_bytes(data, colors, source=...)` parses a byte
-snapshot, so a caller can hash exactly the bytes it parsed, and
+snapshot, so a caller can hash exactly the bytes it parsed (it reads the
+document with its positions, so an error about a shading value names its line
+and column), and
 `materials.validate_library(document, colors, source=...)` validates an
 already-parsed library without reading anything or changing its input. All
 three return the same result for the same library. `--materials FILE` gives the
@@ -2106,14 +2299,16 @@ libraries are YAML. `read_library_bytes` and `validate_library` never inspect
 
 ```yaml
 # Ramps run darkest first, as indices into the palette.
-schema: moskophoros.materials/3
+schema: moskophoros.materials/4
 ramps:
   metal: [12, 13, 14, 15, 47]
   cloth: [80, 81, 82]
   gold: {base: "#ca9337", bands: 4}        # generated from properties
   chrome: {base: "#8c939c", bands: 5, hue_shift_deg: -35, chroma_fade: 0.6}
 default: cloth          # a named material with no entry takes this ramp
-shade: {range: [190, 225]}   # the range its materials fall back to
+shade:                  # the range and the response its materials fall back to
+  range: [190, 225]
+  brightness: {floor: 0.4}
 materials:
   steel: {uses: metal}
   cloth.red:
@@ -2121,19 +2316,27 @@ materials:
     shade: {range: [120, 255], convexity_weight: 0.5}   # its own values
   leather: {ramp: {base: "#6b4226", bands: 3}}
   face: ordinary
+  glow:
+    ordinary: true      # no ramp: the model's own colour
+    shade: {mode: neither}
 ```
 
-- `schema` is `moskophoros.materials/3`, the current schema, or
-  `moskophoros.materials/2`, which still loads and reads exactly as before:
-  every `/2` library is valid `/3` (owner decision 2026-10-14, material
-  styling design D-34). Only a `/3` library may give a generated ramp or a
-  top-level `shade`; a `/2` library using either is an error naming the ramp
-  or key. A `moskophoros.materials/1` library, from before per-material
+- `schema` is `moskophoros.materials/4`, the current schema, or
+  `moskophoros.materials/3` or `moskophoros.materials/2`, which still load and
+  read exactly as before: every `/2` library is valid `/3`, and every `/3`
+  library is valid `/4` (owner decision 2026-10-14, material styling design
+  D-34; shading design D-33). Only a `/3` or later library may give a
+  generated ramp or a top-level `shade`, and a `/2` library using either is an
+  error saying it needs `moskophoros.materials/3 or later`, naming the ramp or
+  key. Only a `/4` library may give the shading response in a `shade`, or an
+  ordinary entry as a mapping; a `/2` or `/3` library giving either is an
+  error saying it needs `moskophoros.materials/4`, and cannot carry the new
+  fields. A `moskophoros.materials/1` library, from before per-material
   shading, is refused, saying to change its `schema` line to
-  `moskophoros.materials/3`, the only edit it needs (owner decision
-  2026-10-11, settings design D-29). `schema`, `ramps` and `materials` are
-  required; `ramps` and `materials` are mappings and may be empty. No other
-  field is allowed at any level.
+  `moskophoros.materials/4`, the only edit it needs (owner decision
+  2026-10-11, settings design D-29; shading design contract 2). `schema`,
+  `ramps` and `materials` are required; `ramps` and `materials` are mappings
+  and may be empty. No other field is allowed at any level.
 - `ramps` holds named generic ramps. A ramp is a non-empty list of at most
   256 integers, never booleans or numbers such as `3.0`, each an index
   from `0` to one less than the palette's length. A one-entry ramp is a flat
@@ -2149,22 +2352,31 @@ materials:
   ramps, and `uses` and `default` may name either. Listing a ramp's indices
   stays the exact control (material styling design D-12).
 - `default`, optional, names one ramp in `ramps`; `null` is not allowed.
-- A `/3` library may give a top-level `shade`, its own shade **range** only:
-  `{range: [lo, hi]}`, checked as a material's `range`. A library `shade`
+- A `/3` or `/4` library may give a top-level `shade`, its own shade **range**
+  `{range: [lo, hi]}`, checked as a material's `range`, and in a `/4` library
+  also the response leaves a material may override (below). A library `shade`
   giving `ao_distance_m`, `occlusion_weight`, `convexity_weight` or
   `ao_samples` is an error naming the key: capture values come only from a
   material's own `shade` or the globals (owner decision 2026-10-14, material
-  styling design D-35, D-36).
+  styling design D-35, D-36; shading design contract 2). The key direction,
+  the sky and ground frame and the snap target are global only, and a library
+  giving one is an error saying so.
 - Each `materials` entry is exactly one of `{"ramp": [...]}`, its own ramp;
-  `{"uses": NAME}`, a ramp in `ramps`; or the string `"ordinary"`.
+  `{"uses": NAME}`, a ramp in `ramps`; the string `"ordinary"`; or, in a `/4`
+  library, a mapping with exactly one of `ramp`, `uses` and `ordinary: true`,
+  and an optional `shade`. In a mapping `ordinary` must be the boolean `true`:
+  `false`, `null`, a number or a string is an error, not another way to
+  inherit. Ordinary means no assigned ramp, never a forced `neither`: the
+  entry keeps the model's own colour and texture and inherits the response.
 - An entry with `ramp` or `uses` may carry a `shade` mapping, its material's
   own shading values (owner decisions 2026-10-11, settings design D-4, D-9,
   D-20 and D-23): any of `ao_distance_m` (finite, greater than 0),
   `occlusion_weight` and `convexity_weight` (finite, 0 or greater) and `range`
   (`[lo, hi]`, two integers with `0 ≤ lo < hi ≤ 255`), checked with the
   global values' limits. `ao_samples` there is an error saying AO samples is
-  global only; any other key is an unknown field. The `"ordinary"` form, named
-  ramps and the default carry none. A material's own value beats the global
+  global only; any other key is an unknown field. The string `"ordinary"`,
+  named ramps and the default carry none; in a `/4` library an entry given as
+  a mapping, an ordinary one included, may. A material's own value beats the global
   one from any layer; a value it does not give is the global in force. A
   material with no entry, or taking the default ramp or the ordinary look,
   takes the global values; a translucent (`BLEND`) material's entry works as
@@ -2175,7 +2387,33 @@ materials:
   range** is the first given of: its entry's own `range`, the library's
   `shade.range`, the settings layers' `shade.range`, the shipped default. A
   material with no entry that takes the default ramp also takes the library's
-  range; the ordinary look uses none (D-35, D-36).
+  range, and in a `/4` library an ordinary entry, a material with no entry and
+  a part with no identity take it too, the ordinary look then using it for
+  its ambient signal (D-35, D-36; shading design contract 2).
+- **The shading response** (`/4`). A `shade` mapping, a material's or the
+  library's, may also give the response leaves marked as overridable in the
+  [settings table](#settings-files): `mode`, `ambient_form`, `key.strength`,
+  `sky.strength`, `ground.strength`, `brightness.floor`, `brightness.ceiling`,
+  `dither.pattern` and `dither.strength`, `key`, `sky`, `ground`, `brightness`
+  and `dither` being mappings of their leaves exactly as in a settings file.
+  Each leaf is checked on its own, whatever it will resolve to, naming the
+  file, the material and its line and column. A leaf takes the first given of
+  the material's entry, the library's `shade`, and the resolved global
+  setting, whichever layer or option set it; so a global option cannot defeat
+  a material or library value, and each leaf inherits independently. The
+  cross-field rules (the strengths adding to at most 1, the brightness floor
+  at most the ceiling) are checked on the resolved response of the globals,
+  of the library as a whole, and of every entry, one the model never uses
+  included: a partial `shade` is valid while the response it resolves to is. A
+  failure names every contributing value and its origin, as under
+  [Option validation](#option-validation). A material with no identity (an
+  unnamed or missing material, or one of an alpha mode glTF does not define)
+  takes the library-wide response, else the global one, and the ordinary base.
+  A material's own capture values (`ao_distance_m`, `occlusion_weight`,
+  `convexity_weight`) work for an ordinary mapping entry as for one with a
+  ramp: they reach the capture job's per-material shade overrides, an omitted
+  one taking the resolved global value, and its own `range` sets that
+  material's ambient signal.
 - Names are non-empty strings, kept and compared exactly, case and
   whitespace included. A reference to an undefined ramp is an error. Entries
   and ramps no model uses are valid and not reported. An unquoted name the
@@ -2220,10 +2458,13 @@ these rules:
 The result is an immutable `materials.Library`: `ramps` maps each name to a
 tuple of indices, `default` is a ramp name or `None`, and `materials` maps
 each name to a `materials.Entry` holding its own `ramp` or the name it
-`uses`, and `shade`, a `materials.Shade` of the values it gives or `None`;
-an entry with neither ramp nor `uses` is `"ordinary"`.
-`materials.capture_overrides` gives each glTF material's own capture values,
-and `materials.override_warnings` the warnings below. Both mappings are read-only
+`uses`, and `shade`, a `materials.Shade` of the values it gives, as supplied
+and never merged with an inherited one, or `None`; an entry with neither ramp
+nor `uses` is ordinary, as the string or as the `/4` mapping, which the entry
+remembers. `materials.capture_overrides` gives each glTF material's own capture
+values, ordinary mapping entries included, `materials.shadow_warnings` the
+warnings below, and `shading_resolve.resolve` the resolved response of each
+material. Both mappings are read-only
 and ordered by name, so the result does not depend on the file's key order,
 and checks run in name order, so neither does the first error reported.
 
@@ -2236,8 +2477,9 @@ for Python to convert, an escape beyond U+10FFFF, a wrong or missing field, an
 unknown field, a key that is not a string, a value of the wrong type, an
 empty or oversized ramp, a non-integer or out-of-palette index, an entry of
 none or several forms, an empty name, a reference to an undefined ramp, a
-`moskophoros.materials/1` schema, or a `shade` that is not a mapping, holds
-`ao_samples` or an unknown key, or a value outside its limits.
+`moskophoros.materials/1` schema, a field or response a library's schema does
+not have, an `ordinary` that is not `true`, or a `shade` that is not a mapping,
+holds `ao_samples` or an unknown key, or a value outside its limits.
 YAML errors give the line and column, such as `is not valid YAML at line 3,
 column 1: …` or `repeats the key "metal" at line 4, column 3`; only these
 parse failures say YAML. Errors after parsing name the field, ramp or
@@ -2295,8 +2537,9 @@ sheet from it is byte-identical to one from the listed ramp. A ramp's own
 formula value beats the global from any layer; a global given explicitly, by
 an option or a project file, that a generated ramp in use keeps its own
 value over is named in a warning, naming the ramp and the value it kept
-(settings design D-23); a value from the shipped defaults, the global file or
-a loaded sheet warns nothing.
+(settings design D-23); a value from the shipped defaults, the global file (the
+user file, or the `--config` file that replaces it) or a loaded sheet warns
+nothing (shading design D-41).
 
 #### Material ramps
 
@@ -2380,8 +2623,10 @@ unreachable.
 Coverage, votes, shade sums, bands and `mode` ties use exact integer
 arithmetic, so they are deterministic and do not depend on the library's key
 order. The ordinary look keeps its own arithmetic, including the NumPy
-`float64` OKLab palette mapping above, and is unchanged. Dithering and eased
-bands are out of scope (D-7).
+`float64` OKLab palette mapping above, and is unchanged. With the default
+shading settings this integer arithmetic is the whole of the mapping; the
+[baked shading](#baked-shading) a project turns on adds the continuous signal,
+brightness, dithering and snapping, and eased bands stay out of scope (D-7).
 
 #### Using a library from the command
 
@@ -2419,18 +2664,27 @@ D-18), before capture starts:
 - each library entry whose name is used only by materials whose alpha mode
   glTF does not define
 - for each global shading value an option or a project file set, each
-  material of the model taking its entry's ramp that keeps its own value
-  instead, naming the material, the value and the global one, once per
-  material and value, by material then in the order `ao_distance_m`,
-  `occlusion_weight`, `convexity_weight`, `range` (owner decision 2026-10-11,
-  settings design D-23). A global from the shipped defaults, the global file or
-  a loaded sheet warns nothing, nor does an entry the model never uses; a
-  translucent material's warns as any other's
+  material of the model taking its entry's ramp, or an ordinary mapping
+  entry, that keeps its own value instead, naming the material, the value and
+  the global one with where it came from, once per material and value, by
+  material then in the order `ao_distance_m`, `occlusion_weight`,
+  `convexity_weight`, `range`, then the response leaves in the settings
+  table's order (owner decision 2026-10-11, settings design D-23; shading
+  design contract 2). A global from the shipped defaults, the global file (the
+  user file, or the `--config` file that replaces it) or a loaded sheet warns
+  nothing, nor does an entry the model never uses; a translucent material's
+  warns as any other's. This holds for the response leaves and the existing
+  values alike (shading design D-41)
 - an explicit global `shade.range` that the library's own range beats for a
   material in use, once, naming the library's value (material styling design
-  D-35)
+  D-35), and, in a `/4` library, for each response leaf the library's own
+  `shade` gives and an explicit global cannot reach for some part of the
+  model, once per leaf
 - an explicit global `ramp` value that a generated ramp in use keeps its own
   value over, naming the ramp and the value it kept (D-33)
+
+A value is explicit when a command-line option or a project file gave it. A
+term that is merely inactive, and a leaf that is only inherited, warn nothing.
 
 Library entries and named ramps the model never uses are silent (D-15).
 Names are shown as JSON strings, so quotes and whitespace are visible. The
@@ -2494,11 +2748,11 @@ ground point's scale, with this encoding and range. It is
 published with the other outputs, rolled back with them, and named in an
 output error (exit 6) when it cannot be written.
 
-**JSON (`moskophoros.sheet/14`).**
+**JSON (`moskophoros.sheet/15`).**
 
 ```json
 {
-  "schema": "moskophoros.sheet/14",
+  "schema": "moskophoros.sheet/15",
   "generator": {
     "tool": "moskophoros", "version": "0.1.0",
     "python": "3.x.y", "numpy": "x.y.z", "pillow": "x.y.z",
@@ -2533,7 +2787,16 @@ output error (exit 6) when it cannot be written.
     "light": { "position": null, "intensity": 1.0, "ambient": 0.3 },
     "shade": { "ao_distance_m": 0.3, "ao_samples": 64,
                "occlusion_weight": 0.25, "convexity_weight": 1.0,
-               "range": [84, 191] },
+               "range": [84, 191],
+               "mode": "ramp", "ambient_form": true,
+               "key": { "direction": [-0.5183210553488161, 0.604707897906952,
+                                      0.604707897906952],
+                        "strength": 0.0 },
+               "sky": { "strength": 0.0 }, "ground": { "strength": 0.0 },
+               "sky_ground_frame": "camera",
+               "brightness": { "floor": 0.3, "ceiling": 1.0 },
+               "snap": "off",
+               "dither": { "pattern": "off", "strength": 1.0 } },
     "ramp": { "lightness_step": 0.12, "hue_shift_deg": -12.0,
               "chroma_fade": 0.3 },
     "style": { "reduce": "plain", "edges": "hard", "palette": null,
@@ -2570,15 +2833,24 @@ output error (exit 6) when it cannot be written.
   properties as given, `base` in canonical lowercase, `bands`, its own
   `lightness_step`, `hue_shift_deg` and `chroma_fade` in that order, then
   `indices`, the generated result), `default` (a ramp name, or `null`), the
-  library's own `shade` when it gives one (holding only `range`; a library
-  without one has no `shade`), and `materials` (each
+  library's own `shade` when it gives one (a library without one has no
+  `shade`), and `materials` (each
   entry in name order: `{"ramp": [...]}` or a generated ramp's mapping,
-  `{"uses": NAME}` or `"ordinary"`,
-  and an entry giving its own shading values has a `shade` after its `ramp`
-  or `uses`, holding only the values the library gives, in the fixed order
-  `ao_distance_m`, `occlusion_weight`, `convexity_weight`, `range`, whatever
-  the file's order (settings design D-37); an entry without them has no
-  `shade`).
+  `{"uses": NAME}`, `"ordinary"` or, for an ordinary entry given as a mapping,
+  `{"ordinary": true}`,
+  and an entry giving its own shading values has a `shade` after its `ramp`,
+  `uses` or `ordinary`; an entry without them has no `shade`). A `shade`,
+  an entry's or the library's, holds only the leaves the library supplied,
+  never an inherited or a global value, in a fixed order whatever the file's:
+  the existing leaves `ao_distance_m`, `occlusion_weight`, `convexity_weight`,
+  `range` first, those a library's own `shade` may not give left out
+  (settings design D-37), then the response leaves in the settings table's
+  order, `key`, `sky`, `ground`, `brightness` and `dither` as nested mappings
+  holding only their supplied leaves, in table order. An ordinary entry given as
+  the string stays a string and one given as a mapping stays a mapping,
+  `{"ordinary": true}` with its `shade` when it has one; neither form is
+  collapsed into the other and no supplied leaf is lost, so reuse writes the
+  same bytes (shading design contract 1).
   It sits between `ramp` and `clips`. Export writes and fingerprints the record the
   command resolved without interpreting it, so a new look changes neither
   export nor capture (owner decisions 2026-10-04, 2026-10-07).
@@ -2623,9 +2895,18 @@ output error (exit 6) when it cannot be written.
   `image` is; `settings.normals` covers it.
 - `settings.shade` records the shading values used, in this order:
   `ao_distance_m`, `ao_samples`, `occlusion_weight`, `convexity_weight` and
-  `range` (`[lo, hi]`), recorded whether or not a library is used, between
-  `light` and `style`, inside the fingerprint (owner decisions 2026-10-11
-  and 2026-10-12, settings design D-24 and D-35). `generator.shade` keeps only
+  `range` (`[lo, hi]`), then the resolved global shading settings: `mode`,
+  `ambient_form`, `key` (`direction`, the unit vector exactly as resolved, and
+  `strength`), `sky` and `ground` (each `strength`), `sky_ground_frame`,
+  `brightness` (`floor`, `ceiling`), `snap` and `dither` (`pattern`,
+  `strength`), recorded whether or not a library is used or the mode makes
+  them effective, between `light` and `ramp`, inside the fingerprint (owner
+  decisions 2026-10-11 and 2026-10-12, settings design D-24 and D-35; shading
+  design contract 1). `ao_samples` and the `range` entries are integers, every
+  other number is a float, `ambient_form` is a boolean and the rest are
+  strings. The canonical fingerprint format is unchanged, so every new global
+  value, and every inline override in `settings.style`, changes it.
+  `generator.shade` keeps only
   the fixed technique: `technique`, `samples_per_pixel`, `seed`,
   `pixel_filter` and `filter_width_px`. `moskophoros.sheet/5` is the same
   document without per-material shading in the inline library record, and
@@ -2642,8 +2923,11 @@ output error (exit 6) when it cannot be written.
   `settings.style.edges`, and its pixels' alpha was only 0 or 255;
   `moskophoros.sheet/13` recorded the view's `projection` and `pitch_deg`
   in `settings.view` and had no `settings.camera`;
-  [reuse](#scale-and-ground-point) loads only `/14` (settings design D-24;
-  projects and camera design D-14, D-17). The normal and depth capture adds no fixed
+  `moskophoros.sheet/14` had none of the shading members of `settings.shade`
+  beyond `range`, no `{"ordinary": true}` entries and no response in a library
+  record;
+  [reuse](#scale-and-ground-point) loads only `/15` (settings design D-24;
+  projects and camera design D-14, D-17; shading design D-8). The normal and depth capture adds no fixed
   parameter to `generator.shade` (lighting sheet design D-26).
 - `generator` records this tool, its Python and libraries, and what the
   render result's `backend` reports: the Blender version, `renderer`
@@ -2728,11 +3012,15 @@ lit preview. Each covered pixel, alpha above 0, is lit with the normal map
 first, keeping its alpha, then blended over the grey exactly as a flat
 preview's is (alpha design D-11, D-13). Without a light every preview is flat and no lit preview is
 written. With previews off a placed light is recorded but unused, with one
-warning saying so. Light is previewed, never baked: the colour sheet, flat
-previews and maps are the same with and without a light. The ordinary look
-shows each material's flat, unlit colour, so a lit preview over it applies
-the light once (alpha design D-8, which replaces lighting sheet design
-D-23).
+warning saying so. The preview light is separate from baked shading
+([Baked shading](#baked-shading)): the colour sheet, flat previews and maps
+are the same with and without `--light`, and baking never requests it. By
+default the ordinary look shows each material's flat, unlit colour, so a lit
+preview over it applies the light once (alpha design D-8, which replaces
+lighting sheet design D-23); when the sheet's colour is shaded by the shading
+settings, `--light` deliberately lights that baked colour again, as an
+additional live-light simulation. The regular preview shows the exported
+colour sheet, subject to its scaling, background blending and colour limits.
 
 The light sits in the camera's frame, fixed to the camera, so every
 direction of the subject sees it from the same place: `x` screen right, `y`
@@ -2804,7 +3092,13 @@ generator. A sheet made with `--no-preview` reloads writing no previews, one mad
 made without `--depth` writing no depth map. A recorded camera direction is
 kept exactly as recorded, never normalised again, so a sheet with any
 direction and roll reproduces itself too (projects and camera design D-14).
-The whole-command Blender tests check this.
+The same holds for the shading controls (shading design D-8, contract 1):
+every resolved shading setting, the key direction as a recorded unit vector
+that is never normalised again, and the library's inline overrides as
+supplied come back from the JSON alone, with the palette and library source
+files gone, so a sheet with a world-frame sky, a nontrivial key direction and
+roll, material overrides, dithering and snapping, or disabled map and preview
+settings reproduces byte for byte. The whole-command Blender tests check this.
 
 ## Project layout
 

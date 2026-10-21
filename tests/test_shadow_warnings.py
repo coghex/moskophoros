@@ -19,10 +19,8 @@ from moskophoros.materials import (
 V4 = "moskophoros.materials/4"
 
 
-def gated(text, source="library.yaml"):
-    return materials.read_library_bytes(
-        text.encode(), COLORS, source=source, shading=True
-    )
+def library_from(text, source="library.yaml"):
+    return materials.read_library_bytes(text.encode(), COLORS, source=source)
 
 
 def old(text):
@@ -152,7 +150,7 @@ NEW_RECORDS = [
 
 
 def test_a_response_override_on_an_explicit_global_warns_with_both_sources():
-    library = gated(NEW_LIBRARY)
+    library = library_from(NEW_LIBRARY)
     explicit = {"mode": "ramp", "key.strength": 0.8, "brightness.floor": 0.1}
     origins = {
         "mode": "--shade-mode",
@@ -176,7 +174,7 @@ def test_a_response_override_on_an_explicit_global_warns_with_both_sources():
 
 
 def test_ordinary_entry_overrides_of_the_old_values_warn_too():
-    library = gated(NEW_LIBRARY)
+    library = library_from(NEW_LIBRARY)
     assert shadow_warnings(
         NEW_RECORDS,
         library,
@@ -195,7 +193,7 @@ def test_ordinary_entry_overrides_of_the_old_values_warn_too():
 
 
 def test_an_ordinary_entry_warns_without_an_origin_for_the_global():
-    library = gated(NEW_LIBRARY)
+    library = library_from(NEW_LIBRARY)
     assert shadow_warnings(NEW_RECORDS, library, {"key.strength": 0.8}, {}) == [
         'material "Painted" keeps its own shade.key.strength, 0.5 (library.yaml '
         "line 14, column 13), from the material library; the global 0.8 applies to "
@@ -205,7 +203,7 @@ def test_an_ordinary_entry_warns_without_an_origin_for_the_global():
 
 def test_a_unit_less_origin_is_the_library_key_path_without_positions():
     document = yaml.safe_load(NEW_LIBRARY)
-    library = validate_library(document, COLORS, source="inline", shading=True)
+    library = validate_library(document, COLORS, source="inline")
     assert shadow_warnings(NEW_RECORDS, library, {"key.strength": 0.8}, {}) == [
         'material "Painted" keeps its own shade.key.strength, 0.5 (inline: '
         'materials["Painted"].shade.key.strength), from the material library; the '
@@ -214,7 +212,7 @@ def test_a_unit_less_origin_is_the_library_key_path_without_positions():
 
 
 def test_only_what_was_given_explicitly_warns():
-    library = gated(NEW_LIBRARY)
+    library = library_from(NEW_LIBRARY)
     # Defaults, the global file, a reused sheet and inheritance are the caller's
     # to leave out of `explicit`; a leaf it does not name never warns.
     assert shadow_warnings(NEW_RECORDS, library, {}, {}) == []
@@ -232,7 +230,7 @@ def test_only_what_was_given_explicitly_warns():
 
 
 def test_a_library_value_every_part_overrides_warns_nothing():
-    library = gated(
+    library = library_from(
         f"""\
 schema: {V4}
 ramps: {{metal: [1, 2]}}
@@ -271,14 +269,14 @@ materials:
 
 
 def test_materials_taking_the_ordinary_look_by_alpha_mode_ignore_their_entry():
-    library = gated(NEW_LIBRARY)
+    library = library_from(NEW_LIBRARY)
     odd = [record(0, "Painted", "SPECULAR")]
     assert shadow_warnings(odd, library, {"key.strength": 0.8}, {}) == []
 
 
 def test_the_order_is_entries_then_the_library_then_the_ramps():
     library = materials.generate(
-        gated(
+        library_from(
             f"""\
 schema: {V4}
 ramps:
@@ -313,7 +311,7 @@ materials:
 
 
 def test_a_resolved_global_the_library_only_shares_is_not_a_warning_event():
-    library = gated(
+    library = library_from(
         f"schema: {V4}\nramps: {{}}\nshade: {{mode: both}}\nmaterials: {{}}\n"
     )
     # Every part takes the library's value, but nothing was set explicitly.
@@ -321,7 +319,7 @@ def test_a_resolved_global_the_library_only_shares_is_not_a_warning_event():
 
 
 def range_library(entries):
-    return gated(
+    return library_from(
         f"schema: {V4}\nramps: {{metal: [1, 2]}}\nshade: {{range: [10, 20]}}\n"
         f"materials:\n{entries}"
     )
@@ -364,7 +362,7 @@ def test_a_v4_library_range_every_part_overrides_warns_nothing():
 
 
 def test_a_shared_name_of_mixed_alpha_modes_takes_each_parts_own_class():
-    library = gated(
+    library = library_from(
         f"schema: {V4}\nramps: {{}}\nshade: {{mode: both}}\n"
         "materials:\n  A: {ordinary: true, shade: {mode: neither}}\n"
     )

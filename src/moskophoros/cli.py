@@ -41,6 +41,7 @@ import traceback
 from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, fields, replace
+from dataclasses import field as dataclass_field
 from decimal import Decimal, InvalidOperation
 from itertools import count
 from pathlib import Path
@@ -52,13 +53,16 @@ from moskophoros import (
     fit,
     gltf,
     imageops,
+    lighting,
     materials,
     palette,
     sampling,
+    shading_resolve,
     stylize,
     views,
 )
 from moskophoros import settings as layered
+from moskophoros import shading as shading_model
 from moskophoros.capture import backend, blender
 
 PROG = "moskophoros"
@@ -106,12 +110,39 @@ REDUCTIONS = layered.REDUCTIONS
 # The values --projection accepts; the first is the default.
 PROJECTIONS = layered.PROJECTIONS
 # The only sheet schema `--settings-from` loads (settings design D-24).
-SHEET_SCHEMA = "moskophoros.sheet/14"
+SHEET_SCHEMA = "moskophoros.sheet/15"
 _MAX_DIGITS = 4300
 # The view's values a preset gives, which an override replaces. `--pitch` and
 # `--camera-direction` both set the direction.
 _VIEW_VALUES = ("direction", "directions", "start_angle")
 _REPEATABLE = frozenset({"--clip", "--once"})
+# The shading settings (shading design contract 1), each as its path under
+# `shade`, the `Options` field that holds its global value, which is also its
+# option's name in `explicit`, and the option that sets it, as errors and
+# warnings name it. A material may override all but the key direction, the
+# sky and ground frame and the snap target (`shading_model.FIELDS`).
+_SHADING = (
+    ("mode", "shade_mode", "--shade-mode"),
+    ("ambient_form", "ambient_form", "--ambient-form"),
+    ("key.direction", "key_direction", "--bake-key-direction"),
+    ("key.strength", "key_strength", "--bake-key-strength"),
+    ("sky.strength", "sky_strength", "--bake-sky-strength"),
+    ("ground.strength", "ground_strength", "--bake-ground-strength"),
+    ("sky_ground_frame", "sky_ground_frame", "--bake-sky-ground-frame"),
+    ("brightness.floor", "brightness_floor", "--brightness-floor"),
+    ("brightness.ceiling", "brightness_ceiling", "--brightness-ceiling"),
+    ("snap", "shade_snap", "--shade-snap"),
+    ("dither.pattern", "dither_pattern", "--dither-pattern"),
+    ("dither.strength", "dither_strength", "--dither-strength"),
+)
+# The shading values a material may override that existed before the
+# response, the same way: path under `shade`, `Options` field and option.
+_SHADE_VALUES = (
+    ("ao_distance_m", "ao_distance", "--ao-distance"),
+    ("occlusion_weight", "occlusion_weight", "--occlusion-weight"),
+    ("convexity_weight", "convexity_weight", "--convexity-weight"),
+    ("range", "shade_range", "--shade-range"),
+)
 # The `Options` field of each file setting whose name differs, which is also
 # its option's name in `explicit`.
 _SETTING_FIELDS = MappingProxyType(
@@ -130,6 +161,7 @@ _SETTING_FIELDS = MappingProxyType(
         "camera.projection": "projection",
         "camera.roll": "roll",
         "camera.position": "camera_position",
+        **{f"shade.{path}": field for path, field, _ in _SHADING},
     }
 )
 # The file settings that are paths, with the `Options` fields a path and a
@@ -218,6 +250,29 @@ class Options:
     ao_samples: int = layered.DEFAULTS["shade.ao_samples"]
     occlusion_weight: float = layered.DEFAULTS["shade.occlusion_weight"]
     convexity_weight: float = layered.DEFAULTS["shade.convexity_weight"]
+    # The global shading settings (shading design contract 1), each the
+    # shipped default until a layer or an option sets it. `key_direction` is
+    # the normalised direction toward the key light in the camera's frame.
+    shade_mode: str = layered.DEFAULTS["shade.mode"]
+    ambient_form: bool = layered.DEFAULTS["shade.ambient_form"]
+    key_direction: tuple[float, float, float] = layered.DEFAULTS["shade.key.direction"]
+    key_strength: float = layered.DEFAULTS["shade.key.strength"]
+    sky_strength: float = layered.DEFAULTS["shade.sky.strength"]
+    ground_strength: float = layered.DEFAULTS["shade.ground.strength"]
+    sky_ground_frame: str = layered.DEFAULTS["shade.sky_ground_frame"]
+    brightness_floor: float = layered.DEFAULTS["shade.brightness.floor"]
+    brightness_ceiling: float = layered.DEFAULTS["shade.brightness.ceiling"]
+    shade_snap: str = layered.DEFAULTS["shade.snap"]
+    dither_pattern: str = layered.DEFAULTS["shade.dither.pattern"]
+    dither_strength: float = layered.DEFAULTS["shade.dither.strength"]
+    # The resolved shading, a `shading_resolve.Resolved`, and where each of
+    # its settings came from (`resolve_settings`); None before then. They are
+    # derived from the settings above, so they take no part in comparing
+    # options.
+    shading: object = dataclass_field(default=None, compare=False)
+    shading_origins: MappingProxyType = dataclass_field(
+        default=MappingProxyType({}), compare=False
+    )
     # The global file `--config` names, in place of the user file; whether
     # `--no-user-config` uses none; and the `--project` name.
     config: Path | None = None
@@ -285,6 +340,8 @@ def parse_args(argv: Sequence[str]) -> Options:
         parser.error("--depth and --no-depth cannot be given together")
     if args.light is not None and args.no_light:
         parser.error("--light and --no-light cannot be given together")
+    if args.ambient_form and args.no_ambient_form:
+        parser.error("--ambient-form and --no-ambient-form cannot be given together")
     if args.config is not None and args.no_user_config:
         parser.error("--config and --no-user-config cannot be given together")
     if args.pitch is not None and args.direction is not None:
@@ -309,6 +366,8 @@ def parse_args(argv: Sequence[str]) -> Options:
         explicit = (explicit - {"no_depth"}) | {"depth"}
     if "no_light" in explicit:
         explicit = (explicit - {"no_light"}) | {"light"}
+    if "no_ambient_form" in explicit:
+        explicit = (explicit - {"no_ambient_form"}) | {"ambient_form"}
     explicit = frozenset(explicit)
     preset = PRESETS[args.view]
     overrides = {"pitch", "direction", "directions", "start_angle"} & explicit
@@ -361,6 +420,22 @@ def parse_args(argv: Sequence[str]) -> Options:
         occlusion_weight=args.occlusion_weight,
         convexity_weight=args.convexity_weight,
         shade_range=args.shade_range,
+        shade_mode=args.shade_mode,
+        ambient_form=(
+            not args.no_ambient_form
+            if "ambient_form" in explicit
+            else layered.DEFAULTS["shade.ambient_form"]
+        ),
+        key_direction=args.key_direction,
+        key_strength=args.key_strength,
+        sky_strength=args.sky_strength,
+        ground_strength=args.ground_strength,
+        sky_ground_frame=args.sky_ground_frame,
+        brightness_floor=args.brightness_floor,
+        brightness_ceiling=args.brightness_ceiling,
+        shade_snap=args.shade_snap,
+        dither_pattern=args.dither_pattern,
+        dither_strength=args.dither_strength,
         config=args.config,
         no_user_config=args.no_user_config,
         project=args.project,
@@ -428,6 +503,18 @@ class ReusedSettings:
     ao_samples: int
     occlusion_weight: float
     convexity_weight: float
+    shade_mode: str
+    ambient_form: bool
+    key_direction: tuple[float, float, float]
+    key_strength: float
+    sky_strength: float
+    ground_strength: float
+    sky_ground_frame: str
+    brightness_floor: float
+    brightness_ceiling: float
+    shade_snap: str
+    dither_pattern: str
+    dither_strength: float
     palette: PaletteRecord | None = None
     materials: MaterialsRecord | None = None
 
@@ -452,6 +539,7 @@ def resolve_settings(options: Options, environ=None) -> Options:
     environ = os.environ if environ is None else environ
     defaults, global_, projects = _read_layers(options, environ)
     command_line_view = _command_line_view(options)
+    given = options.explicit
     options = _apply_layer(
         options, layered.merge(*(values for _, values in projects)), projects
     )
@@ -482,7 +570,56 @@ def resolve_settings(options: Options, environ=None) -> Options:
         merged.update(layer)
     options = replace(options, clip_frames=MappingProxyType(merged))
     options = _resolve_palette(options)
-    return _resolve_materials(options, reused_colors)
+    options = _resolve_materials(options, reused_colors)
+    return _resolve_shading(options, given, global_, projects)
+
+
+def _resolve_shading(options, given, global_, projects):
+    """Resolve the shading response of the merged `options` with its library
+    and check the combination, before Blender (shading design contract 2).
+
+    `given` is what the command line set, as `Options.explicit` held it
+    before any file did; `global_` and `projects` are the global file's and
+    the project files' `(label, layer)`. Every cross-field rule is checked on
+    the resolved values, each failure naming every value it involves and where
+    it came from: an option, a settings file and line, a loaded sheet, a
+    library, or the shipped default.
+    """
+    projected = layered.origins(projects)
+    globally = {} if global_ is None else layered.origins([global_])
+    origins = {}
+    for path, field, option in (*_SHADE_VALUES, *_SHADING):
+        name = f"shade.{path}"
+        if field in given:
+            # The ambient form is one setting with two options.
+            negated = field == "ambient_form" and not options.ambient_form
+            origins[name] = "--no-ambient-form" if negated else option
+        elif name in projected:
+            origins[name] = projected[name]
+        elif options.settings_from is not None:
+            origins[name] = f"--settings-from {str(options.settings_from)!r}"
+        elif name in globally:
+            origins[name] = globally[name]
+    library = None if options.materials is None else options.materials.library
+    try:
+        resolved = shading_resolve.resolve(
+            _shading_values(options),
+            library,
+            has_palette=options.palette is not None,
+            origins=origins,
+        )
+    except shading_model.ShadingError as error:
+        _build_parser()[0].error("; ".join(error.problems))
+    return replace(options, shading=resolved, shading_origins=MappingProxyType(origins))
+
+
+def _shading_values(options):
+    """The checked values of the global shade settings in `options`, named as
+    the settings are, which `shading_resolve.resolve` takes."""
+    return {
+        f"shade.{path}": getattr(options, field)
+        for path, field, _ in (*_SHADE_VALUES, *_SHADING)
+    }
 
 
 def _check_camera(options):
@@ -914,6 +1051,18 @@ def read_settings(path) -> ReusedSettings:
         ao_samples=shade["ao_samples"],
         occlusion_weight=shade["occlusion_weight"],
         convexity_weight=shade["convexity_weight"],
+        shade_mode=shade["mode"],
+        ambient_form=shade["ambient_form"],
+        key_direction=shade["key"]["direction"],
+        key_strength=shade["key"]["strength"],
+        sky_strength=shade["sky"]["strength"],
+        ground_strength=shade["ground"]["strength"],
+        sky_ground_frame=shade["sky_ground_frame"],
+        brightness_floor=shade["brightness"]["floor"],
+        brightness_ceiling=shade["brightness"]["ceiling"],
+        shade_snap=shade["snap"],
+        dither_pattern=shade["dither"]["pattern"],
+        dither_strength=shade["dither"]["strength"],
         palette=style["palette"],
         materials=(
             None
@@ -1017,9 +1166,14 @@ def style_record(options: Options) -> dict:
 def _materials_document(record: MaterialsRecord) -> dict:
     """The library snapshot as the sheet records it: its source base name and
     digest, then its ramps, default and entries in name order. An entry with
-    its own shading values has a `shade` after its `ramp` or `uses`, holding
-    only the values the library gives, in a fixed order (settings design
-    D-37)."""
+    its own shading values has a `shade` after its `ramp`, `uses` or
+    `ordinary`, holding only the values the library gives, in a fixed order:
+    the capture values and range, then the response leaves in the settings
+    table's order, `key`, `sky`, `ground`, `brightness` and `dither` as nested
+    mappings of the leaves given (settings design D-37; shading design
+    contract 1). An ordinary entry given as the string stays the string, and
+    one given as a mapping stays a mapping, `{"ordinary": true}` with its
+    `shade` when it has one, so reuse writes the same bytes."""
     library = record.library
     entries = {}
     for name, entry in library.materials.items():
@@ -1027,14 +1181,13 @@ def _materials_document(record: MaterialsRecord) -> dict:
             entries[name] = {"ramp": _ramp_document(entry.ramp)}
         elif entry.uses is not None:
             entries[name] = {"uses": entry.uses}
+        elif entry.ordinary_mapping:
+            entries[name] = {"ordinary": True}
         else:
             entries[name] = materials.ORDINARY
             continue
         if entry.shade is not None:
-            entries[name]["shade"] = {
-                key: list(value) if key == "range" else value
-                for key, value in entry.shade.given()
-            }
+            entries[name]["shade"] = entry.shade.document()
     document = {
         "source": record.source,
         "sha256": record.sha256,
@@ -1043,10 +1196,7 @@ def _materials_document(record: MaterialsRecord) -> dict:
     }
     # The library's own shade, only when it gives one (D-35).
     if library.shade is not None:
-        document["shade"] = {
-            key: list(value) if key == "range" else value
-            for key, value in library.shade.given()
-        }
+        document["shade"] = library.shade.document()
     document["materials"] = entries
     return document
 
@@ -1165,20 +1315,17 @@ def _command(options):
     )
     settings = capture_settings(options)
     sheet_style = style_record(options)
+    resolved = _resolved_shading(options)
     if options.materials is not None:
         library = options.materials.library
         for warning in materials.warnings(subject.primitive_materials, library):
             _report("warning", warning)
-        for warning in materials.override_warnings(
-            subject.primitive_materials, library, _explicit_shading(options)
-        ):
-            _report("warning", warning)
-        for warning in materials.library_shade_warnings(
-            subject.primitive_materials, library, _explicit_shading(options)
-        ):
-            _report("warning", warning)
-        for warning in materials.ramp_warnings(
-            subject.primitive_materials, library, _explicit_formula(options)
+        for warning in materials.shadow_warnings(
+            subject.primitive_materials,
+            library,
+            _explicit_shading(options),
+            _explicit_formula(options),
+            _warning_origins(options),
         ):
             _report("warning", warning)
         settings = replace(
@@ -1267,6 +1414,7 @@ def _command(options):
                     depth=options.depth,
                     light=light,
                     ramp=_formula(options),
+                    shading=resolved.settings,
                 ),
                 source.sha256,
             )
@@ -1280,11 +1428,21 @@ def _command(options):
         reduce = {"plain": stylize.plain, "mode": stylize.mode}[options.reduce]
         colors = options.palette.colors if options.palette is not None else None
         identities = lookup.identities
-        # Depth is reduced to sheet pixels at the sheet's scale.
+        # Depth is reduced to sheet pixels at the sheet's scale. The shading
+        # is passed whether or not a library or palette is: the stage skips
+        # the response step where it would change nothing.
         scale = {
             "identities": identities,
             "pixels_per_meter": settings.ppm,
             "edges": options.edges,
+            "shade_range": options.shade_range,
+            "shading": resolved,
+            "lights": lighting.light_vectors(
+                resolved.settings.key_direction,
+                resolved.settings.sky_ground_frame,
+                options.direction,
+                options.roll,
+            ),
         }
         if colors is None:
             reduced = reduce(captured, settings.supersample, **scale)
@@ -1296,7 +1454,6 @@ def _command(options):
                 settings.supersample,
                 palette=colors,
                 library=options.materials.library,
-                shade_range=options.shade_range,
                 **scale,
             )
         frames = cleanup.passthrough(reduced)
@@ -1314,6 +1471,7 @@ def _command(options):
         depth=options.depth,
         light=light,
         ramp=_formula(options),
+        shading=resolved.settings,
         selected_clips=selected,
         image_path=outfile,
     )
@@ -1390,18 +1548,6 @@ def _frame_warnings(options, selected):
     return messages
 
 
-# Each shading value a material may override, by the `Options` field that
-# holds its global value.
-_OVERRIDABLE = MappingProxyType(
-    {
-        "ao_distance_m": "ao_distance",
-        "occlusion_weight": "occlusion_weight",
-        "convexity_weight": "convexity_weight",
-        "range": "shade_range",
-    }
-)
-
-
 def _explicit_formula(options):
     """The global formula values an option or a project file set, by name:
     the ones a generated ramp's own value warns about (material styling
@@ -1419,14 +1565,36 @@ def _explicit_formula(options):
 
 
 def _explicit_shading(options):
-    """The global shading values an option or a project file set, by name:
-    the ones a material's own value warns about (settings design D-23). The
-    shipped defaults, the global file and a loaded sheet set none."""
+    """The global shading values an option or a project file set, by name,
+    such as `range` and `key.strength`: the ones a material's or a library's
+    own value warns about (settings design D-23; shading design D-41). The
+    shipped defaults, the global file (the user file or the one `--config`
+    replaces it with) and a loaded sheet set none. The key direction, the sky
+    and ground frame and the snap target are global only, so nothing
+    overrides them."""
+    overridable = {path for path, _, _ in _SHADE_VALUES} | set(shading_model.FIELDS)
     return {
-        name: getattr(options, field)
-        for name, field in _OVERRIDABLE.items()
-        if field in options.explicit
+        path: getattr(options, field)
+        for path, field, _ in (*_SHADE_VALUES, *_SHADING)
+        if path in overridable and field in options.explicit
     }
+
+
+def _warning_origins(options):
+    """Where each global shading value came from, by name as
+    `_explicit_shading` names it, for the warnings that show it."""
+    return {
+        name.removeprefix("shade."): origin
+        for name, origin in options.shading_origins.items()
+    }
+
+
+def _resolved_shading(options):
+    """The resolved shading of `options`: the one `resolve_settings` made, or,
+    for options built without it, resolved here."""
+    if options.shading is not None:
+        return options.shading
+    return _resolve_shading(options, options.explicit, None, []).shading
 
 
 def _load_frame(address, paths, metadata, lookup):
@@ -2173,6 +2341,117 @@ def _build_parser():
         "(default: 84,191)",
     )
     single(
+        "--shade-mode",
+        "NAME",
+        str,
+        defaults["shade.mode"],
+        "what the shading signal changes: ramp selects ramp entries, "
+        "brightness scales the unshaded base colour, both selects then "
+        "scales, neither does neither; a material may override it "
+        f"(default: {defaults['shade.mode']})",
+        choices=shading_model.MODES,
+        dest="shade_mode",
+    )
+    parser.add_argument(
+        "--ambient-form",
+        action=_Flag,
+        help="use the ambient form term of the shade, also over a sheet or "
+        "settings file without it (default: on)",
+    )
+    parser.add_argument(
+        "--no-ambient-form",
+        action=_Flag,
+        help="leave the ambient form out, so a directional term shades alone "
+        "(default: off)",
+    )
+    single(
+        "--bake-key-direction",
+        "X,Y,Z",
+        _camera_direction,
+        defaults["shade.key.direction"],
+        "toward the key light in the camera's frame, x screen right, y up and "
+        "z toward the viewer, each -1 to 1, not all 0, normalised "
+        "(default: -0.6,0.7,0.7)",
+        dest="key_direction",
+    )
+    for name, dest, key, what in (
+        ("--bake-key-strength", "key_strength", "key", "the key light's share"),
+        ("--bake-sky-strength", "sky_strength", "sky", "the sky light's share"),
+        (
+            "--bake-ground-strength",
+            "ground_strength",
+            "ground",
+            "the ground light's share",
+        ),
+    ):
+        single(
+            name,
+            "S",
+            _unit,
+            defaults[f"shade.{key}.strength"],
+            f"{what}, 0 to 1; the key, sky and ground shares add to at most 1; "
+            "a material may override it (default: 0)",
+            dest=dest,
+        )
+    single(
+        "--bake-sky-ground-frame",
+        "NAME",
+        str,
+        defaults["shade.sky_ground_frame"],
+        "the frame the sky and ground lights follow: camera, the picture's "
+        "up, or world, the subject's up (default: camera)",
+        choices=shading_model.FRAMES,
+        dest="sky_ground_frame",
+    )
+    single(
+        "--brightness-floor",
+        "G",
+        _unit,
+        defaults["shade.brightness.floor"],
+        "the least brightness gain, 0 to 1, at most the ceiling; a material "
+        "may override it (default: 0.3)",
+        dest="brightness_floor",
+    )
+    single(
+        "--brightness-ceiling",
+        "G",
+        _unit,
+        defaults["shade.brightness.ceiling"],
+        "the greatest brightness gain, 0 to 1, at least the floor; a material "
+        "may override it (default: 1)",
+        dest="brightness_ceiling",
+    )
+    single(
+        "--shade-snap",
+        "TARGET",
+        str,
+        defaults["shade.snap"],
+        "snap the brightness and both modes' colours to the material's ramp "
+        "(ramp) or the whole palette (palette); needs a palette "
+        "(default: off)",
+        choices=shading_model.SNAPS,
+        dest="shade_snap",
+    )
+    single(
+        "--dither-pattern",
+        "NAME",
+        str,
+        defaults["shade.dither.pattern"],
+        f"dither with a fixed pattern: {', '.join(shading_model.PATTERNS)}; a "
+        "material may override it (default: off)",
+        choices=shading_model.PATTERNS,
+        dest="dither_pattern",
+    )
+    single(
+        "--dither-strength",
+        "S",
+        _unit,
+        defaults["shade.dither.strength"],
+        "how far the pattern moves a pixel toward its second choice, 0 to 1; a "
+        "material may override it (default: 1)",
+        dest="dither_strength",
+    )
+    single(
         "--ramp-step",
         "L",
         _unit,
@@ -2213,8 +2492,8 @@ def _build_parser():
         "FILE",
         _path,
         None,
-        "draw materials from the ramps of a YAML moskophoros.materials/3 "
-        "library (moskophoros.materials/2 still loads): ramps listed as "
+        "draw materials from the ramps of a YAML moskophoros.materials/4 "
+        "library (moskophoros.materials/3 and /2 still load): ramps listed as "
         "palette indices or generated from a base colour, and entries that "
         "may give their own shading values; needs a palette (default: none)",
     )
@@ -2364,6 +2643,8 @@ def _build_parser():
         "--any-blender",
         "--no-palette",
         "--no-materials",
+        "--ambient-form",
+        "--no-ambient-form",
     }
     return parser, frozenset(value_options), frozenset(flags)
 
@@ -2685,6 +2966,34 @@ def _recorded_direction(value):
     return vector
 
 
+def _recorded_leaf(path):
+    """A recorded shading leaf, checked as a settings file checks it (shading
+    design contract 1): its own type and bounds, whether or not another layer
+    replaces it. The cross-field rules wait for the resolved values."""
+
+    def check(value):
+        try:
+            return shading_model.BY_PATH[path].check(value)
+        except shading_model.Bad as error:
+            raise argparse.ArgumentTypeError(error.problem(_shown)) from None
+
+    return check
+
+
+def _recorded_direction_leaf(value):
+    """A recorded key direction: three numbers, each from -1 to 1, of unit
+    length within `views.UNIT_TOLERANCE`, kept exactly as recorded and never
+    normalised again."""
+    try:
+        return shading_model.check_recorded_direction(value)
+    except shading_model.Bad:
+        raise argparse.ArgumentTypeError(
+            "expected a recorded unit direction [x, y, z], each component from "
+            f"-1 to 1 and its length within {views.UNIT_TOLERANCE} of 1, got "
+            f"{_shown(value)}"
+        ) from None
+
+
 _SETTINGS = {
     "view": {
         "preset": _one_of(*PRESETS, CUSTOM_VIEW),
@@ -2720,6 +3029,24 @@ _SETTINGS = {
         "occlusion_weight": _reused(_weight),
         "convexity_weight": _reused(_weight),
         "range": _shade_range,
+        "mode": _recorded_leaf("mode"),
+        "ambient_form": _recorded_leaf("ambient_form"),
+        "key": {
+            "direction": _recorded_direction_leaf,
+            "strength": _recorded_leaf("key.strength"),
+        },
+        "sky": {"strength": _recorded_leaf("sky.strength")},
+        "ground": {"strength": _recorded_leaf("ground.strength")},
+        "sky_ground_frame": _recorded_leaf("sky_ground_frame"),
+        "brightness": {
+            "floor": _recorded_leaf("brightness.floor"),
+            "ceiling": _recorded_leaf("brightness.ceiling"),
+        },
+        "snap": _recorded_leaf("snap"),
+        "dither": {
+            "pattern": _recorded_leaf("dither.pattern"),
+            "strength": _recorded_leaf("dither.strength"),
+        },
     },
     "ramp": {
         "lightness_step": _reused(_unit),
@@ -2800,7 +3127,7 @@ def _style(style, problems):
         problems.append(f"{where}: a library needs a palette, but the palette is null")
         return style
     document = {
-        "schema": materials.SCHEMA,
+        "schema": materials.recorded_schema(record),
         "ramps": record["ramps"],
         "materials": record["materials"],
     }
