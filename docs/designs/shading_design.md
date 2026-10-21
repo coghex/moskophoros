@@ -1094,6 +1094,198 @@ to it in both mode; enabled snap uses the whole palette when there is no
 ramp. Treating the entire palette as an ordered shading ramp was not
 selected. Mixed-material precedence and dithering interactions remain open.
 
+## Batch 10: proposed implementation contracts
+
+These are proposals for owner signoff, not settled decisions or implemented
+behaviour. They complete the settings and pixel-operation details around
+D-1 through D-31. Answer each numbered contract separately: **A approves
+the proposed contract; B names changes required before approval.** No new
+project look is selected here; D-31 reserves that for rendered acceptance.
+
+### 1. Settings, defaults and validation (Q-4/Q-5/Q-11)
+
+Keep the existing settings precedence and nested merge rules. All new global
+fields have command-line overrides, following the existing settings design.
+Per-material values remain in the library. Proposed additions:
+
+| YAML field | Default | Command option | Material override |
+|---|---|---|---|
+| `shade.mode` | `ramp` | `--shade-mode` | yes |
+| `shade.ambient_form` | `true` | `--ambient-form` / `--no-ambient-form` | yes |
+| `shade.key.direction` | `[-0.6, 0.7, 0.7]`, normalised | `--bake-key-direction X,Y,Z` | no |
+| `shade.key.strength` | `0` | `--bake-key-strength` | yes |
+| `shade.sky.strength` | `0` | `--bake-sky-strength` | yes |
+| `shade.ground.strength` | `0` | `--bake-ground-strength` | yes |
+| `shade.sky_ground_frame` | `camera` | `--bake-sky-ground-frame` | no |
+| `shade.brightness.floor` | `0.3` | `--brightness-floor` | yes |
+| `shade.brightness.ceiling` | `1` | `--brightness-ceiling` | yes |
+| `shade.snap` | `off` | `--shade-snap` | no |
+| `shade.dither.pattern` | `off` | `--dither-pattern` | yes |
+| `shade.dither.strength` | `1` | `--dither-strength` | yes |
+
+Modes are `ramp`, `brightness`, `both`, `neither`; frames `camera`, `world`;
+snap targets `off`, `ramp`, `palette`. Pattern names are `off`, `ordered2`,
+`ordered4`, `ordered8`, `clustered4`, `diagonal4`, `shuffled8`, using the
+exact tiles reviewed in Probe 2. The brightness default 0.3/1 matches the
+probes; it has no effect in the default ramp mode. Existing ambient values,
+ramp generation, reduction and preview-light defaults are unchanged.
+
+Key direction points **toward** the light in camera coordinates: +X right,
++Y up, +Z toward the viewer. Components must be finite, each in `[-1,1]`,
+and not all zero; normalise once and record the resolved unit vector.
+Strengths follow D-26, brightness endpoints D-25, dither strength D-29.
+World up is the subject's fixed +Y transformed into that frame's camera
+coordinates; camera up is `(0,1,0)`. Ground uses the opposite vector.
+Perspective does not change a distant light's direction across the image.
+
+Reject unknown names, non-finite values, booleans masquerading as numbers,
+null for any new field, invalid sums/ranges and conflicting/repeated CLI
+options. Omission inherits; explicit values override individual nested
+leaves. Validate even inactive values, without warnings merely because a
+term is off. A non-off snap target requires a palette, even if the chosen
+mode would leave snap unused. Settings/library errors are exit 2 before
+any Blender invocation, naming file/key/line or CLI option and the material
+where relevant. Existing library palette requirements remain unchanged.
+
+Record all new resolved global values, and library overrides as supplied,
+in the sheet and fingerprint. Reuse must reproduce them without reopening
+the original palette/library. Bump the current sheet schema (next available
+version); keep D-8's current-schema-only loading and one-time regeneration.
+The existing `--light` preview interface stays separate.
+
+### 2. Library shape and inheritance (Q-5)
+
+Introduce `moskophoros.materials/4`. Continue reading `/2` and `/3` under
+their existing rules; they cannot contain new fields. Old libraries need no
+edit for unchanged output. New fields or ordinary entries with response
+overrides require `/4`. Keep rejecting `/1` with the existing guidance.
+
+Extend each material's existing `shade` mapping with the response fields
+marked yes in contract 1. At library top level, `shade` may contain the
+existing `range` plus those new response fields. It still cannot supply
+library-wide AO capture values. Direction, sky/ground frame, snap target
+and AO sample count remain global only. Existing per-material AO capture
+overrides remain available, including on the new ordinary-entry form.
+
+Each new response leaf inherits **material entry > library-wide shade >
+resolved global setting**. A global CLI override cannot defeat a material
+or library value. Resolve and validate every entry's combined strengths and
+brightness endpoints, including unused entries; partial overrides do not
+escape the cross-field checks. An explicit global CLI value shadowed by
+library/material values uses the existing warning convention, extended to
+the new fields. Defaults and ordinary inheritance are not warning events.
+
+Keep existing ramp/uses forms and the string `ordinary`. Add a mapping form
+with exactly one of `ramp`, `uses`, or `ordinary: true`, plus optional
+`shade`. For example:
+
+```yaml
+schema: moskophoros.materials/4
+ramps: {}
+shade:
+  mode: brightness
+materials:
+  Painted:
+    ordinary: true
+    shade:
+      brightness: {floor: 0.4, ceiling: 1}
+  Glow:
+    ordinary: true
+    shade:
+      mode: neither
+```
+
+This example still requires a palette under the retained library rule.
+`ordinary` means no assigned ramp, not forced `neither`; it preserves the
+model's ordinary colour/texture base and inherits response controls. An
+unlisted material keeps the existing default-ramp resolution. Materials
+without identities use global/library-wide response defaults and retain
+their ordinary base. Missing ramp references still error; D-23's snap
+fallback applies only when there is legitimately no resolved ramp.
+
+### 3. Pixel operations and addressed capture data (Q-6/Q-8/Q-11)
+
+**Snap applicability — explicit proposal:** optional snap operates on
+brightness/both. Ramp-only keeps shade-driven ramp dithering; neither stays
+unshaded and undithered. Existing palette mapping of ordinary colours and
+non-brightness translucent composites remains unchanged. This preserves
+the original role of snap as a post-brightness operation. If snap should
+also operate in the other modes, request that change before approval.
+
+Retain the existing per-layer alpha weights, material winner/ties, ordinary
+colour reduction and geometric-map reduction. Use the winning material's
+response and resolved ramp. Mapped brightness/neither base is the last ramp
+entry; ordinary base is the existing reduced ordinary colour/texture,
+including its usual palette mapping when a palette is present.
+
+For plain reduction, average the winning material's raw shade and each
+nonnegative normal-facing term separately, using that layer's existing
+visible sample weights. With range `[lo,hi]`, use
+`a=clamp((mean_shade-lo)/(hi-lo+1),0,1)` when ambient form is on, otherwise
+`a=1`. Compute `L` from the averaged facing terms, then `e=a*L`. This is the
+order illustrated in the probes, not averaging normals before the facing
+dot product. Ramp index is `clamp(floor(N*e),0,N-1)`; RGB brightness gain is
+`floor+(ceiling-floor)*e` in linear colour, followed by sRGB encoding and
+half-up byte rounding.
+
+For mode reduction, evaluate each winning-material sample's range signal
+and light product, select its band and use the existing weighted palette
+entry vote. Repeated entries pool their votes. Resolve ties by nearest
+band centre to the plain-reduction signal above, then lower palette index.
+Brightness uses that same plain-reduction signal after the voted ramp/base
+colour has been selected. Thus the existing mean-versus-vote distinction
+remains, without introducing a separate brightness voting scheme.
+
+For shade-driven ramp dithering, perturb the band coordinate by
+`strength*(0.5-threshold)` before flooring; in mode reduction use the same
+output-cell threshold for every sample's band vote. Threshold is
+`(tile_rank+0.5)/tile_size` at `(x mod width,y mod height)`, top-left origin,
+with no frame/direction/sheet-packing offset. Both layers share the cell
+origin. Snap dithering uses D-29 instead. These are distinct quantisers
+with one pattern/strength control.
+
+**Exact compatibility:** with ambient form on, all directional strengths
+zero and no effective dithering, retain today's exact integer ramp
+selection and tie arithmetic. Do not replace it with a floating-point
+approximation. The normal default output, including ordinary materials,
+alpha, maps and previews, must remain byte-identical under D-8. The new
+continuous formula above governs changed shading settings; it does not
+silently revise the historical integer-bin boundary cases.
+
+For effective ramp snap, skip intermediate dithering on each
+brightness/both layer, apply brightness, then D-29 snap to its ramp (or the
+whole palette if absent). Composite once, retaining its off-palette result
+when a contributing layer uses brightness/both, as D-18 requires. For
+effective palette snap, if any contributing layer uses brightness/both,
+skip intermediate dithering on both layers, composite their colours, then
+snap once to the whole palette. D-30 selects the final dither controller;
+if its mode is neither, snap without dithering. With snap off, retain
+brightness/both colours without a final palette snap. When neither layer
+uses brightness/both, retain today's composite palette rule. No operation
+changes alpha or geometry buffers.
+
+Capture publishes addressed `back_normal` and `front_normal` buffers in
+addition to the existing front-most `normal` and `depth`. Reuse the existing
+16-bit RGBA normal encoding, camera coordinates and unit-length tolerance;
+absent samples are all zero, and presence matches each layer's colour
+presence. The front buffer describes the accepted combined front layer's
+front-most surface. Bump capture-result schema and strictly validate names,
+dimensions, encoding, presence and normals before stylize; malformed output
+is backend error 5 with frame/buffer context. A capture-job schema change
+is only needed if its payload changes. Exported normal/depth remain derived
+from their existing buffers.
+
+Decode the new buffers at the existing command/backend boundary into
+addressed float32 arrays; normalise a float64 working copy for shading only.
+Keep pure colour maths outside Blender. Retain one supersampled frame at
+a time and release its auxiliary buffers after reduction. No retained-
+capture replay command, new dependency or extra ray-traced render is
+introduced by this contract. Mechanical checks cover the new buffers,
+plain/mode and material ties, every snap/mode combination, both edge rules,
+zero-strength equality, deterministic reuse, and default byte comparisons.
+D-31's later owner review still decides whether the implemented result
+looks right.
+
 ## Verification strategy
 
 Existing requirements are determinism, explicit validation, addressed stage
