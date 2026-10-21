@@ -303,6 +303,9 @@ and project file come after this design.
 
 ## Decisions
 
+Decisions are chronological. The resolved Q entries and implementation
+contracts incorporate later answers to details left open by earlier entries.
+
 ### D-1. Serve both live-lit sprites and baked panels
 
 Owner, 2026-10-19 16:31 UTC, typed in the earlier review worker's pane;
@@ -903,6 +906,15 @@ implementation contracts embedded below. The review copy is
 `~/.local/share/moskophoros-acceptance/shading-design/batch-10-contracts.md`,
 SHA-256 `e8aa954b2bd86bdcec0ae81d8699fb0cc81f292753d33eec34450485f7b180c2`.
 D-32 to D-34 record all three A approvals against that exact file hash.
+
+Batch 11 was posted on 2026-10-21 at 01:04:54 UTC in `#moskophoros`,
+message `wnjw5kij527hz293d6w7amz2ke`, under the same request, against
+draft `45873add79`. It asks one final question: approve SHD-1 through SHD-8
+and their dependencies and declare the design ready, or name required
+changes. The exact review copy is
+`~/.local/share/moskophoros-acceptance/shading-design/batch-11-delivery.md`,
+SHA-256 `58f448621c2bb523fdd98acf2f05ff4e67d28fefd880280641a12881d764f990`.
+The plan and readiness remain unapproved pending the owner's answer.
 
 ### Q-1. Does a mode route all shading or only the added light?
 
