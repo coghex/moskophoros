@@ -153,3 +153,67 @@ the output root must be an absolute path, because each case runs in the inputs d
 SHD-4's subdirectory `shd4/` holds a copy of the inputs and scripts,
 `hashes-base.json` (the baseline's, unchanged) and the head's renders and hashes
 (`out-head/`, hashes in `hashes-head-b0ec41f.json`), run as for `shd3/` with SHD-4's worktree.
+
+## SHD-6 against the baseline
+
+SHD-6 (#143) activates the shading controls, `moskophoros.sheet/15` and
+`moskophoros.materials/4`, and the command now passes the resolved shading to
+stylize on every run. The same twenty-four commands, plus four more, were run
+with a clean `git archive` copy of master `29e66f666295a19cd463a423976992be4fae8499`
+(its own virtual environment from that copy's `requirements.lock`, sha256
+`86f3d9a7…`; master differs from the `4e03ad0` of SHD-5 by documentation only)
+and with SHD-6's head `28257eaa3c4158b5ee78a96e309081625059ca7a`, and compared
+with the pinned baseline's recorded hashes. Every run exited 0.
+
+**Image and preview bytes.** All 171 non-JSON files across the 24 cases and
+the 4 extra cases are byte-identical to the baseline: sheets, normal and depth
+maps, flat and lit previews; plain and mode reduction; hard and soft edges;
+ordinary materials; a palette without a library; `/2` and `/3` libraries with
+generated ramps, per-material and library-wide shade values, options and a
+`--config` file giving shade values; a perspective camera with roll. Master's
+own outputs, sheet JSON included, equal the baseline's. The four extra cases
+(`props-lib4-plain-hard`, `props-lib4-mode-soft`, `props-lib3-explicit-defaults`
+and `hero-explicit-defaults`) have images equal to the corresponding baseline
+cases: a `/4` library that says what `lib3.yaml` says (its `plain: ordinary`
+written `{ordinary: true}`), and the default command given every new shading
+option at its default value. **No image difference is accepted or listed.**
+
+**Expected JSON changes, listed separately.** In each of the 24 `sheet.json`
+files, `compare6.py` found exactly these differences from the baseline's, and
+no others:
+
+- `schema` is `moskophoros.sheet/15`, was `/14`;
+- `settings.shade` gains, after its five existing members and in this order,
+  `mode: "ramp"`, `ambient_form: true`, `key: {direction: [-0.5183210553488161,
+  0.604707897906952, 0.604707897906952], strength: 0.0}`, `sky: {strength:
+  0.0}`, `ground: {strength: 0.0}`, `sky_ground_frame: "camera"`,
+  `brightness: {floor: 0.3, ceiling: 1.0}`, `snap: "off"` and `dither:
+  {pattern: "off", strength: 1.0}`;
+- `fingerprint` changes with them. Both fingerprints were recomputed from their
+  own sheet's canonical JSON and match, the baseline's and head's alike.
+
+The inline library record of every case is unchanged, so a `/2` or `/3`
+library records exactly as before.
+
+**Planned checks at the delivered head** `28257eaa3c4158b5ee78a96e309081625059ca7a`:
+`ruff check .`, `ruff format --check .`, `plan.py --catalog-check`,
+`bash -n tools/docs_land.sh` and the `py_compile` of
+`tools/docs_land_paths.py` passed; `pytest tools` 233 passed; `pytest tests -m
+"not blender"` 5087 passed; `pytest -m blender`, run locally under the Blender
+lock, 273 passed, none skipped.
+
+**Reproduce.** Local evidence is
+`~/.local/share/moskophoros-acceptance/shading-pre-arc/shd6/`: `inputs/` (the
+earlier inputs, same sha256, plus `lib4.yaml` sha256
+`f06fe1e0bc2eb39f823fa9e112052e59d9c325c2584f8eb676921388ba4c2fca`),
+`tools/run_matrix.py` (sha256 `5afcf78f…`, the earlier matrix plus the four
+extra cases), `run_both.sh`, `compare6.py` (sha256 `5a9f9622…`),
+`hashes-base.json` (the baseline's, unchanged), `master-src/`, and both sides'
+renders and hashes (`out-master/`, `out-head/`). `run_both.sh` runs each side
+under `lockf ~/.local/state/project-manager/moskophoros/blender.lock`, and
+`compare6.py` prints any difference and exits non-zero on one. Each case is
+`moskophoros <options> --blender /opt/homebrew/bin/blender <model> $OUT/sheet.png`
+with the options of `tools/run_matrix.py`, run in `inputs/` with an empty
+`HOME` and `XDG_CONFIG_HOME` of its own and `--no-user-config` (or `--config`
+where the case names a file). Mechanical evidence only: it claims no owner
+visual acceptance (SHD-7).
