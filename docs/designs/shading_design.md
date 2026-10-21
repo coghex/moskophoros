@@ -20,7 +20,7 @@ concrete precondition
 - [x] SHD-5. Integrate shading into the addressed-frame pipeline — [#142]
 - [x] SHD-6. Expose shading controls and reproducible sheet settings — [#143]
 - [x] SHD-7. Obtain owner visual acceptance for both uses — [#144]
-- [ ] SHD-8. Regenerate the inventoried working sheets
+- [x] SHD-8. Regenerate the inventoried working sheets — [#145]
 
 The owner approved the eight delivery slices, their dependencies and design
 readiness in D-35. D-36 to D-39 resolve review round 1's four owner questions
