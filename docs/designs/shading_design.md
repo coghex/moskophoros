@@ -4,7 +4,7 @@ Moskophoros must serve both sprites lit by their consumer from exported face
 maps and art panels whose lighting is baked into their colours. This design
 settles that capability with the owner before implementation.
 
-Design state: `exploring`
+Design state: `ready for issue processing`
 
 Status legend: `[ ]` unprocessed · `[#N]` linked to issue N · `[no-issue]`
 reviewed and deliberately not tracked separately · `[deferred]` blocked on a
@@ -23,11 +23,9 @@ concrete precondition
 - [ ] SHD-8. Regenerate the inventoried working sheets
 
 The owner approved the eight delivery slices, their dependencies and design
-readiness in D-35. Review round 1 subsequently identified four material
-questions reserved for the owner (Q-12 to Q-15). Readiness is temporarily
-reopened for those questions, not for the bookkeeping clarifications.
-Issue processing awaits their resolution, re-review and the manager's
-instruction.
+readiness in D-35. D-36 to D-39 resolve review round 1's four owner questions
+and approve the revised contracts and slice boundaries. Readiness is restored;
+re-review and issue processing await the manager's instruction.
 
 ## Epic contract
 
@@ -99,7 +97,7 @@ on 2026-10-20 (America/Los_Angeles):
 | Material styling D-7, scope and ramp mapping; design §Palette mapping and composition, §Material ramps | Dithering excluded | D-12/D-17/D-27/D-29 approve the six patterns and quantisation rules; SHD-6 |
 | [Settings](settings_design.md) D-20; design §Material libraries | The ordinary form carries no shade | D-33 adds `/4` ordinary mapping entries with overrides; SHD-6 |
 | [Projects and camera](projects_camera_design.md) D-8; [vision V-7](../vision.md#v-7-consistency-is-the-product) | Light stays camera-fixed, V-7 unchanged | D-24 permits world-up sky/ground only; key stays camera-fixed, direction consistency remains; SHD-6 |
-| Design §Capture job and result contract, §Frames into stylize | Mandatory transport buffers and decoded arrays omit separate layer normals | D-19/D-34 retain layer normals; SHD-1, with transport detail pending Q-15 |
+| Design §Capture job and result contract, §Frames into stylize | Mandatory transport buffers and decoded arrays omit separate layer normals | D-19/D-34/D-37 retain layer normals with one extra transported buffer; SHD-1 |
 | Design §CLI, §Settings files, §Option validation, §Stylize, §Export, §Reproducibility | Existing options, palette/ramp rules and sheet record | D-32 to D-34 add controls, nested responses, validation, modes, snap and deterministic reuse; SHD-6 public activation |
 
 These are known design changes requested by the owner, not defects to repair
@@ -859,11 +857,65 @@ deliberately deferred to owner visual acceptance in SHD-7, followed by
 SHD-8's regeneration. No implementation or tracker mutation is authorised
 by this design signoff.
 
+### D-36. Clamp raw shade before continuous normalisation
+
+Owner, about 2026-10-21 02:07 UTC, typed directly in the manager's terminal;
+relayed by mosk-manager in cmux message
+`97680a2f-1e3c-483a-994f-ff214e08ff1b`. The exact answer to the four
+review-round-1 recommendations was:
+
+> "i approve all 4 reccomendations, A for all"
+
+The manager presented S-14 first: clamp the mean to `[lo,hi]` before
+normalising in the continuous path, matching today's integer path so long
+ramps have no top-band jump. The first A approves that correction to D-34.
+Use `a=(clamp(mean_shade,lo,hi)-lo)/(hi-lo+1)` for plain reduction;
+mode reduction uses the same range mapping for each sample. Ambient bypass
+still sets `a=1`, and the exact legacy integer path stays intact. SHD-3 owns
+the correction and long-ramp boundary evidence; SHD-4/SHD-5 use that signal.
+
+### D-37. Transport one extra normal buffer and measure its cost
+
+Same answer and provenance as D-36. The manager's second recommendation,
+S-16, transports only `back_normal` and derives the front from the existing
+`normal` plus front presence. The second A approves this change to D-34's
+two-extra-buffer transport, while preserving both addressed layer normals
+at the stylize boundary. SHD-1 reports measured capture-time and
+work-directory cost on the robot and chest; no extra ray-traced render is
+needed. Exported `normal` and `depth` remain unchanged.
+
+### D-38. Accept exact owner-file diffs, then authorise their application
+
+Same answer and provenance as D-36. The manager's third recommendation,
+S-7, requires SHD-7's acceptance record to give the exact diff for each
+owner file. The owner's verdict authorises the SHD-8 agent to apply exactly
+that diff; SHD-8 records before and after hashes. The third A approves this
+procedure. It does not choose project values now or authorise edits beyond
+the later accepted diffs. A changed source file or a required additional
+edit returns to the owner instead of expanding the accepted diff.
+
+### D-39. Move internal parsing and warnings into SHD-2
+
+Same answer and provenance as D-36. The manager's fourth recommendation,
+S-10, moves the two-level reader, gated `/4` parser and warning builders
+into SHD-2, leaving SHD-6 wiring, schema activation, reuse and evidence.
+The fourth A approves these revised boundaries and publishing the narrative
+amendments with `docs-push` as a named step after SHD-6 merges. Test-read
+`docs/design.md` remains in the corresponding code PR. The eight slice IDs,
+titles and dependencies stay unchanged. This is the explicit exception to
+the usual pre-final-review timing for these narrative amendments.
+
+Together D-36 to D-39 settle all four review holds. The manager directs
+restoring the document to ready, landing revision 1 and reporting status.
+Independent re-review is still required by the approved process; readiness
+does not authorise tracker creation or implementation.
+
 ## Question history and resolution
 
 Behaviour contracts were approved through D-34 and the delivery plan through
-D-35. Review round 1 reopens only the explicit owner questions Q-12 to Q-15;
-the original signoffs remain recorded. Actual project look values are
+D-35. D-36 to D-39 resolve review round 1's Q-12 to Q-15 and amend the
+affected contracts and slice boundaries; the original signoffs remain
+recorded. Actual project look values are
 deliberately deferred to the owner-review slice under D-31.
 Batch 1's accepted answers are D-5 to D-7; batch 2's are D-8 to D-10;
 batch 3's are D-11 to D-13; batch 4's are D-14 to D-16;
@@ -871,7 +923,8 @@ batch 5's are D-17 to D-19; batch 6's are D-20 to D-22;
 batch 7's are D-23 to D-25; batch 8's are D-26 to D-28;
 batch 9's are D-29 to D-31; batch 10's are D-32 to D-34; batch 11's is D-35.
 The Q entries after the dated batch history give the current resolution.
-Q-1 to Q-11 remain resolved; Q-12 to Q-15 await the manager's owner-answer relay.
+Q-1 to Q-15 are resolved. Project look tuning remains deliberately deferred
+to SHD-7's owner acceptance.
 
 Batch 1 was posted on 2026-10-20 at 16:52:53 UTC in `#moskophoros`,
 message `w8y5pdsiqbn56f33gpftcxhsmi`, request
@@ -1037,46 +1090,35 @@ ordered shading ramp.
 
 ### Q-12. Who applies accepted changes to owner configuration files? (S-7)
 
-Pending owner answer through the manager. The proposal is for SHD-7 to
-present exact candidate file diffs, not just prose values. The choice is whether the owner applies
-them or explicitly authorises the SHD-8 agent to apply those exact diffs;
-before/after hashes would record the application. Do not infer write
-authority from visual acceptance. SHD-7/SHD-8's config-application step
-waits for this answer; no owner configuration is changed by this revision.
+Resolved by D-38: SHD-7 records exact candidate diffs for each owner file;
+the owner's verdict authorises the SHD-8 agent to apply exactly those diffs
+and record before/after hashes. No owner configuration changes in this
+design revision, and no project look is accepted yet.
 
 ### Q-13. Which internal work moves from SHD-6 into SHD-2? (S-10)
 
-Pending owner answer through the manager because D-35 approved the slice
-boundaries. S-2's two-level reader and existing internal `/4` parser work
-are recorded in SHD-2 as directed by the revision brief. The proposed
-additional move is the warning-message builders and any remaining internal
-loader work from SHD-6, with direct tests, leaving SHD-6 wiring, activation,
-reuse and evidence. The review also proposes publishing narrative amendments
-as a named step after SHD-6 merges. Do not adopt those boundary/timing changes
-until the answer arrives; SHD-6 retains its approved responsibility below.
+Resolved by D-39: SHD-2 owns the two-level reader, gated `/4` parser and
+warning builders, tested directly. SHD-6 owns wiring, schema activation,
+reuse and evidence. Narrative amendments publish via docs-push as a named
+post-merge step for SHD-6; test-read contracts remain in the code PR.
 
 ### Q-14. Where does the continuous ambient signal clamp? (S-14)
 
-Pending owner answer through the manager. Contract 3's approved expression
-clamps the normalised result to `[0,1]`; the current integer path instead
-clamps raw shade to `[lo,hi]`. With `lo=190, hi=225, N=40`, raw mean 226
-selects continuous band 39 versus integer band 38. The choices are to clamp
-raw shade before normalising on the continuous path too, or intentionally
-retain that jump. SHD-3 and dependent arithmetic wait for the answer. The
-expression below records D-34's original choice, not a resolution of S-14.
+Resolved by D-36: clamp raw shade to `[lo,hi]` before normalising on the
+continuous path. With `lo=190, hi=225, N=40`, raw mean 226 selects band 38
+at `L=1` without dithering, matching the integer path in exact arithmetic.
+The previous expression would select 39; that jump was not retained.
 
 ### Q-15. How many layer normals does capture transport? (S-16)
 
-Pending owner answer through the manager. Contract 3 currently specifies
-two extra buffers. The alternative carries only `back_normal`, deriving
-front normals from existing `normal` wherever `front_present` is true.
-Both supply addressed layer normals to stylize. The reviewer measured about
+Resolved by D-37: carry only `back_normal`, deriving front normals from
+existing `normal` wherever `front_present` is true. Both addressed layer
+normals still reach stylize. The reviewer measured about
 0.26 seconds per 768×1024 normal-buffer write and about 9.4 MB per decoded
 float32 buffer plus 18.9 MB per float64 working copy; these are local probe
-measurements, not production budgets. The proposal also requires SHD-1 to
-report capture-time and work-directory deltas on robot and chest. SHD-1's
-transport detail and cost-report obligation await the owner; the two-buffer
-wording below remains the originally approved contract until resolved.
+measurements, not production budgets. SHD-1 must report actual capture-time
+and work-directory deltas on robot and chest. The two-extra-buffer
+alternative was superseded by D-37.
 
 ## Review round 1 revision record
 
@@ -1089,7 +1131,10 @@ The manager's revision brief is
 SHA-256 `0a8038b6f507e57cb07868dee2bf396c24ffa262f2cd2f80b5f1af22fcc30dee`,
 relayed in cmux message `d1643ba1-ab87-4005-b09e-a9f4ee5d2fb6`.
 It authorises the following non-owner clarifications and additive evidence
-obligations. They are review dispositions, not new owner D decisions.
+obligations. Those clarifications are review dispositions, not new owner D
+decisions. The four owner-reserved findings were subsequently approved in
+D-36 to D-39 through relay `97680a2f-1e3c-483a-994f-ff214e08ff1b`.
+All 19 findings are addressed in this revision, subject to independent re-review.
 
 | Finding | Disposition in this revision |
 |---|---|
@@ -1099,16 +1144,16 @@ obligations. They are review dispositions, not new owner D decisions.
 | S-4 | Fixed: exact ordered sheet shape/types, all inactive values recorded, unit-vector reuse and inline library |
 | S-5 | Fixed: named pre-arc baseline and pin before whichever foundation slice merges first |
 | S-6 | Fixed: proven explicit invocations and snapshots; old sheet metadata is evidence, never a new-schema reuse input |
-| S-7 | Pending owner: Q-12; no inferred config-write permission |
+| S-7 | Fixed by D-38: exact per-file diffs, owner verdict authorising SHD-8 application, before/after hashes |
 | S-8 | Fixed: mode-reduction motion, soft edges and dithered perspective/roll required in SHD-7 |
 | S-9 | Fixed: complete amendment table and per-code-slice public-doc/pinned-test assignments |
-| S-10 | Pending owner: Q-13; no unapproved slice-boundary change |
+| S-10 | Fixed by D-39: internal reader/parser/warning builders in SHD-2; SHD-6 wiring, activation, reuse and evidence; narrative amendments after merge |
 | S-11 | Fixed: OKLab projection, RGB-byte input/deduplication and both nearest-colour tie rules |
 | S-12 | Fixed: tile denominator is width times height; output-cell coordinates named |
 | S-13 | Fixed: effective band dithering defined and ties use unperturbed signal |
-| S-14 | Pending owner: Q-14; original formula retained with explicit hold |
+| S-14 | Fixed by D-36: continuous raw shade clamped before normalisation, long-ramp boundary checks |
 | S-15 | Fixed: older material features require `/3 or later`; `/1` guidance names `/4` |
-| S-16 | Pending owner: Q-15; alternative transport and cost reporting not silently adopted |
+| S-16 | Fixed by D-37: one extra transported normal buffer, derived front normals, measured robot/chest cost in SHD-1 |
 | S-17 | Fixed: explicit world-up vector, stylize argument and narrow V-7 exception |
 | S-18 | Fixed: explicit-source warning convention includes ordinary overrides; false ordinary flag rejected |
 | S-19 | Fixed: resolved references, reviewer identity, timezone and V-4/V-8 explanation |
@@ -1117,8 +1162,8 @@ obligations. They are review dispositions, not new owner D decisions.
 
 The base contracts were approved in full by D-32 through D-34 from batch
 10's immutable review copy. This text incorporates the non-owner precision
-fixes authorised by the revision brief above; the immutable approved copy
-is unchanged. Q-12 to Q-15 explicitly hold the unresolved choices.
+fixes authorised by the revision brief above and the owner's amendments
+D-36 to D-39; the immutable original approved copy is unchanged.
 These are implementation requirements, not claims of shipped
 behaviour. No project look is selected here; D-31 reserves that for rendered
 acceptance.
@@ -1338,15 +1383,16 @@ including its usual palette mapping when a palette is present.
 For plain reduction, average the winning material's raw shade and each
 nonnegative normal-facing term separately, using that layer's existing
 visible sample weights. With range `[lo,hi]`, use
-`a=clamp((mean_shade-lo)/(hi-lo+1),0,1)` when ambient form is on, otherwise
+`a=(clamp(mean_shade,lo,hi)-lo)/(hi-lo+1)` when ambient form is on, otherwise
 `a=1`. Compute `L` from the averaged facing terms, then `e=a*L`. This is the
 order illustrated in the probes, not averaging normals before the facing
 dot product. Ramp index is `clamp(floor(N*e),0,N-1)`; RGB brightness gain is
 `floor+(ceiling-floor)*e` in linear colour, followed by sRGB encoding and
 half-up byte rounding.
 
-For mode reduction, evaluate each winning-material sample's range signal
-and light product, select its band and use the existing weighted palette
+For mode reduction, clamp each winning-material sample's raw shade to
+`[lo,hi]` before the same normalisation, evaluate its range signal and light
+product, select its band and use the existing weighted palette
 entry vote. Repeated entries pool their votes. Resolve ties by nearest
 band centre to the unperturbed plain-reduction signal above, then lower
 palette index; dithering never perturbs the tie-breaking reference.
@@ -1395,19 +1441,25 @@ brightness/both colours without a final palette snap. When neither layer
 uses brightness/both, retain today's composite palette rule. No operation
 changes alpha or geometry buffers.
 
-Capture publishes addressed `back_normal` and `front_normal` buffers in
-addition to the existing front-most `normal` and `depth`. Reuse the existing
-16-bit RGBA normal encoding, camera coordinates and unit-length tolerance;
-absent samples are all zero, and presence matches each layer's colour
-presence. The front buffer describes the accepted combined front layer's
-front-most surface. Bump capture-result schema and strictly validate names,
-dimensions, encoding, presence and normals before stylize; malformed output
-is backend error 5 with frame/buffer context. A capture-job schema change
-is only needed if its payload changes. Exported normal/depth remain derived
-from their existing buffers.
+Capture transports one extra buffer, `back_normal`, alongside the existing
+front-most `normal` and `depth` (D-37). Reuse the existing 16-bit RGBA normal
+encoding, camera coordinates and unit-length tolerance. `back_normal` is
+zero where the back colour is absent and present exactly where it is
+present. At the existing command/backend boundary, decode `back_normal`
+as a float32 addressed array and derive the addressed `front_normal` from
+the decoded existing `normal` wherever `front_present` is true, zero
+elsewhere. Derive presence from the front colour, not front alpha `q`;
+zero-opacity but present fronts still have their accepted front-most normal.
+There is no separately transported `front_normal` PNG. Validate the source
+normal/presence relationship before deriving it. The derived array describes
+the accepted combined front layer's front-most surface.
 
-Decode the new buffers at the existing command/backend boundary into
-addressed float32 arrays; normalise a float64 working copy for shading only.
+Bump capture-result schema and strictly validate required names, dimensions,
+encoding, presence and normals before stylize; malformed output is backend
+error 5 with frame/buffer context. A capture-job schema change is only needed
+if its payload changes. Exported normal/depth still use their existing
+buffers unchanged. Normalise a float64 working copy of the addressed layer
+normals for shading only; never mutate the decoded exported-map source.
 Keep pure colour maths outside Blender. Retain one supersampled frame at
 a time and release its auxiliary buffers after reduction. No retained-
 capture replay command, new dependency or extra ray-traced render is
@@ -1512,10 +1564,9 @@ is claimed.
 
 ## Delivery plan
 
-**Approved by the owner in D-35, with review holds Q-12 to Q-15.** The
-original boundaries and dependencies remain until the owner resolves those
-holds. Additive evidence obligations below are authorised by the revision
-brief. The processing ledger mirrors this
+**Approved by the owner in D-35 and amended by D-36 to D-39.** All review
+holds are resolved. Additive evidence obligations are authorised by the
+revision brief. The processing ledger mirrors this
 order. SHD-1 and SHD-2 can be developed independently; the remaining slices
 follow the stated dependencies. Public controls activate only in SHD-6,
 after their entire behaviour exists: earlier foundations must not accept
@@ -1537,6 +1588,8 @@ processing await the manager's instruction after these revisions.
   while exported geometry and default colours remain unchanged.
 - **Scope:** capture/result schema and encoder changes, backend decoding and
   validation, frame buffer names, fixtures and the owning capture contract.
+  Transport only `back_normal`; derive addressed front normals from existing
+  `normal` and front presence at decode, without modifying map data.
   Apply the shared `shading-pre-arc` baseline precondition before either
   foundation slice merges. Build the proven invocation inventory specified
   under Verification, distinguishing working outputs from historical
@@ -1545,10 +1598,15 @@ processing await the manager's instruction after these revisions.
 - **Phase:** 1, capture foundation.
 - **Depends on:** none.
 - **Ordering:** critical path; can land first.
-- **Relevant decisions:** D-8, D-19, D-31, D-34.
+- **Relevant decisions:** D-8, D-19, D-31, D-34, D-37.
 - **Acceptance signals:** distinct layer normals survive a translucent
   fixture; missing/malformed buffers fail with frame context; existing map
   and default image bytes match the recorded baseline; required checks pass.
+  Report measured capture-time and work-directory byte deltas versus the
+  pinned baseline on robot and chest, with commands, frame/cell dimensions,
+  supersampling and tool versions. Include derived-normal presence checks,
+  including zero-opacity but present fronts; no extra normal render or
+  transported front-normal file is introduced.
 - **Out of scope:** shading controls, colour maths, owner-config edits or
   regeneration of working sheets.
 - **Documentation and pinned tests:** update `docs/design.md` §Capture job
@@ -1557,7 +1615,7 @@ processing await the manager's instruction after these revisions.
   and fixtures in `tests/test_capture_backend.py`, `tests/test_command.py`
   and `tests/test_capture_blender.py`. Add layer-buffer checks without
   changing sheet JSON; capture job schema stays unchanged if its payload does.
-- **Open questions:** Q-15 holds the transport choice and cost reporting.
+- **Open questions:** none; Q-15 resolved by D-37.
 
 ### SHD-2. Model and resolve shading settings and library responses
 
@@ -1568,13 +1626,16 @@ processing await the manager's instruction after these revisions.
   readers, nested inheritance, explicit-value provenance and warning data.
   Extend settings and library readers for the second-level sub-groups,
   leaf origins and resolved cross-field errors behind the internal gate.
+  Own the gated `/4` parser and complete warning-message builders, with
+  direct tests for source attribution, ordinary-entry overrides and older
+  schema guidance; SHD-6 only wires these into public paths.
   Apply the shared baseline precondition if this slice merges first.
   Keep these foundations internal until SHD-6 wires the public loaders and
   CLI; do not accept unsupported user-facing fields in this intermediate step.
 - **Phase:** 1, configuration foundation.
 - **Depends on:** none.
 - **Ordering:** critical path; independent of SHD-1 and can land first.
-- **Relevant decisions:** D-10, D-17, D-24 to D-26, D-28, D-29, D-32, D-33.
+- **Relevant decisions:** D-10, D-17, D-24 to D-26, D-28, D-29, D-32, D-33, D-39.
 - **Acceptance signals:** direct model/parser tests cover old library
   equivalence, ordinary entries, precedence, shadow warnings and cross-field
   validation, including inactive and unused entries; public behaviour stays
@@ -1585,7 +1646,7 @@ processing await the manager's instruction after these revisions.
   parser/model tests while preserving the active settings key list,
   defaults, `/3` public loader and sheet schema. No public `docs/design.md`
   amendment yet. S-2's new reader tests exercise gated code only.
-- **Open questions:** Q-13 holds additional work moving here from SHD-6.
+- **Open questions:** none; Q-13 resolved by D-39.
 
 ### SHD-3. Implement pure lighting and four-mode colour operations
 
@@ -1598,17 +1659,21 @@ processing await the manager's instruction after these revisions.
 - **Phase:** 2, colour mathematics.
 - **Depends on:** SHD-2.
 - **Ordering:** critical path.
-- **Relevant decisions:** D-5, D-14, D-15, D-23 to D-26, D-32, D-34.
+- **Relevant decisions:** D-5, D-14, D-15, D-23 to D-26, D-32, D-34, D-36.
 - **Acceptance signals:** exact fixtures distinguish averaging normals from
   averaging facing terms, mean from vote, ambient bypass, camera/world
   roll, ordinary fallback and repeated ramp entries; zero-new-term kernels
   preserve legacy results; gain rounding/bounds are verified.
+  Pin long-ramp boundary cases including `[190,225]` with 40 bands and
+  `[100,101]` with 3 bands, checking raw shades below, at and above each
+  range endpoint under plain and mode reduction. The continuous mapping
+  clamps raw shade first; retain exact legacy arithmetic on its own path.
 - **Out of scope:** dither/snap quantisation, capture changes, stage wiring
   and public settings.
 - **Documentation and pinned tests:** no public `docs/design.md` or schema
   pins change while kernels are internal. Add pure-operation tests for the
   contracts above; retain existing integer-kernel expectations unchanged.
-- **Open questions:** Q-14 holds the continuous clamp formula.
+- **Open questions:** none; Q-14 resolved by D-36.
 
 ### SHD-4. Implement deterministic ramp and snap dithering
 
@@ -1621,7 +1686,7 @@ processing await the manager's instruction after these revisions.
 - **Phase:** 2, colour quantisation.
 - **Depends on:** SHD-3.
 - **Ordering:** critical path.
-- **Relevant decisions:** D-12, D-17, D-20, D-23, D-27, D-29, D-34.
+- **Relevant decisions:** D-12, D-17, D-20, D-23, D-27, D-29, D-34, D-36.
 - **Acceptance signals:** all tiles contain each rank exactly once; zero
   strength equals the undithered path; targets contain every selected colour;
   ties, duplicates and one-colour targets follow the signed rules; packing
@@ -1630,7 +1695,7 @@ processing await the manager's instruction after these revisions.
 - **Documentation and pinned tests:** no public `docs/design.md` or schema
   pins change while quantisers are internal. Add exact pure-kernel tile,
   rounding, tie and coordinate tests; public scope changes belong to SHD-6.
-- **Open questions:** Q-14 must resolve before dependent band arithmetic.
+- **Open questions:** none; band arithmetic incorporates D-36.
 
 ### SHD-5. Integrate shading into the addressed-frame pipeline
 
@@ -1648,7 +1713,7 @@ processing await the manager's instruction after these revisions.
 - **Phase:** 3, pipeline integration.
 - **Depends on:** SHD-1, SHD-2, SHD-3, SHD-4.
 - **Ordering:** critical path.
-- **Relevant decisions:** D-6, D-14, D-18 to D-21, D-23, D-27 to D-30, D-34.
+- **Relevant decisions:** D-6, D-14, D-18 to D-21, D-23, D-27 to D-30, D-34, D-36, D-37.
 - **Acceptance signals:** mixed front/back mode combinations, own-ramp
   fallback placement, whole-palette composite ownership and ties agree with
   exact fixtures; alpha/maps are invariant; default bytes match; one-frame
@@ -1659,7 +1724,7 @@ processing await the manager's instruction after these revisions.
   addressed data and reduction boundary, explicitly noting that public
   activation remains SHD-6. No public schema pins change; extend stage tests
   for the new arguments and no-library/ordinary combinations.
-- **Open questions:** inherits Q-14/Q-15 through its dependencies.
+- **Open questions:** none; Q-14/Q-15 resolved by D-36/D-37.
 
 ### SHD-6. Expose shading controls and reproducible sheet settings
 
@@ -1667,14 +1732,15 @@ processing await the manager's instruction after these revisions.
   load `/4` libraries and reproduce outputs from current-schema sheets.
 - **Scope:** wire the completed models/kernels into public settings, defaults,
   CLI, project precedence, library loading, warnings, early errors, sheet
-  records/reuse and fingerprints. Activate the sheet schema bump once.
+  records/reuse and fingerprints. Reuse SHD-2's two-level reader, gated `/4`
+  parser and warning builders; do not reimplement them here. Activate the
+  sheet schema bump once.
   Complete end-to-end/default-byte evidence and the owning CLI/pipeline/
-  export contracts. Publish the dated V-7 exception and amendments to older
-  material/lighting/alpha/settings designs when this behaviour becomes live.
+  export contracts. Narrative publication is the named post-merge step below.
 - **Phase:** 4, public activation and reproducibility.
 - **Depends on:** SHD-5.
 - **Ordering:** critical path.
-- **Relevant decisions:** D-5 to D-11, D-14, D-18, D-22 to D-30, D-32 to D-34.
+- **Relevant decisions:** D-5 to D-11, D-14, D-18, D-22 to D-30, D-32 to D-34, D-39.
 - **Acceptance signals:** every option round-trips; invalid input fails
   before Blender; old `/2`/`/3` libraries retain their output; the signed
   precedence/warnings hold; reuse works without original palette/library
@@ -1698,10 +1764,15 @@ processing await the manager's instruction after these revisions.
   rather than blindly replacing every `/3` literal. In `test_settings.py`,
   update the ordered `SCHEMA` keys, defaults-file agreement and example
   loading tests; keep the top-level `GROUPS` set unchanged and test the new
-  sub-group recognition separately. Narrative amendments cover every row
-  of the amendment table, including settings D-20 and projects/camera D-8,
-  and record D-24's dated V-7 exception through docs-push.
-- **Open questions:** Q-13 holds redistribution/timing; no change adopted yet.
+  sub-group recognition separately.
+- **Post-merge narrative publication (D-39):** after SHD-6 merges, publish
+  the narrative amendments with `docs-push` as a named completion step,
+  before handing off to SHD-7. Cover the amendment table's material styling,
+  lighting, alpha, settings D-20 and projects/camera D-8 changes and D-24's
+  dated V-7 exception. Record the documentation commit in the slice's
+  completion report. These narrative edits are outside the code PR's review
+  acceptance; test-read `docs/design.md` stays in that PR.
+- **Open questions:** none; Q-13 resolved by D-39.
 
 ### SHD-7. Obtain owner visual acceptance for both uses
 
@@ -1715,10 +1786,13 @@ processing await the manager's instruction after these revisions.
   evidence; preserve live project settings until the owner accepts the
   exact proposed values. Record commands, hashes, tool revision, limitations
   and the exact owner response in `docs/acceptance/shading.md` via docs-push.
+  Give the exact diff for every owner project/library file and its current
+  hash. The owner's verdict authorises SHD-8 to apply exactly those accepted
+  diffs (D-38); record that verdict against the immutable diff evidence.
 - **Phase:** 5, owner visual review; documentation/acceptance delivery.
 - **Depends on:** SHD-6.
 - **Ordering:** critical path.
-- **Relevant decisions:** D-1 to D-4, D-8, D-17 to D-20, D-24 to D-31, D-34.
+- **Relevant decisions:** D-1 to D-4, D-8, D-17 to D-20, D-24 to D-31, D-34, D-38.
 - **Acceptance signals:** the owner approves both uses against named evidence;
   requested code corrections are delivered and verified before refreshing
   that evidence. Tests or agent judgments cannot substitute for the verdict.
@@ -1727,32 +1801,35 @@ processing await the manager's instruction after these revisions.
 - **Open questions:** deliberately open actual project strengths, palette/
   ramp choices and look tuning under D-31. Stop for the owner at this slice;
   a withheld visual acceptance blocks SHD-8, not a guessed default.
-  Q-12 also holds the authority/procedure for applying exact owner-file diffs.
+  The application procedure is settled by D-38; exact diffs still require
+  that later owner verdict.
 
 ### SHD-8. Regenerate the inventoried working sheets
 
 - **Outcome:** reproducible working sheets use the accepted current settings
   and current schema; historical acceptance evidence remains intact.
-- **Scope:** reconcile SHD-1's inventory, apply only the exact project values
-  accepted in SHD-7 (application authority pending Q-12), regenerate each
+- **Scope:** reconcile SHD-1's inventory. Under the authority of SHD-7's
+  owner verdict, the SHD-8 agent applies exactly the accepted per-file diffs
+  and records before/after hashes. Confirm each file still matches its
+  reviewed before-hash; a changed file or additional edit stops for the
+  owner. Regenerate each
   working output from its baseline-proven explicit invocation and snapshots
   with those accepted changes, and verify current-schema reuse. Do not use
   old `/14` sheets as settings inputs to the new tool. Extend the acceptance
-  record
-  with inventory/disposition, commands, output hashes and any unresolved
+  record with inventory/disposition, commands, output hashes and any unresolved
   input. Keep assets, sheets, previews and local config out of the repository.
 - **Phase:** 6, operational refresh and documentation.
 - **Depends on:** SHD-7.
 - **Ordering:** critical path to the epic's completion.
-- **Relevant decisions:** D-3, D-8, D-31, D-32.
+- **Relevant decisions:** D-3, D-8, D-31, D-32, D-38.
 - **Acceptance signals:** every inventoried working sheet is regenerated and
   reproducible, or explicitly dispositioned by the owner; historical artifact
   hashes remain unchanged. Missing inputs or uncertain working/archive
   classification stop that item for the owner rather than trigger guesses.
 - **Out of scope:** an old-schema loader/converter, regenerating historical
   evidence, unsolicited config changes and second-game setup.
-- **Open questions:** Q-12 holds owner-file application authority. Any
-  concrete inventory gap or unproven baseline invocation also requires owner
+- **Open questions:** any concrete inventory gap, changed owner file or
+  unproven baseline invocation requires owner
   disposition, recorded before declaring done.
 
 ## Source notes
