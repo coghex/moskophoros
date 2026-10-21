@@ -51,7 +51,7 @@ from array import array
 import bpy
 
 JOB_SCHEMA = "moskophoros.capture-job/3"
-RESULT_SCHEMA = "moskophoros.capture-result/4"
+RESULT_SCHEMA = "moskophoros.capture-result/5"
 PROJECTIONS = ("orthographic", "perspective")
 NODE_NAME = "moskophoros.node.{}"
 ANIMATION_NAME = "moskophoros.animation.{}"
@@ -1164,13 +1164,14 @@ NO_MATERIAL = "moskophoros.no-material"
 # glTF's default material, which a primitive without one takes: white.
 NO_MATERIAL_COLOR = (1.0, 1.0, 1.0, 1.0)
 # Every render frame's buffers, each at <name>/NNNNNN.png: the back layer's
-# colour, material ID and shade, the front-most surface's normal and depth,
-# and the front layer's colour, alpha, material ID and shade (alpha design,
-# Capture transport and provenance).
+# colour, material ID, shade and normal, the front-most surface's normal and
+# depth, and the front layer's colour, alpha, material ID and shade (alpha
+# design, Capture transport and provenance; shading design D-37).
 BUFFERS = (
     "color",
     "matid",
     "shade",
+    "back_normal",
     "normal",
     "depth",
     "front_color",
@@ -1995,14 +1996,15 @@ def _check_coverage(name, holds, surface, width, where):
         )
 
 
-def write_normal(path, width, height, x, y, z, where, surface):
-    """The normal buffer from the AOV's camera-space components. Cycles'
-    camera looks along −Z, so the design's normal (+Z toward the viewer) is
-    `(x, y, −z)`; each component n is stored as floor((n + 1) / 2 · 65535 +
-    ½). A pixel the AOV left at (0, 0, 0) holds no surface, and the pixels
-    holding one must be exactly the colour's, `surface`."""
+def write_normal(path, width, height, x, y, z, where, surface, name="normal"):
+    """The normal buffer, called `name` in an error, from the AOV's
+    camera-space components. Cycles' camera looks along −Z, so the design's
+    normal (+Z toward the viewer) is `(x, y, −z)`; each component n is stored
+    as floor((n + 1) / 2 · 65535 + ½). A pixel the AOV left at (0, 0, 0)
+    holds no surface, and the pixels holding one must be exactly the colour's,
+    `surface`."""
     covered = list(map(any, zip(x, y, z, strict=True)))
-    _check_coverage("normal", bytes(covered), surface, width, where)
+    _check_coverage(name, bytes(covered), surface, width, where)
     try:
         channels = [
             _samples(
@@ -2017,7 +2019,7 @@ def write_normal(path, width, height, x, y, z, where, surface):
         for index, (a, b, c) in enumerate(zip(x, y, z, strict=True)):
             if not all(math.isfinite(v) and abs(v) <= 1.00001 for v in (a, b, c)):
                 raise ScriptError(
-                    f"{where}: the normal at pixel {(index % width, index // width)} "
+                    f"{where}: the {name} at pixel {(index % width, index // width)} "
                     f"is {(a, b, -c)}, not a unit vector"
                 ) from None
         raise
@@ -2477,10 +2479,11 @@ def render_frame(
     scene, surfaces, scratch, size, job, relative, codes, ground_view_z, where, place
 ):
     """The frame's back and front buffers: the back render's colour (its
-    8-bit TGA through the `Standard` transform), material ID and shade; the
-    front render's straight colour (its TGA), 16-bit alpha, material ID and
-    shade; and the front-most surface's normal and depth. A count render
-    after them refuses a frame too deep to render (`check_count`)."""
+    8-bit TGA through the `Standard` transform), material ID, shade and
+    normal; the front render's straight colour (its TGA), 16-bit alpha,
+    material ID and shade; and the front-most surface's normal and depth. A
+    count render after them refuses a frame too deep to render
+    (`check_count`)."""
     width, height = size
     layer = bpy.context.view_layer.name
     target = os.path.join(scratch, "capture.tga")
@@ -2543,6 +2546,11 @@ def render_frame(
     write_png(os.path.join(output, relative["matid"]), width, id_rows)
     write_png(os.path.join(output, relative["shade"]), width, shade_rows)
     del id_rows, shade_rows, ids, shades
+    # The back layer's normal, kept before the front's replaces it where the
+    # front is present (shading design D-37): present exactly where the back
+    # colour is.
+    back_normal = os.path.join(output, relative["back_normal"])
+    write_normal(back_normal, width, height, x, y, z, where, covered, "back normal")
     if surfaces.translucent:
         front_rows = read_targa(front_target, width, height)
         os.remove(front_target)
@@ -2582,6 +2590,16 @@ def render_frame(
             bytes(a | b for a, b in zip(back_row, front_row, strict=True))
             for back_row, front_row in zip(covered, front, strict=True)
         ]
+        write_normal(
+            os.path.join(output, relative["normal"]),
+            width,
+            height,
+            x,
+            y,
+            z,
+            where,
+            surface,
+        )
     else:
         nothing = [bytes(4 * width)] * height
         for name in ("front_color", "front_matid", "front_shade"):
@@ -2594,16 +2612,8 @@ def render_frame(
             level=WIDE_LEVEL,
         )
         surface = covered
-    write_normal(
-        os.path.join(output, relative["normal"]),
-        width,
-        height,
-        x,
-        y,
-        z,
-        where,
-        surface,
-    )
+        # With no front layer the front-most normal is the back's.
+        shutil.copyfile(back_normal, os.path.join(output, relative["normal"]))
     write_depth(
         os.path.join(output, relative["depth"]),
         width,

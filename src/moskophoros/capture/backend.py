@@ -26,7 +26,7 @@ from moskophoros.materials import RAMP_ALPHA_MODES
 INTERNAL_ERROR = 1
 BACKEND_ERROR = 5
 JOB_SCHEMA = "moskophoros.capture-job/3"
-RESULT_SCHEMA = "moskophoros.capture-result/4"
+RESULT_SCHEMA = "moskophoros.capture-result/5"
 MODES = ("measure", "render")
 CUSTOM_VIEW = "custom"
 PERSPECTIVE = "perspective"
@@ -72,14 +72,22 @@ COLOR_FIELDS = {
 # more (settings design D-42).
 MAX_AO_SAMPLES = 128
 # Every render frame's buffers beside its colour, each at
-# <name>/NNNNNN.png with the colour's ordinal: the back layer's material ID
-# and shade, the front-most surface's normal and depth, and the front
+# <name>/NNNNNN.png with the colour's ordinal: the back layer's material ID,
+# shade and normal, the front-most surface's normal and depth, and the front
 # layer's colour, alpha, material ID and shade (alpha design D-6, D-11,
-# D-12, Capture transport and provenance).
+# D-12, Capture transport and provenance; shading design D-37).
 FRONT_BUFFERS = ("front_color", "front_alpha", "front_matid", "front_shade")
-AUXILIARY_BUFFERS = ("matid", "shade", "normal", "depth", *FRONT_BUFFERS)
-# The normal and depth buffers (lighting sheet design D-2, D-10, D-11): 16-bit
-# RGBA PNGs, every row unfiltered, with no chunk but IHDR, IDAT and IEND.
+AUXILIARY_BUFFERS = (
+    "matid",
+    "shade",
+    "back_normal",
+    "normal",
+    "depth",
+    *FRONT_BUFFERS,
+)
+# The normal and depth buffers (lighting sheet design D-2, D-10, D-11), and
+# the back layer's normal, which has the normal's form: 16-bit RGBA PNGs,
+# every row unfiltered, with no chunk but IHDR, IDAT and IEND.
 # Alpha is SURFACE where the render hit a surface, and every sample is 0
 # where it hit none. A normal's components n are stored as
 # floor((n + 1) / 2 · 65535 + ½) in red, green and blue, in camera space (+X
@@ -90,7 +98,7 @@ AUXILIARY_BUFFERS = ("matid", "shade", "normal", "depth", *FRONT_BUFFERS)
 # The front alpha buffer has the same form: red is the front layer's alpha
 # `f` as `q = floor(65535 · f + ½)`, green and blue 0, alpha SURFACE where the
 # front layer is present.
-WIDE_BUFFERS = ("normal", "depth", "front_alpha")
+WIDE_BUFFERS = ("back_normal", "normal", "depth", "front_alpha")
 SURFACE = 0xFFFF
 # How far a surface's normal may be from unit length: the 16-bit encoding
 # moves it by at most 2.7·10⁻⁵.
@@ -810,13 +818,16 @@ def _auxiliary(paths, materials, where):
     table (design §Capture job and result contract): each layer's colour,
     material ID and shade on exactly the same pixels, the front alpha exactly
     where the front colour is, and the normal and depth exactly where either
-    layer is."""
+    layer is, and the back normal exactly where the back colour is."""
     ids = _layer(paths, "", materials, where)
     front_ids = _layer(paths, "front_", materials, where)
     _front_alpha(paths["front_alpha"], front_ids, where)
     covered = (ids[..., 3] == 255) | (front_ids[..., 3] == 255)
     for name in ("normal", "depth"):
         _surfaces(name, paths[name], covered, ids, front_ids, where)
+    _surfaces(
+        "back_normal", paths["back_normal"], ids[..., 3] == 255, ids, front_ids, where
+    )
     for prefix, layer_ids in (("", ids), ("front_", front_ids)):
         _colour(paths, prefix, layer_ids, where)
 
@@ -949,17 +960,21 @@ def _refuse_first(problems, ids, where):
 
 
 def _surfaces(name, path, covered, ids, front_ids, where):
-    """Check a frame's normal or depth buffer: its encoding, its coverage
-    against the layers', and its values. It describes the front-most surface
-    that is not a hole, so it holds a surface exactly where either layer
-    does (alpha design D-11)."""
+    """Check a frame's normal, back normal or depth buffer: its encoding, its
+    coverage against `covered`, and its values. The normal and depth describe
+    the front-most surface that is not a hole, so they hold a surface exactly
+    where either layer does (alpha design D-11); the back normal describes the
+    back layer's, so `covered` is the back colour's."""
+    back = name == "back_normal"
+    shows = "the back layer shows none" if back else "neither layer shows one"
+    shown = "the back layer shows one" if back else "a layer shows one"
     try:
         samples = read_wide_png(path)
     except ValueError as error:
         raise _Invalid(f"{where} {name} buffer {error}") from None
     alpha = samples[..., 3]
     surface = alpha == SURFACE
-    if name == "normal":
+    if name in ("normal", "back_normal"):
         values = decode_normal(samples)
         bad = surface & ~unit_normals(values)
         problem = "not a unit normal"
@@ -974,12 +989,12 @@ def _surfaces(name, path, covered, ids, front_ids, where):
         ),
         (
             surface & ~covered,
-            "is {}, a surface, but neither layer shows one there (material-ID "
+            f"is {{}}, a surface, but {shows} there (material-ID "
             "pixels {} and front {})",
         ),
         (
             ~surface & covered,
-            "is {}, no surface, but a layer shows one there (material-ID "
+            f"is {{}}, no surface, but {shown} there (material-ID "
             "pixels {} and front {})",
         ),
         (bad, "is {}, " + problem),
@@ -1196,6 +1211,41 @@ def decode_normal_depth(paths):
                 f"the render result is invalid: {paths[name]} {error}"
             ) from None
     return tuple(decoded)
+
+
+def decode_back_normal(paths):
+    """A frame's back-normal array (design §Frames into stylize) from its
+    validated `back_normal` buffer in `paths`: `float32` of shape `(height,
+    width, 3)`, as `decode_normal_depth`'s normal is."""
+    try:
+        return decode_normal(read_wide_png(paths["back_normal"]))
+    except ValueError as error:
+        raise BackendError(
+            f"the render result is invalid: {paths['back_normal']} {error}"
+        ) from None
+
+
+def derive_front_normal(paths, normal, present):
+    """A frame's front-normal array (design §Frames into stylize): a new
+    `float32` array of shape `(height, width, 3)` holding the front-most
+    `normal` where the front layer is `present` and (0, 0, 0) elsewhere.
+    Presence is the front colour's, never the front alpha's `q`. `normal` is
+    not changed. Every present pixel must hold a unit normal, or
+    `BackendError` names the frame's `normal` buffer in `paths`."""
+    if normal.shape[:2] != present.shape:
+        raise BackendError(
+            f"the render result is invalid: {paths['normal']} has shape "
+            f"{normal.shape[:2]}, but the front layer's is {present.shape}"
+        )
+    wrong = present & ~unit_normals(normal)
+    if wrong.any():
+        y, x = (int(i) for i in np.argwhere(wrong)[0])
+        raise BackendError(
+            f"the render result is invalid: {paths['normal']} pixel {(x, y)} is "
+            f"{tuple(float(v) for v in normal[y, x])}, not a unit normal, but the "
+            "front layer is present there"
+        )
+    return np.where(present[..., np.newaxis], normal, np.float32(0.0))
 
 
 def _backend(value, mode):

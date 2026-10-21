@@ -1100,8 +1100,8 @@ reductions reduce a frame's normal and depth arrays when it carries both, as
 both or neither, and one carrying only one of them is a `ValueError` naming
 the frame.
 
-Four buffer names are reserved, for material identity, shade, normal and
-depth, with this interface:
+These buffer names are reserved, for material identity, shade, normal, depth,
+the front layer and the two layer normals, with this interface:
 
 - Per asset, an **identity list** (`sampling.Identities`): each distinct name
   of an eligible (`OPAQUE`, `MASK` or `BLEND`) material, in a fixed order (by
@@ -1136,7 +1136,23 @@ depth, with this interface:
   the front layer's where it is present (alpha design D-11). Both decode the [capture's](#capture) buffers exactly:
   the depth is the buffer's 32-bit float, and each normal component
   `2 · v / 65535 − 1` of its 16-bit value `v`.
-- The command decodes and validates both arrays; stylize never does. It
+- Per frame, the **layer normals** (shading design D-37), each a `float32`
+  array of shape `(height, width, 3)` in the same camera space and unit
+  length: under `back_normal` (`sampling.BACK_NORMAL`), the normal of the
+  back layer's first opaque surface, `(0, 0, 0)` exactly where the frame's
+  pixels (the back colour) show no surface; and under `front_normal`
+  (`sampling.FRONT_NORMAL`), the front-most surface's normal where
+  `front_present` is true and `(0, 0, 0)` elsewhere. The back normal decodes
+  the capture's `back_normal` buffer as the normal does. The front normal is
+  not transported: the command derives it from the decoded `normal` and
+  `front_present`, which comes from the front colour and never from `q`, so a
+  present front whose `q` is 0 still has its front-most normal. Before
+  deriving it the command checks that the normal is a unit vector wherever
+  the front is present, or it is a backend error (exit 5) naming the frame's
+  `normal` buffer and the pixel. Each is a new array, never a view of the
+  `normal` array, and nothing changes the `normal` and `depth` arrays or the
+  maps reduced from them.
+- The command decodes and validates these arrays; stylize never does. It
   joins the render result's material table
   ([result format](#result-format)) with the glTF material identities
   ([Input contract](#input-contract)): the identity list holds each distinct
@@ -1148,15 +1164,18 @@ depth, with this interface:
   decode the same way, and stylize uses them to ramp the front layer
   ([Two layers](#two-layers)). The shade array is the shade buffer's red channel.
   A table entry naming a material the model does not have is a backend
-  error (exit 5), like any invalid capture result. The normal and depth
-  arrays are the command's to decode too.
+  error (exit 5), like any invalid capture result. The normal, depth and
+  layer normal arrays are the command's to decode too; the capture's
+  `back_normal` is a 16-bit buffer, so it never takes the generic route that
+  loads any other named buffer as an 8-bit image.
 
 Frames are loaded one at a time, as stylize reduces them. Stylize returns a
 reduced colour frame carrying only its reduced normal and depth maps, and
 releases a frame's supersampled colour and every other buffer once it is
 reduced, before the next frame is loaded, so at most one frame's
-supersampled buffers are held; the maps are new arrays, never views of them.
-Cleanup and export receive the reduced colour frames and their maps.
+supersampled buffers are held, the layer normals included; the maps are new
+arrays, never views of them. Cleanup and export receive the reduced colour
+frames and their maps, and never the layer normals.
 
 ### Capture
 
@@ -1289,7 +1308,7 @@ ends.
 - *The back render* (both values 0): an opaque surface is
   `Mix(alpha, Transparent, Emission(colour))`, `alpha` 1 or a `MASK`
   material's chain; a `BLEND` surface is a pure `Transparent`, a hole. It
-  gives the back colour, material ID, shade and hit.
+  gives the back colour, material ID, shade, normal and hit.
 - *The front render* (`front` 1), run only when the model renders a `BLEND`
   material: a `BLEND` surface is `Mix(alpha, Transparent, Emission(colour))`
   with its alpha chain, and an opaque surface `Mix(alpha, Transparent,
@@ -1411,8 +1430,10 @@ Vector Transform (normal, world to camera) to a colour AOV `normal`, and
 Camera Data *View Z Depth* to a value AOV `depth`. Each render writes them
 for its own surfaces, so they are taken from the front render where the
 front layer is present, and from the back render elsewhere: the front-most
-surface that is not a hole (alpha design D-11). The eight view-layer AOVs
-are added for the render phase and removed after it.
+surface that is not a hole (alpha design D-11). The back render's normal is
+also kept, before the front's replaces it, as the `back_normal` buffer (below;
+shading design D-37), so no render is added. The eight view-layer AOVs are
+added for the render phase and removed after it.
 
 After each frame's back and front renders, each one's colour is written as
 an 8-bit TGA through the `Standard` transform, and its result also saved,
@@ -1463,6 +1484,16 @@ colour's ordinal:
 - `front_matid` and `front_shade`: as `matid` and `shade`, for the
   front-most translucent surface, which ramp the front layer in stylize.
 
+**Back normal buffer** (shading design D-37), at `back_normal/` with the
+colour's ordinal: the camera-space normal of the back layer's first opaque
+surface, sampled with the back colour, material ID and shade, taken from the
+back render before the front-most combination, and encoded as `normal` is
+(below). It is present exactly where the back colour is and all zero
+elsewhere, including where only the front layer shows. A render with no front
+layer gives the same bytes as `normal`. There is no transported front normal
+buffer: the front-most normal is `normal` where the front layer is present
+(see [Frames into stylize](#frames-into-stylize)).
+
 Every file goes to the script's
 scratch directory, `scratch/` inside the render phase directory: the script
 creates it before the first frame and removes it after the last, and
@@ -1496,9 +1527,11 @@ Blender never leaves it outside the workspace.
 - *Coverage:* each buffer marks a pixel as a surface where its AOV holds a
   value: a unit normal is never `(0, 0, 0)`, and a view depth is never 0,
   since the camera's near plane is in front of every surface. That is
-  exactly where either layer is present.
+  exactly where either layer is present, for `normal` and `depth`; the
+  `back_normal` buffer's surfaces are exactly the back colour's, since the
+  back render's gate is the colour's.
 - *Encoding:* each buffer is a 16-bit RGBA PNG at the supersampled size,
-  `normal/000000.png` and `depth/000000.png` with the colour's ordinal, every
+  `normal/000000.png`, `back_normal/000000.png` and `depth/000000.png` with the colour's ordinal, every
   row unfiltered and no chunk but IHDR, IDAT and IEND. Alpha is 65535 on a
   surface, and every sample is 0 off one. The normal stores each component
   `n` as `floor((n + 1) / 2 · 65535 + ½)` in red, green and blue: at most
@@ -1569,7 +1602,7 @@ never interprets human-readable stdout as a manifest.
 
 | Field | Meaning |
 |---|---|
-| `schema` | Exactly `moskophoros.capture-result/4`, for measure and render results alike (`/3` had no perspective `depth_m` or null `bounds_m`; `/2` had no front buffers, alpha design ALPHA-4; `/1` recorded Workbench's renderer and studio light, ALPHA-1). |
+| `schema` | Exactly `moskophoros.capture-result/5`, for measure and render results alike (`/4` had no `back_normal` buffer, shading design D-37; `/3` had no perspective `depth_m` or null `bounds_m`; `/2` had no front buffers, alpha design ALPHA-4; `/1` recorded Workbench's renderer and studio light, ALPHA-1). |
 | `mode` | Must match the submitted job. |
 | `job_sha256` | Hash of the submitted job encoded as canonical JSON with sorted keys, compact separators, ASCII escapes and non-finite numbers forbidden. This binds a result to its complete request, not just its source. |
 | `source_sha256` | Must match the job's source digest. |
@@ -1579,7 +1612,7 @@ never interprets human-readable stdout as a manifest.
 | `frames[].depth_m` | Measure only, and only under the perspective camera: the nearest and farthest `z_c` of the frame's vertices, exactly two finite numbers, never booleans, nearest first. Under the orthographic camera a frame has no `depth_m`. |
 | `frames[].height_m` | Measure only: evaluated subject height along the glTF vertical axis, for the accepted unit warning. |
 | `roots` | Measure only: one entry per requested clip/root pair, with `clip`, `node_index`, `node_name` and nonnegative finite `travel_m`. Include zero travel. Evaluate the clip endpoints, even when the loop's render samples omit its endpoint. |
-| `frames[].buffers` | Render only: map from buffer name to relative file path. `color`, `matid`, `shade`, `normal`, `depth`, `front_color`, `front_alpha`, `front_matid` and `front_shade` are mandatory; extra named buffers can be described without changing the frame structure. |
+| `frames[].buffers` | Render only: map from buffer name to relative file path. `color`, `matid`, `shade`, `back_normal`, `normal`, `depth`, `front_color`, `front_alpha`, `front_matid` and `front_shade` are mandatory; extra named buffers can be described without changing the frame structure. |
 | `materials` | Render only: the asset's material table, one entry per material-ID code used, each `{"id": code, "material": index}` mapping a code to a glTF material index, or to `null` for "no material". Background (0) is never in it. |
 
 Every result frame includes its full `address`. Sample indices and angles
@@ -1626,16 +1659,20 @@ The launcher also rejects, as a backend error (exit 5):
   encoded value (alpha other than 0 or 65535, green or blue other than 0,
   or no surface other than `(0, 0, 0, 0)`); or one present where the front
   material ID is not, or absent where it is;
-- a normal, depth or other front buffer that is missing or at another
-  path, or a normal or depth file that is not a 16-bit RGBA PNG of the supersampled size in the
+- a normal, back normal, depth or other front buffer that is missing or at
+  another path, or a normal, back normal or depth file that is not a 16-bit
+  RGBA PNG of the supersampled size in the
   [capture's encoding](#capture) (non-interlaced, every row unfiltered, no
   chunk but IHDR, IDAT and IEND);
-- a normal or depth pixel that is not exactly an encoded value: alpha other
-  than 0 or 65535, or no surface other than `(0, 0, 0, 0)`;
+- a normal, back normal or depth pixel that is not exactly an encoded value:
+  alpha other than 0 or 65535, or no surface other than `(0, 0, 0, 0)`;
 - a normal or depth pixel whose coverage differs from the layers', in
   either direction: a surface where neither layer is present, or none where
   either is;
-- a surface's normal that is not a finite vector of unit length within
+- a back normal pixel whose coverage differs from the back colour's, in
+  either direction: a surface where the back layer shows none, or none where
+  it shows one;
+- a surface's normal or back normal that is not a finite vector of unit length within
   `10⁻³` (the encoding moves it by at most 2.7 · 10⁻⁵; a normal pointing
   away from the viewer is accepted, since silhouettes produce them);
 - a surface's depth that is not a finite 32-bit float, or whose blue is not

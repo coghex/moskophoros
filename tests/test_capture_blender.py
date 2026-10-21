@@ -266,7 +266,7 @@ def make_job(tmp_path, mode="measure"):
 def measure_result(job):
     return json.dumps(
         {
-            "schema": "moskophoros.capture-result/4",
+            "schema": "moskophoros.capture-result/5",
             "mode": "measure",
             "job_sha256": job_sha256(job),
             "source_sha256": job["source"]["sha256"],
@@ -341,19 +341,28 @@ COLOR = {
 }
 RENDER_BUFFERS = {
     name: f"{name}/000000.png"
-    for name in ("color", "matid", "shade", "normal", "depth", *FRONT_BUFFERS)
+    for name in (
+        "color",
+        "matid",
+        "shade",
+        "back_normal",
+        "normal",
+        "depth",
+        *FRONT_BUFFERS,
+    )
 }
 
 
 def copy_buffers(tmp_path, color):
     """Fake-capture code writing the one frame's buffers: `color`, a
-    material-ID, shade, normal and depth buffer showing "no material" shaded
-    137, facing the viewer at depth 0, and no front layer."""
+    material-ID, shade, back normal, normal and depth buffer showing "no
+    material" shaded 137, facing the viewer at depth 0, and no front layer."""
     sources = {"color": color}
     for name, pixel in (("matid", (255, 255, 0, 255)), ("shade", (137,) * 3 + (255,))):
         sources[name] = tmp_path / f"{name}.png"
         Image.new("RGBA", (8, 6), pixel).save(sources[name])
     covered = np.ones((6, 8), dtype=bool)
+    sources["back_normal"] = write_normal(tmp_path / "back_normal.png", covered)
     sources["normal"] = write_normal(tmp_path / "normal.png", covered)
     sources["depth"] = write_depth(tmp_path / "depth.png", covered)
     front = tmp_path / "front"
@@ -373,7 +382,7 @@ def test_a_render_phase(tmp_path):
     Image.new("RGBA", (8, 6), (255, 255, 255, 255)).save(color)
     result_text = json.dumps(
         {
-            "schema": "moskophoros.capture-result/4",
+            "schema": "moskophoros.capture-result/5",
             "mode": "render",
             "job_sha256": job_sha256(job),
             "source_sha256": job["source"]["sha256"],
@@ -592,7 +601,7 @@ def test_an_undecodable_buffer_is_a_backend_error_with_diagnostics(tmp_path):
     raw_png(color, 8, 6, 8, 6, 4, [(b"iCCP", b"")])
     result_text = json.dumps(
         {
-            "schema": "moskophoros.capture-result/4",
+            "schema": "moskophoros.capture-result/5",
             "mode": "render",
             "job_sha256": job_sha256(job),
             "source_sha256": job["source"]["sha256"],

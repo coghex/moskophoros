@@ -33,6 +33,9 @@ FRONT_ALPHA = "front_alpha"
 FRONT_PRESENT = "front_present"
 FRONT_IDENTITY = "front_identity"
 FRONT_SHADE = "front_shade"
+# The names of a frame's layer normals (shading design D-37).
+BACK_NORMAL = "back_normal"
+FRONT_NORMAL = "front_normal"
 # The names of a reduced frame's normal and depth maps.
 NORMAL_MAP = "normal_map"
 DEPTH_MAP = "depth_map"
@@ -115,7 +118,13 @@ class ImageFrame:
     absent; `FRONT_PRESENT`, a `bool` array of where it is present, a front
     whose `q` is 0 included; and `FRONT_IDENTITY` and `FRONT_SHADE`, as
     `IDENTITY` and `SHADE` are, for its front-most translucent surface. A
-    frame without them has no front layer. The command decodes and
+    frame without them has no front layer. Under `BACK_NORMAL`, a `float32`
+    array of shape `(height, width, 3)` holds the unit normal of the back
+    layer's first opaque surface, in `NORMAL`'s camera space, `(0, 0, 0)`
+    where `pixels` shows none; under `FRONT_NORMAL`, one of the same form
+    holds the front-most surface's normal, a copy of `NORMAL`'s, where
+    `FRONT_PRESENT` is true and `(0, 0, 0)` elsewhere. Each is a new array,
+    never a view of `NORMAL` (shading design D-37). The command decodes and
     validates them; stylize trusts them. A buffer under any other name is a
     capture buffer as loaded, an image like `pixels`.
 

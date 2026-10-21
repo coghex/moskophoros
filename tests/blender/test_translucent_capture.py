@@ -443,5 +443,5 @@ def test_repeat_renders_are_byte_identical_in_every_buffer(found, tmp_path):
         assert a[name].read_bytes() == b[name].read_bytes(), name
     assert (
         json.loads((tmp_path / "one" / "render" / "result.json").read_text())["schema"]
-        == "moskophoros.capture-result/4"
+        == "moskophoros.capture-result/5"
     )

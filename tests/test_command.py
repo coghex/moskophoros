@@ -57,7 +57,7 @@ canonical = json.dumps(
     job, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
 ).encode("ascii")
 result = {{
-    "schema": "moskophoros.capture-result/4",
+    "schema": "moskophoros.capture-result/5",
     "mode": mode,
     "job_sha256": hashlib.sha256(canonical).hexdigest(),
     "source_sha256": job["source"]["sha256"],
@@ -153,7 +153,9 @@ else:
         named["shade"] = f"shade/{{i:06d}}.png"
     # Normal and depth buffers on the same surfaces: facing the viewer at
     # depth 0, or with "surfaces" "varied", a different normal and depth per
-    # pixel and frame.
+    # pixel and frame. The back normal is the same where there is no front
+    # layer, and the opposite, facing away, where there is one; a
+    # "bad_back_normal" frame's covers nothing.
     for i, named in enumerate(buffers):
         covered = coverage[i]
         normal, depth = (0.0, 0.0, 1.0), 0.0
@@ -166,7 +168,13 @@ else:
             # One depth in meters for each frame, in turn.
             depth = config["depths"][i % len(config["depths"])]
         write_normal(pathlib.Path(f"normal/{{i:06d}}.png"), covered, normal)
+        write_normal(
+            pathlib.Path(f"back_normal/{{i:06d}}.png"),
+            numpy.zeros_like(covered) if config.get("bad_back_normal") == i else covered,
+            -numpy.asarray(normal) if config.get("front") else normal,
+        )
         write_depth(pathlib.Path(f"depth/{{i:06d}}.png"), covered, depth)
+        named["back_normal"] = f"back_normal/{{i:06d}}.png"
         named["normal"] = f"normal/{{i:06d}}.png"
         named["depth"] = f"depth/{{i:06d}}.png"
         front = config.get("front")
