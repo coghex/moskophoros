@@ -18,15 +18,19 @@ loads and reads exactly as before.
 import json
 import math
 import re
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
 from numbers import Integral
 from pathlib import Path
 from types import MappingProxyType
 
 from moskophoros import ramps as generation
-from moskophoros import yamlfile
+from moskophoros import shading, yamlfile
 
 SCHEMA = "moskophoros.materials/3"
+# The schema with the shading response and ordinary entries as mappings
+# (shading design contract 2). It loads only through the internal gate
+# (`validate_library`'s `shading`) until SHD-6.
+SCHEMA_V4 = "moskophoros.materials/4"
 # The schema before generated ramps and a library shade, which still loads
 # and reads exactly as before (D-34).
 LEGACY_SCHEMA = "moskophoros.materials/2"
@@ -69,27 +73,63 @@ class LibraryError(Exception):
 class Shade:
     """A material's own shading values, each None where the global value in
     force applies (settings design D-9, D-20, D-23). AO samples is global
-    only."""
+    only.
+
+    The fields after `range` are the shading response (shading design
+    contract 2), given only by a library read through the internal gate: the
+    leaves of `shading.Response`, named as it names them. A library-wide
+    shade gives `range` and those only.
+    """
 
     ao_distance_m: float | None = None
     occlusion_weight: float | None = None
     convexity_weight: float | None = None
     range: tuple[int, int] | None = None
+    mode: str | None = None
+    ambient_form: bool | None = None
+    key_strength: float | None = None
+    sky_strength: float | None = None
+    ground_strength: float | None = None
+    brightness_floor: float | None = None
+    brightness_ceiling: float | None = None
+    dither_pattern: str | None = None
+    dither_strength: float | None = None
 
     def given(self):
         """The values the library gives, as `(name, value)` pairs in the fixed
         order `ao_distance_m`, `occlusion_weight`, `convexity_weight`,
-        `range`."""
+        `range`, then the response in the settings table's order."""
         return tuple(
-            (field.name, getattr(self, field.name))
-            for field in fields(self)
-            if getattr(self, field.name) is not None
+            (item.name, getattr(self, item.name))
+            for item in fields(self)
+            if getattr(self, item.name) is not None
         )
+
+    def document(self):
+        """The values the library gives, as the mapping they were supplied
+        in: the first four flat, the response leaves as `shade` names them,
+        `key`, `sky`, `ground`, `brightness` and `dither` nested. The values
+        are as supplied, never merged with an inherited one."""
+        document = {}
+        for name, value in self.given():
+            if name in RESPONSE_NAMES:
+                continue
+            document[name] = list(value) if name == "range" else value
+        for path, name in shading.FIELDS.items():
+            value = getattr(self, name)
+            if value is None:
+                continue
+            group, _, leaf = path.rpartition(".")
+            target = document.setdefault(group, {}) if group else document
+            target[leaf] = value
+        return document
 
 
 # The capture values among a material's shading values; `range` acts in
 # stylize.
 CAPTURE_VALUES = ("ao_distance_m", "occlusion_weight", "convexity_weight")
+# The shading response's names among them (`shading.Response`'s fields).
+RESPONSE_NAMES = tuple(shading.FIELDS.values())
 
 
 @dataclass(frozen=True)
@@ -138,7 +178,9 @@ def indices(ramp):
 class Entry:
     """One material entry: its own `ramp`, the named ramp it `uses`, or
     neither, which is the `"ordinary"` look. `shade` holds its own shading
-    values, or is None when it gives none; the ordinary look takes none."""
+    values, or is None when it gives none; the string `"ordinary"` takes
+    none, and a `/4` ordinary mapping (`{ordinary: true, shade: ...}`, read
+    through the internal gate) may carry them."""
 
     ramp: tuple[int, ...] | Generated | None = None
     uses: str | None = None
@@ -156,6 +198,26 @@ class Library:
     default: str | None
     materials: MappingProxyType
     shade: Shade | None = None
+    # Where the library came from, for diagnostics, and the `(line, column)`
+    # of each shading leaf it gave, by path from the document's root, such as
+    # `("materials", "Painted", "shade", "key", "strength")`. Only a library
+    # read through the internal gate from file bytes has positions. Neither
+    # takes part in comparing libraries.
+    source: object = field(default=None, compare=False, repr=False)
+    where: MappingProxyType = field(
+        default=MappingProxyType({}), compare=False, repr=False
+    )
+
+    def origin(self, path):
+        """Where the value at `path` was given, as an error shows it: the
+        source and its line and column when the library has them, else the
+        source and the key path, such as `materials["Painted"].shade.mode`."""
+        path = tuple(path)
+        label = "the material library" if self.source is None else str(self.source)
+        position = self.where.get(path)
+        if position is not None:
+            return f"{label} line {position[0]}, column {position[1]}"
+        return f"{label}: {_key_path(path)}"
 
 
 def check_path(path):
@@ -182,20 +244,33 @@ def read_library(path, colors):
     return read_library_bytes(data, colors, source=path)
 
 
-def read_library_bytes(data, colors, *, source):
+def read_library_bytes(data, colors, *, source, shading=False):
     """Parse a library snapshot, so its contents and digest describe the same
     bytes. The bytes are one strict YAML document (`yamlfile.load`). `source`
     only labels diagnostics; a caller reading a file checks its name first
     (`check_path`).
+
+    `shading` is the internal gate `validate_library` describes, which no
+    public path passes. With it the document is read with its positions, so
+    an error about a shading value names its line and column, and the
+    library keeps them for the errors the resolved values cause
+    (`Library.origin`).
     """
     try:
-        document = yamlfile.load(data)
+        if shading:
+            document, marks = yamlfile.load_located(data)
+        else:
+            document, marks = yamlfile.load(data), None
     except yamlfile.YamlError as error:
         raise LibraryError(source, error.problem) from None
-    return validate_library(document, colors, source=source)
+    return validate_library(
+        document, colors, source=source, shading=shading, marks=marks
+    )
 
 
-def validate_library(document, colors, *, source, recorded=False):
+def validate_library(
+    document, colors, *, source, recorded=False, shading=False, marks=None
+):
     """Validate an already-parsed library against the palette `colors`.
 
     Applies every structural, value and reference check. `source` only labels
@@ -204,6 +279,14 @@ def validate_library(document, colors, *, source, recorded=False):
     `recorded`, the document is a sheet's inline record: each generated ramp
     must carry its `indices`, `bands` palette indices, which are kept as
     recorded; otherwise no generated ramp may carry them.
+
+    `shading` is an internal gate, which no public path passes and no file,
+    option or sheet record can set (shading design D-39): it admits the
+    `/4` schema, a response in the `shade` of an entry and of the library,
+    and the mapping form of an ordinary entry, and words the errors about
+    older schemas by what they need. Without it a `/4` library, and any of
+    those, is refused as it always was. `marks` are the document's positions
+    (`yamlfile.load_located`), which only the gate uses.
     """
     if not isinstance(document, dict):
         raise LibraryError(source, "expected a mapping")
@@ -211,24 +294,30 @@ def validate_library(document, colors, *, source, recorded=False):
     unknown = sorted(key for key in document if key not in _FIELDS)
     if unknown:
         raise LibraryError(source, f"unknown field {_name(unknown[0])}")
-    for field in _REQUIRED:
-        if field not in document:
-            raise LibraryError(source, f"{field}: missing")
+    for required in _REQUIRED:
+        if required not in document:
+            raise LibraryError(source, f"{required}: missing")
+    current = SCHEMA_V4 if shading else SCHEMA
     if document["schema"] == PREVIOUS_SCHEMA:
         raise LibraryError(
             source,
             f"schema: {_name(PREVIOUS_SCHEMA)} libraries no longer load; change "
-            f"the schema line to {_name(SCHEMA)}, the only edit the library needs",
+            f"the schema line to {_name(current)}, the only edit the library needs",
         )
-    if document["schema"] not in (SCHEMA, LEGACY_SCHEMA) or not isinstance(
-        document["schema"], str
-    ):
+    accepted = (
+        (SCHEMA_V4, SCHEMA, LEGACY_SCHEMA) if shading else (SCHEMA, LEGACY_SCHEMA)
+    )
+    if not isinstance(document["schema"], str) or document["schema"] not in accepted:
+        listed = " or ".join(_name(schema) for schema in accepted)
+        if shading:
+            listed = f"{_name(SCHEMA_V4)}, {_name(SCHEMA)} or {_name(LEGACY_SCHEMA)}"
         raise LibraryError(
             source,
-            f"schema: expected {_name(SCHEMA)} or {_name(LEGACY_SCHEMA)}, got "
-            f"{_shown(document['schema'])}",
+            f"schema: expected {listed}, got {_shown(document['schema'])}",
         )
-    reading = _Reading(len(colors), source, document["schema"] == SCHEMA, recorded)
+    reading = _Reading(
+        len(colors), source, document["schema"], recorded, shading=shading, marks=marks
+    )
     ramps = {
         name: _ramp(value, f"ramps[{_name(name)}]", reading)
         for name, value in _named(document["ramps"], "ramps", source)
@@ -241,14 +330,28 @@ def validate_library(document, colors, *, source, recorded=False):
         if not reading.current:
             raise LibraryError(
                 source,
-                f"shade: a library's own shade needs schema {_name(SCHEMA)}; "
-                f"this library is {_name(LEGACY_SCHEMA)}",
+                (
+                    f"shade: a library's own shade needs {SCHEMA} or later; this "
+                    f"library is {_name(LEGACY_SCHEMA)}"
+                    if shading
+                    else f"shade: a library's own shade needs schema {_name(SCHEMA)}; "
+                    f"this library is {_name(LEGACY_SCHEMA)}"
+                ),
             )
-        shade = _library_shade(document["shade"], "shade", source)
+        shade = _library_shade(document["shade"], "shade", reading, ("shade",))
     materials = {}
     for name, value in _named(document["materials"], "materials", source):
-        materials[name] = _entry(value, f"materials[{_name(name)}]", ramps, reading)
-    return Library(MappingProxyType(ramps), default, MappingProxyType(materials), shade)
+        materials[name] = _entry(
+            value, f"materials[{_name(name)}]", ramps, reading, ("materials", name)
+        )
+    return Library(
+        MappingProxyType(ramps),
+        default,
+        MappingProxyType(materials),
+        shade,
+        source=source,
+        where=MappingProxyType(reading.where),
+    )
 
 
 def generate(library, colors, globals_, recorded=None):
@@ -371,6 +474,25 @@ def _ramped(records, library):
     return [(index, *taken[index]) for index in sorted(taken)]
 
 
+def _taken(records, library):
+    """`_ramped`'s materials, and with them each glTF material of the model
+    whose entry is an ordinary mapping with shading values of its own, in
+    material order (shading design contract 2, D-33)."""
+    taken = {}
+    for record in records:
+        if record.material_index is None or record.name is None:
+            continue
+        if record.alpha_mode not in RAMP_ALPHA_MODES:
+            continue
+        entry = library.materials.get(record.name)
+        if entry is None or (
+            entry.ramp is None and entry.uses is None and entry.shade is None
+        ):
+            continue
+        taken.setdefault(record.material_index, (record.name, entry))
+    return [(index, *taken[index]) for index in sorted(taken)]
+
+
 def capture_overrides(records, library, globals_):
     """The capture values of each glTF material that overrides any of them,
     as `(material index, ao_distance_m, occlusion_weight, convexity_weight)`
@@ -381,10 +503,11 @@ def capture_overrides(records, library, globals_):
     value wins; one it does not give is the global. Materials sharing a name
     share their entry, translucent ones as any other (alpha design D-15); one
     taking the default ramp or the ordinary look, and one with no entry, take
-    the global values.
+    the global values. An ordinary mapping entry (a `/4` library read through
+    the internal gate) overrides them like any other.
     """
     overrides = []
-    for index, _, entry in _ramped(records, library):
+    for index, _, entry in _taken(records, library):
         shade = entry.shade
         if shade is None or all(
             getattr(shade, name) is None for name in CAPTURE_VALUES
@@ -511,7 +634,14 @@ def library_shade_warnings(records, library, explicit):
         "range" not in explicit
         or library.shade is None
         or library.shade.range is None
-        or all(own for _, _, own in _in_use(records, library))
+        or (
+            all(own for _, _, own in _in_use(records, library))
+            and all(
+                entry.shade.range is not None
+                for _, _, entry in _taken(records, library)
+                if entry.ramp is None and entry.uses is None
+            )
+        )
     ):
         return []
     return [
@@ -519,6 +649,119 @@ def library_shade_warnings(records, library, explicit):
         "to its materials without their own; the global "
         f"{_shown(list(explicit['range']))} does not reach them"
     ]
+
+
+# The `explicit` name of each response field of `Shade`: its leaf path, such
+# as `key.strength`. The other names are those of `Shade`'s first four fields.
+_LEAF_OF = MappingProxyType({name: path for path, name in shading.FIELDS.items()})
+
+
+def shadow_warnings(records, library, explicit, formula, origins=None):
+    """Every warning for a global given explicitly that a library or material
+    value takes precedence over, in a fixed order: the materials' own values,
+    by material and then in `Shade`'s order; the library's own shade, the range
+    first and then the response in `shading.FIELDS`' order; then the
+    generated ramps' (settings design D-23, D-33; shading design contract 2,
+    D-41).
+
+    `explicit` maps the name of each shading value an option or a project file
+    set to that global value (`ao_distance_m`, `range`, and a response leaf as
+    its path under `shade`, such as `key.strength`); `formula` maps each
+    formula value the same way, as `ramp_warnings` takes it. Which layers are
+    explicit is the caller's decision: this adds no rule of its own. `origins`
+    maps those same names to where the global value came from, such as
+    `--bake-key-strength`, which a message about a response leaf or an
+    ordinary entry shows.
+
+    Defaults, ordinary inheritance and a term merely being off warn nothing.
+    For a `/2` or `/3` library these are exactly the messages of
+    `override_warnings`, `library_shade_warnings` and `ramp_warnings`, in that
+    order; an ordinary mapping entry is named like a ramped one.
+    """
+    origins = origins or {}
+    return [
+        *_entry_warnings(records, library, explicit, origins),
+        *library_shade_warnings(records, library, explicit),
+        *_library_response_warnings(records, library, explicit, origins),
+        *ramp_warnings(records, library, formula),
+    ]
+
+
+def _entry_warnings(records, library, explicit, origins):
+    messages = []
+    named = set()
+    for _, name, entry in _taken(records, library):
+        if name in named or entry.shade is None:
+            continue
+        named.add(name)
+        ordinary = entry.ramp is None and entry.uses is None
+        for setting, value in entry.shade.given():
+            key = _LEAF_OF.get(setting, setting)
+            if key not in explicit:
+                continue
+            if not ordinary and setting not in RESPONSE_NAMES:
+                # The existing wording, unchanged, for the existing values.
+                shown = list(value) if setting == "range" else value
+                messages.append(
+                    f"material {_name(name)} keeps its own shade.{setting}, "
+                    f"{_shown(shown)}, from the material library; the global "
+                    f"{_shown(list(explicit[setting]) if setting == 'range' else explicit[setting])} "
+                    "applies to materials without their own"
+                )
+                continue
+            own = library.origin(("materials", name, "shade", *key.split(".")))
+            messages.append(
+                f"material {_name(name)} keeps its own shade.{key}, "
+                f"{_shown(value)} ({own}), from the material library; the "
+                f"global {_shown(explicit[key])}{_origin(origins, key)} "
+                "applies to materials without their own"
+            )
+    return messages
+
+
+def _library_response_warnings(records, library, explicit, origins):
+    """The warnings for a global response leaf given explicitly that the
+    library's own shade beats for a part of the model: one per leaf,
+    when some part takes the library's value."""
+    if library.shade is None:
+        return []
+    messages = []
+    for path, name in shading.FIELDS.items():
+        value = getattr(library.shade, name)
+        if value is None or path not in explicit:
+            continue
+        if not _takes_library(records, library, name):
+            continue
+        own = library.origin(("shade", *path.split(".")))
+        messages.append(
+            f"the material library gives shade.{path} {_shown(value)} ({own}) "
+            "to its materials without their own; the global "
+            f"{_shown(explicit[path])}{_origin(origins, path)} does not reach "
+            "them"
+        )
+    return messages
+
+
+def _takes_library(records, library, name):
+    """Whether some part of the model takes the library's own value of the
+    response field `name`: a part with no material name, a material with no
+    entry that applies, or one whose entry does not give it."""
+    taken = {material: entry for _, material, entry in _taken(records, library)}
+    for record in records:
+        if record.material_index is None or record.name is None:
+            return True
+        entry = taken.get(record.name)
+        if entry is None or entry.shade is None or getattr(entry.shade, name) is None:
+            return True
+    return False
+
+
+def _shown(value):
+    return _shown(value)
+
+
+def _origin(origins, name):
+    return f" ({origins[name]})" if name in origins else ""
 
 
 def _named(mapping, location, source):
@@ -544,13 +787,42 @@ def _check_keys(mapping, source, location=None):
 @dataclass(frozen=True)
 class _Reading:
     """What validating one library needs: the palette size, the source for
-    diagnostics, whether it is the current schema, and whether it is a
-    sheet's inline record."""
+    diagnostics, its schema, whether it is a sheet's inline record, and,
+    through the internal gate, that gate, the document's positions and the
+    positions of the shading values read, by path."""
 
     size: int
     source: object
-    current: bool
+    schema: str
     recorded: bool
+    shading: bool = False
+    marks: object = None
+    where: dict = field(default_factory=dict)
+
+    @property
+    def current(self):
+        """Whether the schema is `/3` or later: generated ramps and a
+        library shade."""
+        return self.schema in (SCHEMA, SCHEMA_V4)
+
+    @property
+    def response(self):
+        """Whether the schema is `/4`, which may give the shading response
+        and ordinary entries as mappings."""
+        return self.schema == SCHEMA_V4
+
+    def at(self, path):
+        """` at line L, column C` for the key at `path`, empty without the
+        document's positions."""
+        if self.marks is None:
+            return ""
+        line, column = yamlfile.locate(self.marks, path)
+        return f" at line {line}, column {column}"
+
+    def note(self, path):
+        """Keep the position of the value at `path`, if there are any."""
+        if self.marks is not None:
+            self.where[tuple(path)] = yamlfile.locate(self.marks, path)
 
 
 def _ramp(value, location, reading):
@@ -566,8 +838,13 @@ def _generated(value, location, reading):
     if not reading.current:
         raise LibraryError(
             source,
-            f"{location}: a generated ramp needs schema {_name(SCHEMA)}; this "
-            f"library is {_name(LEGACY_SCHEMA)}",
+            (
+                f"{location}: a generated ramp needs {SCHEMA} or later; this "
+                f"library is {_name(LEGACY_SCHEMA)}"
+                if reading.shading
+                else f"{location}: a generated ramp needs schema {_name(SCHEMA)}; "
+                f"this library is {_name(LEGACY_SCHEMA)}"
+            ),
         )
     _check_keys(value, source, location)
     known = ("base", "bands", *FORMULA, *(("indices",) if reading.recorded else ()))
@@ -659,7 +936,7 @@ def _reference(value, location, ramps, source):
     return value
 
 
-def _entry(value, location, ramps, reading):
+def _entry(value, location, ramps, reading, path):
     source = reading.source
     if isinstance(value, str) and value == ORDINARY:
         return Entry()
@@ -670,80 +947,205 @@ def _entry(value, location, ramps, reading):
             f'"{ORDINARY}", got {_shown(value)}',
         )
     _check_keys(value, source, location)
-    unknown = sorted(key for key in value if key not in ("ramp", "uses", "shade"))
+    mapping = ("ramp", "uses", "shade", *(("ordinary",) if reading.response else ()))
+    unknown = sorted(key for key in value if key not in mapping)
     if unknown:
         raise LibraryError(source, f"{location}: unknown field {_name(unknown[0])}")
-    if ("ramp" in value) == ("uses" in value):
+    forms = [form for form in ("ramp", "uses", "ordinary") if form in value]
+    if len(forms) != 1:
         raise LibraryError(
-            source, f'{location}: expected exactly one of "ramp" and "uses"'
+            source,
+            f'{location}: expected exactly one of "ramp", "uses" and "ordinary"'
+            if reading.response
+            else f'{location}: expected exactly one of "ramp" and "uses"',
+        )
+    if forms == ["ordinary"] and value["ordinary"] is not True:
+        raise LibraryError(
+            source,
+            f"{location}.ordinary: expected true, which is the ordinary look, got "
+            f"{_shown(value['ordinary'])}"
+            f"{reading.at((*path, 'ordinary'))}",
         )
     shade = (
-        _shade(value["shade"], f"{location}.shade", source)
+        _shade(value["shade"], f"{location}.shade", reading, (*path, "shade"))
         if "shade" in value
         else None
     )
     if "ramp" in value:
         ramp = _ramp(value["ramp"], f"{location}.ramp", reading)
         return Entry(ramp=ramp, shade=shade)
+    if "ordinary" in value:
+        return Entry(shade=shade)
     uses = _reference(value["uses"], f"{location}.uses", ramps, source)
     return Entry(uses=uses, shade=shade)
 
 
-def _shade(value, location, source):
+# The shading leaves a library may not override (contract 2), by top-level
+# key of a `shade` mapping, and the groups of those it may.
+_GLOBAL_ONLY = ("sky_ground_frame", "snap")
+_RESPONSE_GROUPS = tuple(
+    dict.fromkeys(path.split(".")[0] for path in shading.FIELDS if "." in path)
+)
+_RESPONSE_TOP = tuple(dict.fromkeys(path.split(".")[0] for path in shading.FIELDS))
+
+
+def _shade(value, location, reading, path, library=False):
     """A material's own shading values, checked with the global values'
-    limits (settings design D-30), or None when it gives none."""
+    limits (settings design D-30), or None when it gives none. With
+    `library`, the library's own, which give the range and the response
+    only (D-36), never the capture values.
+
+    Through the internal gate, a `/4` library may also give the response
+    leaves (contract 2), nested as a settings file nests them; each leaf is
+    checked on its own, whatever the value would resolve to, and its
+    position is kept. Cross-field rules wait for the resolved values
+    (`shading_resolve`)."""
+    source = reading.source
     if not isinstance(value, dict):
         raise LibraryError(
             source,
             f"{location}: expected a mapping of shading values, got {_shown(value)}",
         )
     _check_keys(value, source, location)
-    if "ao_samples" in value:
+    if library:
+        for name in (*CAPTURE_VALUES, "ao_samples"):
+            if name in value:
+                raise LibraryError(
+                    source,
+                    f"{location}.{name}: a library's own shade gives only "
+                    f"{'range and the shading response' if reading.response else 'range'}"
+                    f"; give {name} in a material's own shade, or as a global setting",
+                )
+    elif "ao_samples" in value:
         raise LibraryError(
             source,
             f"{location}.ao_samples: AO samples is a global setting only; set it "
             "with --ao-samples or shade.ao_samples in a settings file",
         )
-    known = [field.name for field in fields(Shade)]
+    known = [*CAPTURE_VALUES, "range"]
+    if reading.shading:
+        _check_response_keys(value, location, reading, path)
+        known += [name for name in _RESPONSE_TOP if name in value]
     unknown = sorted(key for key in value if key not in known)
     if unknown:
         raise LibraryError(source, f"{location}: unknown field {_name(unknown[0])}")
     given = {}
-    for name in known:
+    for name in (*CAPTURE_VALUES, "range"):
         if name not in value:
             continue
         here = f"{location}.{name}"
         item = value[name]
         if name == "range":
             given[name] = _shade_range(item, here, source)
-            continue
-        number = _finite(item)
-        if number is None or (number <= 0 if name == "ao_distance_m" else number < 0):
-            wanted = "greater than 0" if name == "ao_distance_m" else "0 or greater"
-            raise LibraryError(
-                source, f"{here}: expected a finite number {wanted}, got {_shown(item)}"
-            )
-        given[name] = number
+        else:
+            number = _finite(item)
+            if number is None or (
+                number <= 0 if name == "ao_distance_m" else number < 0
+            ):
+                wanted = "greater than 0" if name == "ao_distance_m" else "0 or greater"
+                raise LibraryError(
+                    source,
+                    f"{here}: expected a finite number {wanted}, got {_shown(item)}",
+                )
+            given[name] = number
+        reading.note((*path, name))
+    if reading.shading:
+        given |= _response(value, location, reading, path)
     return Shade(**given) if given else None
 
 
-def _library_shade(value, location, source):
-    """A library's own shading values: the shade range only (D-36)."""
-    if not isinstance(value, dict):
-        raise LibraryError(
-            source,
-            f"{location}: expected a mapping of shading values, got {_shown(value)}",
-        )
-    _check_keys(value, source, location)
-    for name in (*CAPTURE_VALUES, "ao_samples"):
-        if name in value:
+def _library_shade(value, location, reading, path):
+    """A library's own shading values: the shade range (D-36), and through
+    the internal gate of a `/4` library the shading response."""
+    return _shade(value, location, reading, path, library=True)
+
+
+def _check_response_keys(value, location, reading, path):
+    """Refuse a response key the library's schema or place does not allow:
+    one a `/2` or `/3` library may not give, and the global-only leaves."""
+    source = reading.source
+    for name in sorted(value):
+        here = f"{location}.{name}"
+        if name in _RESPONSE_TOP and not reading.response:
             raise LibraryError(
                 source,
-                f"{location}.{name}: a library's own shade gives only range; give "
-                f"{name} in a material's own shade, or as a global setting",
+                f"{here}: the shading response needs {SCHEMA_V4}; this library "
+                f"is {_name(reading.schema)}{reading.at((*path, name))}",
             )
-    shade = _shade(value, location, source)
-    return shade
+        if name in _GLOBAL_ONLY and reading.response:
+            raise LibraryError(
+                source,
+                f"{here}: shade.{name} is a global setting only; set it with its "
+                f"option or in a settings file{reading.at((*path, name))}",
+            )
+
+
+def _response(value, location, reading, path):
+    """The response leaves `value` gives, as `Shade` fields, each checked and
+    its position kept."""
+    source = reading.source
+    given = {}
+    for name in _RESPONSE_TOP:
+        if name not in value:
+            continue
+        item = value[name]
+        if name in _RESPONSE_GROUPS:
+            if not isinstance(item, dict):
+                raise LibraryError(
+                    source,
+                    f"{location}.{name}: expected a mapping of shading values, got "
+                    f"{_shown(item)}{reading.at((*path, name))}",
+                )
+            _check_keys(item, source, f"{location}.{name}")
+            for leaf in sorted(item):
+                leaf_path = f"{name}.{leaf}"
+                if leaf_path == "key.direction":
+                    raise LibraryError(
+                        source,
+                        f"{location}.{leaf_path}: shade.key.direction is a global "
+                        "setting only; set it with its option or in a settings "
+                        f"file{reading.at((*path, name, leaf))}",
+                    )
+                if leaf_path not in shading.FIELDS:
+                    raise LibraryError(
+                        source,
+                        f"{location}.{name}: unknown field {_name(leaf)}"
+                        f"{reading.at((*path, name, leaf))}",
+                    )
+            for leaf in sorted(item):
+                given[shading.FIELDS[f"{name}.{leaf}"]] = _leaf(
+                    item[leaf],
+                    f"{name}.{leaf}",
+                    f"{location}.{name}.{leaf}",
+                    reading,
+                    (*path, name, leaf),
+                )
+            continue
+        given[shading.FIELDS[name]] = _leaf(
+            item, name, f"{location}.{name}", reading, (*path, name)
+        )
+    return given
+
+
+def _leaf(item, leaf_path, location, reading, path):
+    """One response leaf's checked value, and its position kept."""
+    try:
+        checked = shading.BY_PATH[leaf_path].check(item)
+    except shading.Bad as error:
+        raise LibraryError(
+            reading.source,
+            f"{location}: {error.problem(_shown)}{reading.at(path)}",
+        ) from None
+    reading.note(path)
+    return checked
+
+
+def _key_path(path):
+    """A path from a library's root as a key path: `materials["Painted"]
+    .shade.mode`."""
+    if len(path) >= 2 and path[0] in ("ramps", "materials"):
+        return f"{path[0]}[{_name(path[1])}]" + "".join(f".{step}" for step in path[2:])
+    return ".".join(path)
 
 
 def _finite(value):
