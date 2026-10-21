@@ -4,7 +4,7 @@ Moskophoros must serve both sprites lit by their consumer from exported face
 maps and art panels whose lighting is baked into their colours. This design
 settles that capability with the owner before implementation.
 
-Design state: `ready for issue processing`
+Design state: `exploring`
 
 Status legend: `[ ]` unprocessed · `[#N]` linked to issue N · `[no-issue]`
 reviewed and deliberately not tracked separately · `[deferred]` blocked on a
@@ -23,8 +23,11 @@ concrete precondition
 - [ ] SHD-8. Regenerate the inventoried working sheets
 
 The owner approved the eight delivery slices, their dependencies and design
-readiness in D-35. Behaviour is settled through D-34. Design review comes
-next; issue processing awaits the manager's instruction.
+readiness in D-35. Review round 1 subsequently identified four material
+questions reserved for the owner (Q-12 to Q-15). Readiness is temporarily
+reopened for those questions, not for the bookkeeping clarifications.
+Issue processing awaits their resolution, re-review and the manager's
+instruction.
 
 ## Epic contract
 
@@ -44,7 +47,7 @@ This is a plan. It does not describe a shipped baked-light option.
 ## Current state and evidence
 
 Verified against `master` at `6c5f47a1293cc8a99b25d5e6e360bfd3536ab320`
-on 2026-10-20:
+on 2026-10-20 (America/Los_Angeles):
 
 - Capture supplies flat, unlit material colour, material identity, shade,
   normal and depth, with the alpha design's back and combined front layers.
@@ -80,25 +83,32 @@ on 2026-10-20:
   ramp formula, palette, hard edges, maps and a preview light. Its current
   contents were read, not changed. The other project's palette and settings
   follow this design; neither is being authored here.
-- Tracker overlap recheck on 2026-10-21: no open shading epic or pull request.
+- Tracker overlap recheck on 2026-10-21 UTC: no open shading epic or pull request.
   The only open issue is [#43](https://github.com/coghex/moskophoros/issues/43),
   mesh-weight animation pointers and CUBICSPLINE tangents. It is not a shading
   prerequisite; the manager should sequence overlapping capture-file edits.
 
 ### Existing contracts this design must explicitly amend
 
-| Contract | Current rule | Relationship to the requested capability |
+| Contract | Existing rule to amend or preserve | Approved replacement and owning slice |
 |---|---|---|
-| [Material styling D-22](material_styling_design.md#d-22-bands-come-from-ambient-light-only) | Bands come from ambient light only | Optional directional ramp shading needs an amendment |
-| [Material styling D-25](material_styling_design.md#d-25-ambient-means-occlusion-and-curvature-only) | No sky, ground or other direction-dependent light | Additional terms need explicit scope and settings |
-| [Lighting D-4](lighting_sheet_design.md#d-4-light-is-previewed-never-baked), [design §Previews](../design.md#export) | Light is previewed, never baked | Replace the universal restriction with the owner-approved output contract |
-| Material styling D-27; lighting D-1 | Preserve the flat ambient capability | Compatible; exact default byte compatibility is Q-3 |
-| [Alpha D-8](alpha_design.md#d-8-the-colour-is-flat-and-unlit-this-replaces-lighting-d-23) | Ordinary materials are flat and unlit | Preserve as the default; settle optional baking without a ramp |
-| Material styling scope and ramp mapping | Dithering excluded | Dithering needs its own scope and visual decision |
+| [Material styling](material_styling_design.md) D-22, D-25 | Ambient-only bands; no sky/ground or directional light | D-9/D-15/D-24/D-26 permit optional directional terms; SHD-6 |
+| Material styling D-27; [lighting](lighting_sheet_design.md) D-4; design §Export | Light is previewed, not baked | D-5/D-6 permit baked modes while preserving the separate preview interface; SHD-6 |
+| Lighting D-1; material styling D-27's default ambient capability | Preserve existing ambient output | D-7/D-8 retain exact default image bytes; SHD-1 through SHD-6 verification, SHD-6 narrative amendment |
+| [Alpha D-8](alpha_design.md#d-8-the-colour-is-flat-and-unlit-this-replaces-lighting-d-23) | Ordinary materials are flat and unlit | D-14/D-23 permit optional brightness with the ordinary base, including without a library; SHD-5 integration and SHD-6 public contract |
+| Material styling D-7, scope and ramp mapping; design §Palette mapping and composition, §Material ramps | Dithering excluded | D-12/D-17/D-27/D-29 approve the six patterns and quantisation rules; SHD-6 |
+| [Settings](settings_design.md) D-20; design §Material libraries | The ordinary form carries no shade | D-33 adds `/4` ordinary mapping entries with overrides; SHD-6 |
+| [Projects and camera](projects_camera_design.md) D-8; [vision V-7](../vision.md#v-7-consistency-is-the-product) | Light stays camera-fixed, V-7 unchanged | D-24 permits world-up sky/ground only; key stays camera-fixed, direction consistency remains; SHD-6 |
+| Design §Capture job and result contract, §Frames into stylize | Mandatory transport buffers and decoded arrays omit separate layer normals | D-19/D-34 retain layer normals; SHD-1, with transport detail pending Q-15 |
+| Design §CLI, §Settings files, §Option validation, §Stylize, §Export, §Reproducibility | Existing options, palette/ramp rules and sheet record | D-32 to D-34 add controls, nested responses, validation, modes, snap and deterministic reuse; SHD-6 public activation |
 
 These are known design changes requested by the owner, not defects to repair
 silently. This draft changes no current contract document. Changes to
 `docs/design.md` accompany implementation because tests read it.
+The per-slice documentation and pinned-test assignments are listed below.
+D-19 preserves existing capture information that was being discarded; it
+adds no style choice to capture. This implements V-4's full-information
+boundary and leaves later style experiments in stylize, consistent with V-8.
 
 ### What the owner has actually judged
 
@@ -851,8 +861,9 @@ by this design signoff.
 
 ## Question history and resolution
 
-All behaviour contracts are approved through D-34. D-35 approves the
-delivery plan and readiness. Actual project look values are
+Behaviour contracts were approved through D-34 and the delivery plan through
+D-35. Review round 1 reopens only the explicit owner questions Q-12 to Q-15;
+the original signoffs remain recorded. Actual project look values are
 deliberately deferred to the owner-review slice under D-31.
 Batch 1's accepted answers are D-5 to D-7; batch 2's are D-8 to D-10;
 batch 3's are D-11 to D-13; batch 4's are D-14 to D-16;
@@ -860,7 +871,7 @@ batch 5's are D-17 to D-19; batch 6's are D-20 to D-22;
 batch 7's are D-23 to D-25; batch 8's are D-26 to D-28;
 batch 9's are D-29 to D-31; batch 10's are D-32 to D-34; batch 11's is D-35.
 The Q entries after the dated batch history give the current resolution.
-No design-signoff questions remain open.
+Q-1 to Q-11 remain resolved; Q-12 to Q-15 await the manager's owner-answer relay.
 
 Batch 1 was posted on 2026-10-20 at 16:52:53 UTC in `#moskophoros`,
 message `w8y5pdsiqbn56f33gpftcxhsmi`, request
@@ -1024,16 +1035,98 @@ changes the allowed colour set, not placement. The contracts specify mixed
 layers, mode applicability and errors without treating a palette as an
 ordered shading ramp.
 
+### Q-12. Who applies accepted changes to owner configuration files? (S-7)
+
+Pending owner answer through the manager. The proposal is for SHD-7 to
+present exact candidate file diffs, not just prose values. The choice is whether the owner applies
+them or explicitly authorises the SHD-8 agent to apply those exact diffs;
+before/after hashes would record the application. Do not infer write
+authority from visual acceptance. SHD-7/SHD-8's config-application step
+waits for this answer; no owner configuration is changed by this revision.
+
+### Q-13. Which internal work moves from SHD-6 into SHD-2? (S-10)
+
+Pending owner answer through the manager because D-35 approved the slice
+boundaries. S-2's two-level reader and existing internal `/4` parser work
+are recorded in SHD-2 as directed by the revision brief. The proposed
+additional move is the warning-message builders and any remaining internal
+loader work from SHD-6, with direct tests, leaving SHD-6 wiring, activation,
+reuse and evidence. The review also proposes publishing narrative amendments
+as a named step after SHD-6 merges. Do not adopt those boundary/timing changes
+until the answer arrives; SHD-6 retains its approved responsibility below.
+
+### Q-14. Where does the continuous ambient signal clamp? (S-14)
+
+Pending owner answer through the manager. Contract 3's approved expression
+clamps the normalised result to `[0,1]`; the current integer path instead
+clamps raw shade to `[lo,hi]`. With `lo=190, hi=225, N=40`, raw mean 226
+selects continuous band 39 versus integer band 38. The choices are to clamp
+raw shade before normalising on the continuous path too, or intentionally
+retain that jump. SHD-3 and dependent arithmetic wait for the answer. The
+expression below records D-34's original choice, not a resolution of S-14.
+
+### Q-15. How many layer normals does capture transport? (S-16)
+
+Pending owner answer through the manager. Contract 3 currently specifies
+two extra buffers. The alternative carries only `back_normal`, deriving
+front normals from existing `normal` wherever `front_present` is true.
+Both supply addressed layer normals to stylize. The reviewer measured about
+0.26 seconds per 768×1024 normal-buffer write and about 9.4 MB per decoded
+float32 buffer plus 18.9 MB per float64 working copy; these are local probe
+measurements, not production budgets. The proposal also requires SHD-1 to
+report capture-time and work-directory deltas on robot and chest. SHD-1's
+transport detail and cost-report obligation await the owner; the two-buffer
+wording below remains the originally approved contract until resolved.
+
+## Review round 1 revision record
+
+Review by mosk-reviewer-67 (Claude) against `f548312`, received 2026-10-21
+UTC: 0 blocking, 10 should-fix, 9 minor. Review file
+`~/.local/share/moskophoros-acceptance/shading-design/review-claude-1.md`,
+SHA-256 `3ed6942b7ac24a14c699522168b3fbc027e8a626b2d6f4da601a9241336be45b`.
+The manager's revision brief is
+`~/.local/state/project-manager/moskophoros/dispatch-shading-revise-1.md`,
+SHA-256 `0a8038b6f507e57cb07868dee2bf396c24ffa262f2cd2f80b5f1af22fcc30dee`,
+relayed in cmux message `d1643ba1-ab87-4005-b09e-a9f4ee5d2fb6`.
+It authorises the following non-owner clarifications and additive evidence
+obligations. They are review dispositions, not new owner D decisions.
+
+| Finding | Disposition in this revision |
+|---|---|
+| S-1 | Fixed: response without a library, global range, optional palette and default bypass; SHD-5 inputs named |
+| S-2 | Fixed: second-level groups, leaf merging, null/type/path errors and SHD-2 internal reader/parser duty |
+| S-3 | Fixed: leaf validation per source, cross-field validation after resolution, all contributing origins in errors |
+| S-4 | Fixed: exact ordered sheet shape/types, all inactive values recorded, unit-vector reuse and inline library |
+| S-5 | Fixed: named pre-arc baseline and pin before whichever foundation slice merges first |
+| S-6 | Fixed: proven explicit invocations and snapshots; old sheet metadata is evidence, never a new-schema reuse input |
+| S-7 | Pending owner: Q-12; no inferred config-write permission |
+| S-8 | Fixed: mode-reduction motion, soft edges and dithered perspective/roll required in SHD-7 |
+| S-9 | Fixed: complete amendment table and per-code-slice public-doc/pinned-test assignments |
+| S-10 | Pending owner: Q-13; no unapproved slice-boundary change |
+| S-11 | Fixed: OKLab projection, RGB-byte input/deduplication and both nearest-colour tie rules |
+| S-12 | Fixed: tile denominator is width times height; output-cell coordinates named |
+| S-13 | Fixed: effective band dithering defined and ties use unperturbed signal |
+| S-14 | Pending owner: Q-14; original formula retained with explicit hold |
+| S-15 | Fixed: older material features require `/3 or later`; `/1` guidance names `/4` |
+| S-16 | Pending owner: Q-15; alternative transport and cost reporting not silently adopted |
+| S-17 | Fixed: explicit world-up vector, stylize argument and narrow V-7 exception |
+| S-18 | Fixed: explicit-source warning convention includes ordinary overrides; false ordinary flag rejected |
+| S-19 | Fixed: resolved references, reviewer identity, timezone and V-4/V-8 explanation |
+
 ## Implementation contracts
 
-Approved in full by D-32 through D-34 from batch 10's immutable review
-copy. These are implementation requirements, not claims of shipped
+The base contracts were approved in full by D-32 through D-34 from batch
+10's immutable review copy. This text incorporates the non-owner precision
+fixes authorised by the revision brief above; the immutable approved copy
+is unchanged. Q-12 to Q-15 explicitly hold the unresolved choices.
+These are implementation requirements, not claims of shipped
 behaviour. No project look is selected here; D-31 reserves that for rendered
 acceptance.
 
 ### 1. Settings, defaults and validation (Q-4/Q-5/Q-11)
 
-Keep the existing settings precedence and nested merge rules. All new global
+Keep the existing settings precedence and extend nested leaf merging to the
+new second-level sub-groups. All new global
 fields have command-line overrides, following the existing settings design.
 Per-material values remain in the library. Approved additions:
 
@@ -1063,9 +1156,16 @@ Key direction points **toward** the light in camera coordinates: +X right,
 +Y up, +Z toward the viewer. Components must be finite, each in `[-1,1]`,
 and not all zero; normalise once and record the resolved unit vector.
 Strengths follow D-26, brightness endpoints D-25, dither strength D-29.
-World up is the subject's fixed +Y transformed into that frame's camera
-coordinates; camera up is `(0,1,0)`. Ground uses the opposite vector.
+World up is the subject's fixed +Y transformed into camera coordinates:
+`b = views.subject_basis(camera_direction, roll)` and
+`w = (b.right[1], b.up[1], -b.forward[1])`. The command computes this vector
+and passes it explicitly to stylize; stylize reads no capture internals.
+Camera up is `(0,1,0)`. Ground uses the opposite vector.
 Perspective does not change a distant light's direction across the image.
+Both projections use this same basis. Rotation about subject +Y leaves world
+up unchanged across sheet directions. D-24's V-7 exception is narrowly that
+world sky/ground stay tied to world up and camera pitch instead of rotating
+with camera roll; the key remains camera-fixed.
 
 Reject unknown names, non-finite values, booleans masquerading as numbers,
 null for any new field, invalid sums/ranges and conflicting/repeated CLI
@@ -1076,18 +1176,94 @@ mode would leave snap unused. Settings/library errors are exit 2 before
 any Blender invocation, naming file/key/line or CLI option and the material
 where relevant. Existing library palette requirements remain unchanged.
 
+Inside `shade`, `key`, `sky`, `ground`, `brightness` and `dither` are mappings,
+not leaf settings. Settings files and library `shade` mappings merge their
+allowed leaves independently; a later `brightness.floor` never erases an
+earlier `brightness.ceiling`. Omitted leaves inherit. Empty mappings supply
+no leaves. Reject null or any non-mapping sub-group, unknown leaves and
+non-string keys at the full dotted path with the YAML key's line/column:
+for example `config.yaml: shade.key: expected a mapping of settings, got
+null at line 12, column 3`. Library paths additionally name the material
+when applicable. Library groups still admit only the leaves allowed by
+contract 2; nesting does not allow a per-material direction or snap target.
+SHD-2 extends both readers behind the internal-only gate.
+
+Validate types and each leaf's own bounds in every input layer, even when
+overridden. Validate the new cross-field rules (`K+S+G <= 1` and brightness
+floor <= ceiling) on resolved values only: first the merged global response,
+then the library-wide inherited response used by the no-identity class and
+every resolved material entry, including unused entries. Do not reject a partial layer solely because its
+cross-field relationship will be corrected by a later layer. Retain the
+existing per-file duplicate camera-spelling rule unchanged. Report all
+contributing values and their origins, including inherited defaults, rather
+than attributing a cross-source violation to one arbitrary file. Examples:
+
+```text
+shade.brightness.floor 0.8 (config.yaml line 12) exceeds shade.brightness.ceiling 0.5 (--brightness-ceiling)
+material 'Painted': shade.key.strength 0.8 (--bake-key-strength) + shade.sky.strength 0.5 (library.yaml line 7) + shade.ground.strength 0.0 (shipped default) = 1.3, exceeds 1
+```
+
+These are exit-2 errors before Blender. CLI origins use the option spelling;
+file origins include the file, key and line/column; entry errors identify
+the material. The examples abbreviate columns for readability.
+
 Record all new resolved global values, and library overrides as supplied,
 in the sheet and fingerprint. Reuse must reproduce them without reopening
-the original palette/library. Bump the current sheet schema (next available
-version); keep D-8's current-schema-only loading and one-time regeneration.
+the original palette/library. Activate `moskophoros.sheet/15` in SHD-6 (the
+next version after the reviewed `/14`; reconcile an intervening schema bump
+explicitly before implementation). Keep D-8's current-schema-only loading
+and one-time regeneration.
 The existing `--light` preview interface stays separate.
+
+The exact `settings.shade` shape and insertion order are shown below with
+shipped defaults. Preserve the five existing fields first, then add the
+new fields in settings-table order. `ao_samples` and `range` entries remain
+integers; other numeric values, including direction components, are floats;
+`ambient_form` is a boolean and enums are strings. Nested members have the
+order shown. Record every value even when inactive:
+
+```json
+{
+  "ao_distance_m": 0.3,
+  "ao_samples": 64,
+  "occlusion_weight": 0.25,
+  "convexity_weight": 1.0,
+  "range": [84, 191],
+  "mode": "ramp",
+  "ambient_form": true,
+  "key": {
+    "direction": [-0.5183210553488161, 0.604707897906952, 0.604707897906952],
+    "strength": 0.0
+  },
+  "sky": {"strength": 0.0},
+  "ground": {"strength": 0.0},
+  "sky_ground_frame": "camera",
+  "brightness": {"floor": 0.3, "ceiling": 1.0},
+  "snap": "off",
+  "dither": {"pattern": "off", "strength": 1.0}
+}
+```
+
+Reuse validates a recorded unit key direction against `views.UNIT_TOLERANCE`
+and keeps its components exactly as recorded, never normalising them again;
+a non-unit recorded vector is invalid. Ordinary file/CLI vectors normalise
+once using `views.normalise`; the example records that helper's result.
+Retain existing JSON encoding and sorted-key canonical fingerprinting.
+The existing inline `settings.style` library record keeps overrides as
+supplied, including `/4` `ordinary: true` mappings and their nested `shade`,
+alongside existing recorded generated-ramp indices. Do not flatten or replace
+entry overrides with inherited values. Palette/library reuse reads that
+inline record without reopening source files.
 
 ### 2. Library shape and inheritance (Q-5)
 
 Introduce `moskophoros.materials/4`. Continue reading `/2` and `/3` under
 their existing rules; they cannot contain new fields. Old libraries need no
 edit for unchanged output. New fields or ordinary entries with response
-overrides require `/4`. Keep rejecting `/1` with the existing guidance.
+overrides require `/4`. Keep rejecting `/1`; its migration guidance names
+`moskophoros.materials/4`. Messages for library-wide shade and generated
+ramps say `needs moskophoros.materials/3 or later`, rather than incorrectly
+requiring `/4` for those older features. New response fields require `/4`.
 
 Extend each material's existing `shade` mapping with the response fields
 marked yes in contract 1. At library top level, `shade` may contain the
@@ -1100,13 +1276,16 @@ Each new response leaf inherits **material entry > library-wide shade >
 resolved global setting**. A global CLI override cannot defeat a material
 or library value. Resolve and validate every entry's combined strengths and
 brightness endpoints, including unused entries; partial overrides do not
-escape the cross-field checks. An explicit global CLI value shadowed by
-library/material values uses the existing warning convention, extended to
-the new fields. Defaults and ordinary inheritance are not warning events.
+escape the cross-field checks. An explicit global value (option, project
+file or `--config`) shadowed by library/material values uses the existing
+warning convention, extended to the new fields and to ordinary entries with
+response or ambient-occlusion overrides. Defaults and ordinary inheritance
+are not warning events.
 
 Keep existing ramp/uses forms and the string `ordinary`. Add a mapping form
 with exactly one of `ramp`, `uses`, or `ordinary: true`, plus optional
-`shade`. For example:
+`shade`. `ordinary` in a mapping must be the boolean `true`; `false`, null,
+strings or numbers are errors, not another form of inheritance. For example:
 
 ```yaml
 schema: moskophoros.materials/4
@@ -1131,6 +1310,16 @@ unlisted material keeps the existing default-ramp resolution. Materials
 without identities use global/library-wide response defaults and retain
 their ordinary base. Missing ramp references still error; D-23's snap
 fallback applies only when there is legitimately no resolved ramp.
+
+The response step runs with or without a library. Without one, every
+identity (including no-identity) is ordinary, with the resolved global
+response and global `shade.range`; no palette is required unless snap is
+non-off. A supplied palette retains ordinary palette mapping. Ramp mode
+has no invented ramp, both falls back to brightness, and neither keeps the
+ordinary base, as D-23 requires. Skip the response step for the all-default
+no-library case to preserve exact existing bytes. SHD-5 passes resolved
+responses, the sky/ground vector and `shade_range` into stylize explicitly,
+with the range supplied whether or not a library is present.
 
 ### 3. Pixel operations and addressed capture data (Q-6/Q-8/Q-11)
 
@@ -1159,7 +1348,8 @@ half-up byte rounding.
 For mode reduction, evaluate each winning-material sample's range signal
 and light product, select its band and use the existing weighted palette
 entry vote. Repeated entries pool their votes. Resolve ties by nearest
-band centre to the plain-reduction signal above, then lower palette index.
+band centre to the unperturbed plain-reduction signal above, then lower
+palette index; dithering never perturbs the tie-breaking reference.
 Brightness uses that same plain-reduction signal after the voted ramp/base
 colour has been selected. Thus the existing mean-versus-vote distinction
 remains, without introducing a separate brightness voting scheme.
@@ -1167,10 +1357,23 @@ remains, without introducing a separate brightness voting scheme.
 For shade-driven ramp dithering, perturb the band coordinate by
 `strength*(0.5-threshold)` before flooring; in mode reduction use the same
 output-cell threshold for every sample's band vote. Threshold is
-`(tile_rank+0.5)/tile_size` at `(x mod width,y mod height)`, top-left origin,
+`(tile_rank+0.5)/(width*height)` at `(x mod width,y mod height)`, where `x,y`
+are the output cell's pixel column and row, with top-left origin,
 with no frame/direction/sheet-packing offset. Both layers share the cell
 origin. Snap dithering uses D-29 instead. These are distinct quantisers
 with one pattern/strength control.
+
+Effective band dithering requires a pattern other than `off`, strength
+greater than zero, mode `ramp` or `both`, a resolved ramp, and no effective
+snap suppressing that layer's intermediate dithering. Otherwise use the
+undithered band path. Whole-palette snap suppresses intermediate dithering
+on both contributing layers, including a ramp-only layer. D-29 snap receives
+the 8-bit sRGB bytes after brightness half-up rounding (own-ramp snap) or
+composition (whole-palette snap). Distinct target colours mean distinct RGB
+byte triples. Deduplicate by first target occurrence, select nearest and
+second-nearest by OKLab distance with target-order ties for both, and project
+the desired colour onto their segment **in OKLab** before clamping the
+second-colour fraction. A one-colour target is constant.
 
 **Exact compatibility:** with ambient form on, all directional strengths
 zero and no effective dithering, retain today's exact integer ramp
@@ -1254,8 +1457,14 @@ tests and local Blender tests. Report the required current-head local
 validation; skipped tests do not pass. Generated fixtures and outputs stay
 in temporary/local evidence directories, not git.
 
-- **Compatibility:** pin a pre-arc source/tool revision and reproducible
-  input/config snapshots before the first implementation change. Compare
+- **Compatibility:** the named pre-arc source baseline is
+  `shading-pre-arc`, commit `f548312a5a929fb9bd843855b83b9762123f80ab`
+  (a manifest name, not a mutable Git tag). Before the first implementation
+  change, pin that source, its actual tool/dependency versions, command set
+  and hashed input/config/library/palette snapshots in local evidence. The
+  manager records the manifest in the eventual epic. Whichever of SHD-1 or
+  SHD-2 merges first must prove this precondition; later slices reuse it,
+  never move it to their own starting head. Compare
   default sheet/map PNG and ordinary/lit preview bytes against it. Exercise
   mapped and ordinary materials, old library versions, both reductions and
   both edge rules. Record expected schema/settings/fingerprint differences
@@ -1280,6 +1489,22 @@ in temporary/local evidence directories, not git.
 - **Visual acceptance:** SHD-7 follows D-31; tests establish contracts, not
   whether motion, ramps or dithering look right. Record the owner's exact
   acceptance or requested revisions against immutable evidence and settings.
+  Require mode reduction with lighting and ramp dithering in motion, at
+  least one soft-edge case, and a dithered perspective/roll animation; the
+  earlier plain-reduction probes did not establish these visual outcomes.
+
+**Working-sheet invocation inventory:** SHD-1 records each working sheet's
+explicit command, source hash, tool versions, complete effective config and
+palette/library snapshots, and output hashes; classify historical artifacts
+separately. Where only `/14` JSON survives, derive the explicit invocation
+by hand as local evidence. This is not a tool conversion or an old-schema
+loader. Prove the invocation at `shading-pre-arc` by reproducing the original
+sheet and associated image/preview bytes and `/14` metadata byte for byte,
+including recorded path spellings. Record discrepancies rather than quietly
+updating the reference. Missing inputs, differing historical tools or any
+unproven invocation stop that item for owner disposition. SHD-8 uses only
+proven invocations plus SHD-7's accepted changes under the new tool; it never
+passes an old `/14` sheet to the new current-only `--settings-from` loader.
 
 This design-only assignment ran local numerical probes and document checks,
 not repository tests. No implementation, CI or rendered-product acceptance
@@ -1287,8 +1512,10 @@ is claimed.
 
 ## Delivery plan
 
-**Approved by the owner in D-35.** Behaviour, boundaries and dependencies
-are settled. The processing ledger mirrors this
+**Approved by the owner in D-35, with review holds Q-12 to Q-15.** The
+original boundaries and dependencies remain until the owner resolves those
+holds. Additive evidence obligations below are authorised by the revision
+brief. The processing ledger mirrors this
 order. SHD-1 and SHD-2 can be developed independently; the remaining slices
 follow the stated dependencies. Public controls activate only in SHD-6,
 after their entire behaviour exists: earlier foundations must not accept
@@ -1300,8 +1527,9 @@ records with `docs-push`, with no empty code PR. Fixes discovered there use
 the normal code-review path before acceptance resumes. Test-read Markdown,
 including `docs/design.md`, travels with the relevant code under repository
 rules; narrative design amendments and acceptance records use `docs-push`.
-No tracker items are created by this design workflow. Codex review and
-issue processing still await the manager's instruction after readiness.
+No tracker items are created by this design workflow. The owner selected
+Claude for design review; round 1 is recorded above. Re-review and issue
+processing await the manager's instruction after these revisions.
 
 ### SHD-1. Preserve addressed normals for both capture layers
 
@@ -1309,9 +1537,11 @@ issue processing still await the manager's instruction after readiness.
   while exported geometry and default colours remain unchanged.
 - **Scope:** capture/result schema and encoder changes, backend decoding and
   validation, frame buffer names, fixtures and the owning capture contract.
-  Before changing the baseline, pin its source/tool and inventory known
-  working-sheet commands, inputs and config snapshots in local evidence;
-  distinguish working outputs from historical acceptance artifacts.
+  Apply the shared `shading-pre-arc` baseline precondition before either
+  foundation slice merges. Build the proven invocation inventory specified
+  under Verification, distinguishing working outputs from historical
+  acceptance artifacts; it must support regeneration without loading old
+  sheet JSON in the new tool.
 - **Phase:** 1, capture foundation.
 - **Depends on:** none.
 - **Ordering:** critical path; can land first.
@@ -1321,7 +1551,13 @@ issue processing still await the manager's instruction after readiness.
   and default image bytes match the recorded baseline; required checks pass.
 - **Out of scope:** shading controls, colour maths, owner-config edits or
   regeneration of working sheets.
-- **Open questions:** none.
+- **Documentation and pinned tests:** update `docs/design.md` §Capture job
+  and result contract (result format/mandatory buffers, ownership/failures,
+  compatibility) and §Frames into stylize. Update capture-result `/4` pins
+  and fixtures in `tests/test_capture_backend.py`, `tests/test_command.py`
+  and `tests/test_capture_blender.py`. Add layer-buffer checks without
+  changing sheet JSON; capture job schema stays unchanged if its payload does.
+- **Open questions:** Q-15 holds the transport choice and cost reporting.
 
 ### SHD-2. Model and resolve shading settings and library responses
 
@@ -1330,6 +1566,9 @@ issue processing still await the manager's instruction after readiness.
 - **Scope:** new field types/defaults, normalised direction and strength
   validation, `/4` response/ordinary-entry handling, preserved `/2`/`/3`
   readers, nested inheritance, explicit-value provenance and warning data.
+  Extend settings and library readers for the second-level sub-groups,
+  leaf origins and resolved cross-field errors behind the internal gate.
+  Apply the shared baseline precondition if this slice merges first.
   Keep these foundations internal until SHD-6 wires the public loaders and
   CLI; do not accept unsupported user-facing fields in this intermediate step.
 - **Phase:** 1, configuration foundation.
@@ -1342,7 +1581,11 @@ issue processing still await the manager's instruction after readiness.
   at its pre-activation contract.
 - **Out of scope:** public flags, sheet schema activation, rendering or
   owner-config edits.
-- **Open questions:** none.
+- **Documentation and pinned tests:** none public; add direct internal
+  parser/model tests while preserving the active settings key list,
+  defaults, `/3` public loader and sheet schema. No public `docs/design.md`
+  amendment yet. S-2's new reader tests exercise gated code only.
+- **Open questions:** Q-13 holds additional work moving here from SHD-6.
 
 ### SHD-3. Implement pure lighting and four-mode colour operations
 
@@ -1362,7 +1605,10 @@ issue processing still await the manager's instruction after readiness.
   preserve legacy results; gain rounding/bounds are verified.
 - **Out of scope:** dither/snap quantisation, capture changes, stage wiring
   and public settings.
-- **Open questions:** none.
+- **Documentation and pinned tests:** no public `docs/design.md` or schema
+  pins change while kernels are internal. Add pure-operation tests for the
+  contracts above; retain existing integer-kernel expectations unchanged.
+- **Open questions:** Q-14 holds the continuous clamp formula.
 
 ### SHD-4. Implement deterministic ramp and snap dithering
 
@@ -1381,7 +1627,10 @@ issue processing still await the manager's instruction after readiness.
   ties, duplicates and one-colour targets follow the signed rules; packing
   and frame order do not alter the pattern.
 - **Out of scope:** public options, configuration files or visual acceptance.
-- **Open questions:** none.
+- **Documentation and pinned tests:** no public `docs/design.md` or schema
+  pins change while quantisers are internal. Add exact pure-kernel tile,
+  rounding, tie and coordinate tests; public scope changes belong to SHD-6.
+- **Open questions:** Q-14 must resolve before dependent band arithmetic.
 
 ### SHD-5. Integrate shading into the addressed-frame pipeline
 
@@ -1392,6 +1641,10 @@ issue processing still await the manager's instruction after readiness.
   dominant-layer dither control, no double dithering and unchanged geometric
   reduction. Exercise new responses directly in stage tests; normal command
   defaults remain unchanged until SHD-6 enables the public interface.
+  Run the response path without a library as contract 2 specifies; pass
+  resolved responses, sky/ground vector and `shade_range` explicitly, with
+  the range supplied even without a library. Test palette-free brightness,
+  no-ramp both/ramp/neither, and the default no-library bypass.
 - **Phase:** 3, pipeline integration.
 - **Depends on:** SHD-1, SHD-2, SHD-3, SHD-4.
 - **Ordering:** critical path.
@@ -1401,7 +1654,12 @@ issue processing still await the manager's instruction after readiness.
   exact fixtures; alpha/maps are invariant; default bytes match; one-frame
   memory discipline and both reductions/edge rules are covered.
 - **Out of scope:** CLI/schema activation, owner project tuning and review.
-- **Open questions:** none.
+- **Documentation and pinned tests:** update `docs/design.md` §Frames into
+  stylize and §Stylize (Two layers) for the internal response arguments,
+  addressed data and reduction boundary, explicitly noting that public
+  activation remains SHD-6. No public schema pins change; extend stage tests
+  for the new arguments and no-library/ordinary combinations.
+- **Open questions:** inherits Q-14/Q-15 through its dependencies.
 
 ### SHD-6. Expose shading controls and reproducible sheet settings
 
@@ -1425,7 +1683,25 @@ issue processing still await the manager's instruction after readiness.
   passing planned checks and default byte comparisons at the delivered head.
 - **Out of scope:** editing owner project values, second-game palette work,
   visual acceptance or bulk sheet replacement.
-- **Open questions:** none.
+- **Documentation and pinned tests:** update `docs/design.md` §CLI,
+  §Settings files (including the test-read YAML example), §Option validation,
+  §Frames into stylize, §Stylize (Palette mapping and composition, Material
+  libraries, Material ramps, Using a library from the command), §Export
+  (including previews) and §Reproducibility. Remove the universal
+  no-dithering/no-baked-light claims while retaining their default behaviour.
+  Update sheet `/14` pins in `tests/test_command.py`, `test_export.py`,
+  `test_frames_command.py`, `test_materials_command.py`, `test_reuse.py` and
+  `test_settings_command.py` (all under `tests/`). Update materials schema
+  and error expectations in `test_generated_ramps.py`,
+  `test_material_shading_command.py`, `test_materials.py` and `test_reuse.py`;
+  retain valid `/3` fixtures as compatibility coverage, adding `/4` cases
+  rather than blindly replacing every `/3` literal. In `test_settings.py`,
+  update the ordered `SCHEMA` keys, defaults-file agreement and example
+  loading tests; keep the top-level `GROUPS` set unchanged and test the new
+  sub-group recognition separately. Narrative amendments cover every row
+  of the amendment table, including settings D-20 and projects/camera D-8,
+  and record D-24's dated V-7 exception through docs-push.
+- **Open questions:** Q-13 holds redistribution/timing; no change adopted yet.
 
 ### SHD-7. Obtain owner visual acceptance for both uses
 
@@ -1433,7 +1709,9 @@ issue processing still await the manager's instruction after readiness.
   to the owner's explicit verdict and selected project look values.
 - **Scope:** D-31's robot/shrub/chest matrix, both use cases, motion,
   perspective/roll, modes and representative dither/snap combinations,
-  including a longer generic ramp. Use candidate config copies in local
+  including a longer generic ramp. Require `reduce: mode` with light and
+  ramp dithering in motion, at least one soft-edge case and a dithered
+  perspective/roll animation. Use candidate config copies in local
   evidence; preserve live project settings until the owner accepts the
   exact proposed values. Record commands, hashes, tool revision, limitations
   and the exact owner response in `docs/acceptance/shading.md` via docs-push.
@@ -1449,14 +1727,18 @@ issue processing still await the manager's instruction after readiness.
 - **Open questions:** deliberately open actual project strengths, palette/
   ramp choices and look tuning under D-31. Stop for the owner at this slice;
   a withheld visual acceptance blocks SHD-8, not a guessed default.
+  Q-12 also holds the authority/procedure for applying exact owner-file diffs.
 
 ### SHD-8. Regenerate the inventoried working sheets
 
 - **Outcome:** reproducible working sheets use the accepted current settings
   and current schema; historical acceptance evidence remains intact.
 - **Scope:** reconcile SHD-1's inventory, apply only the exact project values
-  accepted in SHD-7, regenerate each working output from recorded inputs and
-  settings, and verify current-schema reuse. Extend the acceptance record
+  accepted in SHD-7 (application authority pending Q-12), regenerate each
+  working output from its baseline-proven explicit invocation and snapshots
+  with those accepted changes, and verify current-schema reuse. Do not use
+  old `/14` sheets as settings inputs to the new tool. Extend the acceptance
+  record
   with inventory/disposition, commands, output hashes and any unresolved
   input. Keep assets, sheets, previews and local config out of the repository.
 - **Phase:** 6, operational refresh and documentation.
@@ -1469,8 +1751,9 @@ issue processing still await the manager's instruction after readiness.
   classification stop that item for the owner rather than trigger guesses.
 - **Out of scope:** an old-schema loader/converter, regenerating historical
   evidence, unsolicited config changes and second-game setup.
-- **Open questions:** only any concrete inventory gap discovered during
-  execution; require owner disposition and record it before declaring done.
+- **Open questions:** Q-12 holds owner-file application authority. Any
+  concrete inventory gap or unproven baseline invocation also requires owner
+  disposition, recorded before declaring done.
 
 ## Source notes
 
