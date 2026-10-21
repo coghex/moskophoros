@@ -108,6 +108,33 @@ pinned copy's recorded hashes and with SHD-4's head
 byte-identical, sheet JSON included; there is no allowed difference.** Every run
 exited 0. The inputs are the ones above, with the same sha256.
 
+## SHD-5 against the baseline
+
+SHD-5 (#142) adds `shade_layers` and gives `stylize.plain` and `stylize.mode`
+the keyword-only arguments `shading` and `lights`. It wires nothing into the
+command: `cli.py` is unchanged and passes neither argument, so the public
+default command is exactly as before. The same twenty-four commands, run with
+the pinned copy's recorded hashes, with a clean `git archive` copy of master
+`0ae27fa` (its own virtual environment from that copy's `requirements.lock`,
+sha256 `86f3d9a7…`) and with SHD-5's head
+`98b8f2fd8bbc293762933495aebb25a86ebf064f`: **all 103 files per side are
+byte-identical across the three, sheet JSON included; there is no allowed
+difference.** Every run exited 0. The inputs are the ones above, with the same
+sha256. The new path itself is covered by stage tests, not by this matrix,
+since no public option reaches it: with the default response and a library it
+equals the historical reduction on random layered and opaque frames, both
+reductions and both edge rules.
+
+## SHD-5 local evidence
+
+`~/.local/share/moskophoros-acceptance/shading-pre-arc/shd5/` holds the inputs,
+the scripts (`tools/make_inputs.py`, `tools/run_matrix.py`, `run_both.sh`,
+`compare.py`), `hashes-base.json` (the baseline's, unchanged), the clean master
+copy `master-src/`, and both sides' renders and hashes (`out-master/`,
+`out-head/`). `run_both.sh` runs each side under
+`lockf ~/.local/state/project-manager/moskophoros/blender.lock`, and
+`compare.py` prints any difference between the three hash sets.
+
 ## Local evidence
 
 `~/.local/share/moskophoros-acceptance/shading-pre-arc/shd2/` (SHD-2's own
