@@ -777,6 +777,21 @@ batch 9's are D-29 to D-31.
 No dependent formula or slice
 ordering is adopted while its blocking questions remain open.
 
+Current resolution after batch 9 (earlier discussion below retains its
+question and decision provenance):
+
+| Question | Settled | Still awaiting signoff |
+|---|---|---|
+| Q-1/Q-2/Q-3 | Four modes, preview separation, default compatibility and sheet regeneration | None beyond the detailed implementation contract |
+| Q-4 | Terms, frames, unit-budget formula and bounded gain | Batch 10 settings/defaults and pixel sampling; actual project strengths deliberately wait for D-31 review |
+| Q-5 | Material response/dither overrides; shared arrangement/snap target | Batch 10 field names, library schema/inheritance and errors |
+| Q-6 | Six tiles, anchoring, strength, snap algorithm and composite controller | Batch 10 sampling and applicability across modes |
+| Q-7 | Outlines deferred | None |
+| Q-8 | Per-layer normals and separate layer shading | Batch 10 addressed-buffer and pixel-operation contract |
+| Q-9 | D-31 review inputs, coverage and owner acceptance boundary | Detailed delivery-slice boundary/order |
+| Q-10 | D-22 exclusions | Delivery slices and dependencies |
+| Q-11 | Base colours, snap targets, fallback and placement | Batch 10 mode applicability, errors and full composition contract |
+
 Batch 1 was posted on 2026-10-20 at 16:52:53 UTC in `#moskophoros`,
 message `w8y5pdsiqbn56f33gpftcxhsmi`, request
 `moskophoros-20261020-1`, against this draft at `07a7180c79`.
@@ -839,6 +854,14 @@ message `ms3nau3wnydkdw35azsub3hr62`, under the same request, against
 draft `42e2e75f1b` and Probe 5's page hash above. It asks Q-6's snap
 algorithm/strength, Q-6/Q-11's composite ownership and fallback placement,
 and Q-9's visual-review boundary. D-29 to D-31 record all three A approvals.
+
+Batch 10 was posted on 2026-10-21 at 00:56:10 UTC in `#moskophoros`,
+message `znwjdat3za8bvp872zif42y8ra`, under the same request, against
+draft `ae411e59d3`. It requests separate signoff on the three enumerated
+implementation contracts embedded below. The review copy is
+`~/.local/share/moskophoros-acceptance/shading-design/batch-10-contracts.md`,
+SHA-256 `e8aa954b2bd86bdcec0ae81d8699fb0cc81f292753d33eec34450485f7b180c2`.
+All three remain proposals pending the owner's answers.
 
 ### Q-1. Does a mode route all shading or only the added light?
 
@@ -1296,8 +1319,10 @@ this document-only exploration runs no repository tests.
 
 ## Delivery plan
 
-No slices yet: Q-1 to Q-3 and Q-7 are resolved; Q-4 to Q-6 are partly
-resolved; their remaining details and Q-8 to Q-11 remain open.
+No slices yet: the remaining settings, library and pixel-operation
+contracts await batch 10 signoff. D-31 has settled the owner-review boundary;
+the complete one-PR delivery slices and dependency order follow only after
+the blocking behaviour details are settled.
 The processing ledger contains only
 the proposed umbrella, matching that state. Final readiness requires the
 owner's explicit signoff on behaviour, scope and dependency-ordered slices.
