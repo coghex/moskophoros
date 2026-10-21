@@ -12,7 +12,7 @@ concrete precondition
 
 ## Processing status
 
-- [ ] EPIC. Support configurable baked shading alongside live-lit sprites
+- [x] EPIC. Support configurable baked shading alongside live-lit sprites — [#137]
 - [ ] SHD-1. Preserve addressed normals for both capture layers
 - [ ] SHD-2. Model and resolve shading settings and library responses
 - [ ] SHD-3. Implement pure lighting and four-mode colour operations
