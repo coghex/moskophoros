@@ -19,7 +19,7 @@ concrete precondition
 - [x] SHD-4. Implement deterministic ramp and snap dithering — [#141]
 - [x] SHD-5. Integrate shading into the addressed-frame pipeline — [#142]
 - [x] SHD-6. Expose shading controls and reproducible sheet settings — [#143]
-- [ ] SHD-7. Obtain owner visual acceptance for both uses
+- [x] SHD-7. Obtain owner visual acceptance for both uses — [#144]
 - [ ] SHD-8. Regenerate the inventoried working sheets
 
 The owner approved the eight delivery slices, their dependencies and design
