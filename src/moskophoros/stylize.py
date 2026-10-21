@@ -24,6 +24,12 @@ front is composited over the back in linear colour, and with a palette the
 composite's colour snaps to it. A frame without one is reduced exactly as
 above.
 
+Given the resolved shading (`shading`, a `shading_resolve.Resolved`, and its
+`lights`; design §Stylize, Two layers), each layer is also shaded by its winning
+material's response, snapped, dithered and composited by `shade_layers`
+(shading design contract 3), with or without a library. Nothing public passes
+them yet: that is SHD-6. Without them the reductions are exactly as above.
+
 Independently of the colour reduction, a frame carrying both normal and
 depth buffers (`NORMAL`, `DEPTH`) has them reduced to its reduced colour's
 pixels, with exactly the colour's coverage, alpha above 0, whatever the
@@ -36,13 +42,15 @@ them is a `ValueError` naming the frame.
 
 import numpy as np
 
-from moskophoros import imageops, materials
+from moskophoros import imageops, lighting, materials, shade_layers, shading_resolve
 from moskophoros.sampling import (
+    BACK_NORMAL,
     DEPTH,
     DEPTH_MAP,
     FRONT_ALPHA,
     FRONT_COLOR,
     FRONT_IDENTITY,
+    FRONT_NORMAL,
     FRONT_PRESENT,
     FRONT_SHADE,
     IDENTITY,
@@ -62,6 +70,9 @@ def plain(
     shade_range=None,
     pixels_per_meter=None,
     edges=imageops.EDGES[0],
+    *,
+    shading=None,
+    lights=None,
 ):
     """Reduce every supersampled frame by `factor`×`factor` blocks, each
     output pixel's alpha decided by `edges` (`imageops.reduce_blocks`).
@@ -72,9 +83,22 @@ def plain(
     averaging; alpha is never snapped. With a material `library`, blocks
     whose winning material has a ramp take its entry instead (see
     `materials`).
+
+    `shading`, a `shading_resolve.Resolved`, and `lights`, the
+    `lighting.Lights` of the frame's sky, ground and key, are the resolved
+    shading response (see `shaded`); without them the reduction is exactly the
+    one above.
     """
     materials = _materials(
-        factor, palette, identities, library, shade_range, by_mode=False, edges=edges
+        factor,
+        palette,
+        identities,
+        library,
+        shade_range,
+        by_mode=False,
+        edges=edges,
+        shading=shading,
+        lights=lights,
     )
     result = []
     for frame in frames:
@@ -102,6 +126,9 @@ def mode(
     shade_range=None,
     pixels_per_meter=None,
     edges=imageops.EDGES[0],
+    *,
+    shading=None,
+    lights=None,
 ):
     """Reduce every supersampled frame by `factor`×`factor` blocks, keeping
     each block's most common colour, each output pixel's alpha decided by
@@ -112,10 +139,19 @@ def mode(
     maps (see `maps`). With a palette, map the supersampled pixels before
     voting, so shades mapped to one entry pool their votes. With a material
     `library`, blocks whose winning material has a ramp take its most voted
-    entry instead (see `materials`).
+    entry instead (see `materials`). `shading` and `lights` are as for
+    `plain`.
     """
     materials = _materials(
-        factor, palette, identities, library, shade_range, by_mode=True, edges=edges
+        factor,
+        palette,
+        identities,
+        library,
+        shade_range,
+        by_mode=True,
+        edges=edges,
+        shading=shading,
+        lights=lights,
     )
     result = []
     for frame in frames:
@@ -181,19 +217,26 @@ def layered(frame, factor, palette, materials, edges, *, by_mode):
     if not by_mode and palette is not None:
         back_rgb = _mapped(back_rgb, palette)
         front_rgb = _mapped(front_rgb, palette)
-    if materials is not None:
-        # Each layer takes the ramp of its winning material, the front layer
-        # by its front-most material's identity and shade, so a rear pane's
-        # ramp is not applied (D-12, D-15).
-        opaque = np.full(back_rgb.shape[:2], 255, np.uint8)
-        back_rgb = materials(frame, np.dstack([back_rgb, opaque]), weights=t)[..., :3]
-        front_rgb = materials(
-            frame, np.dstack([front_rgb, opaque]), weights=u, front=True
-        )[..., :3]
-    colour = imageops.composite(front_rgb, front_weight, back_rgb, back_weight)
-    if palette is not None:
-        both = (front_weight > 0) & (back_weight > 0)
-        colour[both] = _mapped(colour[both][np.newaxis], palette)[0]
+    if isinstance(materials, _Shaded):
+        # Each layer is shaded by its winning material's response and the
+        # layers composited by the response step (`shade_layers`).
+        colour = materials.layered(frame, back_rgb, t, front_rgb, u)
+    else:
+        if materials is not None:
+            # Each layer takes the ramp of its winning material, the front
+            # layer by its front-most material's identity and shade, so a
+            # rear pane's ramp is not applied (D-12, D-15).
+            opaque = np.full(back_rgb.shape[:2], 255, np.uint8)
+            back_rgb = materials(frame, np.dstack([back_rgb, opaque]), weights=t)[
+                ..., :3
+            ]
+            front_rgb = materials(
+                frame, np.dstack([front_rgb, opaque]), weights=u, front=True
+            )[..., :3]
+        colour = imageops.composite(front_rgb, front_weight, back_rgb, back_weight)
+        if palette is not None:
+            both = (front_weight > 0) & (back_weight > 0)
+            colour[both] = _mapped(colour[both][np.newaxis], palette)[0]
     pixels = np.zeros((*alpha.shape, 4), dtype=np.uint8)
     kept = alpha > 0
     pixels[kept, :3] = colour[kept]
@@ -265,7 +308,18 @@ def _own_range(library, name):
     return None
 
 
-def _materials(factor, palette, identities, library, shade_range, *, by_mode, edges):
+def _materials(
+    factor,
+    palette,
+    identities,
+    library,
+    shade_range,
+    *,
+    by_mode,
+    edges,
+    shading=None,
+    lights=None,
+):
     """The per-frame material step for `library`, or `None` without one.
 
     The step takes a frame and its reduced ordinary look and returns the look
@@ -274,7 +328,23 @@ def _materials(factor, palette, identities, library, shade_range, *, by_mode, ed
     bands, and with `front` the front layer's identity and shade arrays are
     voted and banded instead of the frame's. It keeps no reference to the frame, so the frame's buffers are
     free once it returns.
+
+    Given the resolved `shading` and its `lights`, the step is `shaded`
+    instead, and may exist without a library.
     """
+    if (shading is None) != (lights is None):
+        raise ValueError("a resolved shading and its lights are given together")
+    if shading is not None:
+        return shaded(
+            factor,
+            palette,
+            identities,
+            library,
+            shade_range,
+            shading,
+            lights,
+            by_mode=by_mode,
+        )
     if library is None:
         return None
     if palette is None:
@@ -324,3 +394,115 @@ def _materials(factor, palette, identities, library, shade_range, *, by_mode, ed
         return ordinary
 
     return step
+
+
+def shaded(
+    factor, palette, identities, library, shade_range, shading, lights, *, by_mode
+):
+    """The response step for the resolved `shading` (a
+    `shading_resolve.Resolved`) and its `lights` (a `lighting.Lights`), or
+    `None` where it would change nothing.
+
+    The caller resolves everything and passes it: each identity's response
+    and shade range (`shading.look`), the global snap target
+    (`shading.settings.snap`), the key, sky and ground vectors in camera
+    coordinates (`lights`, from `lighting.light_vectors`) and `shade_range`,
+    the global range, which must be the one `shading` resolved. Stylize never
+    resolves a frame name or reads a setting, a file or a Blender object.
+
+    With a `library` each identity takes its ramp (`resolve`); without one
+    every identity is ordinary under the global response, and a palette is
+    needed only by a snap target other than `off`. Without a library, and with
+    no response that scales brightness (mode `brightness` or `both`), nothing
+    changes the ordinary colour, so there is no step and the frame is reduced
+    exactly as it was before shading existed.
+    """
+    if not isinstance(shading, shading_resolve.Resolved):
+        raise TypeError("shading must be a shading_resolve.Resolved")
+    if not isinstance(lights, lighting.Lights):
+        raise TypeError("lights must be a lighting.Lights")
+    snap = shading.settings.snap
+    if library is not None and palette is None:
+        raise ValueError("a material library needs a palette: its ramps index it")
+    if snap != "off" and palette is None:
+        raise ValueError(f"the snap target {snap!r} needs a palette")
+    if shade_range is None:
+        raise ValueError("a shading response needs a shade range")
+    if tuple(shade_range) != shading.base.shade_range:
+        raise ValueError(
+            f"the shade range {tuple(shade_range)} is not the resolved global "
+            f"range {shading.base.shade_range}"
+        )
+    everyone = (shading.base, shading.fallback, *shading.materials.values())
+    if library is None and not any(
+        look.response.mode in shade_layers.BRIGHT for look in everyone
+    ):
+        return None
+    if identities is None:
+        raise ValueError("a shading response needs the asset's identity list")
+    names = identities.names
+    # Materials sharing a name are one identity, the one of lowest index.
+    pooled = np.array([names.index(name) for name in names] + [len(names)])
+    own = [pooled[index] == index for index in range(len(names))]
+    ramps = tuple(
+        None if library is None or not own[index] else resolve(library, name)
+        for index, name in enumerate(names)
+    ) + (None,)
+    looks = tuple(
+        shading.look(name) if own[index] else None for index, name in enumerate(names)
+    ) + (shading.look(None),)
+    colours = None if palette is None else np.asarray(palette, dtype=np.uint8)
+    table = shade_layers.Table(pooled, ramps, looks, colours, lights, snap)
+    return _Shaded(table, factor, palette, by_mode)
+
+
+class _Shaded:
+    """The response step as `stylize` calls it: a frame's layers shaded and
+    composited by `shade_layers`. It keeps no reference to a frame."""
+
+    def __init__(self, table, factor, palette, by_mode):
+        self.table = table
+        self.factor = factor
+        self.palette = palette
+        self.by_mode = by_mode
+
+    def __call__(self, frame, ordinary):
+        """The reduced `ordinary` RGBA look of a frame with no front layer,
+        shaded: the frame's identity, shade and back normal arrays with its
+        colour alpha as the weights, one contributing layer."""
+        layer = shade_layers.Layer(
+            ordinary[..., :3],
+            frame.pixels[..., 3],
+            IDENTITY,
+            SHADE,
+            BACK_NORMAL,
+            covered=ordinary[..., 3] > 0,
+        )
+        colour = shade_layers.shade_frame(
+            self.table,
+            frame,
+            self.factor,
+            layer,
+            palette=self.palette,
+            by_mode=self.by_mode,
+        )
+        result = ordinary.copy()
+        result[..., :3] = colour
+        return result
+
+    def layered(self, frame, back_rgb, back_weights, front_rgb, front_weights):
+        """The composite colour of a frame with a front layer: each layer's
+        ordinary reduced `uint8` RGB and its own weights."""
+        back = shade_layers.Layer(back_rgb, back_weights, IDENTITY, SHADE, BACK_NORMAL)
+        front = shade_layers.Layer(
+            front_rgb, front_weights, FRONT_IDENTITY, FRONT_SHADE, FRONT_NORMAL
+        )
+        return shade_layers.shade_frame(
+            self.table,
+            frame,
+            self.factor,
+            back,
+            front,
+            palette=self.palette,
+            by_mode=self.by_mode,
+        )
