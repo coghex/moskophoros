@@ -932,6 +932,30 @@ remain constant. Ambient bypass can reach the ceiling at `L=1`. This
 clarifies D-25's restoration wording; it does not raise the allowed ceiling.
 SHD-3 verifies a narrow-range brightness case as well as long-ramp bands.
 
+### D-41. Only options and project files trigger shadow warnings
+
+Owner, 2026-10-20 (2026-10-21 UTC), typed directly in the manager's
+terminal; relayed by mosk-manager for request `moskophoros-20261020-1` in
+`~/.local/state/project-manager/moskophoros/dispatch-shading-amend-41.md`,
+SHA-256 `f0dd42748fe2e8e526091464fb3ec059de609d835e55d3a8d609c71afc6e0316`.
+The manager asked:
+
+> Should values in your global config file trigger "ignored value" warnings?
+> A (recommended): keep today's rule. Only options and the project file warn, for the new shading settings and the existing ones alike. The issue and the design's wording get corrected, with a dated note.
+> B: make the global file warn too.
+
+The owner's answer, verbatim:
+
+> "A"
+
+Only an explicit command-line option or a project-file value triggers a
+shadow warning when a library/material value takes precedence. The global
+file, its `--config` replacement, shipped defaults and a reused sheet are
+not warning events. This applies to new response fields and existing fields
+alike, preserving existing behaviour. It corrects contract 2's inclusion
+of `--config`, introduced during round-1 S-18 and identified by the #143
+issue review; it does not change value precedence or validation.
+
 ## Question history and resolution
 
 Behaviour contracts were approved through D-34 and the delivery plan through
@@ -1368,11 +1392,14 @@ Each new response leaf inherits **material entry > library-wide shade >
 resolved global setting**. A global CLI override cannot defeat a material
 or library value. Resolve and validate every entry's combined strengths and
 brightness endpoints, including unused entries; partial overrides do not
-escape the cross-field checks. An explicit global value (option, project
-file or `--config`) shadowed by library/material values uses the existing
-warning convention, extended to the new fields and to ordinary entries with
-response or ambient-occlusion overrides. Defaults and ordinary inheritance
-are not warning events.
+escape the cross-field checks. **D-41 amendment, 2026-10-20:** only an
+explicit command-line option or a project-file value counts as an explicit
+global value for shadow warnings when library/material values take
+precedence. Apply the existing warning convention to new response fields
+and existing fields alike, including ordinary entries with response or
+ambient-occlusion overrides. The global file, its `--config` replacement,
+shipped defaults, a reused sheet and ordinary inheritance are not warning
+events. Existing warning behaviour is unchanged.
 
 Keep existing ramp/uses forms and the string `ordinary`. Add a mapping form
 with exactly one of `ramp`, `uses`, or `ordinary: true`, plus optional
