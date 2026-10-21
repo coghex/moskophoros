@@ -956,6 +956,29 @@ alike, preserving existing behaviour. It corrects contract 2's inclusion
 of `--config`, introduced during round-1 S-18 and identified by the #143
 issue review; it does not change value precedence or validation.
 
+### D-42. No working sheets exist yet
+
+Owner, 2026-10-21, typed directly in the manager's terminal; relayed by
+mosk-manager for request `moskophoros-20261020-1` in
+`~/.local/state/project-manager/moskophoros/dispatch-shading-d42.md`,
+SHA-256 `f1953b0f26069b9e5d2cfd47c0b87dd4518c21ad9e4e8d8cfdfbdf16bdf823c4`.
+The manager asked:
+
+> Which of your existing sprite sheets count as "working" sheets? (The manager searched the machine: almost every moskophoros sheet is a review or test render under ~/.local/share/moskophoros-acceptance/; 8 early robot sheets in ~/Documents/Codex/ from 1-9 October use sheet formats /1-/3; none are in ~/work/synarchy.)
+> A (recommended): you have no working sheets yet. The inventory is recorded as empty, every existing sheet is kept as evidence, and #145 has nothing to regenerate and closes with that note.
+> B: count the latest accepted review sheets (alpha v5, cutout library) as working.
+> C: you name specific sheets or folders.
+
+The owner's answer, verbatim:
+
+> "A"
+
+This resolves D-8's requirement to regenerate all existing working sheets
+for this arc: there are none. Record SHD-1's working-sheet inventory as
+empty and preserve every existing sheet as historical evidence. SHD-8
+(#145) records that nothing needs regenerating and closes with that note;
+this decision does not claim the tracker action has already happened.
+
 ## Question history and resolution
 
 Behaviour contracts were approved through D-34 and the delivery plan through
@@ -1640,6 +1663,12 @@ unproven invocation stop that item for owner disposition. SHD-8 uses only
 proven invocations plus SHD-7's accepted changes under the new tool; it never
 passes an old `/14` sheet to the new current-only `--settings-from` loader.
 
+**D-42 note, 2026-10-21:** the owner confirmed there are no working sheets
+yet. SHD-1 records an empty working-sheet inventory; every existing sheet
+is historical evidence to preserve. There are no working invocations to
+prove or outputs to regenerate for this arc. The shared pre-arc baseline
+and compatibility checks remain required.
+
 This design-only assignment ran local numerical probes and document checks,
 not repository tests. No implementation, CI or rendered-product acceptance
 is claimed.
@@ -1665,6 +1694,11 @@ Claude for design review; round 1 is recorded above. Re-review and issue
 processing await the manager's instruction after these revisions.
 
 ### SHD-1. Preserve addressed normals for both capture layers
+
+**D-42 note, 2026-10-21:** the working-sheet inventory below is empty by
+the owner's decision. Record that disposition and preserve all existing
+sheets as historical evidence; no working-sheet invocation proof is needed.
+The capture and shared-baseline requirements remain unchanged.
 
 - **Outcome:** validated back/front normal buffers reach addressed frames,
   while exported geometry and default colours remain unchanged.
@@ -1898,6 +1932,12 @@ processing await the manager's instruction after these revisions.
   that later owner verdict.
 
 ### SHD-8. Regenerate the inventoried working sheets
+
+**D-42 note, 2026-10-21:** the owner confirmed there are no working sheets
+yet. The inventory is empty, every existing sheet remains historical
+evidence, and SHD-8 (#145) records that nothing needs regenerating and
+closes with that note. The regeneration requirements below have no working
+outputs to act on for this arc; do not regenerate historical evidence.
 
 - **Outcome:** reproducible working sheets use the accepted current settings
   and current schema; historical acceptance evidence remains intact.
