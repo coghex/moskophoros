@@ -162,7 +162,7 @@ stylize on every run. The same twenty-four commands, plus four more, were run
 with a clean `git archive` copy of master `29e66f666295a19cd463a423976992be4fae8499`
 (its own virtual environment from that copy's `requirements.lock`, sha256
 `86f3d9a7…`; master differs from the `4e03ad0` of SHD-5 by documentation only)
-and with SHD-6's head `28257eaa3c4158b5ee78a96e309081625059ca7a`, and compared
+and with SHD-6's head `2378e78645c9e1ddf221e22f8474b3293412f0b2`, and compared
 with the pinned baseline's recorded hashes. Every run exited 0.
 
 **Image and preview bytes.** All 171 non-JSON files across the 24 cases and
@@ -195,11 +195,11 @@ no others:
 The inline library record of every case is unchanged, so a `/2` or `/3`
 library records exactly as before.
 
-**Planned checks at the delivered head** `28257eaa3c4158b5ee78a96e309081625059ca7a`:
+**Planned checks at the delivered head** `2378e78645c9e1ddf221e22f8474b3293412f0b2`:
 `ruff check .`, `ruff format --check .`, `plan.py --catalog-check`,
 `bash -n tools/docs_land.sh` and the `py_compile` of
 `tools/docs_land_paths.py` passed; `pytest tools` 233 passed; `pytest tests -m
-"not blender"` 5087 passed; `pytest -m blender`, run locally under the Blender
+"not blender"` 5136 passed; `pytest -m blender`, run locally under the Blender
 lock, 273 passed, none skipped.
 
 **Reproduce.** Local evidence is
