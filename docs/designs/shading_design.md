@@ -305,8 +305,10 @@ terms are independently switchable (D-9); a project supplies defaults and
 materials can override their mode and shading response (D-10).
 The already accepted camera capability is reused, not redesigned.
 
-The present assignment writes this design only: no production code, repository
-tests, issues or labels. Local evidence probes are allowed by the dispatch.
+The original design assignment wrote this document only, with local evidence
+probes allowed by its dispatch. The round 2 processing handoff now authorises
+tracker drafts and, after individual signoff, issue creation and ledger
+updates. Production code and repository tests remain outside this assignment.
 The Codekarl repository is not an input and must not be read. Its palette
 and project file come after this design.
 
