@@ -366,7 +366,7 @@ The manager then asked whether the light stays with the camera or turns with the
 - `--directions`, `--start-angle` and the direction labels stay.
 - The presets become shorthands for camera settings.
 
-**Amended by [shading design](shading_design.md) D-24 (owner, 2026-10-20; implemented by #143, 2026-10-21):** the light stays fixed to the camera, and V-7's text is unchanged. The one narrow exception, recorded at [vision V-7](../vision.md#v-7-consistency-is-the-product), is the optional baked sky and ground terms in the `world` frame, which follow the subject's up and the camera's pitch rather than its roll. The key stays camera-fixed in either frame and camera is the default frame.
+**Amended by [shading design](shading_design.md) D-24 (owner, 2026-10-20; implemented by #143, 2026-10-21):** the light stays fixed to the camera, and V-7's text is unchanged. The one narrow exception, recorded at [vision V-7](../../vision.md#v-7-consistency-is-the-product), is the optional baked sky and ground terms in the `world` frame, which follow the subject's up and the camera's pitch rather than its roll. The key stays camera-fixed in either frame and camera is the default frame.
 
 ### D-9. Projects: one schema for the global file and project files, layered
 
@@ -725,7 +725,7 @@ Which app settings exist is still open, in Q-10.
     - **before rendering,** confirm that the resolved rendering settings and the referenced palette's and library's bytes are the same;
     - **if `projects/synarchy.yaml` already exists,** stop and ask the owner; never overwrite it.
   - The three review renders of D-15, with commands signed off by the owner before rendering.
-  - The record in `docs/acceptance/`.
+  - The record in `docs/archive/acceptance/`.
 - **Phase:** 4.
 - **Depends on:** CAM-4.
 - **Ordering:** `not on the critical path`; it gates the epic's completion.

@@ -1589,9 +1589,9 @@ blend it. Kept as an identifier only, marked `[no-issue]`.
 
 - **Outcome:** the owner reviews sheets, maps and previews of their own
   model and approves the look, or names what to change (V-12). The verdict
-  is recorded in `docs/acceptance/alpha.md`.
+  is recorded in `docs/archive/acceptance/alpha.md`.
 - **Delivery:** documentation-only, with no pull request, as MAT-7 and LIT-6
-  were. `docs/acceptance/alpha.md` lands on `master` with `docs-push`, and
+  were. `docs/archive/acceptance/alpha.md` lands on `master` with `docs-push`, and
   the issue is closed by a comment linking it at its commit. Renders stay
   outside the repository, under `~/.local/share/moskophoros-acceptance/`,
   each labelled with what it shows and the exact command. The owner's model

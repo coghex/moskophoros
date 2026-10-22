@@ -9,7 +9,7 @@ This records the owner's review of the projects and camera arc, following #132 (
 | CAM-3, point the orthographic camera with a direction and roll | #130 | #135 |
 | CAM-4, add the perspective projection | #131 | #136 |
 
-The design is [`docs/designs/projects_camera_design.md`](../designs/projects_camera_design.md). What the review shows was decided by the owner (design D-15):
+The design is [`docs/archive/designs/projects_camera_design.md`](../designs/projects_camera_design.md). What the review shows was decided by the owner (design D-15):
 1. Synarchy's isometric sheet through `--project synarchy`, byte-identical to today's;
 2. a straight-on perspective panel of the robot, with no baked light;
 3. a camera with a general direction and a roll.
@@ -69,7 +69,7 @@ All under `~/.local/share/moskophoros-acceptance/`, except the owner's settings.
 | Input | SHA-256 | Bytes |
 |---|---|---|
 | `alpha-model/v5/chest.glb`, the alpha review's chest ([alpha.md](alpha.md#input)) | `04932ad4c77d1348d6d123fa4fda8924edbfa338e7c25a8de814b7200ed3a72c` | 58,300 |
-| `robotexpressive/RobotExpressive.glb` ([slice 1](../archive/acceptance/slice-1.md#input)) | `047f5e5fb3bb6d378bd1df16ca6137f2a596c99b3a1b5690b4020c05aaf6f319` | 463,988 |
+| `robotexpressive/RobotExpressive.glb` ([slice 1](slice-1.md#input)) | `047f5e5fb3bb6d378bd1df16ca6137f2a596c99b3a1b5690b4020c05aaf6f319` | 463,988 |
 | `cutout-model/v1/shrub.glb`, the cutout review's shrub ([alpha.md](alpha.md#cutout-input)) | `7a1a29382888c8c21a0b19c9418fdbcc5417e8ac038c9d626770ca6f4f0b684f` | 143,624 |
 | `~/.config/moskophoros/synarchy.yaml`, the owner's Synarchy settings | `9195adfe08c7b0866143076d76079a6523c192f8152c764db0ab02805af344f4` | 1,587 |
 | `~/.config/moskophoros/config.yaml`, the global file: `version: 1` and comments only | `257304183ca22ced1386e2484e95be75996a8a067b5eba3e9cea171d25a8fd0a` | 373 |

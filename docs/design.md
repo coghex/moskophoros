@@ -2276,7 +2276,7 @@ as before palette mapping was added.
 A material library defines each material's look once, as a ramp of indices
 into the shared palette, for reuse across subjects (owner decisions
 2026-10-07, D-6, D-7, D-8, D-15 and D-17 in
-[the material design](designs/material_styling_design.md#decisions)). The
+[the material design](archive/designs/material_styling_design.md#decisions)). The
 standalone `materials.read_library(path, colors)` library function reads only
 the named file and validates it against the palette `colors`.
 `materials.read_library_bytes(data, colors, source=...)` parses a byte
@@ -2553,7 +2553,7 @@ throughout: clamping, band boundaries and `mode`'s band centres (owner
 decisions 2026-10-11, settings design D-9; this amends material design D-7's
 one global range) (owner decisions
 2026-10-07, D-6, D-7, D-9, D-11, D-15, D-17, D-18, D-20, D-22, D-23 and D-25
-in [the material design](designs/material_styling_design.md#decisions)). The
+in [the material design](archive/designs/material_styling_design.md#decisions)). The
 range is a parameter: stylize never chooses or normalises it. A library needs
 a palette, and each frame must carry the `identity` and `shade` buffers
 ([Frames into stylize](#frames-into-stylize)), or stylize raises

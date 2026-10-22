@@ -1,6 +1,6 @@
 # Shading visual acceptance
 
-This records the owner's visual review of the shading arc (epic #137), slice SHD-7 (#144), under vision V-12, and, in [SHD-8](#shd-8-the-working-sheet-refresh-145), the working-sheet refresh (#145), which has nothing to refresh. The arc's code slices are #138 to #143; the design is [`docs/designs/shading_design.md`](../designs/shading_design.md).
+This records the owner's visual review of the shading arc (epic #137), slice SHD-7 (#144), under vision V-12, and, in [SHD-8](#shd-8-the-working-sheet-refresh-145), the working-sheet refresh (#145), which has nothing to refresh. The arc's code slices are #138 to #143; the design is [`docs/archive/designs/shading_design.md`](../designs/shading_design.md).
 
 ## Verdict
 
@@ -794,10 +794,10 @@ Operational record for slice SHD-8 (#145, epic #137), written 2026-10-22 after t
 
 | Precondition | Result | Evidence |
 |---|---|---|
-| #144's verdict is given and complete | both uses accepted (verdicts 11 and 12), exact-diff handoff recorded | this record at `4c62d993b4`, `docs/acceptance/shading.md` SHA-256 `acc9d993b9201c3f17dac7bee6f3a0a7a456c63b79b434e79ded3edad44cdda6` at that commit (the record's [Verdict](#verdict) section); #144 closed |
-| The design's decisions | D-8, D-38 and D-42 read as quoted above and in the issue | `docs/designs/shading_design.md`, last changed in `29e66f6`, SHA-256 `eef96ce9195df5a3729fe1d372642fbe8e0ba5a3295d5f352f93b10ec08788f4` |
-| #138's inventory | empty, recorded | `docs/acceptance/shading-pre-arc-shd1.md`, last changed in `04f481b`, SHA-256 `253ae273a0d647e2d75bbed5a0e07620f90b584321c3f159dcbaa63b18d1c6f6`; #138 closed |
-| The `shading-pre-arc` baseline | pinned source `f548312a5a929fb9bd843855b83b9762123f80ab` exists in the repository (commit object); the local manifest names the same revision | `docs/acceptance/shading-pre-arc-baseline.md` (SHA-256 `80ed6e57cd2687ce38055b4dbf26e2b363a3edbe7768b3cc4682aeb0c8622128`); `~/.local/share/moskophoros-acceptance/shading-pre-arc/manifest.json` SHA-256 `678e6810913610bcdc3cf34211a927557cd807d4440875c8449fe43e981efbed` |
+| #144's verdict is given and complete | both uses accepted (verdicts 11 and 12), exact-diff handoff recorded | this record at `4c62d993b4`, `docs/archive/acceptance/shading.md` SHA-256 `acc9d993b9201c3f17dac7bee6f3a0a7a456c63b79b434e79ded3edad44cdda6` at that commit (the record's [Verdict](#verdict) section); #144 closed |
+| The design's decisions | D-8, D-38 and D-42 read as quoted above and in the issue | `docs/archive/designs/shading_design.md`, last changed in `29e66f6`, SHA-256 `eef96ce9195df5a3729fe1d372642fbe8e0ba5a3295d5f352f93b10ec08788f4` |
+| #138's inventory | empty, recorded | `docs/archive/acceptance/shading-pre-arc-shd1.md`, last changed in `04f481b`, SHA-256 `253ae273a0d647e2d75bbed5a0e07620f90b584321c3f159dcbaa63b18d1c6f6`; #138 closed |
+| The `shading-pre-arc` baseline | pinned source `f548312a5a929fb9bd843855b83b9762123f80ab` exists in the repository (commit object); the local manifest names the same revision | `docs/archive/acceptance/shading-pre-arc-baseline.md` (SHA-256 `80ed6e57cd2687ce38055b4dbf26e2b363a3edbe7768b3cc4682aeb0c8622128`); `~/.local/share/moskophoros-acceptance/shading-pre-arc/manifest.json` SHA-256 `678e6810913610bcdc3cf34211a927557cd807d4440875c8449fe43e981efbed` |
 | The public implementation (#143) is delivered | #143 closed; the review's tool, master `354a21fe316595bee6f13c2455849162f6bb421f` ("Amend the earlier designs and V-7 for the shading arc (#143, D-39)"), has **no difference** in `src/`, `pyproject.toml` and `requirements.lock` against `4c62d993b4` (`git diff --stat` empty) | the command above, run at this record's base |
 
 ### Owner files, re-hashed (read only)

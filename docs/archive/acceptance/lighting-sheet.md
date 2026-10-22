@@ -10,7 +10,7 @@ This records the owner's acceptance of the lighting sheet arc, following #101 (L
 | LIT-4 | #99 | #105 |
 | LIT-5 | #100 | #106 |
 
-The design is [`docs/designs/lighting_sheet_design.md`](../../designs/lighting_sheet_design.md).
+The design is [`docs/archive/designs/lighting_sheet_design.md`](../designs/lighting_sheet_design.md).
 
 ## Verdict
 

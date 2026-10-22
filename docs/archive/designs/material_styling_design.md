@@ -1020,7 +1020,7 @@ needs its own explicit owner request; until then nothing here changes the
 colour output or implies alpha support.
 
 **Superseded by alpha design D-15** (owner, 2026-10-17;
-`docs/designs/alpha_design.md`). `MASK` cutouts and `BLEND` translucency are
+`docs/archive/designs/alpha_design.md`). `MASK` cutouts and `BLEND` translucency are
 captured with the model's alpha, and the ID, shade, normal and depth describe
 the surfaces of the colour's layers as the alpha design sets out (its D-1 to
 D-3, D-6, D-11, D-12, D-14). `BLEND` materials leave the no-identity class:

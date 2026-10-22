@@ -53,7 +53,7 @@ on 2026-10-20 (America/Los_Angeles):
   The shade combines ambient occlusion and curvature, with no directional
   light. The implementation is `capture/blender_script.py`, its material
   shader construction; the current contract is
-  [design §Capture](../design.md#capture).
+  [design §Capture](../../design.md#capture).
 - Material ramps use that shade to choose palette entries. Their ranges may
   be set per material, at library level, or globally, in that order.
   Materials without a ramp use ordinary colour. `stylize.py` resolves the
@@ -97,7 +97,7 @@ on 2026-10-20 (America/Los_Angeles):
 | [Alpha D-8](alpha_design.md#d-8-the-colour-is-flat-and-unlit-this-replaces-lighting-d-23) | Ordinary materials are flat and unlit | D-14/D-23 permit optional brightness with the ordinary base, including without a library; SHD-5 integration and SHD-6 public contract |
 | Material styling D-7, scope and ramp mapping; design §Palette mapping and composition, §Material ramps | Dithering excluded | D-12/D-17/D-27/D-29 approve the six patterns and quantisation rules; SHD-6 |
 | [Settings](settings_design.md) D-20; design §Material libraries | The ordinary form carries no shade | D-33 adds `/4` ordinary mapping entries with overrides; SHD-6 |
-| [Projects and camera](projects_camera_design.md) D-8; [vision V-7](../vision.md#v-7-consistency-is-the-product) | Light stays camera-fixed, V-7 unchanged | D-24 permits world-up sky/ground only; key stays camera-fixed, direction consistency remains; SHD-6 |
+| [Projects and camera](projects_camera_design.md) D-8; [vision V-7](../../vision.md#v-7-consistency-is-the-product) | Light stays camera-fixed, V-7 unchanged | D-24 permits world-up sky/ground only; key stays camera-fixed, direction consistency remains; SHD-6 |
 | Design §Capture job and result contract, §Frames into stylize | Mandatory transport buffers and decoded arrays omit separate layer normals | D-19/D-34/D-37 retain layer normals with one extra transported buffer; SHD-1 |
 | Design §CLI, §Settings files, §Option validation, §Stylize, §Export, §Reproducibility | Existing options, palette/ramp rules and sheet record | D-32 to D-34 add controls, nested responses, validation, modes, snap and deterministic reuse; SHD-6 public activation |
 
@@ -111,12 +111,12 @@ boundary and leaves later style experiments in stylize, consistent with V-8.
 
 ### What the owner has actually judged
 
-- [Material styling](../archive/acceptance/material-styling.md): qualified proof of
+- [Material styling](../acceptance/material-styling.md): qualified proof of
   concept on 2026-10-08; generated ramps separately accepted on 2026-10-14.
   Neither is blanket approval of every future shading look.
-- [Settings](../archive/acceptance/settings.md): accepted 2026-10-13. The owner wanted
+- [Settings](../acceptance/settings.md): accepted 2026-10-13. The owner wanted
   a look between the two shade trials; that did not change shipped defaults.
-- [Lighting](../archive/acceptance/lighting-sheet.md): accepted 2026-10-14, including
+- [Lighting](../acceptance/lighting-sheet.md): accepted 2026-10-14, including
   a dark rear light. This judged preview lighting.
 - [Alpha](../acceptance/alpha.md): both hard and soft edges accepted;
   the combined translucent front layer and present occlusion approximation
@@ -1608,7 +1608,7 @@ Shuffled 8×8 is fixed, with no runtime random seed or permutation:
 
 Each implementation slice includes tests for the behaviour it introduces;
 verification is not postponed to the final visual review. Follow the
-[validation contract](../validation.md) and planner at each actual PR head.
+[validation contract](../../validation.md) and planner at each actual PR head.
 With the present catalog, source changes select static checks, package
 tests and local Blender tests. Report the required current-head local
 validation; skipped tests do not pass. Generated fixtures and outputs stay
@@ -1912,7 +1912,7 @@ The capture and shared-baseline requirements remain unchanged.
   perspective/roll animation. Use candidate config copies in local
   evidence; preserve live project settings until the owner accepts the
   exact proposed values. Record commands, hashes, tool revision, limitations
-  and the exact owner response in `docs/acceptance/shading.md` via docs-push.
+  and the exact owner response in `docs/archive/acceptance/shading.md` via docs-push.
   Give the exact diff for every owner project/library file and its current
   hash. The owner's verdict authorises SHD-8 to apply exactly those accepted
   diffs (D-38); record that verdict against the immutable diff evidence.
@@ -1994,7 +1994,7 @@ outputs to act on for this arc; do not regenerate historical evidence.
   be used for me to generate 2d art panels to accompany text to the player”.
   Its timestamp is not supplied; the ellipses are in the dispatch.
 - Owner after the alpha review, quoted in the dispatch and
-  `docs/acceptance/alpha.md`: “the wood could honestly have more shading, and
+  `docs/archive/acceptance/alpha.md`: “the wood could honestly have more shading, and
   perhaps some more texture to it, but we can do that later”. The acceptance
   record dates the answer to about 2026-10-19 03:05 UTC and identifies the
   manager's relay as `a51e81e0-8190-47be-ab85-99ff495d2e59`.

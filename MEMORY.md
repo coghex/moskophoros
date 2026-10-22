@@ -25,7 +25,7 @@ anything newer than the date below.
   Blender into a sheet, a JSON description and animated previews, and the
   owner judges the looks by eye (vision V-12). Its contract is
   [docs/design.md](docs/design.md) §CLI.
-- **Accepted by the owner** (records in [docs/acceptance/](docs/acceptance/)):
+- **Accepted by the owner** (records in [docs/archive/acceptance/](docs/archive/acceptance/)):
   - slice 1, the plain pipeline: 2026-10-03;
   - style pass 1, palettes and reduction: 2026-10-05;
   - material styling, a qualified acceptance of the proof of concept:
@@ -34,7 +34,7 @@ anything newer than the date below.
   - lighting sheet: 2026-10-14;
   - alpha: 2026-10-19, cutouts judged separately on a shrub the same day;
   - projects and camera: 2026-10-20.
-- **Settings arc** ([design](docs/designs/settings_design.md)): accepted
+- **Settings arc** ([design](docs/archive/designs/settings_design.md)): accepted
   by the owner on 2026-10-13 ([record](docs/archive/acceptance/settings.md)); epic
   #83 closed. Layered YAML settings (user file, reused sheet, `--config`,
   options), the shading values, per-material shading and clip frame counts.
@@ -43,14 +43,14 @@ anything newer than the date below.
   writes `<stem>.normal.png`; `--depth` adds a depth map and `--light X,Y,Z`
   lit previews. Known cost: normal and depth encoding roughly doubles a test
   render's time.
-- **Alpha arc** ([design](docs/designs/alpha_design.md)): accepted by the
-  owner on 2026-10-19 ([record](docs/acceptance/alpha.md)); epic #113 closed.
+- **Alpha arc** ([design](docs/archive/designs/alpha_design.md)): accepted by the
+  owner on 2026-10-19 ([record](docs/archive/acceptance/alpha.md)); epic #113 closed.
   Sheets carry the model's transparency: `MASK` cutouts, `BLEND` translucency
   in 8-bit alpha, `--edges hard|soft` (both required), and maps aligned with
   the colour. Cutouts were judged on a separate shrub model and accepted
-  ([Cutouts](docs/acceptance/alpha.md#cutouts)).
-- **Projects and camera arc** ([design](docs/designs/projects_camera_design.md)):
-  accepted by the owner on 2026-10-20 ([record](docs/acceptance/projects-camera.md));
+  ([Cutouts](docs/archive/acceptance/alpha.md#cutouts)).
+- **Projects and camera arc** ([design](docs/archive/designs/projects_camera_design.md)):
+  accepted by the owner on 2026-10-20 ([record](docs/archive/acceptance/projects-camera.md));
   epic #127 closed. `--project NAME` reads `~/.config/moskophoros/projects/NAME.yaml`
   over the global file. The camera takes a direction vector, a roll, a position, and
   an orthographic or perspective projection, as flags or settings. Commands that

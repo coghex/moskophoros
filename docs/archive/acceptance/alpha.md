@@ -10,7 +10,7 @@ This records the owner's acceptance of the alpha arc, following #119 (ALPHA-7) a
 | ALPHA-4, capture and composite translucent layers | #117 | #124 |
 | ALPHA-5, give translucent materials identities and ramps | #118 | #125 |
 
-The design is [`docs/designs/alpha_design.md`](../designs/alpha_design.md).
+The design is [`docs/archive/designs/alpha_design.md`](../designs/alpha_design.md).
 
 **Cutouts are judged separately, in [Cutouts](#cutouts).** The chest has no `MASK` material: the owner removed the cutout from the test model while making it (see [Input](#input)). This review judges translucency (`BLEND`, with an alpha gradient), the combined front layer (D-12), the occlusion baseline (D-7) and both `edges` values. A second model, a potted shrub with `MASK` leaf cards, was made for the cutouts.
 
