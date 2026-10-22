@@ -2,7 +2,7 @@
 
 This records the owner's visual review of the shading arc (epic #137), slice SHD-7 (#144), under vision V-12. The arc's code slices are #138 to #143; the design is [`docs/designs/shading_design.md`](../designs/shading_design.md).
 
-**Status: pending.** The review evidence is prepared and the owner has not yet given a verdict. Nothing below is an owner judgement, and no owner file has been changed. The owner's first answers (see [Round 2](#round-2-the-shrub) and [Round 3](#round-3-the-shrubs-leaf-ramp)) asked for the live-lit shrub to be revised and rounds 2 and 3 followed, so no look or use is accepted yet. This record is completed when the owner's verdict and the exact-diff handoff are recorded.
+**Status: pending.** The review evidence is prepared and the owner has not yet given a verdict. Nothing below is an owner judgement, and no owner file has been changed. The owner's first answers (see [Round 2](#round-2-the-shrub) and [Round 3](#round-3-the-shrubs-leaf-ramp) and [Round 4](#round-4-the-six-live-lit-looks-on-the-shrub-with-l1-leaves)) asked for the live-lit shrub to be revised and rounds 2 to 4 followed, so no look or use is accepted yet. This record is completed when the owner's verdict and the exact-diff handoff are recorded.
 
 ## Verdict
 
@@ -560,7 +560,14 @@ Measured over each whole sheet (8 directions × 8 frames), the share of leaf pix
 | L4 | #3d431c #41631f #4a6844 #658b6b | 1.3 / 42.6 / 37.4 / 18.7 |
 | L5 | #41631f #358824 #43ad55 | 21 / 53.6 / 25.4 |
 
-The owner's answer to the round-3 question (which leaf ramp) goes here when it arrives.
+### The owner's leaf-ramp choice
+
+Relayed by the moskophoros manager for request `moskophoros-20261020-1` in `~/.local/state/project-manager/moskophoros/relay-144-shrub-3.md` (SHA-256 `225e90677ffc4d2efb072588fd04fb9c64e186a96d53b98d276c982fecfb5f5a`). The owner, in the manager's terminal on 2026-10-22, after viewing the round-3 page (asked "Which leaf ramp for the shrub?"), verbatim:
+
+> "L0 looks good, i assumed you overwrote the file since you didnt give me alink, so i actually never saw this, it looks ok, but i would say that L1 has better color, L4 looks good, L5 is probably the most realistic looking, but i could see myself using any of these. i would say we pick L1"
+
+**Choice: L1, muted green:** the shrub's `Leaves` ramp `[46, 45, 44, 43, 42]` (#343728 #414d35 #4a6844 #658b6b #8dad9d) with its own shade range `[84, 226]`, as rendered in round 3. It is bound to library `leaf-L1.yaml` (SHA-256 `5d43fa30b3f99cac4b1ca211078c2369515423e7d2402abd2a419ecbe8c3228e`) and to the run `R3-L1`: `shrub.json` `04f377351da173c2965968bbfbf909dfdb03554b6ae2a26470ebfeac28ddad2e`, `shrub.png` `0a066fb49d8d197d671022c139856d52026dcdb2f73a2e5fa6bc72a1a9ce8174`. It lives in the shrub's review library only; **no owner file changes** for it. It is a choice of the leaf ramp, not a verdict on either use.
+
 
 Output files of the round's runs:
 
@@ -602,6 +609,68 @@ Output files of the round's runs:
 | `R3-L5` | `shrub.json` | 19,484 | `6a472527a93eb782ed765b34c126186b899bfddb26dc0e8bd604af79db51171b` |
 | `R3-L5` | `shrub.normal.png` | 615,227 | `d01e136f8435ebd1af6a4a08fbb0c9bca12fe92fd6db189523bd837bbe98e2d5` |
 | `R3-L5` | `shrub.png` | 160,845 | `19af5aa8b7b46f8d40e9b8c219849922bd3136d7715788b55414aec776ac2a3e` |
+## Round 4: the six live-lit looks on the shrub with L1 leaves
+
+Rounds 1 to 3 are unchanged. This round adds new evidence under `$REVIEW4=~/.local/share/moskophoros-acceptance/shading-review/v4`, after the owner chose leaf ramp L1 ([Round 3](#round-3-the-shrubs-leaf-ramp)). It is not a verdict.
+
+- **Runs:** the six section-1 candidates (`live-0`, `live-sky20`, `live-sky40`, `live-skyw30`, `live-dith4`, `live-sky20-dith4`; their project files and diffs are round 1's, byte-identical) on the v1 shrub (SHA-256 `7a1a29382888c8c21a0b19c9418fdbcc5417e8ac038c9d626770ca6f4f0b684f`) with `leaf-L1.yaml` (SHA-256 `5d43fa30b3f99cac4b1ca211078c2369515423e7d2402abd2a419ecbe8c3228e`, the round-3 file).
+- **Commands:** `$REVIEW4/helpers/run_case.py R4-<candidate>`, each `XDG_CONFIG_HOME=$REVIEW4/candidates/<candidate> /usr/bin/lockf -k $LOCK $TOOL --project synarchy --view iso --directions 8 --cell 128x128 --materials $REVIEW4/candidates/<candidate>/moskophoros/libraries/leaf-L1.yaml --clip Sway --frames 8 --blender /opt/homebrew/bin/blender $REVIEW4/inputs/models/shrub.glb $REVIEW4/runs/R4-<candidate>/shrub.png`; master `354a21f`, headless Blender 5.2.2, under the lock. Every run exited 0.
+- **Checks:** `helpers/check.py`, output `checks.txt` (SHA-256 `faf2d33471e6b91a14b4921b72c1d496e007469664510092ccbb476bad4fdfdf`): alpha and the normal and depth maps identical across the six runs. `R4-live-0` is the same configuration as round 3's `R3-L1`; its sheet, maps and GIFs are byte-identical to it.
+- **Decision page:** `file:///Users/vincentcoghlan/.local/share/moskophoros-acceptance/shading-review/v4/page/index.html` (SHA-256 `3cce4d64686ddecc1014810da9de2e088562569bc899e2916c4ef6fe49be91aa`), shrub rows (L1) beside round 1's unchanged robot and chest images, with each look's exact diff; index `$REVIEW4/index.html` (SHA-256 `bd158efae0cb9c2172ba89f004addc8cf8b08ea268bcba21ca76f5c566a554d5`), measurements `stats.json` (SHA-256 `e25021e498c3753cfc17c3b5d8095103eef45adc2f7799dacc62d783617c2b14`).
+
+Measured over each whole sheet (8 directions × 8 frames), the share of the shrub's leaf pixels on each L1 green, darkest first (#343728 #414d35 #4a6844 #658b6b #8dad9d):
+
+| Run | Share, % |
+|---|---|
+| `R4-live-0` | 3.6 / 41.9 / 25.4 / 14.2 / 14.9 |
+| `R4-live-sky20` | 4.6 / 54.6 / 19.6 / 16.6 / 4.5 |
+| `R4-live-sky40` | 8.1 / 61 / 21 / 7.9 / 2.1 |
+| `R4-live-skyw30` | 5.2 / 54.7 / 20.1 / 14 / 6 |
+| `R4-live-dith4` | 3.8 / 34.2 / 32.7 / 14.6 / 14.7 |
+| `R4-live-sky20-dith4` | 6 / 49 / 23.7 / 15.9 / 5.3 |
+
+The owner's answer (which live-lit look) goes here when it arrives.
+
+Output files of the round's runs:
+
+| Run | File | Bytes | SHA-256 |
+|---|---|---|---|
+| `R4-live-0` | `shrub-lit.Sway.gif` | 1,398,600 | `0eef7e719483776c247788efde027a875c0ea6c0b2bb95f40588d1023d23d4a0` |
+| `R4-live-0` | `shrub.Sway.gif` | 660,626 | `28f53725341a7448c6c5916a4ad75b2eefe59314e8722d533c9df767f5600da7` |
+| `R4-live-0` | `shrub.depth.png` | 407,004 | `a1b10e37972614d34653e9de36380899f875858e8ce7734d71f7b43417031ad9` |
+| `R4-live-0` | `shrub.json` | 19,259 | `04f377351da173c2965968bbfbf909dfdb03554b6ae2a26470ebfeac28ddad2e` |
+| `R4-live-0` | `shrub.normal.png` | 615,227 | `d01e136f8435ebd1af6a4a08fbb0c9bca12fe92fd6db189523bd837bbe98e2d5` |
+| `R4-live-0` | `shrub.png` | 181,760 | `0a066fb49d8d197d671022c139856d52026dcdb2f73a2e5fa6bc72a1a9ce8174` |
+| `R4-live-sky20` | `shrub-lit.Sway.gif` | 1,388,142 | `2cb39b2af89007a9d5d57b05cde720e713634c5596f4e189317bba64848d6253` |
+| `R4-live-sky20` | `shrub.Sway.gif` | 635,688 | `3d3b79d3c51a32b42a5440a1572bcc3d5736ef7c55aa5e3c966488c14f62552c` |
+| `R4-live-sky20` | `shrub.depth.png` | 407,004 | `a1b10e37972614d34653e9de36380899f875858e8ce7734d71f7b43417031ad9` |
+| `R4-live-sky20` | `shrub.json` | 19,259 | `5d3a089b97545023b817f8bd7af32a9a6baff79b948d55b0e7c8f4c3aa0e7d62` |
+| `R4-live-sky20` | `shrub.normal.png` | 615,227 | `d01e136f8435ebd1af6a4a08fbb0c9bca12fe92fd6db189523bd837bbe98e2d5` |
+| `R4-live-sky20` | `shrub.png` | 173,096 | `f67cdeae0adaa756b6276e3e7fd035610a2ce5c49658de78fae166b12ec6d30d` |
+| `R4-live-sky40` | `shrub-lit.Sway.gif` | 1,362,905 | `37cda238476dd52e0218d12fa8d669bf01e85b9261a0e0564754f0a6a6f31abc` |
+| `R4-live-sky40` | `shrub.Sway.gif` | 590,716 | `3c03e626204557001f4cb974f21d165a4d6a28af36386bfea70a6345c0889bcc` |
+| `R4-live-sky40` | `shrub.depth.png` | 407,004 | `a1b10e37972614d34653e9de36380899f875858e8ce7734d71f7b43417031ad9` |
+| `R4-live-sky40` | `shrub.json` | 19,259 | `f9e6c1dc282b12dcb204e5db72bd90036d8570faef540a4b6b176f07a22113f3` |
+| `R4-live-sky40` | `shrub.normal.png` | 615,227 | `d01e136f8435ebd1af6a4a08fbb0c9bca12fe92fd6db189523bd837bbe98e2d5` |
+| `R4-live-sky40` | `shrub.png` | 159,620 | `498b18104750dab7f1431fae5ec880b82ae2b3dca0c88fa156550616bce853f2` |
+| `R4-live-skyw30` | `shrub-lit.Sway.gif` | 1,424,776 | `f176f42e9e2eeb99800c32ec9c4ba37c269ef80c0dce44715e810dac251b3cdd` |
+| `R4-live-skyw30` | `shrub.Sway.gif` | 666,963 | `71a58222c63468998620519b6c5d417c4d729e569ec5c307f0478bac4b9e9d50` |
+| `R4-live-skyw30` | `shrub.depth.png` | 407,004 | `a1b10e37972614d34653e9de36380899f875858e8ce7734d71f7b43417031ad9` |
+| `R4-live-skyw30` | `shrub.json` | 19,258 | `04076016e1a88bd73eb7eb6fbffe532b8d75c65a131ff75c1a939642e2530bef` |
+| `R4-live-skyw30` | `shrub.normal.png` | 615,227 | `d01e136f8435ebd1af6a4a08fbb0c9bca12fe92fd6db189523bd837bbe98e2d5` |
+| `R4-live-skyw30` | `shrub.png` | 179,945 | `bcb0329b14418aeb61d858f508efb8cc53ceda6a2af377d0c61a421caaec85ef` |
+| `R4-live-dith4` | `shrub-lit.Sway.gif` | 1,467,431 | `296b4665a82cc24dd07fc772a0cb03119cc3012f529104f89b3160266b8c7530` |
+| `R4-live-dith4` | `shrub.Sway.gif` | 705,939 | `135e6b082304dd7ed3a3966461ab579d0228bd2c280b6aaba3250c4268d775a2` |
+| `R4-live-dith4` | `shrub.depth.png` | 407,004 | `a1b10e37972614d34653e9de36380899f875858e8ce7734d71f7b43417031ad9` |
+| `R4-live-dith4` | `shrub.json` | 19,264 | `ecfca51de4fa76651c65e8d6ea771d0fbf9406011ef70da1311dfa774f281739` |
+| `R4-live-dith4` | `shrub.normal.png` | 615,227 | `d01e136f8435ebd1af6a4a08fbb0c9bca12fe92fd6db189523bd837bbe98e2d5` |
+| `R4-live-dith4` | `shrub.png` | 201,658 | `f66e752d5919425070079feca1974c8aed39a2421a3bdfd749bbf92dd44da62b` |
+| `R4-live-sky20-dith4` | `shrub-lit.Sway.gif` | 1,477,936 | `5cb0f80966129a473beb6de0944a1b84af3e44abab90cc8c75062c9dec4f732b` |
+| `R4-live-sky20-dith4` | `shrub.Sway.gif` | 708,853 | `b809bf2f8fe16ef3e4f5ae09af2e2bb944496a7c2839c011b3fcd48f147ed9bc` |
+| `R4-live-sky20-dith4` | `shrub.depth.png` | 407,004 | `a1b10e37972614d34653e9de36380899f875858e8ce7734d71f7b43417031ad9` |
+| `R4-live-sky20-dith4` | `shrub.json` | 19,264 | `022a4c19a374908ece41d1826cb949644fec73e0e13d53373812d9d425f62503` |
+| `R4-live-sky20-dith4` | `shrub.normal.png` | 615,227 | `d01e136f8435ebd1af6a4a08fbb0c9bca12fe92fd6db189523bd837bbe98e2d5` |
+| `R4-live-sky20-dith4` | `shrub.png` | 197,995 | `dd94786e40bfbb4b23e979174f861071c8a331f622fd996850abb2096ea0c554` |
 
 ## Output
 
