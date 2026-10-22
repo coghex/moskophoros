@@ -34,7 +34,8 @@ anything newer than the date below.
   - lighting sheet: 2026-10-14;
   - alpha: 2026-10-19, cutouts judged separately on a shrub the same day;
   - projects and camera: 2026-10-20;
-  - shading, both uses: 2026-10-22.
+  - shading, both uses: 2026-10-22;
+  - Codekarl palette and project: 2026-10-22.
 - **Settings arc** ([design](docs/archive/designs/settings_design.md)): accepted
   by the owner on 2026-10-13 ([record](docs/archive/acceptance/settings.md)); epic
   #83 closed. Layered YAML settings (user file, reused sheet, `--config`,
@@ -96,8 +97,13 @@ anything newer than the date below.
     and a preview light.
   - `config.yaml`, the user file, is kept for app settings and holds none
     yet, so a run without `--config` uses the shipped defaults.
-  - `codekarl.yaml` comes later: the baked, straight-on art panels, with
-    their own palette.
+  - `~/.config/moskophoros/projects/codekarl.yaml`: baked, straight-on art
+    panels (owner, 2026-10-22,
+    [record](docs/archive/acceptance/codekarl-palette.md)). It holds the
+    palette `../palettes/codekarl.gpl` (127 colours: twelve vivid nine-step
+    ramps from a true red, a brown ramp, ten greys), the side view with one
+    direction, the accepted baked light (key 0.35, sky 0.15), no maps, and
+    the shipped ramp formula B.
   - The robot's library is
     `~/.config/moskophoros/libraries/robotexpressive.yaml`.
 
@@ -120,11 +126,9 @@ anything newer than the date below.
 
 ## Next steps
 
-1. **Codekarl panels (next, with the owner):** the Codekarl palette and
-   `codekarl.yaml`, using the baked-panel values accepted in the shading record.
-2. **Later, on the owner's word:** more shading and texture for wood (raised
+1. **Later, on the owner's word:** more shading and texture for wood (raised
    in the alpha review; a look question, not yet an issue).
-3. **Deferred, each waiting on a stated trigger:**
+2. **Deferred, each waiting on a stated trigger:**
    - recolouring without a re-render (settings D-18);
    - #43, mesh-weight animation and CUBICSPLINE tangents: approved, but held
      until a model needs it.
