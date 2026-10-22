@@ -2,11 +2,68 @@
 
 This records the owner's visual review of the shading arc (epic #137), slice SHD-7 (#144), under vision V-12. The arc's code slices are #138 to #143; the design is [`docs/designs/shading_design.md`](../designs/shading_design.md).
 
-**Status: pending.** The review evidence is prepared and the owner has not yet given a verdict. Nothing below is an owner judgement, and no owner file has been changed. The owner's first answers (see [Round 2](#round-2-the-shrub) and [Round 3](#round-3-the-shrubs-leaf-ramp) and [Round 4](#round-4-the-six-live-lit-looks-on-the-shrub-with-l1-leaves)) asked for the live-lit shrub to be revised and rounds 2 to 4 followed. The owner then chose the current live-lit look (decision 1 = A, no project-file change, recorded in Round 4), and [Round 5](#round-5-the-baked-panel-shrub-with-l1-leaves-section-8-redone) redoes the baked-panel shrub section; no use is accepted yet and no verdict is given. This record is completed when the owner's verdict and the exact-diff handoff are recorded.
-
 ## Verdict
 
-No verdict has been given. The owner was shown the decision page (see [Decision page](#decision-page)); their answers, with date, origin and relay id, are recorded here when they arrive, bound to the evidence and diffs below.
+**Status: complete.** The owner accepted both uses on 2026-10-22. All answers below were relayed by the moskophoros manager for request `moskophoros-20261020-1` in `~/.local/state/project-manager/moskophoros/relay-144-verdicts.md` (SHA-256 `cca17b2781187b891c365fa4ca336f71c4681a8287597b6ec533a833df582cbf`), typed by the owner in the manager's terminal as selections in the manager's multiple-choice questions; each question text carried the exact `file://` link of its page. The words in quotes are the owner's selections, verbatim.
+
+### Verdicts
+
+- **Verdict 11, live-lit isometric sprites: "Accept".** Question: "do you accept the live-lit isometric sprites (look A, shrub with L1 leaves, robot, chest, maps)?" Bound to the evidence: decision page `v4/page/index.html` (SHA-256 `3cce4d64686ddecc1014810da9de2e088562569bc899e2916c4ef6fe49be91aa`) and its index `v4/index.html` (`bd158efae0cb9c2172ba89f004addc8cf8b08ea268bcba21ca76f5c566a554d5`); look A is candidate `live-0` (the owner's `projects/synarchy.yaml` verbatim, SHA-256 `e634338df4acbd1533402b1699be5cdae33563586d089df578c1796c7ed1a5ad`, empty diff); the shrub with L1 leaves `v4:R4-live-0` `shrub.png` `0a066fb49d8d197d671022c139856d52026dcdb2f73a2e5fa6bc72a1a9ce8174`; the robot `v1:A-live-0-robot` `robot.png` `d89a5bb27742674e5051bbb8bf81df4834484b2d41f67b8d9c36f4496e5424a8`; the chest `v1:A-live-0-chest` `chest.png` `ed9490c5062b542b915e625cb2498c1160a94cbc1e92de409228c2f5f78a70b4`; the maps (decision 2).
+- **Verdict 12, baked straight-on panels: "Accept".** Question: "do you accept the baked straight-on panels with your choices (soft light, no dither, camera frame, shaded glow)?" Bound to the evidence: the "A soft" row of the first page's section 3, `v1:PB-robot-ramp-soft` `robot.png` `e04787094e106a66df714f06a488a081b5a0d6a0e48efc459951608a8100a624`; sections 6 to 10 of `v1/page/index.html` (SHA-256 `68055804812dc6cbc4a52d63cfacb9377fc9baac4bba191eca0ba6f62ff141d6`, index `v1/index.html` `c71354e4cb555c7569337d107ff43e85e89d412a7cbaa6f66b5e7885b1a12d64`); and the shrub of `v5/page/index.html` (SHA-256 `f186c246e13e4cd62f8b2f40d715ea06321db267572076f5642fa4785ed25fb0`, index `v5/index.html` `82cbcb1605daa60d0b4271ccd9353fce521db5e5ad0d19a82d9a03ec09e4f688`, runs `R5-shrub-*`, listed in Round 5).
+
+### Decisions
+
+| # | Question (page section) | Owner's selection, verbatim | Bound to |
+|---|---|---|---|
+| 1 | Which live-lit look? (v4 page) | "A current look" (relay `relay-144-look.md`, see Round 4) | candidate `live-0`, empty diff; `v4/page/index.html` `3cce4d64686ddecc1014810da9de2e088562569bc899e2916c4ef6fe49be91aa` |
+| 2 | Are the maps and the extra point-lit preview as your shaders need? (v1 #2) | "A yes" | `v1:A-live-0-robot` `robot.normal.png` `8e2e9c005854ea045e9cd9e73a43a33ded709423f7f6754b4e33146dd1ed55b0`, `robot.depth.png` `76dc33fddf9f1baf3c0c0c885c16ef819c371f149184bf556a02b5306d1bb2f2`, `robot-lit.Walking.gif` `089d8b46814818097e0cd2b9e6a07901a758789d928263b92aa3f0388412a06d` |
+| 3 | How much light in baked ramps? (v1 #3) | "A soft" (key 0.35, sky 0.15, ground 0) | `v1:PB-robot-ramp-soft` `robot.png` `e04787094e106a66df714f06a488a081b5a0d6a0e48efc459951608a8100a624` |
+| 4 | Which dithering for baked panels? (v1 #4, rendered with strong light) | "A none" | `v1:PB-robot-ramp-strong` `robot.png` `b40002e2c1a939dc140683d84e25b2ae68545c184cab0a542840e6b6442e0375` |
+| 5 | Which reduction for baked panels? (v1 #5) | "C no preference" | `v1:PB-robot-ramp-ordered4` `robot.png` `ce608f869367ddaadcf9c0ce1387ab78aaa19cc9f3f2849459bd31b356c02051`; `v1:PB-robot-ramp-mode-ordered4` `robot.png` `9f6b9ee0bc12b82b25f208d9c013c8a2b4d6f788d87006d9a73edf18386d685c` |
+| 6 | Do the four modes and snap behave as intended? (v1 #6) | "A yes, all" | `v1:PB-robot-neither` `robot.png` `27532fed8bdfa1b1d3925107cd7c90b8e45cd08daa0d7a798e7d5743337efe60`; `v1:PB-robot-brightness` `robot.png` `6171d54477f56cee7bb2596159df76aa89f440f4873f41cd1a1972eb76fd6f29`; `v1:PB-robot-both` `robot.png` `7e61f6a7de4668d07f8f70a8dada7af698183060cde5185f5c883d7a81032ddf`; `v1:PB-robot-brightness-snap-palette-ordered4` `robot.png` `4c41354b38e0ce88077767cea211564ae0a512602bae1603ccd850a1f825803d`; `v1:PB-robot-both-snap-ramp-ordered4` `robot.png` `43aed6e1d200e3f3e9609ccf840fda22c1fc3e908e18644141e53b4e3cda1228` |
+| 7 | Does the longer ramp work? (v1 #7; the manager explained that the long generated ramps drift orange to magenta to navy from the per-band hue shift) | "A fine as a test" | `v1:PB-robot-long-ramp` `robot.png` `400cea2c7a26807e07fae2b2e182ea0947a18da0ae7b828574cd6b61b861f071`; `v1:PB-robot-long-ramp-ordered4` `robot.png` `0b89d63d6843b76cf246607d31e35d79e9f3c02cfb7aad4b2069a323097ab508`; `v1:PB-robot-long-brightness-snap-ramp-ordered4` `robot.png` `b2f077b8153d607b8e08eff33a252d8447ef48af629984ca7da09c2297323d1a` |
+| 8 | Do the shrub cutouts, hard and soft, look right with baked light? (v5 page, L1 leaves, strong light) | "A yes, both" | `v5:R5-shrub-ramp-strong` `shrub.png` `6020d18e62b87b8b531b6b1e9d1edcc786b2f2e522309c1fd83ef22ef16490e8`; `v5:R5-shrub-ramp-ordered4-soft` `shrub.png` `8c7292cdb9906b9823b24f11018832b769bbdceeafd4525d587863d69bf4ab74`; the page `f186c246e13e4cd62f8b2f40d715ea06321db267572076f5642fa4785ed25fb0` |
+| 9 | Does the translucent glow shade and combine acceptably? (v1 #9; the shaded glow goes dark orange/red, the last row had Glow set to neither) | "B glow shaded is fine" | `v1:PB-chest-ramp-ordered4-soft` `chest.png` `06ce3fd3cc65712185b39a482da8fe01ef40eddbb3f4d50c549af0383673f4d2`; `v1:PB-chest-glow-neither-ramp-ordered4-soft` `chest.png` `64b3a92087edfa5af0239b7af4de8c1726997b8348f7dc031aba429e84520cba` |
+| 10 | Which sky frame under roll? (v1 #10) | "A camera (default)" | `v1:PB-robot-roll-camera-ordered4` `robot.png` `b34eabf2675e43de15f9b3f43b25790b46c10937f9f216b5eaac1d8ef9d2dd4c`; `v1:PB-robot-roll25-camera-ordered4` `robot.png` `abe5a29f3141855afe25f4772035eb072a67751482c28bbba367d6c08247805a` |
+
+### The owner's choices as values
+
+Recorded values only, not applied to any file: **live-lit use:** look A, the current `projects/synarchy.yaml` unchanged; maps and the extra point-lit preview as they are (decision 2); the shrub's leaf ramp is L1, `Leaves` ramp `[46, 45, 44, 43, 42]` with its own shade range `[84, 226]` (Round 3, in the shrub's own review library, `v3/candidates/live-0/moskophoros/libraries/leaf-L1.yaml`, SHA-256 `5d43fa30b3f99cac4b1ca211078c2369515423e7d2402abd2a419ecbe8c3228e`); the v1 shrub model's trunk and branches and its bark entry stay as they are (the owner's answer "Nothing, it's fine now", relay `relay-144-shrub-trunk.md`). **Baked-panel use:** key 0.35, sky 0.15, ground 0 (`mode: ramp`); no dithering; reduction: no preference (the tool's default, plain, applies); the four modes and snap as the tool does them; the longer ramp worked as a test; cutouts hard and soft acceptable; the glow shaded as the tool does by default (no Glow override); the sky frame `camera`, the default.
+
+### Corrections and omissions in the first round, kept visible
+
+- **Section 5's captions were wrong.** Every row label on the first page that listed the recorded settings ended "reduce None" because the page script read `reduce` from the wrong place in the sheet JSON (it is `settings.style.reduce`). Section 5's runs really were `PB-robot-ramp-ordered4` (`reduce: plain`) and `PB-robot-ramp-mode-ordered4` (`reduce: mode`); the sheet JSONs of round 1 record exactly that. The manager told the owner so before the owner answered "C no preference". The images and files of round 1 are unchanged; this record's tables read the value correctly.
+- **The shrub's leaf colour was missing in round 1.** The baked-panel and live-lit shrub runs of round 1 used the cutout review's plain shrub library, which omitted the owner's trial F leaf range, so most leaf pixels were the darkest green. The live-lit shrub was redone in rounds 2 to 4 and the baked-panel shrub in Round 5, with the owner's L1 leaves; round 1's `PB-shrub-*` and `A-*-shrub` runs are kept, superseded for the decisions.
+- **Light strength of the evidence.** Sections 4 to 9 were rendered with the strong light (key 0.6, sky 0.2, ground 0.1; section 10 with key 0.5, sky 0.3). The owner chose the soft light in decision 3 and gave the later answers on the images shown; only the robot's section-3 row was rendered with the soft light, so the shrub, the chest and the other robot cases with the soft light were not rendered or seen.
+- Rounds 2 to 5 added new evidence in new folders; nothing generated earlier was altered.
+
+### Earlier relays
+
+Each is a manager relay of the owner's words, recorded verbatim in the round named:
+
+| Relay file (`~/.local/state/project-manager/moskophoros/`) | SHA-256 | Recorded in |
+|---|---|---|
+| `relay-144-shrub-1.md` | `45e5ab7f57e8b29746f2040ac05a5075d89559b44567606e92ccb52fb1cf23b6` | Round 2 (the owner's first answers) |
+| `relay-144-shrub-2.md` | `eafad3ac450bd9b1b8440e29fb39387a0beff9af5e3386f5f7b8a18dc84dc91b` | Round 3 (trial F "better, not right"; keep the v1 model) |
+| `relay-144-shrub-3.md` | `225e90677ffc4d2efb072588fd04fb9c64e186a96d53b98d276c982fecfb5f5a` | Round 3 (choice of L1) |
+| `relay-144-shrub-trunk.md` | `0462d3c2764c6c1439f2ff2a1b377e073cdc11c7aa60f445e3690d981ccc6619` | this section: trunk and branches with L1 leaves, "Nothing, it's fine now" |
+| `relay-144-look.md` | `72a22992b7155ba56390acf2c483897ff37265b2a7b4e5d965d46a1a951548b7` | Round 4 (decision 1 = A) |
+| `relay-144-verdicts.md` | `cca17b2781187b891c365fa4ca336f71c4681a8287597b6ec533a833df582cbf` | this section (decisions 2 to 10, verdicts 11 and 12) |
+
+### Owner files at handoff
+
+Re-hashed on 2026-10-22 after the verdicts, against the copies taken at the start (`v1/inputs/owner-snapshot/`):
+
+| File | At the start | At handoff | Changed |
+|---|---|---|---|
+| `~/.config/moskophoros/config.yaml` | `257304183ca22ced1386e2484e95be75996a8a067b5eba3e9cea171d25a8fd0a` | `257304183ca22ced1386e2484e95be75996a8a067b5eba3e9cea171d25a8fd0a` | no |
+| `~/.config/moskophoros/projects/synarchy.yaml` | `e634338df4acbd1533402b1699be5cdae33563586d089df578c1796c7ed1a5ad` | `e634338df4acbd1533402b1699be5cdae33563586d089df578c1796c7ed1a5ad` | no |
+| `~/.config/moskophoros/synarchy.yaml` | `9195adfe08c7b0866143076d76079a6523c192f8152c764db0ab02805af344f4` | `9195adfe08c7b0866143076d76079a6523c192f8152c764db0ab02805af344f4` | no |
+| `~/.config/moskophoros/libraries/robotexpressive.yaml` | `33ebb76998abc2366d45a4d1c88f8cef82ccc7a9d4401907e4cde66dc27a2162` | `33ebb76998abc2366d45a4d1c88f8cef82ccc7a9d4401907e4cde66dc27a2162` | no |
+| `~/.config/moskophoros/palettes/synarchy.gpl` | `073695cba52f4fc6a38f035246e69f5c1f8343885fcdb9f376c8fef7b0c2938c` | `073695cba52f4fc6a38f035246e69f5c1f8343885fcdb9f376c8fef7b0c2938c` | no |
+
+**Handoff for #145 (SHD-8): no owner file needs a change.** Decision 1 = A is the empty diff (`v4/candidates/live-0/proposed.diff`, 0 bytes): `projects/synarchy.yaml` stays at the SHA-256 above. `config.yaml`, the duplicate `synarchy.yaml`, `libraries/robotexpressive.yaml` and `palettes/` need no change. The baked-panel choices and the L1 leaf ramp are recorded values only; no owner file exists for them, and the second game's palette and project are not authored here. #145 has nothing to apply from this review; any edit to an owner file, or a changed source file, goes back to the owner (D-38). Before it applies anything, #145 should re-hash the files above and stop if any differs from the "At handoff" column.
+
 
 ## Earlier owner decisions
 
@@ -359,14 +416,14 @@ The review changed no owner file. The hashes at the start (from `inputs/owner-sn
 | `~/.config/moskophoros/libraries/robotexpressive.yaml` | `33ebb76998abc2366d45a4d1c88f8cef82ccc7a9d4401907e4cde66dc27a2162` | `33ebb76998abc2366d45a4d1c88f8cef82ccc7a9d4401907e4cde66dc27a2162` |
 | `~/.config/moskophoros/palettes/synarchy.gpl` | `073695cba52f4fc6a38f035246e69f5c1f8343885fcdb9f376c8fef7b0c2938c` | `073695cba52f4fc6a38f035246e69f5c1f8343885fcdb9f376c8fef7b0c2938c` |
 
-**Proposed changes, by file** (pending the owner's verdict; nothing applies until then, and #145 applies only the accepted diff):
+**Changes, by file** (the owner has given the verdict; #145 applies only what is accepted here, which is nothing):
 
-- `~/.config/moskophoros/projects/synarchy.yaml`: one of the candidate diffs above, chosen by the owner's answer to decision 1. The current hash is the one above; the candidate hashes are in the table.
+- `~/.config/moskophoros/projects/synarchy.yaml`: **no change.** The owner chose candidate `live-0` (decision 1 = A), the empty diff; see [Verdict](#verdict).
 - `~/.config/moskophoros/config.yaml`: **no change** (version and comments only).
 - `~/.config/moskophoros/synarchy.yaml`: **no change** (the older duplicate that the Projects arc kept; not used by `--project`).
 - `~/.config/moskophoros/libraries/robotexpressive.yaml`: **no change** (a `/2` library; it keeps its ranges and ramps, and needs no `/4` response field for any candidate).
 - `~/.config/moskophoros/palettes/*`: **no change.**
-- Baked panels: **no owner file exists and none is proposed.** The owner's choices for this use are recorded as values only; the second game's palette and project file are not authored here.
+- Baked panels: **no owner file exists and none is proposed.** The owner's choices for this use are recorded as values only (see [Verdict](#verdict)); the second game's palette and project file are not authored here.
 
 ## Limitations
 
@@ -689,7 +746,10 @@ Why: round 1's baked-panel shrub runs (`PB-shrub-*`, page section 8) used the cu
 - **Checks:** `helpers/check.py`, output `checks.txt` (SHA-256 `9e600bdb2c6682f5e8612c9988192df93861a22e5d9c6e02e923c748c198cc77`): exit status, schema, recorded settings against the command line, GIF frame counts, palette membership of every visible pixel; alpha and the normal map identical across runs that share an edge rule.
 - **Decision page:** `file:///Users/vincentcoghlan/.local/share/moskophoros-acceptance/shading-review/v5/page/index.html` (SHA-256 `f186c246e13e4cd62f8b2f40d715ea06321db267572076f5642fa4785ed25fb0`); index `$REVIEW5/index.html` (SHA-256 `82cbcb1605daa60d0b4271ccd9353fce521db5e5ad0d19a82d9a03ec09e4f688`).
 
-The owner's answer on the shrub cutouts goes here when it arrives.
+### The owner's answer
+
+Decision 8 ("Do the cutouts, hard and soft, look right with baked light?"): **"A yes, both"**, relayed in `relay-144-verdicts.md` (SHA-256 `cca17b2781187b891c365fa4ca336f71c4681a8287597b6ec533a833df582cbf`) on 2026-10-22, bound to this round's runs and page above. The answer is also recorded in the [Verdict](#verdict).
+
 
 Output files of the round's runs:
 
