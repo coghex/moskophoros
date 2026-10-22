@@ -3,7 +3,7 @@
 Turn the accepted Moskophoros product design into the first working plain
 3D-to-sheet pipeline, delivered through small, reviewable pull requests (PRs).
 The input is animated binary glTF (`.glb`, called GLB below).
-The product contracts remain in [the design](../../design.md); this document owns
+The product contracts remain in [the design](../design.md); this document owns
 the delivery boundaries, dependencies and evidence needed to complete them.
 
 Design state: `ready for issue processing`
@@ -40,7 +40,7 @@ was filed as [#24](https://github.com/coghex/moskophoros/issues/24) on
 - **Done when:** the accepted automated checks pass; an owner's real animated
   character with a looping and a one-shot clip renders in eight directions at
   the owner's intended production size; the owner reviews and approves the
-  sheet and previews. See [design §Slice 1 acceptance](../../design.md#slice-1-acceptance).
+  sheet and previews. See [design §Slice 1 acceptance](../design.md#slice-1-acceptance).
 - **Users and operators:** the owner producing game art, and agents maintaining
   the generic command-line tool. No game integration is part of completion.
 - **Arc label:** None proposed.
@@ -61,16 +61,16 @@ Checked on 2026-09-30 at repository revision
 - `tests/blender/test_smoke.py` proves that Blender starts headless and imports
   `bpy` in background mode. It fails on missing or invalid executables and
   never skips. It does not qualify the supported version or capture behavior.
-- The [CI foundation design](ci_foundation_design.md) D-20 and D-21 require
+- The [CI foundation design](../archive/designs/ci_foundation_design.md) D-20 and D-21 require
   Blender tests under `tests/blender/` and a fresh passing local run for any
-  selected obligation. [Validation](../../validation.md) documents the implemented
+  selected obligation. [Validation](../validation.md) documents the implemented
   planner and reports. Use the published current validation contract when the
   docs-worktree copy has not yet incorporated later implementation changes.
-- The latest [guide review](../../guide/2026-09-30T135925Z-4a9baa3.md) examined
+- The latest [guide review](../guide/2026-09-30T135925Z-4a9baa3.md) examined
   the foundation repairs and recorded no new actionable finding: 241 local
   tests, including the Blender smoke test, passed at that revision.
 - The accepted design records a completed Blender capture experiment and its
-  observations in [§Supported Blender version](../../design.md#supported-blender-version).
+  observations in [§Supported Blender version](../design.md#supported-blender-version).
   That experiment supports feasibility; it is not implementation acceptance.
 - The open tracker inventory contains only the CI foundation epic
   [#3](https://github.com/coghex/moskophoros/issues/3). No open pull request or
@@ -116,7 +116,7 @@ exact values, formulas and formats stay in the owning design sections.
 
 ### Out of scope
 
-All [design §Deferred](../../design.md#deferred) items remain deferred, including
+All [design §Deferred](../design.md#deferred) items remain deferred, including
 auxiliary buffers, style configuration, caching, variants, extra formats,
 perspective and vertex-color rendering. No editor, custom renderer, standalone
 image-command suite or game integration is added by this arc.
@@ -176,7 +176,7 @@ fingerprinting. The backend evaluates the request and returns addressed
 measurement data or named image buffers with actual provenance.
 
 The single authoritative field definition and failure/lifecycle contract now
-lives in [design §Capture job and result contract](../../design.md#capture-job-and-result-contract).
+lives in [design §Capture job and result contract](../design.md#capture-job-and-result-contract).
 Capture archives are internal debugging artifacts; their retention does not
 create replay or cache compatibility. Blender waits for completion, failure
 or caller interruption without a fixed render deadline. These choices are
@@ -187,7 +187,7 @@ accepted by D-6, not implementation suggestions to reopen during processing.
 The owner accepted a new or empty explicitly supplied workspace, refusal of
 nonempty directories without touching their contents, separate measure/render
 directories and retention after success or failure. The owning definition is
-[design §CLI](../../design.md#cli). D-7 rejects allocating fresh subdirectories
+[design §CLI](../design.md#cli). D-7 rejects allocating fresh subdirectories
 inside an existing nonempty parent, so there is no extra naming/discovery
 contract to implement.
 
@@ -198,7 +198,7 @@ demonstrates generated-fixture reproducibility and includes the owner's
 real-character review before final review and merge. Its tracked Markdown
 evidence records the exact command, input hash, tools, settings, output
 locations and owner's verdict. Models, sheets, previews and capture directories
-stay outside Git as [AGENTS.md](../../../AGENTS.md#files) requires.
+stay outside Git as [AGENTS.md](../../AGENTS.md#files) requires.
 
 The owner supplies the character, identifies the production size and judges
 the output. If those inputs are unavailable, S1-12 remains incomplete; agents
@@ -266,7 +266,7 @@ settle the shared capture contract and retained-work-directory behavior.
 ### D-3. Missing Blender fails selected integration tests
 
 Owner decision 2026-09-30, explicitly approving the proposed testing policy
-and correction to [design §Testing](../../design.md#testing). Selected Blender
+and correction to [design §Testing](../design.md#testing). Selected Blender
 tests fail with a clear diagnostic if Blender is unavailable. Developers
 intentionally running only fast tests use `pytest -m "not blender"`.
 A skip cannot satisfy a local-only obligation. Q-1 is resolved by this
@@ -301,7 +301,7 @@ job hash. Source edits fail capture, and failures leave final outputs intact.
 Capture archives are internal debugging artifacts, with no replay/cache
 compatibility promise. Waits end on completion, failure or caller interruption,
 with no fixed render deadline. The contract now lives in
-[the product design](../../design.md#capture-job-and-result-contract), so its
+[the product design](../design.md#capture-job-and-result-contract), so its
 fields and meanings have one authority. Q-3 is resolved by this decision.
 
 ### D-7. Retain captures only in a new or empty explicit workspace
@@ -311,7 +311,7 @@ existing nonempty directory with a usage error and leaves its contents
 untouched. A new or empty workspace gets separate measure/render directories
 and retains available capture artifacts after success or failure. Normal
 temporary capture directories are deleted. The rule is recorded in
-[design §CLI](../../design.md#cli). Rejected: allocating fresh subdirectories
+[design §CLI](../design.md#cli). Rejected: allocating fresh subdirectories
 under a nonempty parent. Q-4 is resolved by this decision.
 
 ### D-8. S1-12 rejects a nonempty `--work-dir`; S1-1 only parses the path
@@ -324,13 +324,13 @@ keeps the parser free of filesystem reads and puts the check and the creation
 together, with no window for the directory to change between them. Rejected:
 checking in the S1-1 parser, which reports earlier but reads the disk during
 option validation and still leaves S1-12 to handle a directory that changes
-before use. The product rule in [design §CLI](../../design.md#cli) is unchanged.
+before use. The product rule in [design §CLI](../design.md#cli) is unchanged.
 
 ### D-9. Settle the option-validation rules design §CLI left unstated
 
 Owner decision 2026-10-01: explicit approval of all eight P-6 rules listed
 under Q-5, recorded in the product contract rather than only in an issue. They
-now live in [design §Option validation](../../design.md#option-validation), which
+now live in [design §Option validation](../design.md#option-validation), which
 is their single authority. Rejected: filing S1-1 with an open-question section
 for its solver to stop and ask, and letting a repeated single-value option
 keep its last value. Q-5 is resolved by this decision.
@@ -340,7 +340,7 @@ keep its last value. Q-5 is resolved by this decision.
 Owner decision 2026-10-01: every clip is selected in ascending animation
 index. This matches how the capture job identifies clips; a re-export that
 reorders animations reorders the sheet. Recorded in
-[design §CLI](../../design.md#cli). Rejected: sorting by name, which is stable
+[design §CLI](../design.md#cli). Rejected: sorting by name, which is stable
 across re-exports but may not follow the author's intended order. Q-6 is
 resolved by this decision.
 
@@ -351,7 +351,7 @@ child, channel, sampler, accessor), a non-forest node hierarchy, and a
 sampler input accessor without one-element `min`/`max` are input errors
 (exit 3) naming the file and problem (V-11). Other glTF rules are left to
 Blender's importer. Recorded in
-[design §Input contract](../../design.md#input-contract). Rejected: checking only
+[design §Input contract](../design.md#input-contract). Rejected: checking only
 the originally listed items and letting other malformations surface as
 backend errors or reader crashes. Q-7 is resolved by this decision.
 
@@ -360,7 +360,7 @@ backend errors or reader crashes. Q-7 is resolved by this decision.
 Owner decision 2026-10-01: `"name": ""` is an input error giving the
 animation's index, like a missing name. An empty name cannot be selected with
 `--clip` or form a preview filename. Recorded in
-[design §Input contract](../../design.md#input-contract). Rejected: accepting
+[design §Input contract](../design.md#input-contract). Rejected: accepting
 `""` as a clip name. Q-8 is resolved by this decision.
 
 ### D-13. S1-1 owns view-preset resolution; S1-3 takes a resolved view
@@ -368,7 +368,7 @@ animation's index, like a missing name. An empty name cannot be selected with
 Owner decision 2026-10-01, settling an overlap found while drafting S1-3:
 S1-3's scope listed "presets, overrides", which S1-1 (#25) already
 implements. S1-1 keeps preset resolution and the `custom` rule, matching
-[design §Project layout](../../design.md#project-layout) (presets in `cli.py`,
+[design §Project layout](../design.md#project-layout) (presets in `cli.py`,
 camera and direction math in `views.py`). S1-3 takes an already-resolved
 pitch, direction count, start angle and model yaw as plain values, so it still
 depends only on S1-2. Rejected: moving presets into S1-3, which would have
@@ -380,7 +380,7 @@ Owner decision 2026-10-01, raised while drafting S1-4: with only `--ppm`,
 the cell is computed and had no upper bound. A computed width or height over
 4096, the `--cell` limit, is now a usage error giving the size and suggesting
 a smaller `--ppm`. Recorded in
-[design §Scale and ground point](../../design.md#scale-and-ground-point).
+[design §Scale and ground point](../design.md#scale-and-ground-point).
 Rejected: no limit, which lets a mistaken scale produce a runaway sheet.
 
 ### D-15. Overflow reports overshoot in whole pixels, rounded up
@@ -388,7 +388,7 @@ Rejected: no limit, which lets a mistaken scale produce a runaway sheet.
 Owner decision 2026-10-01, raised while drafting S1-4: each side's overshoot
 is reported in whole pixels rounded up, so any overshoot shows as at least
 1 px. Recorded in
-[design §Scale and ground point](../../design.md#scale-and-ground-point).
+[design §Scale and ground point](../design.md#scale-and-ground-point).
 Rejected: fractional pixels, which are exact but noisier and depend on float
 formatting.
 
@@ -397,7 +397,7 @@ formatting.
 Owner decision 2026-10-01, raised while drafting S1-5: if `--blender` or
 `$MOSKOPHOROS_BLENDER` is set but names a missing or non-executable file,
 discovery fails with a backend error naming the source and path, and later
-sources are not tried. Recorded in [design §Capture](../../design.md#capture).
+sources are not tried. Recorded in [design §Capture](../design.md#capture).
 Rejected: falling through to the next source, which could silently run a
 different Blender than the one requested.
 
@@ -406,7 +406,7 @@ different Blender than the one requested.
 Owner decision 2026-10-01, raised while drafting S1-5: `--any-blender`
 allows a different version, never an unknown one, so the sheet can always
 record `generator.blender`. The error quotes the output's first line.
-Recorded in [design §Capture](../../design.md#capture). Rejected: accepting the
+Recorded in [design §Capture](../design.md#capture). Rejected: accepting the
 raw first line as the version under `--any-blender`.
 
 ### D-18. The fingerprint hashes an object that mirrors the sheet
@@ -414,21 +414,21 @@ raw first line as the version under `--any-blender`.
 Owner decision 2026-10-01, raised while drafting S1-9: the hashed object is
 `{"generator": …, "settings": …, "source": {"sha256": …}}`, so a fingerprint
 can be recomputed from a sheet by keeping those parts. Recorded in
-[design §Export](../../design.md#export). Rejected: a flat `source_sha256` key.
+[design §Export](../design.md#export). Rejected: a flat `source_sha256` key.
 
 ### D-19. The sheet JSON keeps the example's key order, indented
 
 Owner decision 2026-10-01, raised while drafting S1-9: keys in design
 §Export's example order, 2-space indentation, UTF-8 with non-ASCII kept,
 shortest round-trip floats and a trailing newline. Recorded in
-[design §Export](../../design.md#export). Rejected: canonical compact JSON, which
+[design §Export](../design.md#export). Rejected: canonical compact JSON, which
 is hard to read and diff.
 
 ### D-20. Sheet JSON records base names, not paths
 
 Owner decision 2026-10-01, raised while drafting S1-9: `source.file` and
 `image.file` are base names, so the JSON is identical wherever the command
-runs. Recorded in [design §Export](../../design.md#export). Rejected: the path as
+runs. Recorded in [design §Export](../design.md#export). Rejected: the path as
 typed, which varies by directory and machine.
 
 ### D-21. Previews keep exact colors when they can, and never dither
@@ -436,7 +436,7 @@ typed, which varies by directory and machine.
 Owner decision 2026-10-01, raised while drafting S1-10: a GIF frame holds at
 most 256 colors. A frame within that limit keeps its exact colors; one over
 it is reduced to 256 without dithering, with a warning naming the clip.
-Recorded in [design §Export](../../design.md#export). Rejected: Pillow's default
+Recorded in [design §Export](../design.md#export). Rejected: Pillow's default
 dithered reduction, which adds noise the sheet does not have, and failing the
 run, which would block most real characters.
 
@@ -444,14 +444,14 @@ run, which would block most real characters.
 
 Owner decision 2026-10-01, raised while drafting S1-10: directions sit side
 by side like sheet cells, so a preview shows the real cell boundaries.
-Recorded in [design §Export](../../design.md#export). Rejected: a one-pixel gap.
+Recorded in [design §Export](../design.md#export). Rejected: a one-pixel gap.
 
 ### D-23. Preview filenames take the next free suffix
 
 Owner decision 2026-10-01, raised while drafting S1-10: in sheet order, each
 clip takes its sanitized name if free, else the smallest unused `-2`, `-3`, …
 suffix, counting other clips' own names, so no preview overwrites another.
-Recorded in [design §CLI](../../design.md#cli). Rejected: refusing the run.
+Recorded in [design §CLI](../design.md#cli). Rejected: refusing the run.
 
 ### D-24. An explicit `--view` replaces the whole reused view
 
@@ -459,7 +459,7 @@ Owner decision 2026-10-01, raised while drafting S1-11: with
 `--settings-from`, an explicit `--view` resolves exactly as without reuse,
 and the reused view is ignored. Without it, the reused view stays and
 individual overrides make the preset `custom`. Recorded in
-[design §Scale and ground point](../../design.md#scale-and-ground-point).
+[design §Scale and ground point](../design.md#scale-and-ground-point).
 Rejected: refusing `--view` with `--settings-from`.
 
 ### D-25. Reused settings are validated strictly
@@ -468,7 +468,7 @@ Owner decision 2026-10-01, raised while drafting S1-11: every reused field
 must be present and acceptable to its option, `projection` must be
 `orthographic`, and the fixed values must be set. Unknown fields inside
 `settings` are a usage error. Recorded in
-[design §Scale and ground point](../../design.md#scale-and-ground-point).
+[design §Scale and ground point](../design.md#scale-and-ground-point).
 Rejected: ignoring unknown fields, which could silently drop settings.
 
 ### D-26. Publishing outputs is all-or-nothing
@@ -477,21 +477,21 @@ Owner decision 2026-10-01, raised while drafting S1-12: earlier outputs are
 moved aside before publishing, and a rename failure partway rolls back what
 was replaced and restores them, so a failed run leaves earlier outputs
 untouched even during publication. Recorded in
-[design §CLI](../../design.md#cli). Rejected: best-effort renaming that names
+[design §CLI](../design.md#cli). Rejected: best-effort renaming that names
 what was replaced, which narrows the guarantee to failures before publishing.
 
 ### D-27. A run never deletes files it did not write
 
 Owner decision 2026-10-01, raised while drafting S1-12: previews from an
 earlier run that this run does not write stay as they were. Recorded in
-[design §CLI](../../design.md#cli). Rejected: removing matching previews, which
+[design §CLI](../design.md#cli). Rejected: removing matching previews, which
 risks deleting the user's files.
 
 ### D-28. An interrupted run exits 130
 
 Owner decision 2026-10-01, raised while drafting S1-12: Ctrl-C prints
 `moskophoros: error: interrupted`, with no traceback, publishes nothing and
-exits 130. Recorded in [design §Exit codes](../../design.md#exit-codes).
+exits 130. Recorded in [design §Exit codes](../design.md#exit-codes).
 Rejected: treating an interruption as an internal error (exit 1).
 
 ## Open questions
@@ -511,14 +511,14 @@ activation are accepted. The alternative early-command contract was rejected.
 ### Q-3. What exact capture job and result contracts will the slices share?
 
 Resolved by D-6. The accepted contract is now in
-[design §Capture job and result contract](../../design.md#capture-job-and-result-contract).
+[design §Capture job and result contract](../design.md#capture-job-and-result-contract).
 No capture-schema or lifecycle decision remains open for these slices.
 
 ### Q-4. May an explicitly retained work directory already contain files?
 
 Resolved by D-7. The owner selected a new or empty workspace and rejected
 fresh per-run subdirectories inside a nonempty parent. See the owning
-[CLI contract](../../design.md#cli). No workspace-policy decision remains open.
+[CLI contract](../design.md#cli). No workspace-policy decision remains open.
 
 ### Q-5. Which option-validation rules does design §CLI leave unstated?
 
