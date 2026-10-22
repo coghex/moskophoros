@@ -2,7 +2,7 @@
 
 This records the owner's visual review of the shading arc (epic #137), slice SHD-7 (#144), under vision V-12. The arc's code slices are #138 to #143; the design is [`docs/designs/shading_design.md`](../designs/shading_design.md).
 
-**Status: pending.** The review evidence is prepared and the owner has not yet given a verdict. Nothing below is an owner judgement, and no owner file has been changed. The owner's first answers (see [Round 2](#round-2-the-shrub) and [Round 3](#round-3-the-shrubs-leaf-ramp) and [Round 4](#round-4-the-six-live-lit-looks-on-the-shrub-with-l1-leaves)) asked for the live-lit shrub to be revised and rounds 2 to 4 followed, so no look or use is accepted yet. This record is completed when the owner's verdict and the exact-diff handoff are recorded.
+**Status: pending.** The review evidence is prepared and the owner has not yet given a verdict. Nothing below is an owner judgement, and no owner file has been changed. The owner's first answers (see [Round 2](#round-2-the-shrub) and [Round 3](#round-3-the-shrubs-leaf-ramp) and [Round 4](#round-4-the-six-live-lit-looks-on-the-shrub-with-l1-leaves)) asked for the live-lit shrub to be revised and rounds 2 to 4 followed. The owner then chose the current live-lit look (decision 1 = A, no project-file change, recorded in Round 4), and [Round 5](#round-5-the-baked-panel-shrub-with-l1-leaves-section-8-redone) redoes the baked-panel shrub section; no use is accepted yet and no verdict is given. This record is completed when the owner's verdict and the exact-diff handoff are recorded.
 
 ## Verdict
 
@@ -629,7 +629,14 @@ Measured over each whole sheet (8 directions × 8 frames), the share of the shru
 | `R4-live-dith4` | 3.8 / 34.2 / 32.7 / 14.6 / 14.7 |
 | `R4-live-sky20-dith4` | 6 / 49 / 23.7 / 15.9 / 5.3 |
 
-The owner's answer (which live-lit look) goes here when it arrives.
+### The owner's live-lit look choice (decision 1)
+
+Relayed by the moskophoros manager for request `moskophoros-20261020-1` in `~/.local/state/project-manager/moskophoros/relay-144-look.md` (SHA-256 `72a22992b7155ba56390acf2c483897ff37265b2a7b4e5d965d46a1a951548b7`). The owner, in the manager's terminal on 2026-10-22, asked "Which live-lit look for your Synarchy project?" with the round-4 page, verbatim:
+
+> "A current look"
+
+**Decision 1 = A, the current look: no change to `projects/synarchy.yaml`.** The live file was re-hashed after the answer: `e634338df4acbd1533402b1699be5cdae33563586d089df578c1796c7ed1a5ad`, the same as candidate A's copy (`v4/candidates/live-0/moskophoros/projects/synarchy.yaml`, SHA-256 `e634338df4acbd1533402b1699be5cdae33563586d089df578c1796c7ed1a5ad`) and as at the start of the review. Candidate A's proposed diff (`v4/candidates/live-0/proposed.diff`, 0 bytes) is empty, so the #145 agent has **no project-file diff to apply for the live-lit use**. It is bound to the round-4 evidence: page `v4/page/index.html` SHA-256 `3cce4d64686ddecc1014810da9de2e088562569bc899e2916c4ef6fe49be91aa`, index `v4/index.html` SHA-256 `bd158efae0cb9c2172ba89f004addc8cf8b08ea268bcba21ca76f5c566a554d5`, and the run `R4-live-0` (`shrub.png` `0a066fb49d8d197d671022c139856d52026dcdb2f73a2e5fa6bc72a1a9ce8174`). It is a decision about the live-lit look only, not the verdict on either use.
+
 
 Output files of the round's runs:
 
@@ -671,6 +678,47 @@ Output files of the round's runs:
 | `R4-live-sky20-dith4` | `shrub.json` | 19,264 | `022a4c19a374908ece41d1826cb949644fec73e0e13d53373812d9d425f62503` |
 | `R4-live-sky20-dith4` | `shrub.normal.png` | 615,227 | `d01e136f8435ebd1af6a4a08fbb0c9bca12fe92fd6db189523bd837bbe98e2d5` |
 | `R4-live-sky20-dith4` | `shrub.png` | 197,995 | `dd94786e40bfbb4b23e979174f861071c8a331f622fd996850abb2096ea0c554` |
+## Round 5: the baked-panel shrub with L1 leaves (section 8 redone)
+
+Rounds 1 to 4 are unchanged. This round adds new evidence under `$REVIEW5=~/.local/share/moskophoros-acceptance/shading-review/v5`, after the owner chose the current live-lit look ([Round 4](#round-4-the-six-live-lit-looks-on-the-shrub-with-l1-leaves)). It is not a verdict.
+
+Why: round 1's baked-panel shrub runs (`PB-shrub-*`, page section 8) used the cutout review's plain shrub library, which omitted the owner's trial-F leaf range, so most leaf pixels were the darkest green. Round 1's runs and page are kept unchanged; these runs replace them for the decision.
+
+- **Runs:** the six `PB-shrub-*` cases of round 1 with every panel setting the same (key 0.6, sky 0.2, ground 0.1; straight-on side view, 96×128 cells, `Sway`, 8 frames; the `panel-base` candidate copy, byte-identical to round 1's apart from the added `leaf-L1.yaml`), on the v1 shrub (SHA-256 `7a1a29382888c8c21a0b19c9418fdbcc5417e8ac038c9d626770ca6f4f0b684f`); only `--materials` differs, now `leaf-L1.yaml` (SHA-256 `5d43fa30b3f99cac4b1ca211078c2369515423e7d2402abd2a419ecbe8c3228e`, the round-3 file: ramp `[46, 45, 44, 43, 42]`, leaves' own range `[84, 226]`).
+- **Commands:** `$REVIEW5/helpers/run_case.py R5-shrub-<name>`, each `XDG_CONFIG_HOME=$REVIEW5/candidates/panel-base /usr/bin/lockf -k $LOCK $TOOL --project baked-panel --materials $REVIEW5/candidates/panel-base/moskophoros/libraries/leaf-L1.yaml --clip Sway --frames 8 --view side --directions 1 --start-angle 0 --cell 96x128 <the case's shading flags> --blender /opt/homebrew/bin/blender $REVIEW5/inputs/models/shrub.glb $REVIEW5/runs/R5-shrub-<name>/shrub.png`; master `354a21f`, headless Blender 5.2.2, under the lock. Every run's exact line is in its `command.txt` and in the index.
+- **Checks:** `helpers/check.py`, output `checks.txt` (SHA-256 `9e600bdb2c6682f5e8612c9988192df93861a22e5d9c6e02e923c748c198cc77`): exit status, schema, recorded settings against the command line, GIF frame counts, palette membership of every visible pixel; alpha and the normal map identical across runs that share an edge rule.
+- **Decision page:** `file:///Users/vincentcoghlan/.local/share/moskophoros-acceptance/shading-review/v5/page/index.html` (SHA-256 `f186c246e13e4cd62f8b2f40d715ea06321db267572076f5642fa4785ed25fb0`); index `$REVIEW5/index.html` (SHA-256 `82cbcb1605daa60d0b4271ccd9353fce521db5e5ad0d19a82d9a03ec09e4f688`).
+
+The owner's answer on the shrub cutouts goes here when it arrives.
+
+Output files of the round's runs:
+
+| Run | File | Bytes | SHA-256 |
+|---|---|---|---|
+| `R5-shrub-ramp-strong` | `shrub.Sway.gif` | 66,229 | `00f7116b01a586e5ddf8dc52f4b84745a1890c0fb8d162e5707e2dfe22df8c39` |
+| `R5-shrub-ramp-strong` | `shrub.json` | 8,802 | `75185af20e85b3a280118adb6a6c79f7abc7a079b0fca970df74a615209969d0` |
+| `R5-shrub-ramp-strong` | `shrub.normal.png` | 65,536 | `367cbdc3a57be0d7956b2cb3530157864b297bddf5cb8c5d11a6890ef2c900b8` |
+| `R5-shrub-ramp-strong` | `shrub.png` | 16,147 | `6020d18e62b87b8b531b6b1e9d1edcc786b2f2e522309c1fd83ef22ef16490e8` |
+| `R5-shrub-ramp-mode-ordered4` | `shrub.Sway.gif` | 76,391 | `dfd8a5c348e1d614445cc0c917d1079619d969f8e36c8f5500eeb4a817bc17d5` |
+| `R5-shrub-ramp-mode-ordered4` | `shrub.json` | 8,806 | `6c4bd95fdbc79c3d16d5268b79c7e539fc833b1aa4495a2e162738fcd76d2ac5` |
+| `R5-shrub-ramp-mode-ordered4` | `shrub.normal.png` | 65,536 | `367cbdc3a57be0d7956b2cb3530157864b297bddf5cb8c5d11a6890ef2c900b8` |
+| `R5-shrub-ramp-mode-ordered4` | `shrub.png` | 18,975 | `20280a0a07e28a651b2d2189f925509adc7c2a6e379022885dcedae6a55b58dc` |
+| `R5-shrub-ramp-ordered4-soft` | `shrub.Sway.gif` | 195,357 | `d5b5d93b42b02886e94513aea6fe979f6f5b2571711996dfd049fbcbf00e175f` |
+| `R5-shrub-ramp-ordered4-soft` | `shrub.json` | 8,807 | `5aa383480a9fc76a28ed418b4f9fbccf3022a71d9909c03e3b6bd4c60983c3a9` |
+| `R5-shrub-ramp-ordered4-soft` | `shrub.normal.png` | 97,502 | `d6e9d7bf7bbed90d6184e966de35868d17ddf46eda1ccc1b6db564fd29262601` |
+| `R5-shrub-ramp-ordered4-soft` | `shrub.png` | 54,301 | `8c7292cdb9906b9823b24f11018832b769bbdceeafd4525d587863d69bf4ab74` |
+| `R5-shrub-brightness-snap-palette-ordered4` | `shrub.Sway.gif` | 103,786 | `190f80bcf51ec9aa4da00a3395edb50322a5840f92f22548c69cd600006a1b78` |
+| `R5-shrub-brightness-snap-palette-ordered4` | `shrub.json` | 8,817 | `899bf5b65267321f451eed3dd41eed8600b48eef3d2dd0c7d32d2f27c389d9f6` |
+| `R5-shrub-brightness-snap-palette-ordered4` | `shrub.normal.png` | 65,536 | `367cbdc3a57be0d7956b2cb3530157864b297bddf5cb8c5d11a6890ef2c900b8` |
+| `R5-shrub-brightness-snap-palette-ordered4` | `shrub.png` | 28,156 | `b4df918b74efd9ef280f29559f621d9689b25764f134fb5923c817ffcf28558c` |
+| `R5-shrub-both` | `shrub.Sway.gif` | 164,858 | `93802824d232c8aab3267c943dbbb8d8f8b9b6fc8df5bcdb803d867880bd32ae` |
+| `R5-shrub-both` | `shrub.json` | 8,802 | `86ae6854da9593953f2dcfee3142eb206cb1abb2cf5097bf30a460f1fe271649` |
+| `R5-shrub-both` | `shrub.normal.png` | 65,536 | `367cbdc3a57be0d7956b2cb3530157864b297bddf5cb8c5d11a6890ef2c900b8` |
+| `R5-shrub-both` | `shrub.png` | 42,619 | `7f0500daf3fed120a019099d048a2a92eb07e4b9e3147cf4368894a1f82409f3` |
+| `R5-shrub-neither` | `shrub.Sway.gif` | 46,569 | `b47a908a10ae9a8a6fd934a6b4d9dbd687a119f18560ca83eef590401e22d691` |
+| `R5-shrub-neither` | `shrub.json` | 8,805 | `28888bb6306a38b13350d7b6bb11d81173df503dcde27ff4a4193ffea9e8a7bd` |
+| `R5-shrub-neither` | `shrub.normal.png` | 65,536 | `367cbdc3a57be0d7956b2cb3530157864b297bddf5cb8c5d11a6890ef2c900b8` |
+| `R5-shrub-neither` | `shrub.png` | 10,287 | `e6cd1193986792e1922b157592ccd1b7175e0bb842b956ccd791d75ad2b3db32` |
 
 ## Output
 
