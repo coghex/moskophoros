@@ -1,6 +1,6 @@
 # Shading visual acceptance
 
-This records the owner's visual review of the shading arc (epic #137), slice SHD-7 (#144), under vision V-12. The arc's code slices are #138 to #143; the design is [`docs/designs/shading_design.md`](../designs/shading_design.md).
+This records the owner's visual review of the shading arc (epic #137), slice SHD-7 (#144), under vision V-12, and, in [SHD-8](#shd-8-the-working-sheet-refresh-145), the working-sheet refresh (#145), which has nothing to refresh. The arc's code slices are #138 to #143; the design is [`docs/designs/shading_design.md`](../designs/shading_design.md).
 
 ## Verdict
 
@@ -779,6 +779,55 @@ Output files of the round's runs:
 | `R5-shrub-neither` | `shrub.json` | 8,805 | `28888bb6306a38b13350d7b6bb11d81173df503dcde27ff4a4193ffea9e8a7bd` |
 | `R5-shrub-neither` | `shrub.normal.png` | 65,536 | `367cbdc3a57be0d7956b2cb3530157864b297bddf5cb8c5d11a6890ef2c900b8` |
 | `R5-shrub-neither` | `shrub.png` | 10,287 | `e6cd1193986792e1922b157592ccd1b7175e0bb842b956ccd791d75ad2b3db32` |
+## SHD-8: the working-sheet refresh (#145)
+
+Operational record for slice SHD-8 (#145, epic #137), written 2026-10-22 after the owner's verdicts above. It is a record of checks only: **nothing was regenerated, nothing was applied, no owner file or code was changed, and no Blender run was made.** The visual verdict and its evidence above are untouched.
+
+**Authority and contract.** Dispatch `~/.local/state/project-manager/moskophoros/dispatch-shading-145.md` (SHA-256 `717a3570a23eb154e9354114c2bcd5d7a95ba5ba98aedf2e974e6b03cdea3755`) from the moskophoros manager for request `moskophoros-20261020-1`. The issue (#145) is the contract; the owner's "go" of 2026-10-21 (typed in the manager's terminal, answering "Shall I start solving and merging them as they're approved, stopping for anything important?") started the run, and the owner's two acceptances above release it.
+
+### Why there is nothing to refresh
+
+- **Inventory: empty, by the owner's decision.** D-42 of the design (2026-10-21): the owner, asked which existing sheets count as working sheets, answered "A" ("you have no working sheets yet. The inventory is recorded as empty, every existing sheet is kept as evidence, and #145 has nothing to regenerate and closes with that note"), relayed in `~/.local/state/project-manager/moskophoros/dispatch-shading-d42.md` (SHA-256 `f1953b0f26069b9e5d2cfd47c0b87dd4518c21ad9e4e8d8cfdfbdf16bdf823c4`). #138 recorded the empty inventory in [`shading-pre-arc-shd1.md`](shading-pre-arc-shd1.md#working-sheet-inventory), so there is no invocation to prove and no baseline proof is owed.
+- **Owner-file diffs: none.** Decision 1 = A, the current look, is the empty diff (see [Verdict](#verdict)): `projects/synarchy.yaml` needs no change, and the handoff above records that no other owner file needs one. The panel choices and the L1 leaf ramp are recorded values only, with no owner file to change. D-38's authority to apply accepted diffs therefore applies to nothing.
+
+### Preconditions verified
+
+| Precondition | Result | Evidence |
+|---|---|---|
+| #144's verdict is given and complete | both uses accepted (verdicts 11 and 12), exact-diff handoff recorded | this record at `4c62d993b4`, `docs/acceptance/shading.md` SHA-256 `acc9d993b9201c3f17dac7bee6f3a0a7a456c63b79b434e79ded3edad44cdda6` at that commit (the record's [Verdict](#verdict) section); #144 closed |
+| The design's decisions | D-8, D-38 and D-42 read as quoted above and in the issue | `docs/designs/shading_design.md`, last changed in `29e66f6`, SHA-256 `eef96ce9195df5a3729fe1d372642fbe8e0ba5a3295d5f352f93b10ec08788f4` |
+| #138's inventory | empty, recorded | `docs/acceptance/shading-pre-arc-shd1.md`, last changed in `04f481b`, SHA-256 `253ae273a0d647e2d75bbed5a0e07620f90b584321c3f159dcbaa63b18d1c6f6`; #138 closed |
+| The `shading-pre-arc` baseline | pinned source `f548312a5a929fb9bd843855b83b9762123f80ab` exists in the repository (commit object); the local manifest names the same revision | `docs/acceptance/shading-pre-arc-baseline.md` (SHA-256 `80ed6e57cd2687ce38055b4dbf26e2b363a3edbe7768b3cc4682aeb0c8622128`); `~/.local/share/moskophoros-acceptance/shading-pre-arc/manifest.json` SHA-256 `678e6810913610bcdc3cf34211a927557cd807d4440875c8449fe43e981efbed` |
+| The public implementation (#143) is delivered | #143 closed; the review's tool, master `354a21fe316595bee6f13c2455849162f6bb421f` ("Amend the earlier designs and V-7 for the shading arc (#143, D-39)"), has **no difference** in `src/`, `pyproject.toml` and `requirements.lock` against `4c62d993b4` (`git diff --stat` empty) | the command above, run at this record's base |
+
+### Owner files, re-hashed (read only)
+
+Taken on 2026-10-22 for #145, against the handoff table above (which was taken after the verdicts):
+
+| File | At #144's handoff | Now | Changed |
+|---|---|---|---|
+| `~/.config/moskophoros/config.yaml` | `257304183ca22ced1386e2484e95be75996a8a067b5eba3e9cea171d25a8fd0a` | `257304183ca22ced1386e2484e95be75996a8a067b5eba3e9cea171d25a8fd0a` | no |
+| `~/.config/moskophoros/projects/synarchy.yaml` | `e634338df4acbd1533402b1699be5cdae33563586d089df578c1796c7ed1a5ad` | `e634338df4acbd1533402b1699be5cdae33563586d089df578c1796c7ed1a5ad` | no |
+| `~/.config/moskophoros/synarchy.yaml` | `9195adfe08c7b0866143076d76079a6523c192f8152c764db0ab02805af344f4` | `9195adfe08c7b0866143076d76079a6523c192f8152c764db0ab02805af344f4` | no |
+| `~/.config/moskophoros/libraries/robotexpressive.yaml` | `33ebb76998abc2366d45a4d1c88f8cef82ccc7a9d4401907e4cde66dc27a2162` | `33ebb76998abc2366d45a4d1c88f8cef82ccc7a9d4401907e4cde66dc27a2162` | no |
+| `~/.config/moskophoros/palettes/synarchy.gpl` | `073695cba52f4fc6a38f035246e69f5c1f8343885fcdb9f376c8fef7b0c2938c` | `073695cba52f4fc6a38f035246e69f5c1f8343885fcdb9f376c8fef7b0c2938c` | no |
+
+### Ledger
+
+| Item | Count |
+|---|---|
+| Inventoried working sheets | 0 (D-42) |
+| Regenerated and reproduced through `--settings-from` | 0 |
+| Dispositioned by the owner, item by item | 0 (the owner's D-42 answer empties the whole inventory) |
+| Unresolved | 0 |
+| Owner-file diffs applied | 0 (decision 1 = A) |
+
+**Historical sheets, preserved.** Every existing sheet is historical evidence and none was opened for writing, moved, regenerated or replaced. As a check, the 399 output files of this review's runs (rounds 1 to 5 and the pre-arc comparison runs) were re-hashed against the SHA-256 recorded in each run's `result.json` and the hashes in this record: **0 mismatches**. The owner's other existing sheets, the eight early robot sheets in `~/Documents/Codex/` (sheet formats `/1` to `/3`, from the manager's search for D-42) and the review and test renders under `~/.local/share/moskophoros-acceptance/`, were not touched; the owner classed them as evidence, not working sheets.
+
+**A search for working sheets near the game.** Read-only, names only: of the JSON files under `~/work/synarchy` (285 files under 20 MB, excluding `.git`, `dist-newstyle` and `node_modules`; none was larger), none contains the string `moskophoros.sheet`. This confirms the manager's search that D-42 relied on; it does not replace the owner's answer. `~/work/codekarl` was not read.
+
+**Not done, by design (D-42, issue #145 "Out of scope"):** no regeneration command, no `--settings-from` reuse run, no old-schema loader or converter, no new tuning, no second-game setup, no repository code change, no label, and no change to epic #137, which the manager closes.
+
 
 ## Output
 
