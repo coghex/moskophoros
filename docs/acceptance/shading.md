@@ -2,7 +2,7 @@
 
 This records the owner's visual review of the shading arc (epic #137), slice SHD-7 (#144), under vision V-12. The arc's code slices are #138 to #143; the design is [`docs/designs/shading_design.md`](../designs/shading_design.md).
 
-**Status: pending.** The review evidence is prepared and the owner has not yet given a verdict. Nothing below is an owner judgement, and no owner file has been changed. The owner's first answers (see [Round 2](#round-2-the-shrub)) asked for the live-lit shrub to be revised, so no look or use is accepted yet. This record is completed when the owner's verdict and the exact-diff handoff are recorded.
+**Status: pending.** The review evidence is prepared and the owner has not yet given a verdict. Nothing below is an owner judgement, and no owner file has been changed. The owner's first answers (see [Round 2](#round-2-the-shrub) and [Round 3](#round-3-the-shrubs-leaf-ramp)) asked for the live-lit shrub to be revised and rounds 2 and 3 followed, so no look or use is accepted yet. This record is completed when the owner's verdict and the exact-diff handoff are recorded.
 
 ## Verdict
 
@@ -435,7 +435,8 @@ Measured over each whole sheet (8 directions × 8 frames), leaf pixels by green,
 | `S2-live-sky20-dith4-m1` | v1, trial F | 289,854 | 173,244 | 23.3 / 40.1 / 16.2 / 20.4 |
 | `S2-live-sky20-dith4-m2` | v2, trial F | 398,950 | 305,455 | 18.6 / 55.7 / 13.9 / 11.7 |
 
-The owner's answers to this round's three questions (the colour fix, the denser model, the look) go here when they arrive.
+The owner answered decisions 1 and 2 of this round (leaf colour: "B: better, not right"; model: "D: keep v1"), quoted verbatim under [Round 3](#round-3-the-shrubs-leaf-ramp); decision 3 (the look) is not answered and waits for the leaf colour.
+
 
 Output files of the round's runs:
 
@@ -513,6 +514,94 @@ Output files of the round's runs:
 | `S2-live-sky20-dith4-m2` | `shrub.json` | 19,253 | `5ead5986459d63cfe4fddaf22cf53c79f9a29cc32203a78fb57990d4dc32f68b` |
 | `S2-live-sky20-dith4-m2` | `shrub.normal.png` | 676,945 | `4df7c89b2d23d21a6bb0a9053cdec6dd6619bad52b5c251728c98b349873b1b1` |
 | `S2-live-sky20-dith4-m2` | `shrub.png` | 165,652 | `dec72c6ca1a70e45bdee3199ed4a8807d9c401a588eb717553add9f617aa0c27` |
+## Round 3: the shrub's leaf ramp
+
+Rounds 1 and 2 are unchanged. This round adds new evidence under `$REVIEW3=~/.local/share/moskophoros-acceptance/shading-review/v3`. It is not a verdict.
+
+### The owner's answers on round 2
+
+Relayed by the moskophoros manager for request `moskophoros-20261020-1` in `~/.local/state/project-manager/moskophoros/relay-144-shrub-2.md` (SHA-256 `eafad3ac450bd9b1b8440e29fb39387a0beff9af5e3386f5f7b8a18dc84dc91b`). The owner answered in the manager's terminal on 2026-10-22 (UTC), through the manager's multiple-choice questions on the round-2 page. Verbatim selections:
+
+1. "Section 1 of the shrub page: does the leaf colour fix (trial F) help?" -> "B: better, not right"
+2. "Section 2: which shrub model? v1 (52 cards, branches visible through gaps) or v2 (122 cards, a full ball that hides most of the trunk from above)?" -> "D: keep v1"
+3. Follow-up, after the manager showed a zoomed v1 + trial F canopy: "With trial F, what is still not right about the greens? (Pick all that apply)" -> "Two greens clash, Jump too big, Still too dark, Highlights too bright" (as shown to the owner: two greens clash = "the dull olive mass and the bright emerald leaves look like different colours; I want one green family"; jump too big = "dark to bright happens in one step; I want more in-between shades so leaves blend"; still too dark = "too much of the canopy is the dull olive; overall it should be lighter"; highlights too bright = "the bright emerald leaves pop out too much, like neon or noise").
+
+Section 3 of the round-2 page (which look) is not answered: it waits for the leaf colour. The owner keeps the v1 model; the trunk and branches stay as they are until the leaves are settled.
+
+### Evidence
+
+- **Model:** `shrub.glb` v1, SHA-256 `7a1a29382888c8c21a0b19c9418fdbcc5417e8ac038c9d626770ca6f4f0b684f`, unchanged. **Look:** candidate A, the owner's current project settings (no sky, no dither), the round-1 tree, byte-identical `projects/synarchy.yaml`.
+- **Candidates L0 to L5**, one render each, each a copy of trial F's library with only the `Leaves` entry's ramp and its own range changed; no owner file changes (the shrub library is a review file):
+
+| Candidate | Library file SHA-256 | `Leaves` ramp | Range |
+|---|---|---|---|
+| L0 | `f67099def641676eb9a39924f2f89455ba93b03d88b9df6a8996c4eff528b74c` (`libraries/leaf-L0.yaml`) | indices [34, 35, 36, 37] = #3d431c #41631f #358824 #43ad55 | [110, 190] |
+| L1 | `5d43fa30b3f99cac4b1ca211078c2369515423e7d2402abd2a419ecbe8c3228e` (`libraries/leaf-L1.yaml`) | indices [46, 45, 44, 43, 42] = #343728 #414d35 #4a6844 #658b6b #8dad9d | [84, 226] |
+| L2 | `10c492932010ae7dd9805939306a1069788473252104465edeece0bec5872076` (`libraries/leaf-L2.yaml`) | indices [29, 28, 27, 26] = #534c39 #5d603f #768560 #95ad8d | [40, 240] |
+| L3 | `9803c22ef1497d674be62ebf0789bdc4c786e223b7ba8f358e7fa5290a8d7069` (`libraries/leaf-L3.yaml`) | indices [19, 20, 21, 22] = #6a5822 #757d22 #7ba540 #87ca70 | [40, 240] |
+| L4 | `3f8de37716e19294d2716e625eedf9ab3b9aaa574737b664d449a5cc5a628dfb` (`libraries/leaf-L4.yaml`) | indices [34, 35, 44, 43] = #3d431c #41631f #4a6844 #658b6b | [40, 240] |
+| L5 | `38342646b6103c030b0fe0a9a2b6ec2ae74b277cd4456a5f26b1212afdf34785` (`libraries/leaf-L5.yaml`) | generated `{base: "#43ad55", bands: 6, lightness_step: 0.05, hue_shift_deg: -6.0, chroma_fade: 0.3}`, resolved to indices [35, 35, 36, 36, 37, 37] = #41631f #41631f #358824 #358824 #43ad55 #43ad55 | [94, 218] |
+
+L0 is `lib-F.yaml` (SHA-256 `f67099de…b74c`, the owner's trial F) copied unchanged. The generated ramp of L5 is the library's own form (a `/3` library); the tool snapped its six bands onto three palette greens, each used twice.
+
+- **How the ranges were picked** (a proposal, not a choice; the relay asked that the canopy be lighter than trial F, with most leaf pixels on the middle bands, few on the darkest and the lightest reserved for leaves facing up): a calibration capture (`calibration/cal.png`, SHA-256 `ddc2c129a81e79adc1c8b14879554f5699508e9f535c7d55573147191eec4861`) gave the leaves a 64-entry ramp (palette entries 64 to 127) over shade 0 to 255, so each leaf pixel's colour names a 4-wide bin of its raw shade, 22,088 leaf pixels, all eight directions at frame 0 (`calibration/histogram.json`, SHA-256 `be1ffc9fa5f724e789256b9c4744a19376b0bb9123acb776379f97a88f7a6d07`). `helpers/calibrate.py` searched, for 4, 5 and 6 equal bands, the range whose bands best match shares of about 8% (darkest), 15% (lightest) and an equal split between: 4 bands [40, 240]; 5 bands [84, 226]; 6 bands [94, 218] (`calibration/ranges.json`, SHA-256 `f9d2e6ab9f68e796a3a71185f768a8846610a908bf5c069a892e7011ce6d0c4f`). The same histogram reproduces trial F's measured shares closely (9.9, 48.6, 12.3, 29.3 against 8.1, 50.3, 13.0, 28.6).
+- **Commands:** `$REVIEW3/helpers/run_case.py R3-L0 … R3-L5`, each `XDG_CONFIG_HOME=$REVIEW3/candidates/live-0 /usr/bin/lockf -k $LOCK $TOOL --project synarchy --view iso --directions 8 --cell 128x128 --materials $REVIEW3/candidates/live-0/moskophoros/libraries/leaf-<L>.yaml --clip Sway --frames 8 --blender /opt/homebrew/bin/blender $REVIEW3/inputs/models/shrub.glb $REVIEW3/runs/R3-<L>/shrub.png`; master `354a21f`, headless Blender 5.2.2, under the lock; every run exited 0. The calibration capture used `--frames 1` and `cal-lib.yaml` instead of the library, output `calibration/cal.png`.
+- **Checks:** `helpers/check.py`, all pass; alpha and the normal and depth maps are identical across the six runs (output `checks.txt`, SHA-256 `8fc5c1aacc4acc619ece76a697d016109bd759b99b2c4a4b21a795031ae08cb2`). L0's sheet, maps and both preview GIFs are byte-identical to round 2's `S2-live-0-m1`; only the sheet JSON differs (model, subject and library file names, and so the fingerprint).
+- **Decision page:** `file:///Users/vincentcoghlan/.local/share/moskophoros-acceptance/shading-review/v3/page/index.html` (SHA-256 `c792026b266231a87dcdf3272815077105d960314cbf218077627a67ec45fd16`), index `$REVIEW3/index.html` (SHA-256 `b57644003ac1fe3ebe0b50ebb05d2278633b5618c026bc1cdcee2a47b9fbe87d`), measurements `stats.json` (SHA-256 `b7e604fc2bebb0d4372cedd60473e24583c12113006459587beb1fdb2ff172d5`).
+
+Measured over each whole sheet (8 directions × 8 frames), the share of leaf pixels on each distinct green, darkest first:
+
+| Candidate | Greens, darkest first | Share, % |
+|---|---|---|
+| L0 | #3d431c #41631f #358824 #43ad55 | 8.1 / 50.3 / 13 / 28.6 |
+| L1 | #343728 #414d35 #4a6844 #658b6b #8dad9d | 3.6 / 41.9 / 25.4 / 14.2 / 14.9 |
+| L2 | #534c39 #5d603f #768560 #95ad8d | 1.3 / 42.6 / 37.4 / 18.7 |
+| L3 | #6a5822 #757d22 #7ba540 #87ca70 | 1.3 / 42.6 / 37.4 / 18.7 |
+| L4 | #3d431c #41631f #4a6844 #658b6b | 1.3 / 42.6 / 37.4 / 18.7 |
+| L5 | #41631f #358824 #43ad55 | 21 / 53.6 / 25.4 |
+
+The owner's answer to the round-3 question (which leaf ramp) goes here when it arrives.
+
+Output files of the round's runs:
+
+| Run | File | Bytes | SHA-256 |
+|---|---|---|---|
+| `R3-L0` | `shrub-lit.Sway.gif` | 1,386,007 | `9b6829abab790a74943625e77fd3110c865c01a7feaf007daacb046d56688a35` |
+| `R3-L0` | `shrub.Sway.gif` | 615,648 | `83c256e3aeee866dc69f2267a64ef9917110dfae69b7ed901035eae296216c8d` |
+| `R3-L0` | `shrub.depth.png` | 407,004 | `a1b10e37972614d34653e9de36380899f875858e8ce7734d71f7b43417031ad9` |
+| `R3-L0` | `shrub.json` | 19,244 | `a6c7dd21a3efd2c120a41de18ad65e9e554c8995051bb773fe570b9ea15af00d` |
+| `R3-L0` | `shrub.normal.png` | 615,227 | `d01e136f8435ebd1af6a4a08fbb0c9bca12fe92fd6db189523bd837bbe98e2d5` |
+| `R3-L0` | `shrub.png` | 169,883 | `466155377d0c59c2b5281600849f93a47a364f92b86fb7709c80231048c55737` |
+| `R3-L1` | `shrub-lit.Sway.gif` | 1,398,600 | `0eef7e719483776c247788efde027a875c0ea6c0b2bb95f40588d1023d23d4a0` |
+| `R3-L1` | `shrub.Sway.gif` | 660,626 | `28f53725341a7448c6c5916a4ad75b2eefe59314e8722d533c9df767f5600da7` |
+| `R3-L1` | `shrub.depth.png` | 407,004 | `a1b10e37972614d34653e9de36380899f875858e8ce7734d71f7b43417031ad9` |
+| `R3-L1` | `shrub.json` | 19,259 | `04f377351da173c2965968bbfbf909dfdb03554b6ae2a26470ebfeac28ddad2e` |
+| `R3-L1` | `shrub.normal.png` | 615,227 | `d01e136f8435ebd1af6a4a08fbb0c9bca12fe92fd6db189523bd837bbe98e2d5` |
+| `R3-L1` | `shrub.png` | 181,760 | `0a066fb49d8d197d671022c139856d52026dcdb2f73a2e5fa6bc72a1a9ce8174` |
+| `R3-L2` | `shrub-lit.Sway.gif` | 1,384,201 | `441accd9a5bdc7982dd98cb4f6574d6825b0ea4ef207f5dc50f49b5382faedc5` |
+| `R3-L2` | `shrub.Sway.gif` | 600,158 | `04478d1e29e77d2eece58094e75df1ffc99d2c7fb0bb33a7aecf2628d1b10108` |
+| `R3-L2` | `shrub.depth.png` | 407,004 | `a1b10e37972614d34653e9de36380899f875858e8ce7734d71f7b43417031ad9` |
+| `R3-L2` | `shrub.json` | 19,243 | `b49426169c6518d36af832abf7be3d5f694ab12d4347270a90f2fc6b6882ad72` |
+| `R3-L2` | `shrub.normal.png` | 615,227 | `d01e136f8435ebd1af6a4a08fbb0c9bca12fe92fd6db189523bd837bbe98e2d5` |
+| `R3-L2` | `shrub.png` | 161,330 | `d7fc84b3a643e53c5a09ecc5fb7ba6f8f5e77532db0dc857a8fd0601785161f8` |
+| `R3-L3` | `shrub-lit.Sway.gif` | 1,389,711 | `2707983e1d02a18622a8e7aceba5e43205f1c5e1aaa1b8da137e2e3b52f1c33a` |
+| `R3-L3` | `shrub.Sway.gif` | 600,158 | `4ae237e701235c8b253587e2315bed2df449eda762b0455ba4aa0cd04f4bd3d9` |
+| `R3-L3` | `shrub.depth.png` | 407,004 | `a1b10e37972614d34653e9de36380899f875858e8ce7734d71f7b43417031ad9` |
+| `R3-L3` | `shrub.json` | 19,243 | `37b245b3b3360c2e4774d695fe2c8a3882a606ffed28997bc337a3aae1f348e6` |
+| `R3-L3` | `shrub.normal.png` | 615,227 | `d01e136f8435ebd1af6a4a08fbb0c9bca12fe92fd6db189523bd837bbe98e2d5` |
+| `R3-L3` | `shrub.png` | 162,307 | `c964635b16e940b928b36fa08c2ef2871bd5bd1b8c6fd4eff67ae4844640be11` |
+| `R3-L4` | `shrub-lit.Sway.gif` | 1,389,227 | `fac5b92a0a19bb6e7cfb04e187ad49d8dbf066fd42d62f970f701238143c0a39` |
+| `R3-L4` | `shrub.Sway.gif` | 600,158 | `a19ccc5db1de8771522fcb6b3758ab1dcdf05bf6d76a86d9cf3066fedcd0d750` |
+| `R3-L4` | `shrub.depth.png` | 407,004 | `a1b10e37972614d34653e9de36380899f875858e8ce7734d71f7b43417031ad9` |
+| `R3-L4` | `shrub.json` | 19,243 | `1b42ab193ea6efa6007ebe38917f8876f46b7ae9726bb5ab148e9534d1681ffa` |
+| `R3-L4` | `shrub.normal.png` | 615,227 | `d01e136f8435ebd1af6a4a08fbb0c9bca12fe92fd6db189523bd837bbe98e2d5` |
+| `R3-L4` | `shrub.png` | 162,830 | `38a7d65f3433a617ed1f5b6dca27879d57695483d5c4f51e962ecd4083c9b216` |
+| `R3-L5` | `shrub-lit.Sway.gif` | 1,386,299 | `a86a03729f1ac2a5685bc01751a18e4f2549130789d0790cc60466305414c75f` |
+| `R3-L5` | `shrub.Sway.gif` | 590,812 | `3e42518dc51485329ed065b03376788e666d76537a214ede9a4e86e304e16d11` |
+| `R3-L5` | `shrub.depth.png` | 407,004 | `a1b10e37972614d34653e9de36380899f875858e8ce7734d71f7b43417031ad9` |
+| `R3-L5` | `shrub.json` | 19,484 | `6a472527a93eb782ed765b34c126186b899bfddb26dc0e8bd604af79db51171b` |
+| `R3-L5` | `shrub.normal.png` | 615,227 | `d01e136f8435ebd1af6a4a08fbb0c9bca12fe92fd6db189523bd837bbe98e2d5` |
+| `R3-L5` | `shrub.png` | 160,845 | `19af5aa8b7b46f8d40e9b8c219849922bd3136d7715788b55414aec776ac2a3e` |
 
 ## Output
 
