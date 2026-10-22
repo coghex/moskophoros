@@ -4,7 +4,7 @@ Where the project stands, for an agent or the owner arriving cold. Read it
 after [AGENTS.md](AGENTS.md), then check `git log` and the tracker for
 anything newer than the date below.
 
-**Last reconciled: 2026-10-20.**
+**Last reconciled: 2026-10-22.**
 
 **Rules for this file:**
 - **Current state only.** When something changes, replace the old line; don't
@@ -33,12 +33,13 @@ anything newer than the date below.
   - settings: 2026-10-13;
   - lighting sheet: 2026-10-14;
   - alpha: 2026-10-19, cutouts judged separately on a shrub the same day;
-  - projects and camera: 2026-10-20.
+  - projects and camera: 2026-10-20;
+  - shading, both uses: 2026-10-22.
 - **Settings arc** ([design](docs/archive/designs/settings_design.md)): accepted
   by the owner on 2026-10-13 ([record](docs/archive/acceptance/settings.md)); epic
   #83 closed. Layered YAML settings (user file, reused sheet, `--config`,
   options), the shading values, per-material shading and clip frame counts.
-  Libraries are YAML (`moskophoros.materials/3`, with `/2` still supported).
+  Libraries are YAML (`moskophoros.materials/4`, with `/3` and `/2` still supported).
 - **Lighting sheet** ([record](docs/archive/acceptance/lighting-sheet.md)): every run
   writes `<stem>.normal.png`; `--depth` adds a depth map and `--light X,Y,Z`
   lit previews. Known cost: normal and depth encoding roughly doubles a test
@@ -55,9 +56,18 @@ anything newer than the date below.
   over the global file. The camera takes a direction vector, a roll, a position, and
   an orthographic or perspective projection, as flags or settings. Commands that
   set no camera give byte-identical images. Contract: design §Camera and directions.
-- **Open epics:** none. Material styling, settings, lighting sheets, alpha
-  and projects and camera are complete; #63, #83, #95, #113 and #127 are
-  closed on the owner’s word.
+- **Shading arc** ([design](docs/archive/designs/shading_design.md)): accepted
+  by the owner on 2026-10-22 ([record](docs/archive/acceptance/shading.md)); epic
+  #137 closed. Optional baked shading: modes `ramp`, `brightness`, `both` and
+  `neither`; key, sky and ground light; ordered dithering; and snap to a ramp or
+  the palette. All of it is off by default, so default commands give byte-identical
+  images. Sheets are `moskophoros.sheet/15`. Contract: design §Stylize.
+  Live-lit Synarchy sprites keep their current look (no project change). The baked
+  panels' accepted values are soft light (key 0.35, sky 0.15), no dither and the
+  camera frame, recorded in the shading record.
+- **Open epics:** none. Material styling, settings, lighting sheets, alpha,
+  projects and camera, and shading are complete; #63, #83, #95, #113, #127 and
+  #137 are closed on the owner’s word.
 
 ## Environment
 
@@ -110,11 +120,8 @@ anything newer than the date below.
 
 ## Next steps
 
-1. **Shading design (next, when the owner is ready):** baked light for straight-on art panels.
-   The three shading ways are ramp only, brightness only, and both, with
-   dithering. It amends lighting D-4, `design.md` §Previews ("never baked"),
-   and material styling D-22 and D-25. Then the Codekarl palette and
-   `codekarl.yaml` follow.
+1. **Codekarl panels (next, with the owner):** the Codekarl palette and
+   `codekarl.yaml`, using the baked-panel values accepted in the shading record.
 2. **Later, on the owner's word:** more shading and texture for wood (raised
    in the alpha review; a look question, not yet an issue).
 3. **Deferred, each waiting on a stated trigger:**
