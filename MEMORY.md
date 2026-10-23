@@ -4,7 +4,7 @@ Where the project stands, for an agent or the owner arriving cold. Read it
 after [AGENTS.md](AGENTS.md), then check `git log` and the tracker for
 anything newer than the date below.
 
-**Last reconciled: 2026-10-22.**
+**Last reconciled: 2026-10-23.**
 
 **Rules for this file:**
 - **Current state only.** When something changes, replace the old line; don't
@@ -126,8 +126,10 @@ anything newer than the date below.
 
 ## Next steps
 
-1. **Later, on the owner's word:** more shading and texture for wood (raised
-   in the alpha review; a look question, not yet an issue).
+1. **Deferred by the owner (2026-10-23):** a way to give materials
+   "texturing" waits until the main functionality is finished. A more detailed
+   wood model (the alpha review's wood remark) is fine, but not worth testing
+   yet.
 2. **Deferred, each waiting on a stated trigger:**
    - recolouring without a re-render (settings D-18);
    - #43, mesh-weight animation and CUBICSPLINE tangents: approved, but held
