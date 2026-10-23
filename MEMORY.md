@@ -126,11 +126,20 @@ anything newer than the date below.
 
 ## Next steps
 
-1. **Deferred by the owner (2026-10-23):** a way to give materials
+1. **Synarchy's acolyte model (with the owner):** a rigged 3D acolyte to get
+   the model and output format right. Base chosen 2026-10-23 (a cultist:
+   hooded black robe split to mid-shin with a cord belt, linen pants, boots,
+   a bone-white half-mask; realistic, 1.75 m), with a Rigify rig and scripted
+   `idle` and `walk` the owner called a good start. The owner animates more by
+   hand and adds props as separate models. Files, outside git:
+   `~/.local/share/moskophoros-acceptance/acolyte-model/` (`anim-v1/` is
+   current). Open: how the tool's sheet maps to Synarchy's unit layout (per
+   clip and direction frame folders, five stored directions, 48 px cells).
+2. **Deferred by the owner (2026-10-23):** a way to give materials
    "texturing" waits until the main functionality is finished. A more detailed
    wood model (the alpha review's wood remark) is fine, but not worth testing
    yet.
-2. **Deferred, each waiting on a stated trigger:**
+3. **Deferred, each waiting on a stated trigger:**
    - recolouring without a re-render (settings D-18);
    - #43, mesh-weight animation and CUBICSPLINE tangents: approved, but held
      until a model needs it.
