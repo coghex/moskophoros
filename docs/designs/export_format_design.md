@@ -379,6 +379,289 @@ sheet is wanted, using its parent and stem to name metadata and all export
 folders. This preserves one invocation shape but asks the user to name a
 PNG the tool may deliberately not write.
 
+## Round-3 contract proposals awaiting owner signoff
+
+P-7, P-8 and P-9 are three enumerated approval packages. Approval of one
+does not approve the others or the acceptance model's appearance. All new
+settings below follow the existing defaults/global/reuse/project/flags order.
+
+### P-7. Settings, paths and image layout
+
+**1. Settings shape and defaults.** The new top-level values are
+`stored_directions: all`, `direction_names: {}`, `mirrors: {}` and `export`.
+The first is `all` or a nonempty ordered list of distinct integer indices.
+`direction_names` maps integer indices to filename aliases. `mirrors` maps
+integer target indices to integer stored-source indices. Each of those three
+settings replaces whole across layers; an empty name/mirror mapping clears
+it, and `all` resets direction selection. Global `null` is invalid.
+
+Each `clips.NAME` entry may contain `frames` (unchanged), `fps`,
+`stored_directions`, `mirrors`, and `output_name`. The new fields default to
+`null`: inherit the global value, or use the source clip's cleaned name for
+`output_name`. A per-clip `all` overrides a restricted global direction list;
+an empty per-clip mirror map disables inherited mirrors. Omitted leaves
+inherit across layers; explicit `null` clears the lower per-clip override.
+Entries merge by clip name **and leaf**, so changing FPS preserves that
+clip's lower-layer frame count. Alias maps use integer YAML keys, not string
+digits. New settings are files-only except `--formats` below.
+
+`fps` is finite and greater than zero, just like the global value. A clip's
+own FPS beats global FPS even when the latter comes from `--fps`; it controls
+both automatic sampling and the duration of explicitly counted frames.
+Existing loop, one-shot and zero-duration formulas use that resolved FPS.
+An explicit project/global-FPS flag shadowed by selected clips' own FPS
+gets one warning listing those clips, following the frame-count precedent;
+defaults, global-file values and reused values do not warn. Unlike count
+overrides, FPS overrides matter to the duration of a still too.
+
+Unused clip entries remain syntax/type checked without warnings, as today.
+Integer direction keys/values must be in 0..63 at read time. After merging,
+every selected clip's resolved indices must exist in the actual view;
+mirror sources must be stored and targets omitted. Direction-name keys
+must exist in the actual view. Nothing is silently dropped when `--view`
+or `--directions` changes. Settings errors identify file, key and location;
+merged incompatibilities identify the clip and contributing settings.
+
+**2. Names and identity.** Source clip names and original direction indices
+remain the frame identity. A clip's output name, used by every directory-mode
+path and preview, is its explicit alias or its source name with characters
+outside `A-Z a-z 0-9 . _ -` replaced by `_`. A direction's output name is its
+explicit alias, existing compass label, or `direction-NNN` with a three-digit
+index. Explicit aliases must already use that character set. Any resulting
+empty name, `.` or `..`, trailing dot, or case-insensitive Windows device
+name (`CON`, `PRN`, `AUX`, `NUL`, `COM1`..`COM9`, `LPT1`..`LPT9`, including
+such names before an extension) is refused. Colliding clip output names or
+direction output names are errors, compared ignoring ASCII case, with the
+conflicting originals named. No automatic numeric suffixes in directory
+mode. The old PNG mode keeps today's preview naming/disambiguation and does
+not apply directory-mode aliases to filenames.
+
+**3. Formats and templates.** These defaults ship in `defaults.yaml`:
+
+```yaml
+stored_directions: all
+direction_names: {}
+mirrors: {}
+export:
+  formats: [sheet]
+  frame_path: frames/{clip}/{direction}/frame_{frame:03}{map}.png
+  atlas_path: atlases/{clip}{map}.png
+  sheet_path: sheet{map}.png
+  atlas_padding: 0
+clips: {}
+```
+
+`export.formats` is a nonempty subset of `sheet`, `frames`, `atlases`, with
+no duplicates, replacing whole. `--formats sheet,frames,atlases` sets it as
+an ordinary last-layer option; equivalent input orders resolve to canonical
+order `sheet,frames,atlases`. Other `export` leaves merge independently.
+Templates are files-only settings. `atlas_padding` is an integer 0..64;
+it affects per-clip atlases only, not the combined sheet or frame PNGs.
+
+Template tokens are `{subject}`, `{variant}`, `{clip}`, `{direction}`,
+`{frame}`, and `{map}`. Subject and variant use the same cleaned-name rules;
+subject is still the input filename stem, variant is currently `default`.
+`{frame}` is a zero-based decimal index; `{frame:0N}` sets a minimum width
+N of 1..12, so `{frame:03}` means three digits. `{map}` is empty for colour,
+`.normal` for normals, `.depth` for depth. Frame templates allow all tokens;
+atlas templates exclude direction and frame; sheet templates exclude clip,
+direction and frame. Missing address tokens are allowed only if the fully
+expanded plan has no collisions. There are no other formatting operations,
+attribute/index access, expressions, globbing, environment expansion or
+home expansion; unknown tokens or unmatched braces are errors.
+
+Directory mode always writes `manifest.json`. Enabled previews use
+`previews/{clip}.gif` and `previews/{clip}.lit.gif`, not configurable in this
+arc. These names and every enabled map participate in collision checking.
+A template omitting `{map}` therefore fails if enabled colour/map files
+would collide. Paths must end in lowercase `.png`, use `/` separators and
+contain nonempty components other than `.` or `..`. Absolute paths, drive
+prefixes, backslashes, control characters and Windows-reserved filename
+characters/device components or trailing dots/spaces are refused. Compare
+all expanded paths ignoring ASCII case, including file/directory prefix
+conflicts. Errors are usage exit 2 before capture, naming the template,
+conflicting addresses and paths. Filesystem refusals are output exit 6.
+
+Directory mode may write any chosen format combination. The positional PNG
+mode requires `formats: [sheet]`; otherwise it fails asking for
+`--output-dir`. This avoids ignoring a project's requested formats. Its PNG,
+JSON, maps and preview names remain today's; directory path templates are
+recorded but inactive. The two destination forms are mandatory alternatives,
+not settings; neither an absolute output root nor the legacy output basename
+enters the fingerprint. Neither invocation writes project settings.
+
+**4. Image layout and maps.** Every format consumes the same addressed
+post-cleanup frames, without recapture, trimming, rescaling or per-frame
+recentering. A frame file is exactly the common W by H cell. A per-clip
+atlas has one row per stored direction in its configured order, one column
+per sampled frame, and no empty trailing columns. With padding p, its size
+is `N*(W+2p)` by `D*(H+2p)`; the logical rectangle in slot (column,row)
+starts at `(column*(W+2p)+p, row*(H+2p)+p)` and is W by H. Every border,
+including corners, repeats the nearest edge texel, preserving all channel
+values exactly. Padding zero is tightly packed.
+
+The combined sheet remains unpadded, clips in selected order, each clip's
+stored directions in configured order, columns equal to the largest frame
+count, unused cells transparent. Its row offset is the sum of preceding
+clips' stored-direction counts, never the original direction index.
+Normals and depth accompany every enabled format according to existing
+`normals`/`depth` settings, with identical logical rectangles and padding.
+Encodings remain unchanged; depth is 16-bit and normal alpha matches colour.
+The padding copies encoded texels, never averages or renormalizes them.
+Normal/depth files are neither independently packed nor trimmed.
+
+**5. Previews.** Preserve today's flat/lit GIF appearance, scaling, palette,
+delay rounding and limits. Preview real stored directions only, in their
+configured order, with each clip's resolved timing. Runtime mirror aliases
+are represented in metadata, not added as GIF panels in this arc. Visual
+acceptance will use a local comparison page to show those derived views.
+`--no-preview`, `--no-normals`, `--depth` and the existing light controls keep
+their meanings. A default legacy invocation keeps image bytes identical.
+
+**Example, not approved acolyte acceptance settings:**
+
+```yaml
+directions: 8
+stored_directions: [0, 4, 3, 2, 1]
+mirrors: {7: 1, 6: 2, 5: 3}
+export:
+  formats: [frames, atlases]
+  frame_path: animations/{clip}/{direction}/frame_{frame:03}{map}.png
+  atlas_path: atlas/{clip}{map}.png
+  atlas_padding: 1
+clips:
+  walk: {frames: 6, fps: 6}
+  attack:
+    stored_directions: [0, 7, 6, 5, 4, 3, 2, 1]
+    mirrors: {}
+    output_name: strike
+```
+
+This uses general clip names and settings, not a special game preset. Portrait
+generation and actual acceptance values remain Q-6; neither is implied here.
+
+### P-8. One generic metadata schema and replay contract
+
+**1. Schema and location.** Both command forms write
+`moskophoros.export/1`: `manifest.json` under the directory root, or today's
+`<output-stem>.json` beside the positional PNG. Replace the old combined-
+sheet-specific JSON shape rather than carrying two current schemas.
+`--settings-from` accepts either location only at this current schema;
+`moskophoros.sheet/15` is refused with a diagnostic naming both schemas and
+saying to rerender from the model/project. No migration tool or legacy reader.
+
+**2. Logical content.** Keep the existing generator, source, subject, variant,
+settings and fingerprint meanings. Settings gain the new fields and each
+selected clip's override values as supplied, including `null` inheritance.
+Per-clip fields are recorded together, with existing name/loop/count fields;
+FPS, stored directions, mirrors and output aliases are never lost on reuse.
+The command's destination mode is not a rendering setting: replay still
+chooses a destination explicitly. As today, the manifest stores resolved
+fitting values and inline palette/library content, not machine-local paths.
+
+Top-level directions describe the full ring's original index, angle, label
+and output name. Clip records retain source name, loop, source duration,
+resolved count, frame duration and time scale; add output name, resolved
+FPS and stored-direction order. Real frames carry clip, original direction,
+index, exact source time, and a list of locations. Subject and variant come
+from the manifest; those plus clip/direction/time remain the identity.
+
+An ordered `artifacts` array identifies each output by its zero-based array
+index, kind (`sheet`, `atlas`, `frame`, `preview`), channel (`color`, `normal`,
+`depth`, `flat`, `lit` as appropriate), root-relative path and pixel dimensions.
+An artifact includes its clip for atlas/frame/preview and direction/frame
+index for individual frame files. PNG artifacts record their padding and
+logical cell dimensions. Each real frame's `locations` entries contain an
+artifact index and logical `x,y,w,h`, for every exported colour/normal/depth
+representation of that sample. GIFs are artifacts but not frame locations.
+The JSON does not index itself. There is no `image`/`maps` singleton whose
+meaning changes depending on the number of selected output formats.
+
+Clip mirror records carry target and stored-source direction indices,
+`transform: flip-x`, and derived ground pixel `(W-gx,gy)`. The source clip,
+sample index/time and every artifact location are inherited from that clip's
+real source samples; aliases have no fake captured-frame entries or duplicate
+locations. Schema semantics specify image reversal within the logical cell,
+normal-vector X negation after decoding and normalization, unchanged normal
+alpha, and reversal of depth pixels without changing their values. Consumers
+flipping encoded normals directly use `R'=255-R` only for covered pixels;
+transparent texels stay zero. For padded atlases, flip the logical rectangle,
+not the entire atlas or physical slot. The manifest's normal/depth encodings
+remain those of the current design, not consumer shader conventions.
+
+**3. Determinism.** Artifact ordering is fixed: sheet colour/normal/depth;
+then per-clip atlases in clip order, each colour/normal/depth; then individual
+frames in clip, stored-direction, sample order, each colour/normal/depth;
+then previews in clip order, flat then lit. Omitted files have no entries.
+Mirror records sort by target index, aliases by index. The JSON has fixed
+key order, two-space indentation, UTF-8 and a trailing newline, as today.
+Relative paths always use `/`; output root and project name are absent.
+The fingerprint remains the canonical hash of generator, source digest and
+recorded settings, including new settings. Output artifact paths/dimensions
+are outside it, as the old `image` was; path templates are inside settings.
+
+**4. Replay.** The manifest alone plus the same model/generator restores every
+render/export setting, clip selection and one-shot marks, inline materials,
+counts, rates, subsets, aliases, mirroring and formats. No project or palette
+file is needed. The same destination mode and legacy basename where relevant
+produce byte-identical files and metadata at any root. A different explicit
+destination mode is allowed subject to its format constraints, and may change
+artifact filenames/metadata without changing the fingerprint. Existing
+settings-layer precedence and explicit `--clip`/`--once` behavior stay intact.
+No normalizing recorded camera/light directions again. Unknown schema,
+missing/invalid required settings and inconsistent references fail loudly.
+
+The logical shape and schema behavior above are proposed contracts; the
+implementation documentation will pin the complete JSON example and key
+order before the implementation's final review, without changing these
+meanings. During sliced delivery, any intermediate schema bump must have a
+separate name and reject its predecessor; it cannot silently change `/1`.
+
+### P-9. Publication, reruns and failures
+
+**1. Existing files.** Permit a new or existing output directory. A run
+replaces exactly the paths it writes and never deletes other files. Dropped
+clips, reduced frame counts, disabled maps and changed templates may leave
+old files; the new manifest lists only the current run's files and is the
+authority for what belongs to it. Consumers scanning directories must use a
+fresh output root or clean their own stale files. No hidden managed cleanup,
+ownership database, pruning option or recursive directory replacement in this
+arc. This extends the current publication policy without a destructive default.
+
+**2. Preflight and staging.** Resolve and validate every planned output path
+before Blender capture, including metadata/previews, duplicate names and
+file/directory prefix conflicts. The chosen output root is resolved once;
+its ancestors may be ordinary filesystem links, but no existing symlink at
+or below that resolved root may be traversed as an output component or
+overwritten as an output file. Recheck components before publication. Refuse
+non-regular existing file targets and input/output overlap, including the
+model and read configuration/palette/library files. Do not follow a link
+outside the root. Concurrent writers to the same root are unsupported; do
+not promise isolation against filesystem changes by other processes.
+
+After successful rendering/encoding, create needed directories, stage every
+file on the destination filesystem, and replace files under the existing
+rollback mechanism. Publish the manifest last; roll it back with the others
+if a handled failure interrupts publication. Readers must wait for successful
+command completion; a many-file replacement is not an atomic snapshot for
+concurrent readers. No successful partial export is reported.
+
+**3. Failures and cleanup.** On a handled write/rename failure or interruption,
+restore previous files and remove newly published files. Remove only newly
+created empty directories and this run's temporary files; never remove an
+existing directory or other content. Report output exit 6 naming the failed
+path. If rollback itself fails, report each unrestored target and preserved
+backup path honestly; do not claim earlier outputs were fully restored.
+No power-loss or uncatchable-process-kill recovery guarantee is added.
+Bad configuration and planned path collisions are usage exit 2, invalid model
+input exit 3, geometry/depth overflow exit 4 and backend failures exit 5,
+as in today's contract. A failure publishes no valid new manifest.
+
+The alternative is an explicitly managed export that removes files from the
+previous manifest on rerun. It is not recommended here because it expands
+ownership, deletion and recovery semantics. It can be designed separately if
+the owner prefers it; an empty-directory-only mode is another stricter option.
+
 ## Open questions
 
 ### Q-1. Output choices and consumer boundary
@@ -421,12 +704,26 @@ Resolved by D-5. This is not visual signoff on any model's symmetry.
 
 ### Q-9. Detailed settings, metadata and output contract
 
-Next checkpoint; Q-4, Q-5 and Q-8 are settled. Set settings keys and layer merge/reset
-semantics, per-clip FPS override validation and interaction with global flags,
-clip output-name mapping, templates and file validation, atlas padding,
-map alignment/naming, preview policy, manifest schema and settings reuse,
-and all-or-nothing publication including stale-file behavior. These choices
-must be explicit before affected slices become ready for issue processing.
+Round 3, first package: approve P-7 (recommended), or request amendments to
+its five enumerated parts: settings/merging/timing; names; formats/templates;
+image/map layout; stored-view previews? This covers exact clip output-name
+mapping and atlas padding. Metadata and publication are separate Q-10/Q-11.
+
+### Q-10. Metadata and reuse
+
+Round 3, second package: approve P-8 (recommended), one generic
+`moskophoros.export/1` schema for both command forms with artifact locations,
+mirror references and full replay; or keep distinct legacy-sheet and bundle
+schemas, revising the compatibility contract? P-8 rejects old `/15` reuse as
+already authorized in D-3 and avoids two representations of current settings.
+
+### Q-11. Output replacement and stale files
+
+Round 3, third package: approve P-9 (recommended), overwrite only written
+files, retain stale files, publish current manifest last with rollback;
+or require an explicitly managed root that removes previous-manifest files;
+or require a new/empty output root every run? Directory ownership and cleanup
+must be settled before the publication slice is designed.
 
 ## Verification strategy
 
@@ -463,3 +760,10 @@ No visual approval was requested there. Verified relay
 Next settle Q-9 and Q-6 before the final
 dependency-ordered slices and readiness signoff; the three-question limit
 does not silently resolve the remaining choices.
+
+Round 3 asks Q-9, Q-10 and Q-11 as the three explicit contract packages above.
+New round folder:
+`file:///Users/vincentcoghlan/.local/share/moskophoros-acceptance/export-format-design/round-03/index.html`.
+After contract answers, Q-6 covers acceptance values/visual probes and portrait
+scope, then Q-7 covers slices and readiness. No implementation is authorized
+by publication or by a partial contract answer.
