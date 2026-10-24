@@ -5,13 +5,18 @@ import moskophoros
 import moskophoros.capture
 import moskophoros.cleanup
 import moskophoros.cli
+import moskophoros.diagnostics
 import moskophoros.export
+import moskophoros.exportsettings
 import moskophoros.fit
 import moskophoros.gltf
 import moskophoros.imageops
+import moskophoros.outputs
 import moskophoros.plan
 import moskophoros.sampling
 import moskophoros.stylize
+import moskophoros.templates
+import moskophoros.usage
 import moskophoros.views
 
 
@@ -26,13 +31,18 @@ def test_the_package_namespace_holds_only_its_submodules():
         "capture",
         "cleanup",
         "cli",
+        "diagnostics",
         "export",
+        "exportsettings",
         "fit",
         "gltf",
         "imageops",
+        "outputs",
         "plan",
         "sampling",
         "stylize",
+        "templates",
+        "usage",
         "views",
     } <= public
     for name in public:

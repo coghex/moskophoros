@@ -163,8 +163,9 @@ allowed (owner decisions 2026-10-11, settings design D-2, D-5, D-8, D-14,
 D-17, D-22, D-28, D-30 and D-32; lighting sheet design D-18; alpha design
 D-9; projects and camera design D-4, D-5, D-12 and D-16). Each is validated exactly as its option is. One schema table
 in `settings.py` gives each setting's type, unit, default and validation
-rule, and the packaged `defaults.yaml` gives every setting its shipped
-default; a test keeps the two in agreement.
+rule, and the packaged `defaults.yaml` gives every active setting its shipped
+default; a test keeps the two in agreement. A setting can be defined in the
+table but inactive, which the export preparation below uses.
 
 | Setting | Option | Shipped default | Value |
 |---|---|---|---|
@@ -251,11 +252,25 @@ target are global only: a material cannot override them.
 `clips` is a mapping keyed by clip name, each entry a mapping of that clip's
 own settings, so far only `frames` (owner decisions 2026-10-11, settings
 design D-17, D-22, D-31 and D-34). Per-clip values are set in files only.
-Entries merge by clip name across the layers, the loaded sheet's included,
-and a higher layer's `null` clears a lower one's count. An entry naming a
+Entries merge by clip name and by leaf across the layers, the loaded sheet's
+included, and a higher layer's `null` clears a lower one's count. An entry naming a
 clip the model does not have, or one not selected, is unused, though it is
 still checked. An unknown key in an entry, or a bad count, is an error
 naming the file, the key path (`clips.Jump.frames`) and the line.
+
+**Export preparation (internal, not yet available).** The schema table also
+defines the settings the export arc will add: `stored_directions`,
+`direction_names`, `mirrors` and `export.formats`, `export.frame_path`,
+`export.atlas_path`, `export.sheet_path` and `export.atlas_padding`, and a
+clip's `fps`, `stored_directions`, `mirrors` and `output_name`. They are
+marked inactive. No settings file can set one: a file that does, with any
+value, the `export` group included, is a usage error (exit 2, before
+Blender) that names the file, the key and its line and column and says
+`not available yet`. The shipped `defaults.yaml` and the command's defaults hold
+active settings only, and no option for them exists. Internal code resolves
+them across layers (`exportsettings`), checks them against the view, and plans
+the relative output paths and warnings (`outputs`, `diagnostics`); the command
+does not call it yet, and its output and sheet schema are unchanged.
 
 **Layers.** Lowest first, each a partial set of settings; a setting a layer
 leaves out falls through to the layer below (projects and camera design D-9,
@@ -3110,6 +3125,11 @@ requirements.lock         exact tested versions
 src/moskophoros/
   cli.py                  options, presets, settings resolution, exit codes
   settings.py             the settings schema table, settings files, layers
+  templates.py            output path template grammar (internal, not yet available)
+  exportsettings.py       export settings resolved across layers and the view (internal)
+  outputs.py              output names and the relative output-path plan (internal)
+  diagnostics.py          shadowed-rate and mirror warnings, as text (internal)
+  usage.py                the usage error those modules raise
   defaults.yaml           the shipped settings defaults, installed with the package
   gltf.py                 .glb reading: scenes, clips, time ranges, validation
   views.py                camera and direction math

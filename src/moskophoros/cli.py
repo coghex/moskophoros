@@ -550,7 +550,9 @@ def resolve_settings(options: Options, environ=None) -> Options:
         options = apply_settings(options, reused)
         if reused.palette is not None:
             reused_colors = reused.palette.colors
-        clip_layers.append(reused.clip_frames)
+        clip_layers.append(
+            {name: {"frames": count} for name, count in reused.clip_frames.items()}
+        )
         options = _apply_defaults(options, defaults, global_, layered.APP_SETTINGS)
     else:
         options = _apply_defaults(options, defaults, global_)
@@ -565,9 +567,11 @@ def resolve_settings(options: Options, environ=None) -> Options:
     # included, a higher layer's null clearing a lower one's count; per-clip
     # values come from files and the sheet only (settings design D-17, D-39).
     clip_layers += [values.get("clips", {}) for _, values in projects]
-    merged = {}
-    for layer in clip_layers:
-        merged.update(layer)
+    merged = {
+        name: leaves["frames"]
+        for name, leaves in layered.merge_clips(*clip_layers).items()
+        if "frames" in leaves
+    }
     options = replace(options, clip_frames=MappingProxyType(merged))
     options = _resolve_palette(options)
     options = _resolve_materials(options, reused_colors)

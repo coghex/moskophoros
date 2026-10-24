@@ -33,8 +33,8 @@ def refused(data):
 # The schema table and the shipped defaults
 
 
-def test_the_schema_holds_this_slices_settings():
-    assert list(settings.SCHEMA) == [
+def test_the_active_schema_holds_this_slices_settings():
+    assert list(settings.ACTIVE_SCHEMA) == [
         "view",
         "pitch",
         "camera.projection",
@@ -103,7 +103,7 @@ def test_the_design_s_example_settings_file_loads():
 
 def test_the_defaults_file_and_the_schema_table_agree():
     shipped = settings.read_defaults()
-    assert list(shipped) == list(settings.SCHEMA)
+    assert list(shipped) == list(settings.ACTIVE_SCHEMA)
     assert shipped == dict(settings.DEFAULTS)
     assert shipped == {
         # The view, scale and framing settings and the app settings
@@ -176,7 +176,7 @@ def test_the_defaults_file_gives_every_default_as_the_table_writes_it():
 
     document = yamlfile.load(text.encode("utf-8"))
     expected = {"version": 1}
-    for name, setting in settings.SCHEMA.items():
+    for name, setting in settings.ACTIVE_SCHEMA.items():
         *groups, member = name.split(".")
         target = expected
         for group in groups:
@@ -843,7 +843,11 @@ def test_a_global_count_and_each_clips_own_value():
         "  Walk: {frames: null}\n  Pose: {}\n"
     ) == {
         "frames": 8,
-        "clips": {"Jump": 6, "Idle": "auto", "Walk": None},
+        "clips": {
+            "Jump": {"frames": 6},
+            "Idle": {"frames": "auto"},
+            "Walk": {"frames": None},
+        },
     }
     assert layer("frames: auto\n") == {"frames": "auto"}
     assert layer("frames: 100000\n") == {"frames": 100000}
@@ -875,8 +879,14 @@ def test_a_bad_clip_count_names_its_key_path_and_line(value, shown):
 
 
 def test_an_unknown_clip_key_names_its_key_path_and_line():
+    assert refused("clips:\n  Jump:\n    frames: 6\n    speed: 24\n") == (
+        "clips.Jump.speed: unknown key at line 4, column 5"
+    )
+
+
+def test_a_clip_leaf_not_available_yet_names_its_key_path_and_line():
     assert refused("clips:\n  Jump:\n    frames: 6\n    fps: 24\n") == (
-        "clips.Jump.fps: unknown key at line 4, column 5"
+        "clips.Jump.fps: not available yet at line 4, column 5"
     )
 
 
@@ -900,5 +910,12 @@ def test_a_malformed_clips_mapping_is_refused(text, problem):
 def test_per_clip_values_merge_by_name_and_null_clears_a_lower_count():
     user = layer("clips:\n  Jump: {frames: 6}\n  Walk: {frames: 4}\n")
     config = layer("clips:\n  Jump: {frames: null}\n  Idle: {frames: auto}\n")
-    assert merge(user, config)["clips"] == {"Jump": None, "Walk": 4, "Idle": "auto"}
-    assert merge(user, layer("fps: 6\n"))["clips"] == {"Jump": 6, "Walk": 4}
+    assert merge(user, config)["clips"] == {
+        "Jump": {"frames": None},
+        "Walk": {"frames": 4},
+        "Idle": {"frames": "auto"},
+    }
+    assert merge(user, layer("fps: 6\n"))["clips"] == {
+        "Jump": {"frames": 6},
+        "Walk": {"frames": 4},
+    }
