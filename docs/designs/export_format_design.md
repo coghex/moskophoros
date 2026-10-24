@@ -1365,15 +1365,26 @@ affect either run. Cover the positional default-output invocation and
 an otherwise identical opt-in depth/lit-preview invocation so colour, normals, depth,
 flat GIFs and lit GIFs are all compared; flags used only for the comparison
 must be identical at base/head. Record exact commands, base/head commits,
-model hash and each emitted image's base/head SHA-256 in the PR's
-`local-validation` block, with the required passing current-head Blender
-result. JSON/fingerprint differences are expected only across 6a's schema
+model and generator identity (including the model hash), and each emitted
+image's base/head SHA-256 directly beside the PR's single `local-validation`
+fence in the PR body. Keep that fence exactly in `docs/validation.md`'s
+format: `test.blender <full current-head SHA> passed`. Include the same
+commands, identities and image-hash table in linked `docs-push` evidence.
+JSON/fingerprint differences are expected only across 6a's schema
 switch. 6b must also keep the already-final `/1` default metadata unchanged.
 Keep models/renders/logs locally under the acceptance folder, separate from
 consumer evidence; publish the textual evidence with `docs-push` and link it
 from the PR. Do not commit generated binaries or substitute a CI-only claim
 for this local check. A mismatch blocks acceptance until explained and fixed
 within D-3; no new look is implicitly approved by tests.
+
+**Owner-approved evidence-placement clarification, 2026-10-24.** In response
+to question message `87d8wvc6b394xpzh44qtx9p3q2`, the owner chose
+"Beside the block (Rec.)", relayed by the manager in this session on
+2026-10-24. This applies to both EXP-6a and EXP-6b: the structured fence
+contains only the required test result; exact commands, model/generator
+identity and the base/head image SHA-256 table go directly beside it in the
+PR body and in linked `docs-push` evidence. Coverage is unchanged.
 
 **Scale evidence (review 1, not a benchmark guarantee).** The reviewer's
 `review-1/scale_probe.py`/`.log` reported 1,764 stored frames, 5,455 files and
