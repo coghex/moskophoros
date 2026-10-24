@@ -19,11 +19,12 @@ concrete precondition
 - [ ] EXP-3. Encode frame files and clip atlases from addressed frames
 - [ ] EXP-4. Record and reload the generic export manifest
 - [ ] EXP-5. Publish nested output files with rollback
-- [ ] EXP-6. Connect directory exports to the command pipeline
+- [ ] EXP-6a. Switch legacy output to the complete export manifest
+- [ ] EXP-6b. Activate configurable directory exports
 - [ ] EXP-7. Review the implemented acolyte export with the owner
 
-Seven slices approved by the owner on 2026-10-24 (D-15). All design questions
-are resolved. D-13 and D-14 set the model and placement policies for the
+Eight slices approved by the owner on 2026-10-24 (D-18 amends D-15).
+All design questions are resolved. D-13 and D-14 set the model and placement policies for the
 final owner-review slice; model rework remains outside implementation.
 The manager arranges design review and issue processing. No issues have
 been filed by this design session.
@@ -54,7 +55,8 @@ the owner's exact words, date and relay message ID or "in the designer's pane".
 
 The endpoint is an owner-signed design ready for `process-design-doc`.
 This session writes no implementation or repository tests and files no issues.
-Only this design document changes in the repository. Local probes and review
+The review-1 revision also adds the authorized dated note under vision V-2
+(D-19); all other repository work remains design-only. Local probes and review
 pages live under `~/.local/share/moskophoros-acceptance/export-format-design/`.
 Consumer repositories and existing acceptance evidence remain read-only.
 
@@ -238,8 +240,9 @@ Make frame folders and per-clip atlases independently selectable, with both
 available in one run and an optional combined sheet. Record generic metadata
 even when the combined sheet is disabled. Configure names, paths, row order
 and atlas padding through project settings. For the test consumer, export
-frames and let its existing compiler produce its private index and runtime
-atlases. Do not teach moskophoros the consumer's schema or digest rules.
+colour frames in its strict frame tree and keep normal/depth files outside
+that tree; its existing compiler owns the private index and runtime atlases.
+Do not teach moskophoros the consumer's schema or digest rules.
 This makes generic atlases useful to other consumers without claiming they
 replace this game's compilation step. D-6 and D-7 subsequently settle the
 exact settings and CLI.
@@ -510,10 +513,11 @@ digits. New settings are files-only except `--formats` below.
 own FPS beats global FPS even when the latter comes from `--fps`; it controls
 both automatic sampling and the duration of explicitly counted frames.
 Existing loop, one-shot and zero-duration formulas use that resolved FPS.
-An explicit project/global-FPS flag shadowed by selected clips' own FPS
-gets one warning listing those clips, following the frame-count precedent;
-defaults, global-file values and reused values do not warn. Unlike count
-overrides, FPS overrides matter to the duration of a still too.
+An explicit `--fps` or a project file's `fps` shadowed by selected clips'
+own FPS gets one warning listing those clips, even when the per-clip value
+equals the global value, following the frame-count precedent. Defaults,
+global-file values and reused values do not warn. Unlike count overrides,
+FPS overrides matter to the duration of a still too, so stills are included.
 
 Unused clip entries remain syntax/type checked without warnings, as today.
 Integer direction keys/values must be in 0..63 at read time. After merging,
@@ -537,6 +541,12 @@ conflicting originals named. No automatic numeric suffixes in directory
 mode. The old PNG mode keeps today's preview naming/disambiguation and does
 not apply directory-mode aliases to filenames.
 
+The name refusals in this subsection and expanded-template path checks below
+apply only in directory mode. The positional form checks recorded templates'
+syntax only and preserves existing output/preview naming, including names
+such as `aux` and case-colliding clips. Metadata retains original names;
+unapplied directory aliases cannot make a default legacy run fail.
+
 **3. Formats and templates.** These defaults ship in `defaults.yaml`:
 
 ```yaml
@@ -549,8 +559,11 @@ export:
   atlas_path: atlases/{clip}{map}.png
   sheet_path: sheet{map}.png
   atlas_padding: 0
-clips: {}
 ```
+
+Do not add `clips: {}` to `defaults.yaml`: clips keep their existing separate
+default/`CLIP_SCHEMA` handling. These new `SCHEMA` rows ship in defaults only
+when activated in EXP-6b. EXP-2's inactive-row gate is specified in P-13.
 
 `export.formats` is a nonempty subset of `sheet`, `frames`, `atlases`, with
 no duplicates, replacing whole. `--formats sheet,frames,atlases` sets it as
@@ -569,7 +582,27 @@ atlas templates exclude direction and frame; sheet templates exclude clip,
 direction and frame. Missing address tokens are allowed only if the fully
 expanded plan has no collisions. There are no other formatting operations,
 attribute/index access, expressions, globbing, environment expansion or
-home expansion; unknown tokens or unmatched braces are errors.
+home expansion; unknown tokens or unmatched braces are errors. One root holds
+one subject's export (D-16); `{subject}` names files inside that root, not a
+way to batch different models into a shared root.
+
+The grammar is:
+
+```text
+template   = (literal | "{" token "}" | "{frame:0" width "}")+
+token      = "subject" | "variant" | "clip" | "direction" | "frame" | "map"
+width      = "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10" | "11" | "12"
+literal    = one character from [A-Za-z0-9._/-]
+```
+
+There are no brace escapes: `{{` and `}}` fail. `{frame:3}`, `{frame:00}`,
+`{clip:03}`, `{ clip }`, leading-zero widths and non-ASCII literals fail.
+The per-format token restrictions above still apply. Syntax is checked even
+for inactive templates. Every path rule below applies to each expanded path,
+not to a token's spelling in the template: for example `out/{map}/frame.png`
+fails for colour's empty component. A nonempty component starting with a dot
+(for example `.subject`) is allowed unless it is exactly `.` or `..` or
+violates another rule; hidden names are not a separate prohibition.
 
 Directory mode always writes `manifest.json`. Enabled previews use
 `previews/{clip}.gif` and `previews/{clip}.lit.gif`, not configurable in this
@@ -581,7 +614,8 @@ prefixes, backslashes, control characters and Windows-reserved filename
 characters/device components or trailing dots/spaces are refused. Compare
 all expanded paths ignoring ASCII case, including file/directory prefix
 conflicts. Errors are usage exit 2 before capture, naming the template,
-conflicting addresses and paths. Filesystem refusals are output exit 6.
+conflicting addresses and paths. The P-9 table distinguishes preflight usage
+refusals (2), output I/O failures (6) and interruption (130).
 
 Directory mode may write any chosen format combination. The positional PNG
 mode requires `formats: [sheet]`; otherwise it fails asking for
@@ -627,7 +661,7 @@ stored_directions: [0, 4, 3, 2, 1]
 mirrors: {7: 1, 6: 2, 5: 3}
 export:
   formats: [frames, atlases]
-  frame_path: animations/{clip}/{direction}/frame_{frame:03}{map}.png
+  frame_path: animations{map}/{clip}/{direction}/frame_{frame:03}.png
   atlas_path: atlas/{clip}{map}.png
   atlas_padding: 1
 clips:
@@ -638,8 +672,10 @@ clips:
     output_name: strike
 ```
 
-This uses general clip names and settings, not a special game preset. Portrait
-generation and actual acceptance values remain Q-6; neither is implied here.
+This uses general clip names and settings, not a special game preset. Colour
+frames go under `animations/`; maps go under `animations.normal/` and
+`animations.depth/`. Portrait scope and actual acceptance values are D-10
+through D-14; neither is selected by this example.
 
 ### P-8. One generic metadata schema and replay contract
 
@@ -680,6 +716,10 @@ representation of that sample. GIFs are artifacts but not frame locations.
 The JSON does not index itself. There is no `image`/`maps` singleton whose
 meaning changes depending on the number of selected output formats.
 
+In the positional form the root is the PNG's containing directory: artifact
+paths are base names, preserving existing relocation behavior. Directory-mode
+paths are relative to `--output-dir`.
+
 Clip mirror records carry target and stored-source direction indices,
 `transform: flip-x`, and derived ground pixel `(W-gx,gy)`. The source clip,
 sample index/time and every artifact location are inherited from that clip's
@@ -691,6 +731,23 @@ flipping encoded normals directly use `R'=255-R` only for covered pixels;
 transparent texels stay zero. For padded atlases, flip the logical rectangle,
 not the entire atlas or physical slot. The manifest's normal/depth encodings
 remain those of the current design, not consumer shader conventions.
+
+Consumers must use the derived mirror anchor: if `W != 2*gx`, it differs
+from the stored-view anchor by `W-2*gx` pixels. This includes auto-fit odd
+widths. Placement by a single shared anchor would shift those mirrored views;
+the 48-wide, gx=24 acceptance target is unaffected.
+
+A horizontal flip represents geometric reflection only if roll is 0 or ±1
+(the existing roll unit, half-turns), `theta_target + theta_source` is
+congruent to `-2*model_yaw` modulo 360 degrees, and a perspective camera has
+no sideways position offset from its vertical heading plane through the
+ground point. Orthographic position is unused. These are necessary camera
+conditions, not a claim that the subject or its lighting is symmetric.
+Per D-17, warn once per clip/target-source pair when any condition fails,
+listing the pair and failed conditions, then export anyway. The transform
+still specifies the requested pixel operation, not guaranteed equivalence
+to a separately captured target. Validate geometry with pure checks in EXP-2
+and emit warnings in EXP-6b; document these semantics in `docs/design.md`.
 
 **3. Determinism.** Artifact ordering is fixed: sheet colour/normal/depth;
 then per-clip atlases in clip order, each colour/normal/depth; then individual
@@ -709,16 +766,169 @@ counts, rates, subsets, aliases, mirroring and formats. No project or palette
 file is needed. The same destination mode and legacy basename where relevant
 produce byte-identical files and metadata at any root. A different explicit
 destination mode is allowed subject to its format constraints, and may change
-artifact filenames/metadata without changing the fingerprint. Existing
+artifact filenames/metadata without changing the fingerprint only when the
+recorded settings stay identical. In particular, switching a frames/atlases
+manifest to positional output requires `--formats sheet`, changing settings
+and the fingerprint. Existing
 settings-layer precedence and explicit `--clip`/`--once` behavior stay intact.
 No normalizing recorded camera/light directions again. Unknown schema,
 missing/invalid required settings and inconsistent references fail loudly.
 
-The logical shape and schema behavior above are approved contracts (D-8); the
-implementation documentation will pin the complete JSON example and key
-order before the implementation's final review, without changing these
-meanings. P-13 delivers one public schema change at EXP-6, with no public
-intermediate schema or silent change to `/1` during sliced delivery.
+The complete member/order contract is pinned in P-8a below, before EXP-4 is
+filed. EXP-4 implements it internally and EXP-6a copies the contract into
+`docs/design.md` with the public switch. P-13 delivers one public schema
+change at EXP-6a, with no public intermediate schema or silent change to `/1`
+when EXP-6b activates settings.
+
+### P-8a. Pinned JSON members, order and example
+
+This is the complete `/1` member contract for EXP-4 issue review, pinned in
+the review-1 revision. It supplements P-8's meanings without adding another
+schema. Required keys are never omitted unless this table explicitly says
+so. Unknown, duplicate, missing and wrong-type members fail strict reuse;
+integer indices exclude booleans. Preserve existing finite-number checks,
+inline palette/library validation and current-only reuse errors.
+
+| Object | Members in serialized order |
+|---|---|
+| Document | `schema`, `generator`, `source`, `subject`, `variant`, `settings`, `fingerprint`, `artifacts`, `directions`, `clips`, `frames` |
+| `generator`, `source` | Exact existing member order, types and values from `docs/design.md` §Export at `5788a7c4f6`; no added capture fields |
+| `settings` | `view`, `camera`, `model_yaw_deg`, `fps`, `frames`, `supersample`, `pixels_per_meter`, `cell`, `ground_m`, `ground_px`, `root_motion`, `previews`, `normals`, `depth`, `light`, `shade`, `ramp`, `style`, `stored_directions`, `direction_names`, `mirrors`, `export`, `clips` |
+| Existing nested settings | Existing types/order and inline palette/library variants from the same §Export contract; resolved fit values and normalized vectors preserved exactly |
+| `settings.export` | `formats`, `frame_path`, `atlas_path`, `sheet_path`, `atlas_padding` |
+| `settings.clips[]` | `name`, `loop`, `frames`, `fps`, `stored_directions`, `mirrors`, `output_name` |
+| Name-map entry | `index` (integer), `name` (string) |
+| Settings mirror-map entry | `target` (integer), `source` (integer) |
+| Artifact common prefix | `kind`, `channel`, `path`, `width`, `height` |
+| Artifact suffix, after prefix | `clip` for atlas/frame/preview; then `direction`, `index` for frame only; then `padding`, `cell` for PNG kinds only |
+| Artifact `cell` | `width`, `height` (positive integer logical dimensions) |
+| `directions[]` | `index`, `angle_deg`, `label`, `output_name` |
+| Top-level `clips[]` | `name`, `loop`, `duration_s`, `frame_count`, `frame_duration_s`, `time_scale`, `output_name`, `fps`, `stored_directions`, `mirrors` |
+| Top-level clip mirror entry | `target`, `source`, `transform`, `ground_px` |
+| Mirror `ground_px` | `x`, `y` (integer pixel-edge coordinates) |
+| `frames[]` | `clip`, `direction`, `index`, `time_s`, `locations` |
+| Location | `artifact` (zero-based integer array index), `x`, `y`, `w`, `h` (integers; positive sizes) |
+
+`settings.stored_directions` is the JSON string `"all"` or an ordered integer
+array. `settings.direction_names` and `settings.mirrors` are arrays of the
+entries above, sorted by index/target; empty mappings encode as `[]`, never
+string-keyed JSON objects. Reuse converts them to integer-keyed internal
+maps; the YAML rule rejecting string-digit keys is unchanged. Duplicate
+indices/targets are errors, not last-wins mappings. Per-clip
+`stored_directions` is `null`, `"all"` or an ordered integer array; per-clip
+`mirrors` is `null` or the same target/source array. `null` retains inheritance,
+whereas `[]` explicitly disables inherited mirrors. Per-clip `fps` is `null`
+or a positive finite float; `output_name` is `null` or its supplied alias;
+`frames` retains count/`"auto"`/`null`. Settings clips list selected source
+clips in selection order, as today; effective values belong in the top-level
+clip records, not in place of supplied overrides.
+
+Top-level clip `duration_s` is source duration; `fps`, `frame_count`,
+`frame_duration_s` and `time_scale` are resolved by the existing sampling
+formulas. Its `stored_directions` is always an ordered nonempty index array,
+and `mirrors` is always a target-sorted array (possibly empty). Direction
+records cover the entire ring in original index order, with existing nullable
+compass `label` and the P-7 output name. Frames follow selected clip, stored
+direction, sample order. Locations sort by artifact index. Every enabled PNG
+representation occurs exactly once for each real sample; no preview or
+mirror is a location. Reference checks validate channels, dimensions,
+logical bounds excluding padding, clip/direction/index identity and absence
+of missing/extra samples. Artifact dimensions are positive integers; padding
+is zero for frame/sheet and the configured value for atlas. `channel` is
+`color`/`normal`/`depth` for PNGs and `flat`/`lit` for previews. No irrelevant
+suffix keys or null placeholders are emitted on artifacts.
+
+The manifest settings builder is independent of
+`capture.backend.settings_document`. The latter remains the existing strict
+capture-relevant subset, including its old per-clip name/loop/frames keys.
+Do not append export settings to a Blender job. EXP-4 tests byte identity of
+job settings while varying the new manifest-only fields with the existing
+capture fields and fitted values held fixed. Actual addressed frame lists
+and fit may change when a selected plan changes; that is not a settings-wire
+schema change. The job's `fps` remains the resolved global value, while exact
+sample times in the job frames govern clips with their own FPS.
+
+Complete structural example: one stored static view, one requested mirror,
+colour frame output only. Hash/version placeholders stand for the existing
+computed values; they are not literal valid digest/version test fixtures.
+Formatting here is compact for reading; the writer uses two-space indentation
+and the key order above. Other optional library/palette shapes retain their
+complete existing §Export definitions; no ellipsis substitutes for members.
+
+```json
+{
+  "schema": "moskophoros.export/1",
+  "generator": {
+    "tool": "moskophoros", "version": "0.1.0",
+    "python": "3.x.y", "numpy": "x.y.z", "pillow": "x.y.z",
+    "blender": "x.y.z", "renderer": "cycles",
+    "color": {"technique": "cycles-flat-emission", "samples_per_pixel": 1,
+      "seed": 0, "pixel_filter": "BOX", "filter_width_px": 0.01,
+      "min_transparent_bounces": 64, "transparent_max_bounces": 64,
+      "pass_alpha_threshold": 9.313225746154785e-10},
+    "shade": {"technique": "cycles-ambient-occlusion", "samples_per_pixel": 1,
+      "seed": 0, "pixel_filter": "BOX", "filter_width_px": 0.01}
+  },
+  "source": {"file": "hero.glb", "sha256": "<computed source digest>"},
+  "subject": "hero",
+  "variant": "default",
+  "settings": {
+    "view": {"preset": "custom", "directions": 4, "start_angle_deg": 0.0},
+    "camera": {"projection": "orthographic", "direction": [0.0, -0.6, -0.8],
+      "roll": 0.0, "position": null},
+    "model_yaw_deg": 0.0,
+    "fps": 12.0,
+    "frames": "auto",
+    "supersample": 8,
+    "pixels_per_meter": 4.0,
+    "cell": {"width": 4, "height": 4},
+    "ground_m": {"x": 0.0, "y": 0.0, "z": 0.0},
+    "ground_px": {"x": 2, "y": 3},
+    "root_motion": "error",
+    "previews": false,
+    "normals": false,
+    "depth": false,
+    "light": {"position": null, "intensity": 1.0, "ambient": 0.3},
+    "shade": {"ao_distance_m": 0.3, "ao_samples": 64,
+      "occlusion_weight": 0.25, "convexity_weight": 1.0, "range": [84, 191],
+      "mode": "ramp", "ambient_form": true,
+      "key": {"direction": [-0.5183210553488161, 0.604707897906952, 0.604707897906952], "strength": 0.0},
+      "sky": {"strength": 0.0}, "ground": {"strength": 0.0},
+      "sky_ground_frame": "camera", "brightness": {"floor": 0.3, "ceiling": 1.0},
+      "snap": "off", "dither": {"pattern": "off", "strength": 1.0}},
+    "ramp": {"lightness_step": 0.12, "hue_shift_deg": -12.0, "chroma_fade": 0.3},
+    "style": {"reduce": "plain", "edges": "hard", "palette": null, "materials": null},
+    "stored_directions": "all",
+    "direction_names": [{"index": 1, "name": "right"}],
+    "mirrors": [],
+    "export": {"formats": ["frames"],
+      "frame_path": "frames/{clip}/{direction}/frame_{frame:03}{map}.png",
+      "atlas_path": "atlases/{clip}{map}.png", "sheet_path": "sheet{map}.png",
+      "atlas_padding": 0},
+    "clips": [{"name": "static", "loop": true, "frames": null, "fps": null,
+      "stored_directions": [1], "mirrors": [{"target": 3, "source": 1}],
+      "output_name": null}]
+  },
+  "fingerprint": "sha256:<computed fingerprint>",
+  "artifacts": [{"kind": "frame", "channel": "color",
+    "path": "frames/static/right/frame_000.png", "width": 4, "height": 4,
+    "clip": "static", "direction": 1, "index": 0, "padding": 0,
+    "cell": {"width": 4, "height": 4}}],
+  "directions": [
+    {"index": 0, "angle_deg": 0.0, "label": "south", "output_name": "south"},
+    {"index": 1, "angle_deg": 90.0, "label": "east", "output_name": "right"},
+    {"index": 2, "angle_deg": 180.0, "label": "north", "output_name": "north"},
+    {"index": 3, "angle_deg": 270.0, "label": "west", "output_name": "west"}
+  ],
+  "clips": [{"name": "static", "loop": true, "duration_s": 0.0,
+    "frame_count": 1, "frame_duration_s": 0.08333333333333333, "time_scale": 1.0,
+    "output_name": "static", "fps": 12.0, "stored_directions": [1],
+    "mirrors": [{"target": 3, "source": 1, "transform": "flip-x",
+      "ground_px": {"x": 2, "y": 3}}]}],
+  "frames": [{"clip": "static", "direction": 1, "index": 0, "time_s": 0.0,
+    "locations": [{"artifact": 0, "x": 0, "y": 0, "w": 4, "h": 4}]}]
+}
+```
 
 ### P-9. Publication, reruns and failures
 
@@ -733,6 +943,16 @@ fresh output root or clean their own stale files. No hidden managed cleanup,
 ownership database, pruning option or recursive directory replacement in this
 arc. This extends the current publication policy without a destructive default.
 
+One directory root holds one subject's export (D-16). Before capture, read an
+existing `manifest.json` and refuse exit 2 if its `subject` differs from the
+new run's subject. A same-subject rerun remains allowed, including a changed
+model hash. Subject is the input stem, not a content identity. A malformed or
+unreadable manifest, or one lacking a string subject, cannot establish this
+precondition: refuse before capture with the file and reason. Do not interpret
+this check as permission to reuse an old schema; replay remains current-only.
+`{subject}` is for naming inside one subject's root. This guard does not add
+pruning or multi-subject ownership tracking.
+
 **2. Preflight and staging.** Resolve and validate every planned output path
 before Blender capture, including metadata/previews, duplicate names and
 file/directory prefix conflicts. The chosen output root is resolved once;
@@ -740,9 +960,19 @@ its ancestors may be ordinary filesystem links, but no existing symlink at
 or below that resolved root may be traversed as an output component or
 overwritten as an output file. Recheck components before publication. Refuse
 non-regular existing file targets and input/output overlap, including the
-model and read configuration/palette/library files. Do not follow a link
+model and read configuration/palette/library files. The one explicit exception
+is the `--settings-from` document: read it completely and close it before
+capture, then allow it to be replaced in both forms, including
+`--settings-from OUT/manifest.json --output-dir OUT` and positional replay
+onto its own JSON. It receives the same staging/rollback protection as every
+other target. Do not follow a link
 outside the root. Concurrent writers to the same root are unsupported; do
 not promise isolation against filesystem changes by other processes.
+
+A new root may be created when its immediate parent already exists as a
+directory; do not create missing ancestors above the root. Nested directories
+inside the root are created as needed. The positional form still requires
+its output directory to exist. This preserves its existing preflight rules.
 
 After successful rendering/encoding, create needed directories, stage every
 file on the destination filesystem, and replace files under the existing
@@ -754,13 +984,32 @@ concurrent readers. No successful partial export is reported.
 **3. Failures and cleanup.** On a handled write/rename failure or interruption,
 restore previous files and remove newly published files. Remove only newly
 created empty directories and this run's temporary files; never remove an
-existing directory or other content. Report output exit 6 naming the failed
-path. If rollback itself fails, report each unrestored target and preserved
+existing directory or other content. Report output exit 6 for I/O failure,
+or 130 for a handled interruption, naming the affected path. If rollback
+itself fails, report each unrestored target and preserved
 backup path honestly; do not claim earlier outputs were fully restored.
 No power-loss or uncatchable-process-kill recovery guarantee is added.
 Bad configuration and planned path collisions are usage exit 2, invalid model
 input exit 3, geometry/depth overflow exit 4 and backend failures exit 5,
 as in today's contract. A failure publishes no valid new manifest.
+
+| Condition | Detection | Exit |
+|---|---|---|
+| Bad settings, inactive key, name/template/collision/prefix error | Before capture | 2 |
+| Existing manifest has a different subject or invalid ownership record | Before capture | 2 |
+| `--output-dir` is a file/non-directory; its immediate parent is missing/non-directory; positional output directory is missing | Before capture | 2 |
+| Target is a directory or other non-regular file; symlink at/below root; input/output overlap except the loaded reuse document | Before capture | 2 |
+| Invalid model/input | Input validation | 3 |
+| Geometry or encoded-depth overflow | Fitting/encoding | 4 |
+| Backend failure | Measure/render | 5 |
+| Filesystem access/I/O error (including reading an existing manifest), mkdir/stage/write/rename/rollback failure | At the attempted operation | 6 |
+| Output components become invalid after successful preflight | Publication recheck | 6 |
+| Handled interruption | Any stage; roll back if publication started | 130 |
+
+Manifest parse/subject errors are usage errors (2); an actual read I/O error
+is output error (6). A rollback failure preserves the original failure class
+(6 or 130) and reports backups; it never claims a complete restoration.
+These rules apply to both destination forms wherever the condition exists.
 
 The alternative is an explicitly managed export that removes files from the
 previous manifest on rerun. It is not recommended here because it expands
@@ -831,7 +1080,7 @@ Record and freeze its model, library, palette and settings hashes for that
 review. Do not pin the historical `physics-v2`/`library-v4` as the final
 acceptance input or assume that a newer unapproved model qualifies.
 Model rework remains a separate request. Model approval gates only EXP-7;
-EXP-1 through EXP-6 use generated fixtures and can proceed independently.
+EXP-1 through EXP-6b use generated fixtures and can proceed independently.
 
 ### D-14. Start acceptance from the reviewed placement values
 
@@ -854,11 +1103,67 @@ For Q-7 the owner chose:
 
 > "A: approve, ready"
 
-Adopt P-13 and the seven ordered EXP-1 through EXP-7 slices below. All design
-questions are resolved and the document is ready for issue processing.
+Originally adopted P-13 and seven ordered EXP-1 through EXP-7 slices. D-18
+subsequently amends this plan to eight slices on the owner's instruction.
+All design questions are resolved and the document is ready for issue processing.
 The manager explicitly instructed this session to record and land the design,
 post done with the path, commit and slice list, then stop without filing
 issues. The manager arranges design review and `process-design-doc` next.
+
+### D-16. Refuse a different subject in an existing output root
+
+Owner decision, 2026-10-24; source: **manager relay of the owner's answers
+to review 1**, verified `mosk-manager` message `4vxnn6as53vva49b8kdfjs26ai`
+and `dispatch-export-design-revise-1.md` (SHA-256 prefix `66723cda71ed`).
+For X-3 the owner chose:
+
+> "Refuse (Recommended)"
+
+A directory root holds one model's export. Before capture, refuse an existing
+`manifest.json` whose `subject` differs, with usage exit 2. Same-subject
+reruns remain allowed. `{subject}` names files within one model's root;
+it does not authorize multi-model batching into a shared root. This amends
+D-9's unconditional overwrite rule with the explicit P-9 preflight guard.
+
+### D-17. Warn on mirror camera-condition violations, then export
+
+Owner decision, 2026-10-24, through the same **manager relay of the owner's
+answers to review 1**. For X-9 the owner chose:
+
+> "Warn (Recommended)"
+
+Export anyway, warning once with the clip and target/source pair when the
+P-8 roll, angle-pair or sideways-perspective-offset conditions fail. Multiple
+failed conditions for one pair share that warning. This does not infer model
+symmetry or alter D-5's explicit transform records. EXP-2 checks conditions;
+EXP-6b activates the warning and documents it in the current contract.
+
+### D-18. Split the public transition into EXP-6a and EXP-6b
+
+Owner decision, 2026-10-24, through the same **manager relay of the owner's
+answers to review 1**. For X-10 the owner chose:
+
+> "Split into 6a/6b (Rec.)"
+
+Amend D-15's seven-slice plan to eight. EXP-6a switches legacy output to the
+complete `moskophoros.export/1`, with new user settings still refused.
+EXP-6b activates settings and `--output-dir`/`--formats`; EXP-7 depends on
+6b. The public schema changes once, in 6a; 6b does not change its shape.
+No option may be accepted and ignored. Each half owns the pinned test and
+`docs/design.md` inventory below. The manager authorizes retaining readiness
+once every review finding is addressed, followed by the same reviewer's
+re-review; this is not a claim that the reviewer has approved the revision.
+
+### D-19. Record the optional-sheet command form in vision V-2
+
+Owner decision, 2026-10-24, through the same **manager relay of the owner's
+answers to review 1**. For X-16 the owner chose:
+
+> "Add dated note (Rec.)"
+
+Add only a dated owner note under V-2 citing D-6: the `--output-dir` form may
+write no combined sheet. Preserve all other vision text. The note describes
+approved direction, not already delivered behavior, and lands by `docs-push`.
 
 ## Round-4 acceptance choices and retained alternatives
 
@@ -877,8 +1182,15 @@ metadata-only replay checks in technical acceptance. Flat and lit previews
 stay enabled with the accepted project's current light.
 
 This reaches the consumer's logical cell/row layout through generic settings;
-50x50 is the physical atlas slot, not the cell. Local acceptance keeps the
-existing approved palette/library and project snapshot, not a shipped preset.
+50x50 is the physical atlas slot, not the cell. Its compiler accepts only
+`frame_NNN.png` inside direction folders: maps must live outside that colour
+tree. The round-04 mixed-map mock-up is historical format evidence, not a
+valid consumer handoff. EXP-7 uses
+`animations{map}/{clip}/{direction}/frame_{frame:03}.png`; generic defaults
+remain unchanged. Consumer validation rejects stray/stale frame PNGs loudly,
+although other directory scanners may consume them. Keep fresh roots.
+Local acceptance freezes the latest approved palette/library and settings
+under D-13, not a shipped preset.
 The model remains larger than the old art at its approved scale. The old
 sprite's drawn feet do not coincide exactly with the renderer's inferred
 (24,44) anchor; the page marks the anchor rather than moving the old pixels.
@@ -956,7 +1268,7 @@ probe evidence remains round-04/q6.
 
 ### Q-7. Delivery and readiness
 
-Resolved by D-15: P-13's seven-slice plan is approved and the design is ready
+Resolved by D-15, amended by D-18: P-13's eight-slice plan is approved and the design is ready
 for issue processing. The tracker was rechecked on 2026-10-24: only unrelated
 #43 is open, and no PRs are open. No export epic duplicates the umbrella at
 this check. This session files no issues.
@@ -1016,6 +1328,36 @@ activation; preserve reproducible default-image baseline hashes for a locally
 generated model across the command switch using the same generator. New
 metadata is expected to differ. Appearance needs the separate owner gate.
 
+**D-3 byte-identity evidence belongs to EXP-6a and EXP-6b.** Each implementer,
+before its switch, generates the rigged model from
+`tests/blender/test_whole_command.py::rigged_model` once, records its SHA-256,
+and runs the base and head in isolated output roots with that identical model,
+generator and settings. Use `--clip walk --clip attack --once attack` as in
+the existing whole-command baseline, excluding the fixture's deliberately
+travelling `slide` clip; isolate configuration so live owner files cannot
+affect either run. Cover the positional default-output invocation and
+an otherwise identical opt-in depth/lit-preview invocation so colour, normals, depth,
+flat GIFs and lit GIFs are all compared; flags used only for the comparison
+must be identical at base/head. Record exact commands, base/head commits,
+model hash and each emitted image's base/head SHA-256 in the PR's
+`local-validation` block, with the required passing current-head Blender
+result. JSON/fingerprint differences are expected only across 6a's schema
+switch. 6b must also keep the already-final `/1` default metadata unchanged.
+Keep models/renders/logs locally under the acceptance folder, separate from
+consumer evidence; publish the textual evidence with `docs-push` and link it
+from the PR. Do not commit generated binaries or substitute a CI-only claim
+for this local check. A mismatch blocks acceptance until explained and fixed
+within D-3; no new look is implicitly approved by tests.
+
+**Scale evidence (review 1, not a benchmark guarantee).** The reviewer's
+`review-1/scale_probe.py`/`.log` reported 1,764 stored frames, 5,455 files and
+a 3.3 MB, 175,147-line indented manifest; at 2,250 frames roughly 4.2 MB.
+Existing `publish()` took 1.08 seconds fresh and 2.23 seconds replacing
+existing files, with zero leftover hidden files. This pure temporary-folder
+probe did not run Blender and does not measure the future publisher. It
+supports ordinary staged publication in EXP-5, not an extra indexing/storage
+subsystem. Capture still runs once per stored sample across output formats.
+
 Every code slice follows [validation](../validation.md) and the planner at its
 actual diff. The current catalog selects `test.blender` for any `src/` change,
 even preparatory pure-code changes; those PRs need current passing local
@@ -1026,23 +1368,39 @@ rule. No generated art or binary model enters the repository.
 
 ## Delivery plan
 
-### P-13. Seven slices with one public activation and a final owner gate
+### P-13. Eight slices with one public schema and a final owner gate
 
-Approved by D-15. EXP-1 through EXP-6 are each one issue,
+Approved by D-15 and amended by D-18. EXP-1 through EXP-6b are each one issue,
 worktree and reviewable code PR. EXP-7 is a human acceptance issue with
 evidence published by `docs-push`, not a manufactured code PR. Model rework
 is outside every slice.
 
 EXP-1 through EXP-5 provide tested internal capabilities. The existing command
-continues its current sheet behavior/schema until EXP-6 connects the complete
-feature. It must not accept new settings and silently ignore them. Prepare
-schema extensions/helpers without enabling incomplete public behavior. EXP-6
-activates the full settings contract and makes one public switch to
-`moskophoros.export/1`; no intermediate public export schema or long-lived
-feature flag is needed. This sequencing is part of the approved plan.
+continues its current sheet behavior/schema until EXP-6a switches the legacy
+path to the complete `moskophoros.export/1`. EXP-6b activates new settings and
+directory output with that same schema. No intermediate public schema or
+long-lived feature flag is needed. No accepted setting may be ignored.
 
-Dependency order: EXP-1 → EXP-2 → EXP-3 → EXP-4 → EXP-6 → EXP-7.
-EXP-5 depends on EXP-2 and also feeds EXP-6. After EXP-2 it may proceed
+EXP-2 adds new rows to the single `SCHEMA`/`CLIP_SCHEMA` authority with an
+internal inactive marker, including the new `export` group. Any user layer
+setting an inactive key fails exit 2 before capture, naming source file,
+key and line with "not available yet". New per-clip leaves have the same
+gate. Helpers may construct typed values for internal tests without exposing
+them to the command. Shipped `defaults.yaml`, `DEFAULTS` and their agreement
+test filter to active rows; do not duplicate a second schema. Group/key-order
+tests distinguish all definitions from publicly active settings. `--formats`
+and `--output-dir` do not exist until EXP-6b.
+
+EXP-6a can record/reload the complete new default fields through an internal
+manifest decoder, but the user-file gate remains closed. Reuse accepts those
+new fields only at their inactive defaults (`all`, empty maps, default export
+templates/formats/padding and null per-clip overrides), and refuses non-default
+new settings as unavailable before capture. This permits 6a to replay its own
+output without accepting an ignored option. EXP-6b removes the temporary
+markers/reuse restriction, ships the new defaults and activates both flags.
+
+Dependency order: EXP-1 → EXP-2 → EXP-3 → EXP-4 → EXP-6a → EXP-6b → EXP-7.
+EXP-5 depends on EXP-2 and also feeds EXP-6b. After EXP-2 it may proceed
 separately from encoding/metadata if the manager judges the scopes compatible.
 The ledger gives one valid order, not a request to launch parallel agents.
 
@@ -1072,13 +1430,18 @@ The ledger gives one valid order, not a request to launch parallel agents.
   paths, collision/prefix checks, warnings and provenance. Prepare extensions
   without making the old command accept values it cannot execute. Keep one
   schema-table authority rather than duplicate existing setting definitions.
+  Implement P-13's inactive-row gate in `SCHEMA`/`CLIP_SCHEMA`, active-default
+  agreement, group/key-order tests and file/line errors. Include pure mirror
+  condition checks and once-per-pair diagnostic construction (D-17).
 - **Phase:** internal configuration and preflight.
 - **Depends on:** EXP-1.
 - **Ordering:** critical path.
-- **Relevant decisions:** D-1, D-2, D-4, D-5, D-6, D-7, D-9.
+- **Relevant decisions:** D-1, D-2, D-4, D-5, D-6, D-7, D-9, D-17, D-18.
 - **Acceptance signals:** layer/reset cases resolve exactly; errors retain
   file/key locations; path conflicts fail before capture; a changed view
-  cannot silently discard invalid direction/mirror references.
+  cannot silently discard invalid direction/mirror references; user files
+  cannot activate new rows; old defaults still load and agree with active
+  rows in `tests/test_settings.py`; each violating mirror pair warns once.
 - **Out of scope:** encoding, filesystem mutation and command activation.
 - **Open questions:** None.
 
@@ -1089,7 +1452,7 @@ The ledger gives one valid order, not a request to launch parallel agents.
 - **Scope:** logical rectangles, variable clip-row counts, exact padding,
   encodings, ordered artifact descriptors and sample locations; stored-view
   previews at each clip's timing. Reuse shared image operations. Keep encoding
-  separate from publication and preserve the old path for comparison until EXP-6.
+  separate from publication and preserve the old path for comparison until EXP-6a.
 - **Phase:** internal image export.
 - **Depends on:** EXP-1, EXP-2.
 - **Ordering:** critical path.
@@ -1107,16 +1470,21 @@ The ledger gives one valid order, not a request to launch parallel agents.
   references and restores every required setting.
 - **Scope:** deterministic JSON/key order/fingerprint; artifact references;
   full-ring and per-clip records; actual versus derived identity; inline
-  palette/library; strict validation and reload to the settings layer. Pin
-  the full JSON example/field contract before final review. Keep this internal
-  until EXP-6 so no partially implemented schema becomes public.
+  palette/library; strict validation and reload to the settings layer. Use
+  the full P-8a member/order contract, already pinned before this issue is
+  filed, including array encodings for integer-keyed maps. Build manifest
+  settings independently of `backend.settings_document`; assert job-settings
+  byte identity under changes to manifest-only fields. Keep this internal
+  until EXP-6a so no partially implemented schema becomes public.
 - **Phase:** internal metadata and replay.
 - **Depends on:** EXP-1, EXP-2, EXP-3.
 - **Ordering:** critical path.
 - **Relevant decisions:** D-3, D-5, D-7, D-8.
 - **Acceptance signals:** encode/reload preserves overrides and inheritance;
   references match artifacts; mirror/anchor semantics hold; original config
-  files are unnecessary; malformed references and old schemas are refused.
+  files are unnecessary; malformed references and old schemas are refused;
+  new settings do not leak into strict capture-job keys. Review compares
+  every serialized member and order against P-8a, not a later PR invention.
 - **Out of scope:** CLI switch, consumer indexes and runtime shaders.
 - **Open questions:** None.
 
@@ -1126,12 +1494,13 @@ The ledger gives one valid order, not a request to launch parallel agents.
   with manifest-last publication and honest rollback.
 - **Scope:** filesystem preflight/confinement, input/output overlap checks,
   staging, replace-only-written policy, rollback, owned-empty-directory cleanup
-  and backup diagnostics. The publisher stays independent of image internals;
+  and backup diagnostics. Include D-16 subject preflight, P-9's exit-code
+  table and explicit in-place-reuse exception. The publisher stays independent of image internals;
   preserve existing default publication behavior.
 - **Phase:** filesystem effects.
 - **Depends on:** EXP-2.
-- **Ordering:** independent of EXP-3/EXP-4 after EXP-2; required by EXP-6.
-- **Relevant decisions:** D-6, D-7, D-9.
+- **Ordering:** independent of EXP-3/EXP-4 after EXP-2; required by EXP-6b.
+- **Relevant decisions:** D-6, D-7, D-9, D-16.
 - **Acceptance signals:** injected failures restore prior bytes; only owned
   empty new directories are cleaned; stale/unrelated files survive; links
   cannot escape the root; incomplete publication has no valid new manifest;
@@ -1139,7 +1508,28 @@ The ledger gives one valid order, not a request to launch parallel agents.
 - **Out of scope:** pruning, crash recovery and concurrent-writer isolation.
 - **Open questions:** None.
 
-### EXP-6. Connect directory exports to the command pipeline
+### EXP-6a. Switch legacy output to the complete export manifest
+
+- **Outcome:** the positional command emits and replays the final `/1`
+  manifest while preserving its existing image bytes and refusing new options.
+- **Scope:** wire EXP-3/EXP-4 into the legacy path; switch `/15` to `/1` once,
+  refusing older schemas; enforce P-13's inactive-default-only reuse rule.
+  Move the full P-8a JSON contract into `docs/design.md`. Keep current sample
+  planning and publication behavior; no directory mode yet. Update the
+  schema/artifact test inventory below and record local byte-identity evidence.
+- **Phase:** public schema transition, legacy path only.
+- **Depends on:** EXP-1, EXP-2, EXP-3, EXP-4.
+- **Ordering:** critical path; EXP-5 is not required for this legacy switch.
+- **Relevant decisions:** D-3, D-8, D-18.
+- **Acceptance signals:** legacy default images match base/head SHA-256
+  evidence under Verification; `/1` reloads itself and `/15` fails clearly;
+  all serialized fields have final meanings/order; non-default inactive reuse
+  values and every new user-file key/flag are refused, never ignored.
+- **Out of scope:** activation of direction/FPS/output settings, new CLI flags,
+  nested publication, consumer assets and visual approval.
+- **Open questions:** None. The test/document inventory below is part of scope.
+
+### EXP-6b. Activate configurable directory exports
 
 - **Outcome:** both command forms support all approved settings, output
   combinations and metadata replay end to end.
@@ -1148,21 +1538,51 @@ The ledger gives one valid order, not a request to launch parallel agents.
   stylize/cleanup, encoding, metadata and publication. Update the capture
   builder's expected-frame check to use the shared resolved plan rather than
   reconstructing a global-FPS/full-ring plan. Blender still evaluates exact
-  supplied times/angles and renders no aliases. Document the full CLI/contract.
+  supplied times/angles and renders no aliases. Remove inactive markers and
+  reuse restrictions, ship new defaults, activate D-17 warnings and P-9
+  publication rules. Keep the `/1` schema unchanged. Document the full
+  CLI/contract with the inventory below.
 - **Phase:** public activation and integration.
-- **Depends on:** EXP-1, EXP-2, EXP-3, EXP-4, EXP-5.
+- **Depends on:** EXP-1, EXP-2, EXP-3, EXP-4, EXP-5, EXP-6a.
 - **Ordering:** critical path.
-- **Relevant decisions:** D-1 through D-9.
+- **Relevant decisions:** D-1 through D-9, D-16 through D-19.
 - **Acceptance signals:** generated-model command runs cover format combinations,
   per-clip rates/counts/subsets, full-view exceptions, maps/previews and fresh-root
   replay. Defaults match pre-activation image baselines with the same generator.
-  No accepted option is ignored. The command switches to `/1`, refuses `/15`,
-  and its help and tested contracts match the delivered behavior.
+  No accepted option is ignored. The command retains 6a's complete `/1`
+  shape and default metadata, and its help and tested contracts match the
+  delivered behavior. In-place replay, same-subject reruns, wrong-subject
+  refusal and mirror warning behavior have whole-command coverage.
 - **Out of scope:** consumer integration, model changes and final visual approval.
 - **Open questions:** None. The current capture wire already accepts arbitrary
   in-ring addressed samples and exact times: no renderer resampling or new
   wire field is needed. The caller validates the resolved plan; capture keeps
   its existing wire fields and carries no output paths/aliases/mirror policy.
+
+**EXP-6a/6b pinned-test and documentation inventory.** Paths/sections refer
+to the reviewed base `5788a7c4f6`; update names if moved, preserve obligations.
+
+| Slice | Tests owned by the transition |
+|---|---|
+| EXP-6a | Convert all 20 `/15` pins in `tests/test_reuse.py` (10), `test_command.py`, `test_materials_command.py`, `test_shading_command.py` (2 each), `test_export.py`, `test_frames_command.py`, `test_settings_command.py`, `test_shading_settings_command.py` (1 each). Preserve old-schema refusal tests with updated expected current schema. |
+| EXP-6a | Convert singleton `image`/`maps` assertions and exact JSON/order expectations to artifacts/locations in `tests/test_export.py`, `test_reuse.py`, `test_command.py`, `test_normal_map.py`, `test_depth_map.py`, `test_lit_previews.py`, `tests/blender/test_whole_command.py`. Preserve pixel, filename, map encoding and preview assertions. Add capture-settings isolation and default `/1` replay checks. |
+| EXP-6b | Activate key/group/default expectations and design-example loading in `tests/test_settings.py` (review lines 88, 94–106); remove inactive-key/default-only-reuse tests in favor of full layered-settings and replay coverage. Extend settings/frames/command and Blender whole-command tests for all new behavior, including exact requested samples, mirror warnings and filesystem/refusal cases. |
+| Both | Run planner-selected checks and current local Blender checks; include the Verification section's base/head image-hash evidence at each current PR head. |
+
+The review's broad text search also found `tests/blender/test_normal_depth_capture.py`
+using `probed["before"]["image"]` for a Blender image-state tuple, not the
+export JSON. Do not mechanically rewrite that unrelated assertion. The
+actual export-shape/schema inventory spans 12 files; the review's 13-file
+count includes that incidental match.
+
+| Slice | `docs/design.md` sections owned by the transition |
+|---|---|
+| EXP-6a | Vocabulary: generic manifest/artifact terms while the public command still writes a sheet. CLI `--settings-from` row and positional output paragraph: final schema/artifact names, unchanged filenames. Reuse: current `/1` only, complete field validation, temporary inactive-default restriction. Export JSON: full P-8/P-8a member/order contract. Reproducibility: `/1` default replay and fingerprint boundaries. Mark directory-only/new-setting behavior planned until 6b; do not claim it is active. |
+| EXP-6b | Vocabulary and CLI synopsis/output paragraph: both forms, optional sheet, formats and one-subject roots. Settings table, example and per-clip merging: active fields/defaults/gates removed. Exit codes: P-9 table including 130 and in-place replay. Clips and sampling: per-clip FPS and warning rules. Bounds: only stored directions, common fit. Reuse: full settings with no temporary restriction. |
+| EXP-6b | Capture job contract: capture-relevant subset, unchanged exact keys, frames in resolved-plan order, global `fps` does not time per-clip clips. Export layout: configured direction order, artifacts, templates, padding and mirror geometry/anchors. Previews: stored-direction order and per-clip cadence. Reproducibility: both forms, output roots and changed-format fingerprint caveat. Remove delivered per-frame/other-output items from Deferred, retaining genuinely deferred formats. |
+
+`docs/design.md` is read by tests and travels with each code change. The
+approved V-2 note lands now by `docs-push`, separate from those code contracts.
 
 ### EXP-7. Review the implemented acolyte export with the owner
 
@@ -1174,10 +1594,21 @@ The ledger gives one valid order, not a request to launch parallel agents.
   comparison, and replay from metadata alone. Compare captured/mirrored views
   and old sprites on a labelled page. Check timing, counts, pixels and replay
   separately from visual judgement. Always use a fresh local output root.
+  Load export settings from a frozen, hashed `--config FILE` under the local
+  acceptance folder, capturing the approved palette/library and required
+  project values there; do not depend on a changing live project layer.
+  Nothing under `~/.config/moskophoros/` changes without the owner. Route
+  normal/depth frames outside the colour frame tree using
+  `animations{map}/{clip}/{direction}/frame_{frame:03}.png`; hand off only
+  `animations/` to the consumer's existing frame compiler, without running
+  that compiler or writing its repository in this slice. Show the actual
+  frozen preview-light values to the owner: the historical project comment
+  says "scaled for 128x128 cells" while this target is 48x48. Do not silently
+  retune the light; desired changes follow the owner gate.
 - **Phase:** owner acceptance and documentation closeout.
-- **Depends on:** EXP-6; additionally the owner-selected model/placement gate.
-- **Ordering:** critical path to epic completion; does not block EXP-1–EXP-6.
-- **Relevant decisions:** D-1 through D-15.
+- **Depends on:** EXP-6b; additionally the owner-selected model/placement gate.
+- **Ordering:** critical path to epic completion; does not block EXP-1–EXP-6b.
+- **Relevant decisions:** D-1 through D-19.
 - **Acceptance signals:** current technical checks pass; exact commands and
   hashes are recorded; the owner explicitly approves the implemented export
   with dated provenance. Stop for the owner if the chosen model is unapproved,
@@ -1189,6 +1620,37 @@ The ledger gives one valid order, not a request to launch parallel agents.
 - **Open questions:** None. D-13 and D-14 are explicit acceptance gates for
   review inputs and targets. This is documentation-only acceptance: evidence lands
   with `docs-push`, with no code PR needed.
+
+## Review 1 disposition
+
+Review: local `review-claude-1.md`, SHA-256
+`472fb39140a29b1433b495e429ffdfd5fab020ada76ebe522b21f48dae1e2308`,
+against design commit `5788a7c4f6`; verdict: 0 blocking, 12 should fix,
+5 minor. Revision authority: manager dispatch SHA-256
+`66723cda71ed34bd928c437a65bebb2f43e153e7b4336b56e355cf670dbbd61f`,
+verified relay `4vxnn6as53vva49b8kdfjs26ai`, dated 2026-10-24.
+The reviewer owns the next verdict; the dispositions below report this
+designer's edits, not review approval. No findings are declined.
+
+| Finding | Resolution in this revision |
+|---|---|
+| X-1 | P-13/EXP-2 specify inactive schema rows, source/key/line exit-2 refusals, active defaults/group tests and EXP-6b-only flags. EXP-6a reuse accepts only the inactive default values it emits. |
+| X-2 | P-8a/EXP-4 build manifest settings independently and require byte-identical capture settings when new manifest fields vary. EXP-6b rewrites Capture job wording for the subset, resolved-plan order and global FPS. |
+| X-3 | D-16 records owner “Refuse”; P-7/P-9 restrict roots to one subject, with a pre-capture exit-2 guard and within-root meaning for `{subject}`. |
+| X-4 | P-9 enumerates refusal/operation timing and exits 2–6/130, new-root parent behavior and rollback-failure reporting; both forms preserve legacy preflight classifications. |
+| X-5 | P-9 explicitly permits replacing the fully read/closed `--settings-from` document in both forms, with normal rollback protection. |
+| X-6 | P-7 limits name and expanded-template refusals to directory mode; positional output retains legacy names and checks template syntax only. |
+| X-7 | P-8a pins the full ordered member contract and complete structural example now, before EXP-4 filing; integer-keyed JSON maps are sorted arrays with explicit null/empty/all semantics. |
+| X-8 | P-7 gives exact grammar, no brace escapes/non-ASCII literals, strict frame widths, per-expansion path checks and explicit dot-component behavior. |
+| X-9 | D-17 records owner “Warn”; P-8 gives all three mirror camera conditions and once-per-pair warnings, with EXP-2 checks and EXP-6b activation/documentation. |
+| X-10 | D-18 amends D-15 to eight slices, splitting EXP-6a schema transition from EXP-6b activation. Both have named pinned-test and design-section inventories; incidental Blender image-state match is identified, not changed. |
+| X-11 | Verification assigns each 6a/6b implementer the same-generated-model base/head comparison, exact commands, per-image SHA-256 values and current local-validation evidence; binaries stay local. |
+| X-12 | P-1/P-7/P-10/EXP-7 route maps outside `animations/` using `animations{map}/…`; only colour frames enter the consumer handoff. Historical mixed-map probe is not called consumer-ready; stale-frame validator behavior is clarified. |
+| X-13 | EXP-7 requires a frozen hashed local `--config`, no live config edits, and explicit display of the historical 128x128-light comment versus the 48x48 target. |
+| X-14 | P-8 explains the derived anchor shift `W-2*gx`, including odd widths, and requires consumers to use the per-mirror anchor. No extra warning policy is added. |
+| X-15 | Verification records the reviewer's measured 5,455-file/3.3-MB scale and 1.08/2.23-second publication probe, clearly as existing-code evidence rather than a performance promise. |
+| X-16 | D-19 records owner “Add dated note”; only the dated V-2 note is added in `docs/vision.md`, citing D-6 and distinguishing planned behavior. |
+| X-17 | P-8 qualifies cross-mode fingerprint identity and defines positional root/base names; P-7 omits `clips` from shipped defaults and states exact FPS warning provenance/equal-value/still behavior. Current `/15` evidence remains correct. |
 
 ## Conversation cursor
 
@@ -1230,8 +1692,17 @@ Round 5 resolved Q-14 (review model), Q-15 (initial placement policy) and Q-7
 The placement section reproduces the earlier labelled image as historical
 context, explicitly not a new model/look approval. Verified manager relay
 `9aqym2znqa32juy547huw6mvg2` records all three owner answers dated 2026-10-24,
-responding to question message `g6qgzq7kjekwv86fu3kfbdajww`. The design is
-`ready for issue processing`; all seven slices remain unprocessed. Publish
-the design and report done, then stop. The manager arranges design review
-and `process-design-doc`: the epic first, then exactly one child per
-invocation with separate approval. This session files no issues.
+responding to question message `g6qgzq7kjekwv86fu3kfbdajww`. The design was
+marked `ready for issue processing` at that checkpoint, with all seven
+original slices unprocessed.
+
+Review 1 subsequently found twelve should-fix and five minor items, with no
+blocking finding. The owner answered the four decision items through the
+manager on 2026-10-24 (D-16 through D-19). This revision addresses X-1 through
+X-17 as mapped above and retains readiness under the revision brief's express
+condition that every finding be addressed. All eight revised slices remain
+unprocessed. Publish the design and V-2 note, report done with the table, and
+stop for the manager to arrange the same reviewer's re-review. No review
+approval or issue creation is claimed. After review, `process-design-doc`
+processes the epic first and exactly one child per invocation, with separate
+approval for every tracker artifact. This session files no issues.

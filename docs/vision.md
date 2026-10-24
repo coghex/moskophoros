@@ -42,6 +42,11 @@ version, renderer, Python dependencies), and every sheet records those tools
 and settings so a result can be reproduced or questioned later (owner decision
 2026-09-29, from the second review). See [design §CLI](design.md#cli).
 
+*Note (owner, 2026-10-24, export design D-6 and D-19; planned):* the
+`moskophoros [options] <infile.glb> --output-dir OUT` form may write frame
+folders, per-clip atlases or both without a combined sheet. It still records
+a reproducible manifest. See [export design](designs/export_format_design.md).
+
 ### V-3. Binary glTF is the canonical input
 
 `.glb` is the input (owner decision 2026-09-29; the owner delegated the
