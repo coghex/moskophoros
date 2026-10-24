@@ -17,8 +17,9 @@ concrete precondition
 
 No child slices are defined yet. The owner has established the consumer
 boundary, timing scope, compatibility, direction/output contracts and
-publication policy. Acceptance values, portrait scope and delivery boundaries
-remain open.
+publication policy. Base-acolyte directions, clip timing and portrait scope
+are now decided. Acceptance-model version, the remaining placement values
+and delivery boundaries still need explicit signoff.
 
 ## Epic contract
 
@@ -159,6 +160,11 @@ output paths rather than overwriting evidence.
 
 ### Round-4 local probes, not implementation acceptance
 
+These probes use the then-approved `physics-v2` model. After viewing them,
+the owner requested model/look revisions in a separate workstream. Preserve
+the probes as historical export evidence; they are not approval of the
+model/look for the final export review. See D-10 through D-12 and Q-14.
+
 All paths below are relative to
 `~/.local/share/moskophoros-acceptance/export-format-design/round-04/`.
 
@@ -208,8 +214,9 @@ The output choices and consumer handoff are approved in D-1 below.
 Established constraints: no game-specific branches or fixtures; no consumer
 file writes or configuration edits in this design session; no model
 refinement; no production code or tracker creation. Clip output-name mapping
-is included (D-7); automatic stale-output removal is excluded (D-9). Portrait
-generation remains an explicit scope question, Q-13.
+is included (D-7); automatic stale-output removal is excluded (D-9).
+Portrait-specific generation is excluded (D-12). Model/look rework belongs
+to a separate request and is not an export delivery slice.
 
 ## Design directions approved in round 1
 
@@ -747,9 +754,65 @@ previous manifest on rerun. It is not recommended here because it expands
 ownership, deletion and recovery semantics. It can be designed separately if
 the owner prefers it; an empty-directory-only mode is another stricter option.
 
-## Round-4 acceptance proposals awaiting owner signoff
+### D-10. Five views plus mirrors for the base unequipped acolyte
+
+Owner answer on 2026-10-24, via verified `mosk-manager` relay
+`cu65sdzfp57fn7hhp3jf637m86`, answering round-4 question message
+`px6jz5p75byqcjjyj6w89nqkd2`:
+
+> "as for this question you are asking me, the acolyte is 5 views + mirrors for the base unequipped version."
+
+Record the five-view/mirror choice for the **base unequipped version** only.
+It is not blanket approval for equipped/asymmetric clips, and not approval
+of the model's look. The response does not explicitly choose the other
+numbers bundled into P-10 (cell, scale and anchor); Q-15 asks whether those
+remain the acceptance target or should be set during the later visual review.
+
+### D-11. Old-game clip rates and counts
+
+Owner answer on 2026-10-24 through the same verified relay and question:
+
+> "B: game's old rates"
+
+The owner additionally wrote:
+
+> "the fps needs to drop to the 8 that the original art uses"
+
+This selects the explicitly described option B: walk **six frames at 8 FPS**
+(0.75 seconds) and idle **four frames at 6 FPS** (two-thirds of a second).
+The extra remark emphasizes the walk rate; the chosen option already states
+the two per-clip rates. P-11's recommendation to preserve source duration and
+the full 12-FPS sample-count alternative are rejected for this acceptance
+profile. Generic sampling/retiming semantics are unchanged.
+
+### D-12. Portraits excluded; model rework is a separate request
+
+Owner answer on 2026-10-24 through the same verified relay and question:
+
+> "A: not in this arc"
+
+Adopt P-12: no portrait-specific workflow in this arc; generic static exports
+remain supported. In the same relay the owner identified model/look changes:
+skin reading grey under lighting, a desire for brighter cartoon colours and
+a possible blue ramp, and a more casual walk/posture. The owner said:
+
+> "the mask is nice, dont change that."
+
+These are context for the separate model work, not export implementation
+requirements or permission for this designer to edit the model. The manager
+explicitly directed that rework remain outside this design and asked for an
+owner decision on the final acceptance model. Q-14 records that decision
+point. Do not label the round-4 appearance approved or silently pin the
+export's final acceptance to the old look.
+
+## Round-4 acceptance choices and retained alternatives
 
 ### P-10. Fixed cells and five stored acolyte directions
+
+Five views plus mirrors are adopted only for the base unequipped version
+(D-10). The placement values remain proposed pending Q-15, and the final
+model/look input is Q-14. The rest of this section describes the reviewed
+prototype, not an unqualified acceptance record.
 
 Use the approved model and look at 24 px/m in fixed 48x48 cells, ground
 pixel (24,44), with colour, normals and depth. Store `[0,4,3,2,1]` and map
@@ -774,6 +837,10 @@ approval here would cover only these unarmed walk and idle clips.
 
 ### P-11. Reduced counts at the authored duration
 
+Rejected for acceptance in favor of option B, D-11. Retained to explain the
+round-4 alternatives; the final profile is six walk frames at 8 FPS and four
+idle frames at 6 FPS.
+
 For the acceptance model, use six walk frames at 6 FPS (one-second loop)
 and four idle frames at 2 FPS (two-second loop). This exercises independent
 clip rates and the consumer's smaller frame counts without speeding up the
@@ -787,6 +854,8 @@ walk 1.02/0.78/0.96 seconds and idle 2.00/0.68/1.92 seconds because today's
 preview rounds every frame to 10 ms. Metadata uses the intended durations.
 
 ### P-12. Portrait generation remains outside this arc
+
+Adopted by D-12.
 
 Do not add portrait-specific cameras, crops, output kinds or automatic pose
 selection. The existing 32x32 portrait is read-only context on the page.
@@ -807,7 +876,7 @@ Resolved by D-1.
 
 ### Q-2. Clip timing
 
-Resolved by D-2. Actual acolyte counts and cadence remain under Q-6.
+Resolved by D-2. Actual acolyte counts and cadence are now D-11.
 
 ### Q-3. Default compatibility
 
@@ -815,8 +884,8 @@ Resolved by D-3.
 
 ### Q-4. Direction subsets, names and mirroring
 
-Resolved by D-4. Actual five-view acceptance still needs Q-6's labelled
-visual evidence. Exact settings syntax remains part of Q-9.
+Resolved by D-4. The base unequipped acolyte's five-view choice is D-10;
+the implemented result still needs visual review. Settings syntax is D-7.
 
 ### Q-5. Output paths, maps, naming and publication
 
@@ -824,11 +893,10 @@ Resolved by D-6. Q-9 retains the detailed output contract.
 
 ### Q-6. Acceptance cell, anchor and optional outputs
 
-Round 4: A (recommended), adopt P-10's fixed 48x48/(24,44)/24 px-per-meter
-profile with maps and five stored views plus mirrors; B, the same profile
-with all eight real views; or C, revise cell/scale/anchor first? Labelled
-comparison images are in round-04/q6. Timing and portrait scope now have
-their own stable questions, Q-12 and Q-13.
+Direction scope resolved by D-10. The owner answered five views plus mirrors
+for the base unequipped version, not an unqualified approval of P-10's
+placement bundle. Remaining placement values are explicitly carried to Q-15.
+Model-version ownership is Q-14. Labelled probe evidence remains round-04/q6.
 
 ### Q-7. Delivery and readiness
 
@@ -854,16 +922,31 @@ Resolved by D-9.
 
 ### Q-12. Acolyte frame counts and rates
 
-Round 4: A (recommended), P-11's six-frame/6-FPS walk and four-frame/2-FPS
-idle; B, the same counts at the old game's 8/6 FPS; or C, the approved
-12/24-frame sampling at 12 FPS? Mixed per-clip answers are welcome. The
-round-04/q12 animations show all choices beside old art.
+Resolved by D-11: option B, walk six at 8 FPS, idle four at 6 FPS.
 
 ### Q-13. Portrait workflow scope
 
-Round 4: A (recommended), P-12 excludes portrait-specific generation while
-retaining generic static exports; or B, include and design that workflow
-before finalizing slices? The existing portrait is context in round-04/q13.
+Resolved by D-12: portrait-specific generation is outside this arc.
+
+### Q-14. Which acolyte version owns final visual acceptance?
+
+Required clarification from the manager after the owner requested separate
+model rework: use the latest acolyte explicitly approved by the owner at
+review time (recommended), recording and freezing its model/library/palette
+hashes for that review; or pin the historical `physics-v2` and `library-v4`
+as this export arc's acceptance fixture? Technical tests use generated models
+either way. Model refinement is never a dependency of implementation work;
+it may gate only the final owner review if the owner chooses the newer model.
+
+### Q-15. Acceptance placement after model rework
+
+Required clarification because D-10 answers direction scope only: retain the
+prototype's 48x48 cell, 24 px/m, anchor (24,44), normal/depth outputs and
+one-pixel atlas padding as the initial acceptance target (recommended), with
+an overflow or desired change sent to the owner; or choose those acceptance
+values during the final model review? Either is compatible with the generic
+export contract. No auto-shrinking, changed anchor or claimed visual approval
+is inferred from the five-view answer.
 
 ## Verification strategy
 
@@ -908,8 +991,11 @@ Verified relay `zrbvdx42r5mqc9vwavgcrkvbfn` records the owner's signoff dated
 scope, then Q-7 covers slices and readiness. No implementation is authorized
 by this design session.
 
-Round 4 asks Q-6, Q-12 and Q-13. New round folder:
+Round 4 answered Q-6's direction scope, Q-12 and Q-13 as D-10, D-11 and D-12.
+Its round folder:
 `file:///Users/vincentcoghlan/.local/share/moskophoros-acceptance/export-format-design/round-04/index.html`.
 The fresh locked render and local crop/layout probes succeeded as recorded
-above. Owner visual/scope answers are pending; do not mark these targets
-accepted or design child boundaries from an assumed answer.
+above. Verified relay `cu65sdzfp57fn7hhp3jf637m86` records the owner's answers
+dated 2026-10-24. The owner requested separate model/look rework; Q-14 and
+Q-15 explicitly carry the remaining model/placement questions. Next propose
+delivery slices with those choices isolated to the final owner-review gate.
