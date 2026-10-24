@@ -16,8 +16,9 @@ concrete precondition
 - [ ] EPIC. Export configurable game-ready frames and clip atlases
 
 No child slices are defined yet. The owner has established the consumer
-boundary, timing scope and compatibility contract. Direction and output
-details, acceptance scope and delivery boundaries remain open.
+boundary, timing scope, compatibility, direction/output contracts and
+publication policy. Acceptance values, portrait scope and delivery boundaries
+remain open.
 
 ## Epic contract
 
@@ -151,9 +152,51 @@ cover the agreed stored directions, cell and anchor explicitly.
 
 The brief's required diff check, `git diff --stat 354a21f origin/master --
 src pyproject.toml requirements.lock`, was empty. Its pinned acceptance
-tool can therefore support later probes. No new Blender render has run in
-this design session. Any such run must use the shared lock and headless
-factory-startup flags, and copy inputs rather than overwrite evidence.
+tool can therefore support the design probes. The check was repeated before
+round 4 and remained empty. The round-4 render below used the shared lock and
+headless factory-startup flags, with copied model/library inputs and fresh
+output paths rather than overwriting evidence.
+
+### Round-4 local probes, not implementation acceptance
+
+All paths below are relative to
+`~/.local/share/moskophoros-acceptance/export-format-design/round-04/`.
+
+- `render_probe.py` copies the approved model and library into `inputs/` and
+  invokes the pinned tool under `/usr/bin/lockf -k` with the shared lock.
+  `render/command.txt` preserves the exact command; `render/inputs.json`
+  records input hashes, and `render/run.log` records the result. It rendered
+  both clips at 24 px/m, 48x48, ground (24,44), eight directions, and 12 FPS.
+  Exit 0, no overflow. Only the three already-known skin-ramp override
+  warnings appeared. No repository tests were run for this documentation task.
+- `render/acolyte.json` is today's `moskophoros.sheet/15`, with 12 walk frames
+  and 24 idle frames in every direction. Model SHA-256 matches the approved
+  handoff above. This is not the proposed new export schema or implementation.
+- `build_comparisons.py` cuts cells using JSON rectangles. It compares actual
+  SW/W/NW samples with horizontally mirrored SE/E/NE at the same sample times.
+  For lit comparisons it reverses depth pixels and negates the encoded normal
+  X component before lighting, retaining alpha and the centered anchor.
+  The comparison page places actual views above derived views in a single
+  synchronized animation; it also shows flat colour separately.
+- The walk is not pixel-symmetric: across 36 compared western-view samples,
+  5,604 RGBA pixels differ, including 3,403 alpha pixels. Idle's 72 comparisons
+  differ at 1,924 RGBA pixels, including 866 alpha pixels. These are counts
+  of differences, not visual-quality verdicts or an error in mirroring.
+- Timing variants use every second walk frame (six samples) or every sixth
+  idle frame (four samples). The source times cover the authored loop without
+  the duplicate endpoint. GIF generation uses the current tool's colour and
+  timing routines, with no palette reductions. Its 10-ms delay rounding means
+  intended versus displayed loop durations differ; the page states both.
+- `build_mockup.py` builds option-A frame folders and per-clip atlases for
+  colour/normal/depth under `q6/option-A-layout/`. Five stored directions,
+  six walk or four idle frames, and one-pixel extrusion give 300x250 and
+  200x250 atlases. All 150 emitted frame/map files were compared with their
+  padded atlas slots: exact decoded pixel equality including borders. The
+  local `mockup-plan.json` is explicitly marked as a design mockup; no fake
+  production manifest or consumer index is emitted.
+- `comparison-evidence.json` records timings, comparisons and output hashes.
+  `index.html` links each question to its own image directory, `q6/`, `q12/`
+  or `q13/`. No browser was opened; the owner receives the exact file link.
 
 ## Desired experience and scope
 
@@ -164,9 +207,9 @@ The output choices and consumer handoff are approved in D-1 below.
 
 Established constraints: no game-specific branches or fixtures; no consumer
 file writes or configuration edits in this design session; no model
-refinement; no production code or tracker creation. Portrait generation,
-extra clip naming features and automatic stale-output removal have not been
-accepted into or excluded from implementation scope.
+refinement; no production code or tracker creation. Clip output-name mapping
+is included (D-7); automatic stale-output removal is excluded (D-9). Portrait
+generation remains an explicit scope question, Q-13.
 
 ## Design directions approved in round 1
 
@@ -704,6 +747,58 @@ previous manifest on rerun. It is not recommended here because it expands
 ownership, deletion and recovery semantics. It can be designed separately if
 the owner prefers it; an empty-directory-only mode is another stricter option.
 
+## Round-4 acceptance proposals awaiting owner signoff
+
+### P-10. Fixed cells and five stored acolyte directions
+
+Use the approved model and look at 24 px/m in fixed 48x48 cells, ground
+pixel (24,44), with colour, normals and depth. Store `[0,4,3,2,1]` and map
+7 from 1, 6 from 2, 5 from 3 for both unarmed clips. Use frame folders plus
+per-clip atlases with one-pixel padding; include a combined-sheet run and
+metadata-only replay checks in technical acceptance. Flat and lit previews
+stay enabled with the accepted project's current light.
+
+This reaches the consumer's logical cell/row layout through generic settings;
+50x50 is the physical atlas slot, not the cell. Local acceptance keeps the
+existing approved palette/library and project snapshot, not a shipped preset.
+The model remains larger than the old art at its approved scale. The old
+sprite's drawn feet do not coincide exactly with the renderer's inferred
+(24,44) anchor; the page marks the anchor rather than moving the old pixels.
+
+The alternative is the same cell/anchor/scale/maps/padding with all eight
+real directions `[0,7,6,5,4,3,2,1]` and no mirrors. This retains the model's
+original pose in each direction; five views save three rows but change some
+poses/robe details. The owner judges that tradeoff from synchronized images.
+Future asymmetric clips require their own explicit full-direction settings;
+approval here would cover only these unarmed walk and idle clips.
+
+### P-11. Reduced counts at the authored duration
+
+For the acceptance model, use six walk frames at 6 FPS (one-second loop)
+and four idle frames at 2 FPS (two-second loop). This exercises independent
+clip rates and the consumer's smaller frame counts without speeding up the
+approved authored motion. Its coarser sampling is a visible tradeoff.
+
+Alternatives on the page: the same counts at the current game's 8/6 FPS,
+making walk 0.75 seconds and idle two-thirds of a second; or retain the
+approved full sampling, walk 12 and idle 24 frames, both at 12 FPS. The
+owner may mix choices by clip. Displayed GIF cycles are respectively
+walk 1.02/0.78/0.96 seconds and idle 2.00/0.68/1.92 seconds because today's
+preview rounds every frame to 10 ms. Metadata uses the intended durations.
+
+### P-12. Portrait generation remains outside this arc
+
+Do not add portrait-specific cameras, crops, output kinds or automatic pose
+selection. The existing 32x32 portrait is read-only context on the page.
+Generic static one-frame exports remain supported; a portrait may be designed
+as a separate rendering workflow later. The alternative is to include that
+workflow now, which requires its own framing/pose/size decisions before
+delivery boundaries can be finalized.
+
+The final implemented export still requires a dedicated owner review, even
+if the owner accepts these prototype values. Prototype approval chooses the
+acceptance target; it does not close the future implementation's visual gate.
+
 ## Open questions
 
 ### Q-1. Output choices and consumer boundary
@@ -729,10 +824,11 @@ Resolved by D-6. Q-9 retains the detailed output contract.
 
 ### Q-6. Acceptance cell, anchor and optional outputs
 
-Unasked. Visually compare a fixed cell and explicit anchor at the accepted
-scale; decide portrait scope, actual clip counts/cadence and normal/depth
-use. Keep the approved model as input. A dedicated owner visual-review slice
-is required by the brief but its scope depends on these answers.
+Round 4: A (recommended), adopt P-10's fixed 48x48/(24,44)/24 px-per-meter
+profile with maps and five stored views plus mirrors; B, the same profile
+with all eight real views; or C, revise cell/scale/anchor first? Labelled
+comparison images are in round-04/q6. Timing and portrait scope now have
+their own stable questions, Q-12 and Q-13.
 
 ### Q-7. Delivery and readiness
 
@@ -755,6 +851,19 @@ Resolved by D-8.
 ### Q-11. Output replacement and stale files
 
 Resolved by D-9.
+
+### Q-12. Acolyte frame counts and rates
+
+Round 4: A (recommended), P-11's six-frame/6-FPS walk and four-frame/2-FPS
+idle; B, the same counts at the old game's 8/6 FPS; or C, the approved
+12/24-frame sampling at 12 FPS? Mixed per-clip answers are welcome. The
+round-04/q12 animations show all choices beside old art.
+
+### Q-13. Portrait workflow scope
+
+Round 4: A (recommended), P-12 excludes portrait-specific generation while
+retaining generic static exports; or B, include and design that workflow
+before finalizing slices? The existing portrait is context in round-04/q13.
 
 ## Verification strategy
 
@@ -798,3 +907,9 @@ Verified relay `zrbvdx42r5mqc9vwavgcrkvbfn` records the owner's signoff dated
 2026-10-24. Q-6 now covers acceptance values/visual probes and portrait
 scope, then Q-7 covers slices and readiness. No implementation is authorized
 by this design session.
+
+Round 4 asks Q-6, Q-12 and Q-13. New round folder:
+`file:///Users/vincentcoghlan/.local/share/moskophoros-acceptance/export-format-design/round-04/index.html`.
+The fresh locked render and local crop/layout probes succeeded as recorded
+above. Owner visual/scope answers are pending; do not mark these targets
+accepted or design child boundaries from an assumed answer.
