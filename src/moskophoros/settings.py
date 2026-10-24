@@ -973,6 +973,21 @@ ALL_DEFAULTS = MappingProxyType(
 NOT_YET = "not available yet"
 
 
+def check_recorded(key, value, *, clip=False):
+    """`value` as the setting `key` holds it, or a clip's leaf `key` with
+    `clip`, checked exactly as a settings file's value is, including for an
+    inactive setting. Raises `ValueError` with the problem, naming the place
+    inside `value` when it is a list or mapping."""
+    setting = (CLIP_SCHEMA if clip else SCHEMA)[key]
+    try:
+        return setting.check(value)
+    except _Bad as error:
+        where = "".join(f"[{step!r}]" for step in error.at)
+        raise ValueError(
+            f"{where}: {error.problem}" if where else error.problem
+        ) from None
+
+
 def read_bytes(data, *, source, directory, shipped=False):
     """The layer the settings file `data` gives, read from `directory`.
     A setting that is not active yet is refused (`NOT_YET`), however it is
