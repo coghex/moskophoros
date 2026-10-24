@@ -21,14 +21,14 @@ concrete precondition
 - [x] EXP-5. Publish nested output files with rollback — [#158]
 - [x] EXP-6a. Switch legacy output to the complete export manifest — [#159]
 - [x] EXP-6b. Activate configurable directory exports — [#160]
-- [ ] EXP-7. Review the implemented acolyte export with the owner
+- [x] EXP-7. Review the implemented acolyte export with the owner — [#161]
 
 Eight slices approved by the owner on 2026-10-24 (D-18 amends D-15).
 All design questions are resolved. D-13 and D-14 set the model and placement policies for the
 final owner-review slice; model rework remains outside implementation.
-Design review is complete. Epic #153, EXP-1 through EXP-5 (#154–#158) and
-EXP-6a/EXP-6b (#159–#160) are filed; one child entry remains unprocessed
-and requires separate draft signoff before creation.
+Design review and issue processing are complete. Epic #153 and all eight
+children (#154–#161) are filed and linked; no entries remain unprocessed.
+Filing does not mark implementation or owner acceptance complete.
 
 ## Epic contract
 
@@ -1832,3 +1832,14 @@ EXP-6b [#160](https://github.com/coghex/moskophoros/issues/160) was created
 with that exact body and the existing `enhancement` label, and linked on its
 still-unchecked epic #153 checklist line. No review labels were added.
 Next entry: EXP-7; one child remains to be drafted and signed off.
+
+2026-10-24: the manager signed off the body of `drafts/exp-7-v1.md`
+(SHA-256 `8cbe2f7917eed540fcc2fb8ea0e016a5ba527622dfba85c0836bed644d68a3ae`)
+with one explicit amendment: use the existing `documentation` label instead
+of `enhancement`. EXP-7 [#161](https://github.com/coghex/moskophoros/issues/161)
+was created with that exact body and amended label, and linked on its
+still-unchecked epic #153 checklist line. No review labels were added.
+Issue processing is complete: epic #153 and all eight children #154–#161
+are filed; zero entries remain. Implementation and owner acceptance are
+still pending. This arc document retains its processing record; archive it
+only after the epic closes and no open issue cites its path, per AGENTS.md.
