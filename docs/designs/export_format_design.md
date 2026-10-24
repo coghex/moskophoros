@@ -5,7 +5,7 @@ with runtime mirroring, and clip sampling for a general-purpose renderer.
 The approved acolyte is the external acceptance model; no consumer names,
 paths or private formats belong in production code, defaults or tests.
 
-Design state: `exploring`
+Design state: `ready for issue processing`
 
 Status legend: `[ ]` unprocessed · `[#N]` linked to issue N · `[no-issue]`
 reviewed and deliberately not tracked separately · `[deferred]` blocked on a
@@ -22,10 +22,11 @@ concrete precondition
 - [ ] EXP-6. Connect directory exports to the command pipeline
 - [ ] EXP-7. Review the implemented acolyte export with the owner
 
-Seven proposed slices, awaiting Q-7 signoff. Generic behavior, contracts,
-base-acolyte directions, timing and portrait scope are decided. Q-14 and
-Q-15 affect only the final owner-review slice; the plan does not assume
-their answers or add model rework to implementation.
+Seven slices approved by the owner on 2026-10-24 (D-15). All design questions
+are resolved. D-13 and D-14 set the model and placement policies for the
+final owner-review slice; model rework remains outside implementation.
+The manager arranges design review and issue processing. No issues have
+been filed by this design session.
 
 ## Epic contract
 
@@ -36,7 +37,7 @@ their answers or add model rework to implementation.
   path, overflow and publication failures satisfy the contract; planned
   automated checks pass with current local Blender evidence; and the owner
   approves the implemented base-acolyte export beside old sprites in EXP-7.
-  Acceptance input/placement follow the answers to Q-14/Q-15.
+  Acceptance input and placement follow D-13 and D-14.
 - **Users and operators:** artists and developers rendering subjects for games.
 - **Arc label:** None proposed.
 
@@ -48,7 +49,7 @@ The verified `mosk-manager` chat record
 `wuihstigu7bmbb8e4e56cpb53w` confirms the owner selected this design session.
 The brief quotes the owner's choice as **"Design the export format
 (Recommended)"**, after approving the acolyte. This authorizes exploration,
-not the options proposed below. Every subsequent approved choice will record
+not by itself the options below. Every subsequent approved choice records
 the owner's exact words, date and relay message ID or "in the designer's pane".
 
 The endpoint is an owner-signed design ready for `process-design-doc`.
@@ -172,7 +173,7 @@ output paths rather than overwriting evidence.
 These probes use the then-approved `physics-v2` model. After viewing them,
 the owner requested model/look revisions in a separate workstream. Preserve
 the probes as historical export evidence; they are not approval of the
-model/look for the final export review. See D-10 through D-12 and Q-14.
+model/look for the final export review. See D-10 through D-14.
 
 All paths below are relative to
 `~/.local/share/moskophoros-acceptance/export-format-design/round-04/`.
@@ -240,7 +241,8 @@ and atlas padding through project settings. For the test consumer, export
 frames and let its existing compiler produce its private index and runtime
 atlases. Do not teach moskophoros the consumer's schema or digest rules.
 This makes generic atlases useful to other consumers without claiming they
-replace this game's compilation step. Exact settings and CLI remain open.
+replace this game's compilation step. D-6 and D-7 subsequently settle the
+exact settings and CLI.
 
 ### P-2. Add per-clip FPS without changing frame-count meaning
 
@@ -251,7 +253,8 @@ one-second walk with six frames at 6 FPS lasts one second; six at 8 FPS lasts
 0.75 seconds, matching the current game's cadence. A two-second idle with
 four frames at 2 FPS preserves two seconds, while four at 6 FPS matches the
 old game's two-thirds-second cadence. These numbers explain behavior; none
-is selected for the approved model. Preview cadence requires owner review.
+was selected in round 1. D-11 subsequently selects the old-game cadence;
+the implemented previews still require owner review.
 
 ### P-3. Preserve default images, explicitly version metadata
 
@@ -262,7 +265,8 @@ bytes when no new option is used. Permit JSON and fingerprint changes for
 the new recorded settings and schema. Continue the owner's current-schema-
 only reuse policy instead of adding compatibility modes. A promise of
 byte-identical JSON conflicts with an unconditional schema bump; that part
-of the brief needs a precise choice. Exact schema identity remains open.
+of the brief needed a precise choice. D-8 subsequently fixes the schema
+identity as `moskophoros.export/1`.
 
 ## Decisions
 
@@ -290,7 +294,7 @@ Owner signoff on 2026-10-24 through the same verified relay and question:
 
 P-2 is adopted. Add per-clip FPS and preserve the current explicit-count
 meaning; do not add a separate source-duration-preserving sampling mode.
-Actual acceptance-model cadence is still open. This affects sampling,
+Acceptance-model cadence is subsequently settled by D-11. This affects sampling,
 settings, metadata/reuse and preview timing. Global-FPS-only was rejected
 because clips need independent playback rates.
 
@@ -304,7 +308,7 @@ P-3 is adopted: preserve default sheet/map/preview bytes when no new feature
 is selected, allow the schema, JSON and fingerprint to change, and retain
 current-schema-only reuse. No legacy JSON compatibility path is added.
 This affects every new setting's recording, reuse and regression checks;
-the exact schema identity remains open.
+the exact schema identity is subsequently settled by D-8.
 
 ### D-4. Ordered direction lists and exact per-clip overrides
 
@@ -710,11 +714,11 @@ settings-layer precedence and explicit `--clip`/`--once` behavior stay intact.
 No normalizing recorded camera/light directions again. Unknown schema,
 missing/invalid required settings and inconsistent references fail loudly.
 
-The logical shape and schema behavior above are proposed contracts; the
+The logical shape and schema behavior above are approved contracts (D-8); the
 implementation documentation will pin the complete JSON example and key
 order before the implementation's final review, without changing these
-meanings. During sliced delivery, any intermediate schema bump must have a
-separate name and reject its predecessor; it cannot silently change `/1`.
+meanings. P-13 delivers one public schema change at EXP-6, with no public
+intermediate schema or silent change to `/1` during sliced delivery.
 
 ### P-9. Publication, reruns and failures
 
@@ -774,8 +778,8 @@ Owner answer on 2026-10-24, via verified `mosk-manager` relay
 Record the five-view/mirror choice for the **base unequipped version** only.
 It is not blanket approval for equipped/asymmetric clips, and not approval
 of the model's look. The response does not explicitly choose the other
-numbers bundled into P-10 (cell, scale and anchor); Q-15 asks whether those
-remain the acceptance target or should be set during the later visual review.
+numbers bundled into P-10 (cell, scale and anchor); D-14 subsequently adopts
+those as the initial acceptance target in answer to Q-15.
 
 ### D-11. Old-game clip rates and counts
 
@@ -810,17 +814,59 @@ a possible blue ramp, and a more casual walk/posture. The owner said:
 These are context for the separate model work, not export implementation
 requirements or permission for this designer to edit the model. The manager
 explicitly directed that rework remain outside this design and asked for an
-owner decision on the final acceptance model. Q-14 records that decision
-point. Do not label the round-4 appearance approved or silently pin the
+owner decision on the final acceptance model. D-13 resolves Q-14.
+Do not label the round-4 appearance approved or silently pin the
 export's final acceptance to the old look.
+
+### D-13. Latest owner-approved acolyte at review time
+
+Owner signoff on 2026-10-24, via verified `mosk-manager` relay
+`9aqym2znqa32juy547huw6mvg2`, answering final-checkpoint question message
+`g6qgzq7kjekwv86fu3kfbdajww` with the round-05 links. For Q-14 the owner chose:
+
+> "A: latest approved"
+
+Use the latest acolyte explicitly approved by the owner at review time.
+Record and freeze its model, library, palette and settings hashes for that
+review. Do not pin the historical `physics-v2`/`library-v4` as the final
+acceptance input or assume that a newer unapproved model qualifies.
+Model rework remains a separate request. Model approval gates only EXP-7;
+EXP-1 through EXP-6 use generated fixtures and can proceed independently.
+
+### D-14. Start acceptance from the reviewed placement values
+
+Owner signoff on 2026-10-24 through the same verified relay and question.
+For Q-15 the owner chose:
+
+> "A: start from these"
+
+Use a 48x48 cell, 24 px/m, ground anchor (24,44), normal and depth outputs,
+and one-pixel atlas padding as the initial acceptance target. If the revised
+model overflows or a placement change is desired, stop and ask the owner;
+never automatically shrink it or move its anchor. This settles the remaining
+Q-6 placement values and Q-15, without approving colours, posture or any
+other aspect of the model's appearance.
+
+### D-15. Seven-slice plan approved and ready for issue processing
+
+Owner signoff on 2026-10-24 through the same verified relay and question.
+For Q-7 the owner chose:
+
+> "A: approve, ready"
+
+Adopt P-13 and the seven ordered EXP-1 through EXP-7 slices below. All design
+questions are resolved and the document is ready for issue processing.
+The manager explicitly instructed this session to record and land the design,
+post done with the path, commit and slice list, then stop without filing
+issues. The manager arranges design review and `process-design-doc` next.
 
 ## Round-4 acceptance choices and retained alternatives
 
 ### P-10. Fixed cells and five stored acolyte directions
 
 Five views plus mirrors are adopted only for the base unequipped version
-(D-10). The placement values remain proposed pending Q-15, and the final
-model/look input is Q-14. The rest of this section describes the reviewed
+(D-10). D-14 adopts the placement values as the initial acceptance target;
+D-13 selects the final model. The rest of this section describes the reviewed
 prototype, not an unqualified acceptance record.
 
 Use the approved model and look at 24 px/m in fixed 48x48 cells, ground
@@ -877,7 +923,7 @@ The final implemented export still requires a dedicated owner review, even
 if the owner accepts these prototype values. Prototype approval chooses the
 acceptance target; it does not close the future implementation's visual gate.
 
-## Open questions
+## Resolved questions
 
 ### Q-1. Output choices and consumer boundary
 
@@ -902,18 +948,18 @@ Resolved by D-6. Q-9 retains the detailed output contract.
 
 ### Q-6. Acceptance cell, anchor and optional outputs
 
-Direction scope resolved by D-10. The owner answered five views plus mirrors
+Resolved by D-10 and D-14. The owner answered five views plus mirrors
 for the base unequipped version, not an unqualified approval of P-10's
-placement bundle. Remaining placement values are explicitly carried to Q-15.
-Model-version ownership is Q-14. Labelled probe evidence remains round-04/q6.
+placement bundle. D-14 subsequently resolves the remaining placement values
+through Q-15. D-13 resolves model-version ownership through Q-14. Labelled
+probe evidence remains round-04/q6.
 
 ### Q-7. Delivery and readiness
 
-Round 5: approve P-13's seven-slice plan and explicitly mark the design ready
-after Q-14/Q-15 are recorded (recommended), or approve the plan but leave the
-design exploring for further changes? Alternatively specify plan amendments.
-The tracker was rechecked: only unrelated #43 is open, and no PRs are open.
-No export epic duplicates the proposed umbrella at this check.
+Resolved by D-15: P-13's seven-slice plan is approved and the design is ready
+for issue processing. The tracker was rechecked on 2026-10-24: only unrelated
+#43 is open, and no PRs are open. No export epic duplicates the umbrella at
+this check. This session files no issues.
 
 ### Q-8. What does runtime mirroring mean in the export?
 
@@ -941,23 +987,17 @@ Resolved by D-12: portrait-specific generation is outside this arc.
 
 ### Q-14. Which acolyte version owns final visual acceptance?
 
-Required clarification from the manager after the owner requested separate
-model rework: use the latest acolyte explicitly approved by the owner at
-review time (recommended), recording and freezing its model/library/palette
-hashes for that review; or pin the historical `physics-v2` and `library-v4`
-as this export arc's acceptance fixture? Technical tests use generated models
-either way. Model refinement is never a dependency of implementation work;
-it may gate only the final owner review if the owner chooses the newer model.
+Resolved by D-13: use the latest acolyte explicitly approved by the owner at
+review time, freezing its model/library/palette/settings hashes for that
+review. The historical pinned-model alternative was not selected. Technical
+tests use generated models; only EXP-7 depends on model approval.
 
 ### Q-15. Acceptance placement after model rework
 
-Required clarification because D-10 answers direction scope only: retain the
-prototype's 48x48 cell, 24 px/m, anchor (24,44), normal/depth outputs and
-one-pixel atlas padding as the initial acceptance target (recommended), with
-an overflow or desired change sent to the owner; or choose those acceptance
-values during the final model review? Either is compatible with the generic
-export contract. No auto-shrinking, changed anchor or claimed visual approval
-is inferred from the five-view answer.
+Resolved by D-14: start from the prototype's 48x48 cell, 24 px/m, anchor
+(24,44), normal/depth outputs and one-pixel atlas padding. Ask the owner about
+overflow or desired changes. Deferring the initial values until final review
+was not selected; automatic shrinking or anchor changes are not authorized.
 
 ## Verification strategy
 
@@ -988,7 +1028,7 @@ rule. No generated art or binary model enters the repository.
 
 ### P-13. Seven slices with one public activation and a final owner gate
 
-Proposed until Q-7 is approved. EXP-1 through EXP-6 are each one issue,
+Approved by D-15. EXP-1 through EXP-6 are each one issue,
 worktree and reviewable code PR. EXP-7 is a human acceptance issue with
 evidence published by `docs-push`, not a manufactured code PR. Model rework
 is outside every slice.
@@ -999,7 +1039,7 @@ feature. It must not accept new settings and silently ignore them. Prepare
 schema extensions/helpers without enabling incomplete public behavior. EXP-6
 activates the full settings contract and makes one public switch to
 `moskophoros.export/1`; no intermediate public export schema or long-lived
-feature flag is needed. This sequencing is part of the plan being approved.
+feature flag is needed. This sequencing is part of the approved plan.
 
 Dependency order: EXP-1 → EXP-2 → EXP-3 → EXP-4 → EXP-6 → EXP-7.
 EXP-5 depends on EXP-2 and also feeds EXP-6. After EXP-2 it may proceed
@@ -1128,7 +1168,7 @@ The ledger gives one valid order, not a request to launch parallel agents.
 
 - **Outcome:** explicit owner acceptance with reproducible evidence identifying
   the exact input, settings, generator and implementation revision.
-- **Scope:** apply Q-14's model policy and Q-15's placement policy; base
+- **Scope:** apply D-13's model policy and D-14's placement policy; base
   unequipped acolyte has five views plus mirrors, walk six at 8 FPS, idle
   four at 6 FPS. Produce frame folders and clip atlases/maps, a combined-sheet
   comparison, and replay from metadata alone. Compare captured/mirrored views
@@ -1137,7 +1177,7 @@ The ledger gives one valid order, not a request to launch parallel agents.
 - **Phase:** owner acceptance and documentation closeout.
 - **Depends on:** EXP-6; additionally the owner-selected model/placement gate.
 - **Ordering:** critical path to epic completion; does not block EXP-1–EXP-6.
-- **Relevant decisions:** D-1 through D-12, plus eventual Q-14/Q-15 decisions.
+- **Relevant decisions:** D-1 through D-15.
 - **Acceptance signals:** current technical checks pass; exact commands and
   hashes are recorded; the owner explicitly approves the implemented export
   with dated provenance. Stop for the owner if the chosen model is unapproved,
@@ -1146,8 +1186,8 @@ The ledger gives one valid order, not a request to launch parallel agents.
 - **Out of scope:** model/look refinement, portraits, equipped/asymmetric asset
   creation, game writes and private compilation. Generated fixtures cover
   full-direction exceptions mechanically.
-- **Open questions:** Q-14 and Q-15 affect only review inputs/targets or an
-  explicit owner gate. This is documentation-only acceptance: evidence lands
+- **Open questions:** None. D-13 and D-14 are explicit acceptance gates for
+  review inputs and targets. This is documentation-only acceptance: evidence lands
   with `docs-push`, with no code PR needed.
 
 ## Conversation cursor
@@ -1165,15 +1205,14 @@ Round 2 resolved Q-4, Q-8 and Q-5 as D-4, D-5 and D-6. Its round folder:
 `file:///Users/vincentcoghlan/.local/share/moskophoros-acceptance/export-format-design/round-02/index.html`.
 No visual approval was requested there. Verified relay
 `kxtwp9nj4gdsdhmdnk28wjaezn` records the owner's answers dated 2026-10-24.
-Next settle Q-9 and Q-6 before the final
-dependency-ordered slices and readiness signoff; the three-question limit
-does not silently resolve the remaining choices.
+The detailed contracts and acceptance choices were addressed in subsequent
+rounds before the final dependency-ordered slices and readiness signoff.
 
 Round 3 resolved Q-9, Q-10 and Q-11 as D-7, D-8 and D-9. Its round folder:
 `file:///Users/vincentcoghlan/.local/share/moskophoros-acceptance/export-format-design/round-03/index.html`.
 Verified relay `zrbvdx42r5mqc9vwavgcrkvbfn` records the owner's signoff dated
-2026-10-24. Q-6 now covers acceptance values/visual probes and portrait
-scope, then Q-7 covers slices and readiness. No implementation is authorized
+2026-10-24. Acceptance values, visual probes, portrait scope and readiness
+were subsequently addressed in rounds 4 and 5. No implementation is authorized
 by this design session.
 
 Round 4 answered Q-6's direction scope, Q-12 and Q-13 as D-10, D-11 and D-12.
@@ -1181,13 +1220,18 @@ Its round folder:
 `file:///Users/vincentcoghlan/.local/share/moskophoros-acceptance/export-format-design/round-04/index.html`.
 The fresh locked render and local crop/layout probes succeeded as recorded
 above. Verified relay `cu65sdzfp57fn7hhp3jf637m86` records the owner's answers
-dated 2026-10-24. The owner requested separate model/look rework; Q-14 and
-Q-15 explicitly carry the remaining model/placement questions. Next propose
-delivery slices with those choices isolated to the final owner-review gate.
+dated 2026-10-24. The owner requested separate model/look rework; round 5
+resolved the remaining model/placement questions and approved delivery slices
+with those choices isolated to the final owner-review gate.
 
-Round 5 asks Q-14 (review model), Q-15 (initial placement policy) and Q-7
-(seven slices and readiness). New round folder:
+Round 5 resolved Q-14 (review model), Q-15 (initial placement policy) and Q-7
+(seven slices and readiness) as D-13, D-14 and D-15. Its round folder:
 `file:///Users/vincentcoghlan/.local/share/moskophoros-acceptance/export-format-design/round-05/index.html`.
 The placement section reproduces the earlier labelled image as historical
-context, explicitly not a new model/look approval. State remains `exploring`
-until the owner answers these questions and grants readiness.
+context, explicitly not a new model/look approval. Verified manager relay
+`9aqym2znqa32juy547huw6mvg2` records all three owner answers dated 2026-10-24,
+responding to question message `g6qgzq7kjekwv86fu3kfbdajww`. The design is
+`ready for issue processing`; all seven slices remain unprocessed. Publish
+the design and report done, then stop. The manager arranges design review
+and `process-design-doc`: the epic first, then exactly one child per
+invocation with separate approval. This session files no issues.
