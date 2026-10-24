@@ -9,6 +9,7 @@ import moskophoros.export
 import moskophoros.fit
 import moskophoros.gltf
 import moskophoros.imageops
+import moskophoros.plan
 import moskophoros.sampling
 import moskophoros.stylize
 import moskophoros.views
@@ -29,6 +30,7 @@ def test_the_package_namespace_holds_only_its_submodules():
         "fit",
         "gltf",
         "imageops",
+        "plan",
         "sampling",
         "stylize",
         "views",
