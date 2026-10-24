@@ -14,20 +14,29 @@ concrete precondition
 ## Processing status
 
 - [ ] EPIC. Export configurable game-ready frames and clip atlases
+- [ ] EXP-1. Plan per-clip sampling and stored directions
+- [ ] EXP-2. Resolve export settings, names and output paths
+- [ ] EXP-3. Encode frame files and clip atlases from addressed frames
+- [ ] EXP-4. Record and reload the generic export manifest
+- [ ] EXP-5. Publish nested output files with rollback
+- [ ] EXP-6. Connect directory exports to the command pipeline
+- [ ] EXP-7. Review the implemented acolyte export with the owner
 
-No child slices are defined yet. The owner has established the consumer
-boundary, timing scope, compatibility, direction/output contracts and
-publication policy. Base-acolyte directions, clip timing and portrait scope
-are now decided. Acceptance-model version, the remaining placement values
-and delivery boundaries still need explicit signoff.
+Seven proposed slices, awaiting Q-7 signoff. Generic behavior, contracts,
+base-acolyte directions, timing and portrait scope are decided. Q-14 and
+Q-15 affect only the final owner-review slice; the plan does not assume
+their answers or add model rework to implementation.
 
 ## Epic contract
 
 - **Goal:** render a model using project settings into reusable images and
   metadata, with explicit clip timing, directions, scale and ground anchor.
-- **Done when:** pending owner decisions. Proposed completion is the agreed
-  generic export contract implemented, mechanically verified, and reviewed
-  visually by the owner using the approved acolyte beside current sprites.
+- **Done when:** all approved output combinations work from project settings;
+  defaults preserve image bytes; the current manifest reproduces the export;
+  path, overflow and publication failures satisfy the contract; planned
+  automated checks pass with current local Blender evidence; and the owner
+  approves the implemented base-acolyte export beside old sprites in EXP-7.
+  Acceptance input/placement follow the answers to Q-14/Q-15.
 - **Users and operators:** artists and developers rendering subjects for games.
 - **Arc label:** None proposed.
 
@@ -900,9 +909,11 @@ Model-version ownership is Q-14. Labelled probe evidence remains round-04/q6.
 
 ### Q-7. Delivery and readiness
 
-Unasked. Set one-PR slice boundaries and dependency order only after the
-blocking behavioral decisions. Obtain separate readiness signoff. Recheck
-tracker overlap at readiness. A document publication is not design approval.
+Round 5: approve P-13's seven-slice plan and explicitly mark the design ready
+after Q-14/Q-15 are recorded (recommended), or approve the plan but leave the
+design exploring for further changes? Alternatively specify plan amendments.
+The tracker was rechecked: only unrelated #43 is open, and no PRs are open.
+No export epic duplicates the proposed umbrella at this check.
 
 ### Q-8. What does runtime mirroring mean in the export?
 
@@ -950,20 +961,194 @@ is inferred from the five-view answer.
 
 ## Verification strategy
 
-Proposed families, to refine with the accepted contract: pure sample and
-direction mapping; settings precedence and reuse; frame/atlas pixel equality,
-padding and map alignment; stable frame addresses; deterministic metadata and
-paths; invalid templates and collisions; overflow and publication rollback;
-unchanged default image bytes; generated-fixture Blender integration; and a
-separate owner visual review of the approved model beside current sprites.
-Real consumer assets stay local acceptance evidence, never repository tests.
-Implementation follows [validation](../validation.md) and its planner-selected
-groups, including current-commit local Blender evidence when selected.
+Checks belong to each slice and use generated fixtures and temporary
+directories. Real consumer assets remain local acceptance evidence, never
+repository tests. Test observable behavior: exact sample times and identity;
+layer merging and reset semantics; invalid names/templates/mirror sources;
+decoded cell/map/padding equality; deterministic metadata and complete replay;
+and injected staging/replacement/rollback failures that preserve prior files.
+
+Generated-GLB integration covers unequal clip rates/counts/subsets, a full-view
+asymmetric exception, format combinations, maps/previews and fresh-root replay.
+Retained jobs prove that only stored samples are requested. Compare the new
+default encoder with the existing one on the same addressed arrays before
+activation; preserve reproducible default-image baseline hashes for a locally
+generated model across the command switch using the same generator. New
+metadata is expected to differ. Appearance needs the separate owner gate.
+
+Every code slice follows [validation](../validation.md) and the planner at its
+actual diff. The current catalog selects `test.blender` for any `src/` change,
+even preparatory pure-code changes; those PRs need current passing local
+evidence as well as required CI checks. No new dependency is proposed.
+Evidence/design notes land with `docs-push`; implementation contracts tests
+read, notably `docs/design.md`, travel with code under the documentation-as-code
+rule. No generated art or binary model enters the repository.
 
 ## Delivery plan
 
-Zero child slices yet. Decomposition waits on the unresolved questions. The processing
-ledger will mirror the eventual dependency-ordered plan exactly.
+### P-13. Seven slices with one public activation and a final owner gate
+
+Proposed until Q-7 is approved. EXP-1 through EXP-6 are each one issue,
+worktree and reviewable code PR. EXP-7 is a human acceptance issue with
+evidence published by `docs-push`, not a manufactured code PR. Model rework
+is outside every slice.
+
+EXP-1 through EXP-5 provide tested internal capabilities. The existing command
+continues its current sheet behavior/schema until EXP-6 connects the complete
+feature. It must not accept new settings and silently ignore them. Prepare
+schema extensions/helpers without enabling incomplete public behavior. EXP-6
+activates the full settings contract and makes one public switch to
+`moskophoros.export/1`; no intermediate public export schema or long-lived
+feature flag is needed. This sequencing is part of the plan being approved.
+
+Dependency order: EXP-1 → EXP-2 → EXP-3 → EXP-4 → EXP-6 → EXP-7.
+EXP-5 depends on EXP-2 and also feeds EXP-6. After EXP-2 it may proceed
+separately from encoding/metadata if the manager judges the scopes compatible.
+The ledger gives one valid order, not a request to launch parallel agents.
+
+### EXP-1. Plan per-clip sampling and stored directions
+
+- **Outcome:** one pure request planner resolves per-clip sample times,
+  durations and stored-view order without changing original frame addresses.
+- **Scope:** effective FPS/count rules; loop/one-shot/still cases; ordered
+  subsets; logical mirror references; shared frame plans for capture/export/
+  previews. Existing callers keep default behavior until integration.
+- **Phase:** internal planning foundation.
+- **Depends on:** `none`.
+- **Ordering:** critical path.
+- **Relevant decisions:** D-2, D-4, D-5, D-7.
+- **Acceptance signals:** expected exact times/rates for unequal clips;
+  reordered subsets keep original direction IDs; no captured alias samples;
+  static and zero-length clips keep their defined behavior.
+- **Out of scope:** parsing, filenames, public activation and Blender changes.
+- **Open questions:** None.
+
+### EXP-2. Resolve export settings, names and output paths
+
+- **Outcome:** layered settings yield a validated deterministic request and
+  complete relative output-path plan before rendering.
+- **Scope:** schema extensions, per-clip leaf merge/reset, formats normalization,
+  alias/name validation, template grammar, all enabled map/preview/manifest
+  paths, collision/prefix checks, warnings and provenance. Prepare extensions
+  without making the old command accept values it cannot execute. Keep one
+  schema-table authority rather than duplicate existing setting definitions.
+- **Phase:** internal configuration and preflight.
+- **Depends on:** EXP-1.
+- **Ordering:** critical path.
+- **Relevant decisions:** D-1, D-2, D-4, D-5, D-6, D-7, D-9.
+- **Acceptance signals:** layer/reset cases resolve exactly; errors retain
+  file/key locations; path conflicts fail before capture; a changed view
+  cannot silently discard invalid direction/mirror references.
+- **Out of scope:** encoding, filesystem mutation and command activation.
+- **Open questions:** None.
+
+### EXP-3. Encode frame files and clip atlases from addressed frames
+
+- **Outcome:** one set of post-cleanup addressed frames produces any approved
+  combination of individual PNGs, clip atlases and combined sheet, with maps.
+- **Scope:** logical rectangles, variable clip-row counts, exact padding,
+  encodings, ordered artifact descriptors and sample locations; stored-view
+  previews at each clip's timing. Reuse shared image operations. Keep encoding
+  separate from publication and preserve the old path for comparison until EXP-6.
+- **Phase:** internal image export.
+- **Depends on:** EXP-1, EXP-2.
+- **Ordering:** critical path.
+- **Relevant decisions:** D-1, D-3, D-4, D-5, D-7.
+- **Acceptance signals:** decoded frame/map pixels and every padded edge/corner
+  match; zero padding and unequal counts work; combined-sheet empty cells are
+  transparent; default PNG/GIF bytes match the existing encoder on identical
+  inputs; missing/extra/duplicate addressed frames are rejected.
+- **Out of scope:** metadata schema, publication and model changes.
+- **Open questions:** None.
+
+### EXP-4. Record and reload the generic export manifest
+
+- **Outcome:** `moskophoros.export/1` records all sample locations and mirror
+  references and restores every required setting.
+- **Scope:** deterministic JSON/key order/fingerprint; artifact references;
+  full-ring and per-clip records; actual versus derived identity; inline
+  palette/library; strict validation and reload to the settings layer. Pin
+  the full JSON example/field contract before final review. Keep this internal
+  until EXP-6 so no partially implemented schema becomes public.
+- **Phase:** internal metadata and replay.
+- **Depends on:** EXP-1, EXP-2, EXP-3.
+- **Ordering:** critical path.
+- **Relevant decisions:** D-3, D-5, D-7, D-8.
+- **Acceptance signals:** encode/reload preserves overrides and inheritance;
+  references match artifacts; mirror/anchor semantics hold; original config
+  files are unnecessary; malformed references and old schemas are refused.
+- **Out of scope:** CLI switch, consumer indexes and runtime shaders.
+- **Open questions:** None.
+
+### EXP-5. Publish nested output files with rollback
+
+- **Outcome:** planned exports create directories and replace their files
+  with manifest-last publication and honest rollback.
+- **Scope:** filesystem preflight/confinement, input/output overlap checks,
+  staging, replace-only-written policy, rollback, owned-empty-directory cleanup
+  and backup diagnostics. The publisher stays independent of image internals;
+  preserve existing default publication behavior.
+- **Phase:** filesystem effects.
+- **Depends on:** EXP-2.
+- **Ordering:** independent of EXP-3/EXP-4 after EXP-2; required by EXP-6.
+- **Relevant decisions:** D-6, D-7, D-9.
+- **Acceptance signals:** injected failures restore prior bytes; only owned
+  empty new directories are cleaned; stale/unrelated files survive; links
+  cannot escape the root; incomplete publication has no valid new manifest;
+  rollback failures identify preserved backups without claiming full restoration.
+- **Out of scope:** pruning, crash recovery and concurrent-writer isolation.
+- **Open questions:** None.
+
+### EXP-6. Connect directory exports to the command pipeline
+
+- **Outcome:** both command forms support all approved settings, output
+  combinations and metadata replay end to end.
+- **Scope:** activate settings; add `--output-dir`/`--formats` and their
+  constraints; connect request planning, measure/render, common fitting,
+  stylize/cleanup, encoding, metadata and publication. Update the capture
+  builder's expected-frame check to use the shared resolved plan rather than
+  reconstructing a global-FPS/full-ring plan. Blender still evaluates exact
+  supplied times/angles and renders no aliases. Document the full CLI/contract.
+- **Phase:** public activation and integration.
+- **Depends on:** EXP-1, EXP-2, EXP-3, EXP-4, EXP-5.
+- **Ordering:** critical path.
+- **Relevant decisions:** D-1 through D-9.
+- **Acceptance signals:** generated-model command runs cover format combinations,
+  per-clip rates/counts/subsets, full-view exceptions, maps/previews and fresh-root
+  replay. Defaults match pre-activation image baselines with the same generator.
+  No accepted option is ignored. The command switches to `/1`, refuses `/15`,
+  and its help and tested contracts match the delivered behavior.
+- **Out of scope:** consumer integration, model changes and final visual approval.
+- **Open questions:** None. The current capture wire already accepts arbitrary
+  in-ring addressed samples and exact times: no renderer resampling or new
+  wire field is needed. The caller validates the resolved plan; capture keeps
+  its existing wire fields and carries no output paths/aliases/mirror policy.
+
+### EXP-7. Review the implemented acolyte export with the owner
+
+- **Outcome:** explicit owner acceptance with reproducible evidence identifying
+  the exact input, settings, generator and implementation revision.
+- **Scope:** apply Q-14's model policy and Q-15's placement policy; base
+  unequipped acolyte has five views plus mirrors, walk six at 8 FPS, idle
+  four at 6 FPS. Produce frame folders and clip atlases/maps, a combined-sheet
+  comparison, and replay from metadata alone. Compare captured/mirrored views
+  and old sprites on a labelled page. Check timing, counts, pixels and replay
+  separately from visual judgement. Always use a fresh local output root.
+- **Phase:** owner acceptance and documentation closeout.
+- **Depends on:** EXP-6; additionally the owner-selected model/placement gate.
+- **Ordering:** critical path to epic completion; does not block EXP-1–EXP-6.
+- **Relevant decisions:** D-1 through D-12, plus eventual Q-14/Q-15 decisions.
+- **Acceptance signals:** current technical checks pass; exact commands and
+  hashes are recorded; the owner explicitly approves the implemented export
+  with dated provenance. Stop for the owner if the chosen model is unapproved,
+  overflows, lacks expected clips or needs appearance work. Never silently
+  substitute an input, refit scale or close the epic on tests alone.
+- **Out of scope:** model/look refinement, portraits, equipped/asymmetric asset
+  creation, game writes and private compilation. Generated fixtures cover
+  full-direction exceptions mechanically.
+- **Open questions:** Q-14 and Q-15 affect only review inputs/targets or an
+  explicit owner gate. This is documentation-only acceptance: evidence lands
+  with `docs-push`, with no code PR needed.
 
 ## Conversation cursor
 
@@ -999,3 +1184,10 @@ above. Verified relay `cu65sdzfp57fn7hhp3jf637m86` records the owner's answers
 dated 2026-10-24. The owner requested separate model/look rework; Q-14 and
 Q-15 explicitly carry the remaining model/placement questions. Next propose
 delivery slices with those choices isolated to the final owner-review gate.
+
+Round 5 asks Q-14 (review model), Q-15 (initial placement policy) and Q-7
+(seven slices and readiness). New round folder:
+`file:///Users/vincentcoghlan/.local/share/moskophoros-acceptance/export-format-design/round-05/index.html`.
+The placement section reproduces the earlier labelled image as historical
+context, explicitly not a new model/look approval. State remains `exploring`
+until the owner answers these questions and grants readiness.
