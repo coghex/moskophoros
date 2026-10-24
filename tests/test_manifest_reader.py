@@ -2,6 +2,7 @@
 P-8a): what it refuses, with the file and the field, and what it restores."""
 
 import copy
+import json
 import subprocess
 from pathlib import Path
 
@@ -1488,7 +1489,6 @@ def test_an_artifact_kind_that_is_not_a_string_is_a_usage_error():
 
 
 def test_random_corruption_is_always_a_usage_error_or_a_valid_manifest():
-    import json
     import random
 
     rng = random.Random(20261024)
@@ -1514,3 +1514,65 @@ def test_random_corruption_is_always_a_usage_error_or_a_valid_manifest():
             manifest.decode(data)
         except UsageError as error:
             assert error.exit_code == 2
+
+
+# Counts, names and text the reader must treat as data
+
+
+def test_a_still_clip_is_one_sample_whatever_count_the_settings_give():
+    ring8 = views.View(8, 0.0)
+    for text in (
+        "frames: 12\n",
+        "clips: {pose: {frames: 12}}\n",
+        "frames: 12\nclips: {pose: {frames: 50}}\n",
+    ):
+        x = export_for(text, clips=(POSE,), view=ring8)
+        assert [c["frame_count"] for c in x.document["clips"]] == [1]
+        assert len(x.document["frames"]) == 8
+        manifest.decode(x.data)
+
+
+def test_a_count_too_large_for_a_float_is_refused_without_an_overflow():
+    animated = export_for("{}\n", clips=(clip(0, "walk"),), view=RING4).document
+    for path in (("settings", "frames"), ("settings", "clips", 0, "frames")):
+        doc = copy.deepcopy(animated)
+        container, last = walk_to(doc, path)
+        container[last] = 10**309
+        message = refused(dump(seal(doc)))
+        assert (
+            "clips[0].frame_count: the settings sample about " + "1" + "0" * 309
+            in message
+        )
+
+
+def test_a_source_basename_with_a_backslash_round_trips():
+    from pathlib import PurePosixPath
+
+    from moskophoros.capture.backend import Source
+
+    odd = Source(PurePosixPath("/models/a\\b.glb"), "ab" * 32, 0)
+    x = export_for("{}\n", clips=(POSE,), view=RING4, source=odd)
+    assert x.document["source"]["file"] == "a\\b.glb"
+    assert manifest.decode(x.data).document["source"]["file"] == "a\\b.glb"
+    for name in ("", ".", "..", "dir/hero.glb"):
+        assert "source.file" in refused(edited(("set", ("source", "file"), name)))
+
+
+def test_an_unpaired_surrogate_is_a_usage_error_before_any_hashing():
+    text = base().data.decode()
+    value = text.replace('"tool": "moskophoros"', '"tool": "\\ud800"')
+    assert value != text
+    assert "generator.tool: holds an unpaired surrogate" in refused(value.encode())
+    key = text.replace('"variant": "default"', '"variant": "default", "\\udfff": 1')
+    assert "is a key with an unpaired surrogate" in refused(key.encode())
+    name = text.replace('"name": "walk"', '"name": "w\\ud800"', 1)
+    assert "holds an unpaired surrogate" in refused(name.encode())
+
+
+def test_a_value_nested_beyond_the_recursion_limit_is_a_usage_error():
+    text = base().data.decode()
+    assert '"materials": null' in text
+    for depth in (1500, 3000, 20000):
+        nested = '"materials": ' + "[" * depth + "]" * depth
+        message = refused(text.replace('"materials": null', nested, 1).encode())
+        assert "nested too deeply" in message or "settings.style" in message

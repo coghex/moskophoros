@@ -461,14 +461,52 @@ def decode(data, label="the manifest"):
     """
     document = _parse(data, label)
     problems = _Problems(label)
-    if not _members(problems, document, DOCUMENT, ""):
-        problems.raise_all()
-    checked = _structure(problems, document)
+    _surrogates(problems, document)
     problems.raise_all()
-    _derive(label, document, checked)
-    return Manifest(
-        label, cli.reused_from(checked), _layer(checked), MappingProxyType(document)
-    )
+    try:
+        if not _members(problems, document, DOCUMENT, ""):
+            problems.raise_all()
+        checked = _structure(problems, document)
+        problems.raise_all()
+        _derive(label, document, checked)
+        return Manifest(
+            label,
+            cli.reused_from(checked),
+            _layer(checked),
+            MappingProxyType(document),
+        )
+    except RecursionError:
+        raise UsageError(f"{label}: is nested too deeply") from None
+
+
+def _surrogates(problems, document):
+    """Add a problem for each string, or key, holding an unpaired surrogate:
+    JSON can spell one, but no UTF-8 text, hash or file name can hold it."""
+    stack = [("", document)]
+    while stack:
+        where, value = stack.pop()
+        if isinstance(value, str):
+            try:
+                value.encode("utf-8")
+            except UnicodeEncodeError:
+                problems.add(where, "holds an unpaired surrogate, which is not text")
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                here = f"{where}.{key}" if where else key
+                if not isinstance(key, str) or _unencodable(key):
+                    problems.add(here, "is a key with an unpaired surrogate")
+                else:
+                    stack.append((here, item))
+        elif isinstance(value, list):
+            stack.extend((f"{where}[{i}]", item) for i, item in enumerate(value))
+
+
+def _unencodable(text):
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return True
+    return False
 
 
 class _Problems:
@@ -854,7 +892,7 @@ def _source(problems, source):
         problems,
         source["file"],
         "source.file",
-        lambda v: isinstance(v, str) and bool(v) and "/" not in v and "\\" not in v,
+        lambda v: isinstance(v, str) and v not in ("", ".", "..") and "/" not in v,
         "a nonempty base filename",
     )
     _field(
@@ -1226,17 +1264,21 @@ def _check_budget(label, document, resolved, selected):
         fps = resolved.fps if own is None or own.fps is None else own.fps
         count = resolved.frames if chosen.frames is None else chosen.frames
         duration = chosen.clip.t1 - chosen.clip.t0
+        if duration == 0:
+            # A still or zero-length clip is one sample whatever its count.
+            continue
         if count == sampling.AUTO:
             wanted = duration * fps
             too_many = wanted > limit + 1
+            shown = f"{wanted:g}"
         else:
-            wanted = count
             too_many = count > limit
+            shown = str(count)
         if too_many:
             _fail(
                 label,
                 f"clips[{position}].frame_count",
-                f"the settings sample about {wanted:g} frames, but the document "
+                f"the settings sample about {shown} frames, but the document "
                 f"records only {limit}",
             )
 
