@@ -14,7 +14,7 @@ concrete precondition
 ## Processing status
 
 - [x] EPIC. Export configurable game-ready frames and clip atlases — [#153]
-- [ ] EXP-1. Plan per-clip sampling and stored directions
+- [x] EXP-1. Plan per-clip sampling and stored directions — [#154]
 - [ ] EXP-2. Resolve export settings, names and output paths
 - [ ] EXP-3. Encode frame files and clip atlases from addressed frames
 - [ ] EXP-4. Record and reload the generic export manifest
@@ -26,8 +26,8 @@ concrete precondition
 Eight slices approved by the owner on 2026-10-24 (D-18 amends D-15).
 All design questions are resolved. D-13 and D-14 set the model and placement policies for the
 final owner-review slice; model rework remains outside implementation.
-Design review is complete. Epic #153 is filed; all eight child entries remain
-unprocessed and require separate draft signoff before creation.
+Design review is complete. Epic #153 and EXP-1 (#154) are filed; seven child
+entries remain unprocessed and require separate draft signoff before creation.
 
 ## Epic contract
 
@@ -1771,3 +1771,10 @@ Epic [#153](https://github.com/coghex/moskophoros/issues/153) was created
 with that exact body and the existing `epic` label. No review labels were
 added. Next entry: EXP-1; eight child drafts/signoffs remain. The earlier
 no-issue-creation instructions above describe the completed design phase.
+
+2026-10-24: the manager signed off `drafts/exp-1-v1.md` (SHA-256
+`b6c2c6c26e6a1848e52ff336aa09227ffb58fdf80828e5955106c2a303c1124f`).
+EXP-1 [#154](https://github.com/coghex/moskophoros/issues/154) was created
+with that exact body and the existing `enhancement` label, and linked on its
+still-unchecked epic #153 checklist line. No review labels were added.
+Next entry: EXP-2; seven children remain to be drafted and signed off.
