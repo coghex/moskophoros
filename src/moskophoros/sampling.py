@@ -225,9 +225,14 @@ def frames(subject, selected_clips, view, fps, frame_count=AUTO):
                     subject, VARIANT, selected.clip.name, direction.index, time_s
                 )
                 result.append(Frame(address, index, direction.angle))
+    refuse_shared_addresses(result)
+    return tuple(result)
+
+
+def refuse_shared_addresses(requested):
+    """Raise `ValueError` if two of the requested `Frame`s share an address."""
     seen = set()
-    for frame in result:
+    for frame in requested:
         if frame.address in seen:
             raise ValueError(f"two requested frames share the address {frame.address}")
         seen.add(frame.address)
-    return tuple(result)
