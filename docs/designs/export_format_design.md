@@ -379,13 +379,51 @@ sheet is wanted, using its parent and stem to name metadata and all export
 folders. This preserves one invocation shape but asks the user to name a
 PNG the tool may deliberately not write.
 
-## Round-3 contract proposals awaiting owner signoff
+### D-7. Settings, paths and image layout contract
 
-P-7, P-8 and P-9 are three enumerated approval packages. Approval of one
-does not approve the others or the acceptance model's appearance. All new
+Owner signoff on 2026-10-24, via verified `mosk-manager` relay
+`zrbvdx42r5mqc9vwavgcrkvbfn`, answering contract-checkpoint message
+`wxpznwr7zxj78abmr7na4kx766` after the complete contracts were summarized
+with the round-03 link. The owner chose:
+
+> "A: approve P-7"
+
+P-7's five enumerated parts are adopted: settings/merging/timing, names,
+formats/templates, image/map layout, and stored-view previews. This approves
+the exact configuration contract, not the illustrative acolyte values.
+
+### D-8. One generic export metadata schema
+
+Owner signoff on 2026-10-24 through the same verified relay and question:
+
+> "A: approve P-8"
+
+P-8 is adopted in full: `moskophoros.export/1` in both command forms, ordered
+artifacts and sample locations, mirror semantics, deterministic recording
+and complete settings replay. Distinct current sheet and bundle schemas are
+rejected. Earlier sheet schemas stop loading as D-3 already authorized.
+
+### D-9. Replace written files and retain old files
+
+Owner signoff on 2026-10-24 through the same verified relay and question:
+
+> "A: overwrite, keep old"
+
+P-9 is adopted in full, including preflight, path confinement, staging,
+manifest-last publication and rollback limitations. The relay explicitly
+records that the owner was told a shorter rerun leaves old frames that a
+folder-scanning game would pick up. No managed pruning or empty-root-only
+restriction is added. Fresh acceptance roots avoid stale-file ambiguity.
+
+## Contracts approved in round 3
+
+P-7, P-8 and P-9 were approved as D-7, D-8 and D-9. Their identifiers remain
+for the approval record. They do not approve the acceptance model's appearance. All new
 settings below follow the existing defaults/global/reuse/project/flags order.
 
 ### P-7. Settings, paths and image layout
+
+Adopted by D-7.
 
 **1. Settings shape and defaults.** The new top-level values are
 `stored_directions: all`, `direction_names: {}`, `mirrors: {}` and `export`.
@@ -542,6 +580,8 @@ generation and actual acceptance values remain Q-6; neither is implied here.
 
 ### P-8. One generic metadata schema and replay contract
 
+Adopted by D-8.
+
 **1. Schema and location.** Both command forms write
 `moskophoros.export/1`: `manifest.json` under the directory root, or today's
 `<output-stem>.json` beside the positional PNG. Replace the old combined-
@@ -618,6 +658,8 @@ meanings. During sliced delivery, any intermediate schema bump must have a
 separate name and reject its predecessor; it cannot silently change `/1`.
 
 ### P-9. Publication, reruns and failures
+
+Adopted by D-9.
 
 **1. Existing files.** Permit a new or existing output directory. A run
 replaces exactly the paths it writes and never deletes other files. Dropped
@@ -704,26 +746,15 @@ Resolved by D-5. This is not visual signoff on any model's symmetry.
 
 ### Q-9. Detailed settings, metadata and output contract
 
-Round 3, first package: approve P-7 (recommended), or request amendments to
-its five enumerated parts: settings/merging/timing; names; formats/templates;
-image/map layout; stored-view previews? This covers exact clip output-name
-mapping and atlas padding. Metadata and publication are separate Q-10/Q-11.
+Resolved by D-7.
 
 ### Q-10. Metadata and reuse
 
-Round 3, second package: approve P-8 (recommended), one generic
-`moskophoros.export/1` schema for both command forms with artifact locations,
-mirror references and full replay; or keep distinct legacy-sheet and bundle
-schemas, revising the compatibility contract? P-8 rejects old `/15` reuse as
-already authorized in D-3 and avoids two representations of current settings.
+Resolved by D-8.
 
 ### Q-11. Output replacement and stale files
 
-Round 3, third package: approve P-9 (recommended), overwrite only written
-files, retain stale files, publish current manifest last with rollback;
-or require an explicitly managed root that removes previous-manifest files;
-or require a new/empty output root every run? Directory ownership and cleanup
-must be settled before the publication slice is designed.
+Resolved by D-9.
 
 ## Verification strategy
 
@@ -761,9 +792,9 @@ Next settle Q-9 and Q-6 before the final
 dependency-ordered slices and readiness signoff; the three-question limit
 does not silently resolve the remaining choices.
 
-Round 3 asks Q-9, Q-10 and Q-11 as the three explicit contract packages above.
-New round folder:
+Round 3 resolved Q-9, Q-10 and Q-11 as D-7, D-8 and D-9. Its round folder:
 `file:///Users/vincentcoghlan/.local/share/moskophoros-acceptance/export-format-design/round-03/index.html`.
-After contract answers, Q-6 covers acceptance values/visual probes and portrait
+Verified relay `zrbvdx42r5mqc9vwavgcrkvbfn` records the owner's signoff dated
+2026-10-24. Q-6 now covers acceptance values/visual probes and portrait
 scope, then Q-7 covers slices and readiness. No implementation is authorized
-by publication or by a partial contract answer.
+by this design session.
