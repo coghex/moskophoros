@@ -247,12 +247,51 @@ current-schema-only reuse. No legacy JSON compatibility path is added.
 This affects every new setting's recording, reuse and regression checks;
 the exact schema identity remains open.
 
-## Round-2 proposals awaiting owner signoff
+### D-4. Ordered direction lists and exact per-clip overrides
+
+Owner signoff on 2026-10-24, via verified `mosk-manager` relay
+`kxtwp9nj4gdsdhmdnk28wjaezn`, answering round-2 message
+`g84eyq3qefmj2y6dfxpj9ntt9a`. The owner chose:
+
+> "A: lists + per-clip"
+
+The relay explicitly adopts P-4 on `round-02/index.html`: ordered original
+indices, exact per-clip replacement, output aliases, stored-view-only
+measurement and rendering, and a common scale/cell/anchor. Pattern-based
+clip matching is excluded from this arc. Frame indices are not direction
+identities; reordering an exported row never renumbers its direction.
+
+### D-5. Runtime mirror records without duplicate PNGs
+
+Owner signoff on 2026-10-24 through the same verified relay and question:
+
+> "A: mirror records"
+
+P-5 is adopted: explicit omitted-target-to-stored-source relationships,
+replaceable or disabled per clip, recorded in generic metadata with anchor
+and map transforms. No automatically inferred symmetry, mirror chains or
+generated mirrored PNGs. Visual acceptability remains for owner review.
+
+### D-6. Directory output and relative templates
+
+Owner signoff on 2026-10-24 through the same verified relay and question:
+
+> "A: --output-dir OUT"
+
+P-6 is adopted: mutually exclusive directory and legacy positional-PNG
+output forms; project-controlled relative templates; no destination escape
+or collisions; destination location excluded from the fingerprint. The
+alternative requiring a phantom PNG name is rejected. The detailed contract
+checkpoint below settles names, settings, metadata and publication.
+
+## Design directions approved in round 2
 
 These are configuration and behavior choices, not approval of a mirrored
 acolyte's appearance. The actual five-view look and cadence remain Q-6.
 
 ### P-4. Ordered subsets of the existing direction ring
+
+Adopted by D-4. Retained proposal ID for the round-2 record.
 
 Keep the current direction count and start angle as the definition of the
 view's ring. Add an ordered list of stored direction indices, globally and
@@ -280,6 +319,8 @@ asymmetric mirroring would become extra user-visible rules. Per-clip exact
 entries already fit the settings model and are easy to inspect.
 
 ### P-5. Explicit runtime mirror references, no generated mirror files
+
+Adopted by D-5. Retained proposal ID for the round-2 record.
 
 For each clip, record optional mappings from an omitted direction index to
 a stored source index plus a horizontal-flip operation. A global mapping may
@@ -309,6 +350,8 @@ the generic result then cannot describe a complete intended view set. Files
 containing synthesized mirrored pixels are not proposed for this arc.
 
 ### P-6. A directory output mode with relative templates
+
+Adopted by D-6. Retained proposal ID for the round-2 record.
 
 Keep `moskophoros [options] model.glb output.png` working as today. Add an
 explicit directory-output form, illustrated as
@@ -352,18 +395,12 @@ Resolved by D-3.
 
 ### Q-4. Direction subsets, names and mirroring
 
-Round 2: A (recommended), adopt P-4's ordered index subsets, exact per-clip
-overrides, explicit naming aliases and stored-view-only measurement/rendering;
-or B, add clip-name patterns too? Mirror representation has its own explicit
-checkpoint Q-8 below. Actual five-view acceptance still needs Q-6's labelled
+Resolved by D-4. Actual five-view acceptance still needs Q-6's labelled
 visual evidence. Exact settings syntax remains part of Q-9.
 
 ### Q-5. Output paths, maps, naming and publication
 
-Round 2: A (recommended), adopt P-6's new directory-output mode and relative
-templates while retaining the old PNG invocation; or B, retain a mandatory
-output PNG argument even for exports with no combined sheet? This settles
-the interface direction; Q-9 retains the detailed output contract.
+Resolved by D-6. Q-9 retains the detailed output contract.
 
 ### Q-6. Acceptance cell, anchor and optional outputs
 
@@ -380,14 +417,11 @@ tracker overlap at readiness. A document publication is not design approval.
 
 ### Q-8. What does runtime mirroring mean in the export?
 
-Round 2: A (recommended), adopt P-5's explicit mirror references in generic
-metadata, with per-clip replacement/disable and no generated duplicate PNGs;
-or B, store only the subset and leave mirror relationships entirely outside
-the export? This is not visual signoff on any model's symmetry.
+Resolved by D-5. This is not visual signoff on any model's symmetry.
 
 ### Q-9. Detailed settings, metadata and output contract
 
-Unasked; depends on Q-4, Q-5 and Q-8. Set settings keys and layer merge/reset
+Next checkpoint; Q-4, Q-5 and Q-8 are settled. Set settings keys and layer merge/reset
 semantics, per-clip FPS override validation and interaction with global flags,
 clip output-name mapping, templates and file validation, atlas padding,
 map alignment/naming, preview policy, manifest schema and settings reuse,
@@ -419,11 +453,13 @@ This is a new round folder, not an alteration of the approved model review.
 No visual preference was requested in that round. Later visual questions need
 labelled comparison images grouped by decision. The verified manager relay
 `c3csfyvkcf4anp6jc2nup8s382` carries the owner's signoff dated 2026-10-24.
-Next: direction selection, mirror representation and output configuration.
+Direction selection, mirror representation and output configuration were
+subsequently approved in round 2.
 
-Round 2 asks Q-4, Q-8 and Q-5, in that order. New round folder:
+Round 2 resolved Q-4, Q-8 and Q-5 as D-4, D-5 and D-6. Its round folder:
 `file:///Users/vincentcoghlan/.local/share/moskophoros-acceptance/export-format-design/round-02/index.html`.
-No visual approval is requested here. P-4, P-5 and P-6 remain proposals until
-the owner answers. After these answers, settle Q-9 and Q-6 before the final
+No visual approval was requested there. Verified relay
+`kxtwp9nj4gdsdhmdnk28wjaezn` records the owner's answers dated 2026-10-24.
+Next settle Q-9 and Q-6 before the final
 dependency-ordered slices and readiness signoff; the three-question limit
 does not silently resolve the remaining choices.
