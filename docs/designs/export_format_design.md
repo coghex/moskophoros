@@ -13,7 +13,7 @@ concrete precondition
 
 ## Processing status
 
-- [ ] EPIC. Export configurable game-ready frames and clip atlases
+- [x] EPIC. Export configurable game-ready frames and clip atlases — [#153]
 - [ ] EXP-1. Plan per-clip sampling and stored directions
 - [ ] EXP-2. Resolve export settings, names and output paths
 - [ ] EXP-3. Encode frame files and clip atlases from addressed frames
@@ -26,8 +26,8 @@ concrete precondition
 Eight slices approved by the owner on 2026-10-24 (D-18 amends D-15).
 All design questions are resolved. D-13 and D-14 set the model and placement policies for the
 final owner-review slice; model rework remains outside implementation.
-The manager arranges design review and issue processing. No issues have
-been filed by this design session.
+Design review is complete. Epic #153 is filed; all eight child entries remain
+unprocessed and require separate draft signoff before creation.
 
 ## Epic contract
 
@@ -1760,3 +1760,14 @@ and stop for the manager to arrange the quick reviewer check. No review
 approval or issue creation is claimed. After review, `process-design-doc`
 processes the epic first and exactly one child per invocation, with separate
 approval for every tracker artifact. This session files no issues.
+
+## Issue-processing cursor
+
+2026-10-24: processing authorized by the manager under
+`dispatch-process-export.md` (SHA-256 prefix `d9fbd55ee7ee`). The manager
+signed off `drafts/epic-v1.md` (SHA-256
+`26e73801395826368207d672a3a1f2b57804de6469ea4fd59dcb177ec87a3c7e`).
+Epic [#153](https://github.com/coghex/moskophoros/issues/153) was created
+with that exact body and the existing `epic` label. No review labels were
+added. Next entry: EXP-1; eight child drafts/signoffs remain. The earlier
+no-issue-creation instructions above describe the completed design phase.
