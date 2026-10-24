@@ -320,17 +320,17 @@ def encode(
     )
     width, height = settings.cell
     frames = tuple(frames)
-    pixels = _pixels_by_address(frames, requested, (height, width, 4))
+    pixels = pixels_by_address(frames, requested, (height, width, 4))
     normal_maps = (
-        _maps_by_address(frames, sampling.NORMAL_MAP, (height, width, 3))
+        maps_by_address(frames, sampling.NORMAL_MAP, (height, width, 3))
         if normals
         else None
     )
     depth_maps = (
-        _maps_by_address(frames, sampling.DEPTH_MAP, (height, width)) if depth else None
+        maps_by_address(frames, sampling.DEPTH_MAP, (height, width)) if depth else None
     )
     if depth:
-        _check_depths(requested, pixels, depth_maps, settings.ppm)
+        check_depths(requested, pixels, depth_maps, settings.ppm)
 
     row_of_clip = {selected.clip.name: c for c, selected in enumerate(selected_clips)}
     samplings = [
@@ -420,10 +420,10 @@ def encode(
         "frames": frame_documents,
     }
     return Sheet(
-        _png(image),
+        encode_png(image),
         _json(description),
-        None if normal_image is None else _png(normal_image),
-        None if depth_image is None else _png(depth_image),
+        None if normal_image is None else encode_png(normal_image),
+        None if depth_image is None else encode_png(depth_image),
     )
 
 
@@ -456,7 +456,7 @@ def encode_depth(depths):
     return codes.astype(np.uint16)
 
 
-def _check_depths(requested, pixels, depth_maps, ppm):
+def check_depths(requested, pixels, depth_maps, ppm):
     """Raise `DepthOverflow` for frames with a covered pixel whose depth the
     depth map cannot hold (lighting sheet design D-21), in request order."""
     overflowing = []
@@ -488,7 +488,7 @@ def write(sheet, png_path, json_path):
     Path(json_path).write_bytes(sheet.json)
 
 
-def _pixels_by_address(frames, requested, shape):
+def pixels_by_address(frames, requested, shape):
     """Map each requested address to its frame's pixels, or raise."""
     wanted = {frame.address for frame in requested}
     pixels = {}
@@ -521,7 +521,7 @@ def _pixels_by_address(frames, requested, shape):
     return pixels
 
 
-def _maps_by_address(frames, name, shape):
+def maps_by_address(frames, name, shape):
     """Map each frame's address to its map under `name`, or raise."""
     maps = {}
     for frame in frames:
@@ -533,7 +533,7 @@ def _maps_by_address(frames, name, shape):
     return maps
 
 
-def _png(image):
+def encode_png(image):
     """An 8-bit RGBA PNG with no text or time chunks."""
     buffer = io.BytesIO()
     Image.fromarray(image).save(buffer, format="PNG")
@@ -594,14 +594,12 @@ def previews(frames, *, subject, settings, selected_clips, lit=False):
     requested = sampling.frames(
         subject, selected_clips, view, settings.fps, settings.frames
     )
-    pixels = _pixels_by_address(frames, requested, (height, width, 4))
+    pixels = pixels_by_address(frames, requested, (height, width, 4))
 
     result = []
     for name, times, delays in plans:
-        images = []
-        reduced = False
-        for time_s in times:
-            row = np.concatenate(
+        rows = (
+            np.concatenate(
                 [
                     pixels[
                         sampling.FrameAddress(
@@ -612,23 +610,42 @@ def previews(frames, *, subject, settings, selected_clips, lit=False):
                 ],
                 axis=1,
             )
-            transparent = row[..., 3] == 0
-            rgb = blend_over_background(row)
-            indices, palette, frame_reduced = _palette_frame(rgb, transparent)
-            reduced |= frame_reduced
-            indices = indices.repeat(PREVIEW_SCALE, axis=0).repeat(
-                PREVIEW_SCALE, axis=1
-            )
-            images.append((indices, palette))
-        warnings = ()
-        if reduced:
-            kind = "lit preview" if lit else "preview"
-            warnings = (
-                f"clip {name!r}'s {kind} has frames with more than 256 colors, "
-                "reduced to 256 without dithering",
-            )
-        result.append(Preview(name, _gif(images, delays), warnings))
+            for time_s in times
+        )
+        gif, reduced = preview_gif(rows, delays)
+        result.append(Preview(name, gif, reduction_warnings(name, reduced, lit)))
     return tuple(result)
+
+
+def preview_gif(rows, delays_ms):
+    """An animated preview GIF and whether a frame needed its colors reduced.
+
+    `rows` are the samples' images in order, each the RGBA cells of every
+    shown direction side by side; `delays_ms` are the frames' delays. Each is
+    blended, indexed, enlarged and encoded as `previews` describes.
+    """
+    images = []
+    reduced = False
+    for row in rows:
+        transparent = row[..., 3] == 0
+        rgb = blend_over_background(row)
+        indices, palette, frame_reduced = _palette_frame(rgb, transparent)
+        reduced |= frame_reduced
+        indices = indices.repeat(PREVIEW_SCALE, axis=0).repeat(PREVIEW_SCALE, axis=1)
+        images.append((indices, palette))
+    return _gif(images, delays_ms), reduced
+
+
+def reduction_warnings(name, reduced, lit):
+    """The warnings of clip `name`'s flat or `lit` preview: one when `reduced`
+    says a frame had more than 256 colors, else none."""
+    if not reduced:
+        return ()
+    kind = "lit preview" if lit else "preview"
+    return (
+        f"clip {name!r}'s {kind} has frames with more than 256 colors, "
+        "reduced to 256 without dithering",
+    )
 
 
 def blend_over_background(pixels):
@@ -672,10 +689,10 @@ def lit_previews(frames, *, subject, settings, selected_clips, light):
     )
     width, height = settings.cell
     frames = tuple(frames)
-    pixels = _pixels_by_address(frames, requested, (height, width, 4))
-    normals = _maps_by_address(frames, sampling.NORMAL_MAP, (height, width, 3))
-    depths = _maps_by_address(frames, sampling.DEPTH_MAP, (height, width))
-    _check_depths(requested, pixels, depths, settings.ppm)
+    pixels = pixels_by_address(frames, requested, (height, width, 4))
+    normals = maps_by_address(frames, sampling.NORMAL_MAP, (height, width, 3))
+    depths = maps_by_address(frames, sampling.DEPTH_MAP, (height, width))
+    check_depths(requested, pixels, depths, settings.ppm)
     lit = []
     for frame in frames:
         address = frame.address
