@@ -11,11 +11,12 @@ resolved against the file's directory. `merge` lays layers over each other,
 later layers winning key by key; a key a layer leaves out falls through.
 
 The schema table is the one place a setting's type, unit, default and
-validation rule are kept; the packaged `defaults.yaml` gives every setting
-its shipped default and agrees with it. Everything here is pure except
-`read_file` and `read_defaults`, which read the one file they name. Which
-layers apply, and how they meet a loaded sheet and the command line, is the
-command's business (`cli.resolve_settings`). The global file and a project
+validation rule are kept; the packaged `defaults.yaml` gives every active
+setting its shipped default and agrees with it. A setting may be defined but
+inactive (`Setting.active`): no file can set it yet. Everything here is pure
+except `read_file` and `read_defaults`, which read the one file they name.
+Which layers apply, and how they meet a loaded sheet and the command line, is
+the command's business (`cli.resolve_settings`). The global file and a project
 file share this one schema (projects and camera design D-9).
 """
 
@@ -28,9 +29,10 @@ from pathlib import Path
 from types import MappingProxyType
 
 from moskophoros import shading as shading_model
-from moskophoros import views, yamlfile
+from moskophoros import templates, views, yamlfile
 from moskophoros.capture.backend import MAX_AO_SAMPLES, PROJECTIONS
 from moskophoros.imageops import EDGES
+from moskophoros.plan import ALL as ALL_DIRECTIONS
 
 VERSION = 1
 DEFAULTS_FILE = "defaults.yaml"
@@ -67,23 +69,32 @@ class Layer(dict):
 
 
 class _Bad(Exception):
-    """A value its setting refuses; `problem` reads after the key path."""
+    """A value its setting refuses; `problem` reads after the key path. `at`
+    is the further path inside the value, such as a mapping's key or a
+    list's index, that the problem is at."""
 
-    def __init__(self, problem):
+    def __init__(self, problem, at=()):
         self.problem = problem
+        self.at = tuple(at)
 
 
 @dataclass(frozen=True)
 class Setting:
     """One setting: what it holds, its unit, its default as a file gives it,
     and `check`, which turns a file's value into the command's or raises
-    `_Bad`. A `path` setting's string is resolved against its file."""
+    `_Bad`. A `path` setting's string is resolved against its file.
+
+    An inactive setting is defined, with its check and internal default, but
+    not yet available: no settings file can set it (`NOT_YET`), and neither
+    the shipped defaults nor `DEFAULTS` hold it. Only internal code reads or
+    resolves one (`_read_document`)."""
 
     kind: str
     unit: str | None
     default: object
     check: object
     path: bool = False
+    active: bool = True
 
 
 def _shown(value):
@@ -310,6 +321,141 @@ def _check_clip_frames(value):
         raise _Bad(
             f"expected a whole number 1 or more, {AUTO} or null, got {_shown(value)}"
         ) from None
+
+
+# The highest direction index a file may name: a view has at most 64.
+MAX_DIRECTION_INDEX = 63
+# The export formats, in the canonical order a set of them is kept in.
+FORMATS = ("sheet", "frames", "atlases")
+MAX_ATLAS_PADDING = 64
+# The default path templates (export design P-7, part 3).
+FRAME_PATH = "frames/{clip}/{direction}/frame_{frame:03}{map}.png"
+ATLAS_PATH = "atlases/{clip}{map}.png"
+SHEET_PATH = "sheet{map}.png"
+
+
+def _index(value, what):
+    """A direction index as a file gives it: an integer from 0 to 63, never a
+    boolean or a string of digits."""
+    if type(value) is not int or not 0 <= value <= MAX_DIRECTION_INDEX:
+        raise _Bad(
+            f"expected {what}, a whole number from 0 to {MAX_DIRECTION_INDEX}, "
+            f"got {_shown(value)}"
+        )
+    return value
+
+
+def _check_stored(value):
+    """`all`, or a nonempty ordered list of distinct direction indices, as a
+    tuple."""
+    if isinstance(value, str) and value == ALL_DIRECTIONS:
+        return value
+    wanted = f"{ALL_DIRECTIONS} or a nonempty list of distinct direction indices"
+    if not isinstance(value, list):
+        raise _Bad(f"expected {wanted}, got {_shown(value)}")
+    if not value:
+        raise _Bad(f"expected {wanted}, got an empty list")
+    seen = set()
+    for position, index in enumerate(value):
+        try:
+            _index(index, "a direction index")
+        except _Bad as error:
+            raise _Bad(error.problem, (position,)) from None
+        if index in seen:
+            raise _Bad(f"the direction {index} is listed twice", (position,))
+        seen.add(index)
+    return tuple(value)
+
+
+def _check_mapping(value, what):
+    if not isinstance(value, dict):
+        raise _Bad(f"expected a mapping of {what}, got {_shown(value)}")
+
+
+def _check_names(value):
+    """A mapping from direction index to filename alias, by index. Which
+    characters an alias may use is a directory-mode rule (`outputs`)."""
+    _check_mapping(value, "direction index to name")
+    names = {}
+    for key, name in value.items():
+        try:
+            _index(key, "a direction index key")
+        except _Bad as error:
+            raise _Bad(error.problem, (key,)) from None
+        if not isinstance(name, str):
+            raise _Bad(f"expected a name, got {_shown(name)}", (key,))
+        names[key] = name
+    return MappingProxyType(dict(sorted(names.items())))
+
+
+def _check_mirrors(value):
+    """A mapping from target direction index to stored source index, by
+    target. Which of them are stored is checked on the resolved view."""
+    _check_mapping(value, "target direction index to stored source index")
+    mirrors = {}
+    for target, source in value.items():
+        try:
+            _index(target, "a target direction index key")
+        except _Bad as error:
+            raise _Bad(error.problem, (target,)) from None
+        try:
+            _index(source, "a stored source direction index")
+        except _Bad as error:
+            raise _Bad(error.problem, (target,)) from None
+        mirrors[target] = source
+    return MappingProxyType(dict(sorted(mirrors.items())))
+
+
+def _check_formats(value):
+    """A nonempty, duplicate-free subset of `FORMATS`, as a tuple in
+    canonical order whatever order it was written in."""
+    wanted = f"a nonempty list of {', '.join(FORMATS[:-1])} or {FORMATS[-1]}"
+    if not isinstance(value, list):
+        raise _Bad(f"expected {wanted}, got {_shown(value)}")
+    if not value:
+        raise _Bad(f"expected {wanted}, got an empty list")
+    seen = set()
+    for position, name in enumerate(value):
+        if not isinstance(name, str) or name not in FORMATS:
+            raise _Bad(f"expected {wanted}, got {_shown(name)}", (position,))
+        if name in seen:
+            raise _Bad(f"the format {name} is listed twice", (position,))
+        seen.add(name)
+    return tuple(name for name in FORMATS if name in seen)
+
+
+def _template(kind):
+    def check(value):
+        try:
+            return templates.parse(value, kind).text
+        except templates.TemplateError as error:
+            raise _Bad(f"the template {error}") from None
+
+    return check
+
+
+def _check_padding(value):
+    if type(value) is not int or not 0 <= value <= MAX_ATLAS_PADDING:
+        raise _Bad(
+            f"expected a whole number from 0 to {MAX_ATLAS_PADDING}, got "
+            f"{_shown(value)}"
+        )
+    return value
+
+
+def _check_alias(value):
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise _Bad(f"expected a name or null, got {_shown(value)}")
+    return value
+
+
+def _or_null(check):
+    def nullable(value):
+        return None if value is None else check(value)
+
+    return nullable
 
 
 def _check_edges(value):
@@ -695,7 +841,71 @@ SCHEMA = MappingProxyType(
             0.3,
             _within(0, 1),
         ),
+        # The export settings (export design P-7): defined here, the one
+        # schema authority, but inactive until the command can execute them.
+        "stored_directions": Setting(
+            "the directions captured and stored: all, or an ordered list of "
+            "distinct direction indices",
+            None,
+            ALL_DIRECTIONS,
+            _check_stored,
+            active=False,
+        ),
+        "direction_names": Setting(
+            "filename aliases of directions, a mapping from direction index to name",
+            None,
+            {},
+            _check_names,
+            active=False,
+        ),
+        "mirrors": Setting(
+            "directions taken from a stored one's picture reversed, a mapping "
+            "from target direction index to stored source index",
+            None,
+            {},
+            _check_mirrors,
+            active=False,
+        ),
+        "export.formats": Setting(
+            "what is written: a nonempty list of sheet, frames and atlases",
+            None,
+            ["sheet"],
+            _check_formats,
+            active=False,
+        ),
+        "export.frame_path": Setting(
+            "the template of each frame file's path in an output directory",
+            None,
+            FRAME_PATH,
+            _template(templates.FRAME_PATH),
+            active=False,
+        ),
+        "export.atlas_path": Setting(
+            "the template of each clip atlas's path in an output directory",
+            None,
+            ATLAS_PATH,
+            _template(templates.ATLAS_PATH),
+            active=False,
+        ),
+        "export.sheet_path": Setting(
+            "the template of the combined sheet's path in an output directory",
+            None,
+            SHEET_PATH,
+            _template(templates.SHEET_PATH),
+            active=False,
+        ),
+        "export.atlas_padding": Setting(
+            "the edge texels repeated around each cell of a clip atlas, 0 to 64",
+            "pixels",
+            0,
+            _check_padding,
+            active=False,
+        ),
     }
+)
+# The one table's active settings: the ones a settings file may hold today.
+ACTIVE_SCHEMA = MappingProxyType(
+    {name: setting for name, setting in SCHEMA.items() if setting.active}
 )
 # A clip's own settings, in a file's `clips` mapping keyed by clip name;
 # each beats the global setting of the same name (settings design D-17,
@@ -709,18 +919,71 @@ CLIP_SCHEMA = MappingProxyType(
             None,
             _check_clip_frames,
         ),
+        "fps": Setting(
+            "the clip's own sampling rate, greater than 0, or null to take the "
+            "global rate",
+            "frames per second",
+            None,
+            _nullable(_check_fps, "a finite number greater than 0"),
+            active=False,
+        ),
+        "stored_directions": Setting(
+            "the clip's own stored directions, all or an ordered list of "
+            "distinct direction indices, or null to take the global ones",
+            None,
+            None,
+            _or_null(_check_stored),
+            active=False,
+        ),
+        "mirrors": Setting(
+            "the clip's own mirrors, a mapping from target to stored source "
+            "direction index, empty for none, or null to take the global ones",
+            None,
+            None,
+            _or_null(_check_mirrors),
+            active=False,
+        ),
+        "output_name": Setting(
+            "the clip's name in directory-mode paths, or null: its cleaned source name",
+            None,
+            None,
+            _check_alias,
+            active=False,
+        ),
     }
 )
+ACTIVE_CLIP_SCHEMA = MappingProxyType(
+    {name: setting for name, setting in CLIP_SCHEMA.items() if setting.active}
+)
 # The groups of settings a file writes as a nested mapping, such as `shade`;
-# each of its keys is a setting of its own, merged key by key.
-GROUPS = frozenset(name.split(".")[0] for name in SCHEMA if "." in name)
-# Each setting's default, as the command holds it.
+# each of its keys is a setting of its own, merged key by key. `GROUPS` are
+# the active ones, `ALL_GROUPS` every defined one: a group with no active
+# setting, such as `export`, is refused whole.
+GROUPS = frozenset(name.split(".")[0] for name in ACTIVE_SCHEMA if "." in name)
+ALL_GROUPS = frozenset(name.split(".")[0] for name in SCHEMA if "." in name)
+# Each active setting's default, as the command holds it, and every defined
+# setting's, which only internal code uses.
 DEFAULTS = MappingProxyType(
+    {name: setting.check(setting.default) for name, setting in ACTIVE_SCHEMA.items()}
+)
+ALL_DEFAULTS = MappingProxyType(
     {name: setting.check(setting.default) for name, setting in SCHEMA.items()}
 )
+# What a file that sets an inactive setting is told.
+NOT_YET = "not available yet"
 
 
 def read_bytes(data, *, source, directory, shipped=False):
+    """The layer the settings file `data` gives, read from `directory`.
+    A setting that is not active yet is refused (`NOT_YET`), however it is
+    written. See `_read_document` for the rest.
+    """
+    return _read_document(
+        data, source=source, directory=directory, shipped=shipped, open_gate=False
+    )
+
+
+def _read_document(data, *, source, directory, shipped=False, open_gate=False):
     """The layer the settings file `data` gives, read from `directory`.
 
     `source` names the file in errors. Paths resolve against `directory`,
@@ -733,7 +996,13 @@ def read_bytes(data, *, source, directory, shipped=False):
     second-level groups `key`, `sky`, `ground`, `brightness` and `dither` are
     mappings read leaf by leaf, each leaf named by its dotted path, such as
     `shade.key.strength` (shading design contract 1).
+
+    A setting defined but not active (`Setting.active`) fails with `NOT_YET`
+    at its key, whatever its value, and so does a group none of whose settings
+    is active, such as `export`, and a clip's inactive leaf; only internal
+    code and tests pass `open_gate` to read them. No file can.
     """
+    groups = ALL_GROUPS if open_gate else GROUPS
     try:
         document, marks = yamlfile.load_located(data)
     except yamlfile.YamlError as error:
@@ -762,13 +1031,16 @@ def read_bytes(data, *, source, directory, shipped=False):
             refuse(("version",), f"expected {VERSION}, got {_shown(version)}")
     entries = []
     clips = {}
+    clip_where = {}
     for key, value in document.items():
         if key == "version":
             continue
         if key == "clips":
-            clips = _read_clips(value, refuse, marks, source)
+            clips, clip_where = _read_clips(value, refuse, marks, source, open_gate)
             continue
-        if key not in GROUPS:
+        if key not in groups:
+            if key in ALL_GROUPS:
+                refuse((key,), NOT_YET)
             entries.append(((key,), value))
             continue
         if not isinstance(value, dict):
@@ -793,10 +1065,12 @@ def read_bytes(data, *, source, directory, shipped=False):
         setting = SCHEMA.get(key)
         if setting is None:
             refuse(path, "unknown key")
+        if not setting.active and not open_gate:
+            refuse(path, NOT_YET)
         try:
             checked = setting.check(value)
         except _Bad as error:
-            refuse(path, error.problem)
+            refuse((*path, *error.at), error.problem)
         if setting.path and checked is not None:
             try:
                 checked = resolve_path(checked, directory)
@@ -813,6 +1087,7 @@ def read_bytes(data, *, source, directory, shipped=False):
         )
     if clips:
         layer["clips"] = clips
+        layer.where.update(clip_where)
     return layer
 
 
@@ -835,13 +1110,15 @@ def _read_subgroup(path, value, refuse, marks, source):
     return entries
 
 
-def _read_clips(value, refuse, marks, source):
-    """A file's `clips` mapping: each named clip's own settings, as
-    `{clip name: frames}` for the clips that give a frame count, null
-    included. Every entry is checked, whether or not the model has it."""
+def _read_clips(value, refuse, marks, source, open_gate):
+    """A file's `clips` mapping: each named clip's own settings, as `{clip
+    name: {leaf: value}}` for the clips that give any, null included, with
+    the `(line, column)` of each leaf under `("clips", name, leaf)`. Every
+    entry is checked, whether or not the model has it."""
     if not isinstance(value, dict):
         refuse(("clips",), f"expected a mapping of clips by name, got {_shown(value)}")
     clips = {}
+    where = {}
     for name, entry in value.items():
         if not isinstance(name, str) or not name:
             line, column = yamlfile.locate(marks, ("clips", name))
@@ -856,13 +1133,19 @@ def _read_clips(value, refuse, marks, source):
                 f"expected a mapping of the clip's settings, got {_shown(entry)}",
             )
         for member, member_value in entry.items():
-            if member not in CLIP_SCHEMA:
-                refuse(("clips", name, member), "unknown key")
+            path = ("clips", name, member)
+            setting = CLIP_SCHEMA.get(member) if isinstance(member, str) else None
+            if setting is None:
+                refuse(path, "unknown key")
+            if not setting.active and not open_gate:
+                refuse(path, NOT_YET)
             try:
-                clips[name] = CLIP_SCHEMA[member].check(member_value)
+                checked = setting.check(member_value)
             except _Bad as error:
-                refuse(("clips", name, member), error.problem)
-    return clips
+                refuse((*path, *error.at), error.problem)
+            clips.setdefault(name, {})[member] = checked
+            where[path] = yamlfile.locate(marks, path)
+    return clips, where
 
 
 def read_file(path, *, source, required):
@@ -945,15 +1228,28 @@ def origins(sources):
     return found
 
 
+def merge_clips(*clip_layers):
+    """Lay per-clip entries, each `{clip name: {leaf: value}}`, over each
+    other, lowest first: they merge by clip name and leaf, so a higher layer
+    that gives a clip's `fps` leaves a lower layer's `frames` for it alone,
+    and a leaf it gives as `None` clears the lower one's (settings design
+    D-22; export design P-7, part 1)."""
+    merged = {}
+    for clips in clip_layers:
+        for name, leaves in clips.items():
+            merged.setdefault(name, {}).update(leaves)
+    return merged
+
+
 def merge(*layers):
     """Lay `layers` over each other, lowest first: each key takes the value
-    of the last layer that has it."""
+    of the last layer that has it, and per-clip entries merge by clip name and
+    leaf (`merge_clips`)."""
     merged = Layer()
     for layer in layers:
-        clips = {**merged.get("clips", {}), **layer.get("clips", {})}
+        clips = merge_clips(merged.get("clips", {}), layer.get("clips", {}))
         merged.update(layer)
         if clips:
-            # Per-clip entries merge by clip name (settings design D-22).
             merged["clips"] = clips
         merged.where.update(getattr(layer, "where", {}))
     return merged
