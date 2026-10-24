@@ -549,6 +549,39 @@ def test_an_output_that_is_an_input_is_refused_before_capture(root, parent, kind
     assert tree(root) == before
 
 
+@pytest.mark.parametrize("side", ["input", "output"])
+def test_a_failed_identity_lookup_fails_the_overlap_check_instead_of_passing_it(
+    root, parent, monkeypatch, side
+):
+    root.mkdir()
+    earlier = earlier_tree(root)
+    shared = root / "sheet.png"
+    model = parent / "model.glb"
+    os.link(shared, model)  # the input is the output's file
+    broken = model if side == "input" else shared
+    real_stat = os.stat if side == "input" else os.lstat
+    name = "stat" if side == "input" else "lstat"
+    calls = []
+
+    def lookup(path, *args, **kwargs):
+        if Path(path) == broken and len(calls) < 99:
+            # Only the overlap check reaches this call for the input; for the
+            # output, the component check has looked it up already (twice,
+            # at most) before it.
+            calls.append(path)
+            if side == "input" or len(calls) >= 2:
+                raise OSError(errno.EIO, "Input/output error")
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, name, lookup)
+    with pytest.raises(OutputError, match="Input/output error") as raised:
+        check(root, inputs=[model])
+    monkeypatch.undo()
+    assert raised.value.exit_code == EXIT_OUTPUT
+    assert str(broken) in str(raised.value)
+    assert tree(root) == earlier
+
+
 def test_an_input_that_merely_lives_in_the_root_is_not_an_overlap(root):
     root.mkdir()
     model = root / "model.glb"

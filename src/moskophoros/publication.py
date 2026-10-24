@@ -215,11 +215,16 @@ class _Publication:
         directory = self.directory
         root = directory.root
         where = str(directory.given)
+        self.doing = ("check", root)
         if Path(os.path.realpath(directory.given)) != root:
             raise OutputError(
                 f"the output directory {where!r} no longer resolves to {str(root)!r}"
             )
-        if _exists(root) and (os.path.islink(root) or not root.is_dir()):
+        try:
+            mode = os.lstat(root).st_mode
+        except (FileNotFoundError, NotADirectoryError):
+            mode = stat.S_IFDIR  # not made yet: the directories step makes it
+        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
             raise OutputError(
                 f"the output directory {where!r} is no longer a directory"
             )
@@ -448,11 +453,19 @@ def _component_problem(root, parts):
     return None
 
 
-def _identity(path):
+def _identity(path, follow=True):
+    """`(device, inode)` of `path`, or None when nothing is there. A lookup
+    that fails for another reason is an `OutputError`: the overlap check
+    cannot be completed, and it must not pass for lack of an answer."""
     try:
-        status = os.stat(path)
-    except OSError:
+        status = os.stat(path) if follow else os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
         return None
+    except OSError as error:
+        raise OutputError(
+            f"cannot check {str(path)!r} against the run's inputs: "
+            f"{error.strerror or error}"
+        ) from None
     return status.st_dev, status.st_ino
 
 
@@ -462,11 +475,9 @@ def _check_overlap(targets, inputs, reuse):
     exempt = None if reuse is None else _identity(reuse)
     existing = {}
     for target in targets.values():
-        try:
-            status = os.lstat(target)
-        except OSError:
-            continue
-        existing[(status.st_dev, status.st_ino)] = target
+        identity = _identity(target, follow=False)
+        if identity is not None:
+            existing[identity] = target
     for source in inputs:
         identity = _identity(source)
         if identity is None or identity == exempt:
