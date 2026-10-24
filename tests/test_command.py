@@ -24,7 +24,16 @@ import pytest
 from glb_writer import GlbWriter
 from PIL import Image
 
-from moskophoros import cli, export, gltf, imageops, sampling, stylize, views
+from moskophoros import (
+    cli,
+    export,
+    gltf,
+    imageops,
+    publication,
+    sampling,
+    stylize,
+    views,
+)
 from moskophoros.capture import backend, blender
 
 FAKE = """\
@@ -905,7 +914,7 @@ def _failing_stage(monkeypatch, name, failure):
             return _FullDisk(real_open(path, mode, *args, **kwargs))
         return real_open(path, mode, *args, **kwargs)
 
-    monkeypatch.setattr(cli, "open", staged_open, raising=False)
+    monkeypatch.setattr(publication, "open", staged_open, raising=False)
 
 
 @pytest.mark.parametrize(
@@ -986,7 +995,7 @@ def test_ctrl_c_while_staging_restores_every_earlier_output(setup, capsys, monke
             signal.raise_signal(signal.SIGINT)
         return handle
 
-    monkeypatch.setattr(cli, "open", staging_open, raising=False)
+    monkeypatch.setattr(publication, "open", staging_open, raising=False)
     status, out, err = run(capsys, setup.argv())
     assert (status, out, err) == (130, "", "moskophoros: error: interrupted\n")
     assert setup.listing() == earlier
@@ -1013,6 +1022,120 @@ def test_ctrl_c_after_every_output_is_in_place_lets_the_run_finish(
     for name in ("hero.png", "hero.json", "hero.attack.gif"):
         assert after[name] != earlier[name]
     assert after["notes.txt"] == earlier["notes.txt"]
+
+
+def _failing_rollback(monkeypatch, out, fail_at, restore_of, error):
+    """Fail the `fail_at`-th rename into or out of `out` with `error`, then
+    make moving the earlier `restore_of` back from its backup fail too."""
+    calls = _failing_replace(monkeypatch, out, fail_at, error)
+    renamed = os.replace
+
+    def replace(source, target):
+        if "-earlier-" in Path(source).name and Path(target).name == restore_of:
+            raise OSError(errno.EACCES, "Permission denied")
+        return renamed(source, target)
+
+    monkeypatch.setattr(os, "replace", replace)
+    return calls
+
+
+def _only_backup(setup, name):
+    (backup,) = [
+        path for path in setup.out.iterdir() if path.name.startswith(f".{name}.")
+    ]
+    return backup
+
+
+def test_a_failed_restoration_is_named_with_its_backup_and_claims_nothing_kept(
+    setup, capsys, monkeypatch
+):
+    earlier = earlier_outputs(setup, "hero.png", "hero.json", "hero.attack.gif")
+    # The last rename fails; moving the earlier PNG back then fails as well.
+    _failing_rollback(
+        monkeypatch,
+        setup.out,
+        RENAMES - 1,
+        "hero.png",
+        OSError(errno.EBUSY, "Device or resource busy"),
+    )
+    status, _, err = run(capsys, setup.argv())
+    backup = _only_backup(setup, "hero.png")
+    assert status == 6
+    assert err == (
+        f"moskophoros: error: cannot write {str(setup.attack_gif)!r}: "
+        "Device or resource busy; rolling back failed: the earlier "
+        f"{str(setup.png)!r} could not be restored and is kept at "
+        f"{str(backup)!r}: Permission denied\n"
+    )
+    assert backup.read_bytes() == earlier["hero.png"]
+    # The other targets were still restored.
+    after = setup.listing()
+    for name in ("hero.json", "hero.attack.gif", "notes.txt"):
+        assert after[name] == earlier[name]
+
+
+def test_an_interruption_with_a_failed_restoration_is_still_130(
+    setup, capsys, monkeypatch
+):
+    earlier_outputs(setup, "hero.png", "hero.json", "hero.attack.gif")
+    _failing_rollback(monkeypatch, setup.out, 3, "hero.png", KeyboardInterrupt())
+    status, out, err = run(capsys, setup.argv())
+    backup = _only_backup(setup, "hero.png")
+    assert (status, out) == (130, "")
+    assert err == (
+        "moskophoros: error: interrupted; rolling back failed: the earlier "
+        f"{str(setup.png)!r} could not be restored and is kept at "
+        f"{str(backup)!r}: Permission denied\n"
+    )
+
+
+def _linked_png(setup):
+    """`hero.png` as a link to a file outside the output directory."""
+    outside = setup.tmp_path / "outside"
+    outside.mkdir()
+    (outside / "real.png").write_bytes(b"the referent")
+    setup.png.symlink_to(outside / "real.png")
+    return outside
+
+
+def test_a_symlinked_target_is_replaced_by_a_file_not_followed(setup, capsys):
+    outside = _linked_png(setup)
+    assert run(capsys, setup.argv())[0] == 0
+    assert not setup.png.is_symlink()
+    assert setup.png.read_bytes()[:4] == b"\x89PNG"
+    assert (outside / "real.png").read_bytes() == b"the referent"
+
+
+def test_a_symlinked_target_comes_back_as_the_link_after_a_failure(
+    setup, capsys, monkeypatch
+):
+    outside = _linked_png(setup)
+    # The link is moved aside and replaced first, and the last of the six
+    # renames then fails.
+    _failing_replace(
+        monkeypatch, setup.out, 5, OSError(errno.EBUSY, "Device or resource busy")
+    )
+    status, _, _ = run(capsys, setup.argv())
+    assert status == 6
+    assert setup.png.is_symlink()
+    assert os.readlink(setup.png) == str(outside / "real.png")
+    assert (outside / "real.png").read_bytes() == b"the referent"
+    assert sorted(setup.listing()) == ["hero.png"]
+
+
+def test_an_input_palette_png_may_be_the_output_target(setup, capsys):
+    Image.new("RGB", (2, 1), (10, 20, 30)).save(setup.png)
+    palette_before = setup.png.read_bytes()
+    assert run(capsys, setup.argv("--palette", str(setup.png)))[0] == 0
+    assert setup.png.read_bytes() != palette_before
+    with Image.open(setup.png) as image:
+        assert image.size[0] > 2
+
+
+def test_an_earlier_json_of_another_subject_is_replaced_without_a_check(setup, capsys):
+    setup.json.write_text(json.dumps({"subject": "villain"}))
+    assert run(capsys, setup.argv())[0] == 0
+    assert json.loads(setup.json.read_text())["subject"] == "hero"
 
 
 def test_ctrl_c_outside_publication_still_interrupts(setup, capsys):

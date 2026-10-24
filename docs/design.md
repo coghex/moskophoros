@@ -123,10 +123,14 @@ fails partway, the outputs already replaced are rolled back and the earlier
 ones restored before the run fails. An output that cannot be written, on a
 full disk, without permission or because a rename fails, is an output error
 (exit 6) naming the output and the reason, with the earlier outputs kept
-(owner decision 2026-10-03). A run replaces only the files it writes
-and never deletes others, so previews from an earlier run that this run does
-not write, such as a dropped clip's or under `--no-preview`, stay as they
-were, and so does an earlier normal map under `--no-normals`, depth map
+(owner decision 2026-10-03). If a step of that rollback fails too, the message
+names each target left unrestored and the backup that holds its earlier file,
+and does not say the earlier outputs are kept; the other steps still run.
+The exit status is the same, and an interruption whose rollback fails the same
+way is still reported as `interrupted`, with the status 130. A run replaces
+only the files it writes and never deletes others, so previews from an earlier
+run that this run does not write, such as a dropped clip's or under
+`--no-preview`, stay as they were, and so does an earlier normal map under `--no-normals`, depth map
 without `--depth` and lit previews without a light (owner decisions
 2026-10-01; lighting sheet design D-17). Errors go to stderr as
 `moskophoros: error: <message>`.
@@ -610,8 +614,8 @@ A usage error prints the usage synopsis to stderr, followed by the
 | 3 | Input error: see [Input contract](#input-contract) and [Root motion](#root-motion). |
 | 4 | Overflow: the subject does not fit a fixed cell and scale; with the depth map written, its depth does not fit the map's range; or, under the perspective camera, a vertex is too near the camera to project (see [Camera and directions](#camera-and-directions)). |
 | 5 | Backend error: Blender missing, wrong version, or failed, including a frame with a stack of see-through surfaces deeper than the capture renders (see [Capture](#capture)). |
-| 6 | Output error: an output could not be written (a full disk, no permission, a failed rename). The message names the output and the reason; the earlier outputs are kept, and no usage synopsis or traceback is printed (owner decision 2026-10-03). |
-| 130 | Interrupted (Ctrl-C): `moskophoros: error: interrupted`, no traceback, nothing published (owner decision 2026-10-01). |
+| 6 | Output error: an output could not be written (a full disk, no permission, a failed rename). The message names the output and the reason; the earlier outputs are kept, or, when a rollback step failed, each target left unrestored is named with the backup that holds its earlier file, and no usage synopsis or traceback is printed (owner decision 2026-10-03). |
+| 130 | Interrupted (Ctrl-C): `moskophoros: error: interrupted`, no traceback, nothing published, or, when a rollback step failed, `interrupted` followed by each target left unrestored and the backup that holds its earlier file (owner decision 2026-10-01). |
 
 ## Input contract
 
