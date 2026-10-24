@@ -186,14 +186,18 @@ class _Publication:
         for target, data in self.outputs:
             _stop_if(stop)
             self.doing = ("write", target)
-            self.staged.append((target, _stage(target, data)))
+            _stage(
+                target,
+                data,
+                lambda path, target=target: self.staged.append((target, path)),
+            )
         if self.directory is not None:
             _stop_if(stop)
             self._recheck()
         for target, temporary in self.staged:
             _stop_if(stop)
             self.doing = ("write", target)
-            if os.path.lexists(target):
+            if _exists(target):
                 backup = _unused_name(target, "earlier")
                 # Recorded first: the rollback checks which renames happened.
                 self.moved.append((target, backup))
@@ -212,7 +216,7 @@ class _Publication:
             raise OutputError(
                 f"the output directory {where!r} no longer resolves to {str(root)!r}"
             )
-        if os.path.lexists(root) and (os.path.islink(root) or not root.is_dir()):
+        if _exists(root) and (os.path.islink(root) or not root.is_dir()):
             raise OutputError(
                 f"the output directory {where!r} is no longer a directory"
             )
@@ -232,9 +236,9 @@ class _Publication:
             wanted += [root.joinpath(*parts[:n]) for n in range(1, len(parts))]
         for path in wanted:
             _stop_if(self.interrupted)
-            if os.path.lexists(path):
-                continue
             self.doing = ("create the directory", path)
+            if _exists(path):
+                continue
             self.made.append(path)
             try:
                 os.mkdir(path)
@@ -271,26 +275,33 @@ class _Publication:
         problems = _Problems()
         unremoved = {}
         for target, temporary in reversed(self.placed):
-            if os.path.lexists(temporary):
-                continue  # its rename never happened
+            try:
+                if _exists(temporary):
+                    continue  # its rename never happened
+            except OSError:
+                # Cannot tell. If nothing was placed there is nothing to
+                # remove, and the removal below finds none.
+                pass
             try:
                 if self._crosses_link(target):
                     raise OSError(0, "its directory is now a link")
                 os.remove(target)
+            except FileNotFoundError:
+                pass
             except OSError as error:
                 unremoved[target] = (
                     f"the new {str(target)!r} could not be removed: "
                     f"{error.strerror or error}"
                 )
         for target, backup in reversed(self.moved):
-            if not os.path.lexists(backup):
-                continue  # its rename never happened
             try:
                 if self._crosses_link(target):
                     raise OSError(0, "its directory is now a link")
                 os.replace(backup, target)
                 unremoved.pop(target, None)
             except OSError as error:
+                if isinstance(error, FileNotFoundError) and _gone(backup):
+                    continue  # its rename never happened
                 problems.restore.append(
                     f"the earlier {str(target)!r} could not be restored and is "
                     f"kept at {str(backup)!r}: {error.strerror or error}"
@@ -373,7 +384,13 @@ def _parts(path):
 def _resolve_root(given):
     shown = str(given)
     resolved = Path(os.path.realpath(given))
-    if os.path.lexists(given):
+    try:
+        present = _exists(given)
+    except OSError as error:
+        raise OutputError(
+            f"cannot check the output directory {shown!r}: {error.strerror or error}"
+        ) from None
+    if present:
         if not resolved.is_dir():
             if os.path.islink(given):
                 raise UsageError(
@@ -528,30 +545,45 @@ def _stop_if(interrupted):
         raise KeyboardInterrupt
 
 
-def _stage(target, data):
-    """Write `data` to a new temporary file beside `target`; return its path.
+def _stage(target, data, record):
+    """Write `data` to a new temporary file beside `target`, calling
+    `record(path)` as soon as the file exists, so a failed write leaves it in
+    the rollback's record rather than to a cleanup of its own.
 
     It is created like any new file, so the umask sets its permissions.
     """
     path = _unused_name(target, "new")
     handle = open(path, "xb")
+    record(path)
+    with handle:
+        handle.write(data)
+
+
+def _exists(path):
+    """Whether anything, a dangling link included, is at `path`. Unlike
+    `os.path.lexists`, a lookup that fails for another reason raises, instead
+    of answering that nothing is there."""
     try:
-        with handle:
-            handle.write(data)
-    except BaseException:
-        # Only the file this call created, after a write such as on a full
-        # disk fails partway.
-        try:
-            os.remove(path)
-        except OSError:
-            pass
-        raise
-    return path
+        os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    return True
+
+
+def _gone(path):
+    """Whether `path` is confirmed absent: a failed lookup is not."""
+    try:
+        os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError:
+        return False
+    return False
 
 
 def _unused_name(target, purpose):
     """A name beside `target`, hidden and unused, for a `purpose` file."""
     for n in count():
         path = target.with_name(f".{target.name}.{PROG}-{purpose}-{os.getpid()}-{n}")
-        if not os.path.lexists(path):
+        if not _exists(path):
             return path

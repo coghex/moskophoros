@@ -1247,6 +1247,167 @@ def test_rollback_does_not_cross_a_link_that_appeared(root, monkeypatch):
     assert (root / "atlas").is_symlink()
 
 
+# Lookups that fail are not answers
+
+
+def fail_lstat(monkeypatch, matches, error):
+    """Make `os.lstat` of a path `matches` accepts raise `error`."""
+    real = os.lstat
+
+    def lstat(path, *args, **kwargs):
+        if matches(Path(path)):
+            raise error
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "lstat", lstat)
+
+
+def test_a_failed_backup_lookup_in_rollback_does_not_hide_a_restoration(
+    root, monkeypatch
+):
+    root.mkdir()
+    earlier = earlier_tree(root)
+    failing = []  # set once the manifest's rename has failed: the rollback
+    real = os.replace
+
+    def replace(source, dest):
+        if Path(dest) == root / MANIFEST and "-new-" in Path(source).name:
+            failing.append(True)
+            raise OSError(errno.EBUSY, "Device or resource busy")
+        return real(source, dest)
+
+    monkeypatch.setattr(os, "replace", replace)
+    fail_lstat(
+        monkeypatch,
+        lambda path: bool(failing) and is_backup(path),
+        OSError(errno.EIO, "Input/output error"),
+    )
+    with pytest.raises(OutputError) as raised:
+        export(root)
+    monkeypatch.undo()
+    assert "Device or resource busy" in str(raised.value)
+    # The lookups failed, but the restorations did not need them.
+    assert str(raised.value).endswith("earlier outputs are kept")
+    assert tree(root) == earlier
+
+
+def test_a_backup_that_cannot_be_confirmed_missing_is_reported_not_assumed(
+    root, monkeypatch
+):
+    root.mkdir()
+    earlier_tree(root)
+    sheet = root / "sheet.png"
+    failing = []  # set once the manifest's rename has failed: the rollback
+    real = os.replace
+
+    def replace(source, dest):
+        if Path(dest) == root / MANIFEST and "-new-" in Path(source).name:
+            failing.append(True)
+            raise OSError(errno.EBUSY, "Device or resource busy")
+        if is_backup(source) and Path(dest) == sheet:
+            raise FileNotFoundError(errno.ENOENT, "No such file or directory")
+        return real(source, dest)
+
+    monkeypatch.setattr(os, "replace", replace)
+    fail_lstat(
+        monkeypatch,
+        lambda path: (
+            bool(failing) and is_backup(path) and path.name.startswith(".sheet.png.")
+        ),
+        OSError(errno.EIO, "Input/output error"),
+    )
+    with pytest.raises(OutputError) as raised:
+        export(root)
+    monkeypatch.undo()
+    message = str(raised.value)
+    assert f"the earlier {str(sheet)!r} could not be restored" in message
+    assert "kept at" in message
+    assert "earlier outputs are kept" not in message
+
+
+def test_a_failed_lookup_of_an_existing_target_never_overwrites_it(root, monkeypatch):
+    root.mkdir()
+    earlier = earlier_tree(root)
+    sheet = root / "sheet.png"
+    target = check(root)
+    looked = []
+    real = os.lstat
+
+    def lstat(path, *args, **kwargs):
+        if Path(path) == sheet:
+            looked.append(path)
+            # The two rechecks come first; then the publisher asks whether
+            # the target exists, to move it aside.
+            if len(looked) == 3:
+                raise OSError(errno.EIO, "Input/output error")
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "lstat", lstat)
+    with pytest.raises(OutputError, match="Input/output error"):
+        publish(target)
+    monkeypatch.undo()
+    assert len(looked) == 3
+    assert tree(root) == earlier
+
+
+# A failing write is part of the rollback record
+
+
+def test_a_partial_staged_file_is_removed_by_the_guarded_rollback(root, monkeypatch):
+    # The write fails halfway; the cleanup fails too, and says so.
+    root.mkdir()
+    earlier = earlier_tree(root)
+    fail_staging(monkeypatch, 2, "full", errno.ENOSPC, "No space left on device")
+    fail_when(
+        monkeypatch,
+        "remove",
+        lambda path: ".1.png.moskophoros-new-" in Path(path).name,
+        OSError(errno.EACCES, "Permission denied"),
+    )
+    with pytest.raises(OutputError) as raised:
+        export(root)
+    monkeypatch.undo()
+    message = str(raised.value)
+    assert "No space left on device" in message
+    assert "the temporary file" in message
+    assert "could not be removed: Permission denied" in message
+    leftover = [name for name in tree(root) if "moskophoros-new-" in name]
+    assert len(leftover) == 1
+    assert leftover[0].startswith("frames/walk/south/.1.png.")
+    for path in (*PATHS, MANIFEST, "notes.txt"):
+        assert (root / path).read_bytes() == earlier[path], path
+
+
+def test_a_failed_write_does_not_clean_up_through_a_link_that_appeared(
+    root, monkeypatch
+):
+    import re
+
+    outside = root.parent / "outside"
+    planted = outside / "walk" / "south"
+    planted.mkdir(parents=True)
+    # Where the failed write's temporary file would be, through the link.
+    decoy = planted / f".1.png.moskophoros-new-{os.getpid()}-0"
+    decoy.write_bytes(b"not ours")
+    real_open = open
+
+    def staging_open(path, mode="r", *args, **kwargs):
+        handle = real_open(path, mode, *args, **kwargs)
+        if re.search(r"/south/\.1\.png\.", str(path)):
+            (root / "frames").rename(root / "frames-aside")
+            (root / "frames").symlink_to(outside)
+            return FullDisk(handle)
+        return handle
+
+    monkeypatch.setattr(publication, "open", staging_open, raising=False)
+    with pytest.raises(OutputError) as raised:
+        export(root)
+    monkeypatch.undo()
+    assert decoy.read_bytes() == b"not ours"
+    assert "its directory is now a link" in str(raised.value)
+    assert "earlier outputs are kept" in str(raised.value)
+
+
 # The positional form's publisher
 
 
