@@ -171,6 +171,9 @@ class _Publication:
                 raise error from None
             for target, backup in self.moved:
                 try:
+                    reason = self._unsafe(backup)
+                    if reason:
+                        raise OSError(0, reason)
                     os.remove(backup)
                 except OSError as error:
                     _warn(
@@ -247,24 +250,30 @@ class _Publication:
                 self.made.pop()
                 raise
 
-    def _crosses_link(self, path):
-        """Whether `path` lies below a link in the directory form, which the
-        rollback must not follow."""
+    def _unsafe(self, path):
+        """Why `path` must not be touched, or None: in the directory form,
+        the root or a directory above `path` is a link, or the lookup that
+        would show it failed. Cleanup must not follow a link, or act where
+        confinement cannot be established."""
         if self.directory is None:
-            return False
+            return None
         root = self.directory.root
-        if os.path.islink(root):
-            return True
-        current = root
         try:
             parts = path.relative_to(root).parts
         except ValueError:
-            return True
-        for part in parts[:-1]:
-            current = current / part
-            if os.path.islink(current):
-                return True
-        return False
+            return "it is outside the output directory"
+        current = root
+        for part in ("", *parts[:-1]):
+            current = current / part if part else current
+            try:
+                linked = stat.S_ISLNK(os.lstat(current).st_mode)
+            except (FileNotFoundError, NotADirectoryError):
+                return None  # nothing there to follow
+            except OSError as error:
+                return f"its directory could not be checked: {error.strerror or error}"
+            if linked:
+                return "its directory is now a link"
+        return None
 
     def _roll_back(self):
         """Undo a partial publication: remove each output whose rename into
@@ -283,8 +292,9 @@ class _Publication:
                 # remove, and the removal below finds none.
                 pass
             try:
-                if self._crosses_link(target):
-                    raise OSError(0, "its directory is now a link")
+                reason = self._unsafe(target)
+                if reason:
+                    raise OSError(0, reason)
                 os.remove(target)
             except FileNotFoundError:
                 pass
@@ -295,8 +305,9 @@ class _Publication:
                 )
         for target, backup in reversed(self.moved):
             try:
-                if self._crosses_link(target):
-                    raise OSError(0, "its directory is now a link")
+                reason = self._unsafe(target)
+                if reason:
+                    raise OSError(0, reason)
                 os.replace(backup, target)
                 unremoved.pop(target, None)
             except OSError as error:
@@ -309,8 +320,9 @@ class _Publication:
         problems.restore += unremoved.values()
         for _, temporary in self.staged:
             try:
-                if self._crosses_link(temporary):
-                    raise OSError(0, "its directory is now a link")
+                reason = self._unsafe(temporary)
+                if reason:
+                    raise OSError(0, reason)
                 os.remove(temporary)
             except FileNotFoundError:
                 pass
@@ -321,8 +333,9 @@ class _Publication:
                 )
         for path in reversed(self.made):
             try:
-                if self._crosses_link(path):
-                    raise OSError(0, "its parent is now a link")
+                reason = self._unsafe(path)
+                if reason:
+                    raise OSError(0, reason)
                 os.rmdir(path)
             except OSError as error:
                 if error.errno not in (errno.ENOTEMPTY, errno.ENOENT):

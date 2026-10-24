@@ -1408,6 +1408,74 @@ def test_a_failed_write_does_not_clean_up_through_a_link_that_appeared(
     assert "earlier outputs are kept" in str(raised.value)
 
 
+def test_deleting_backups_after_completion_does_not_follow_a_link_that_appeared(
+    root, monkeypatch, capsys
+):
+    outside = root.parent / "outside"
+    outside.mkdir()
+    # The backup of atlas/walk.png is named like this; the decoy is the same
+    # name outside the root, where a followed link would delete it.
+    decoy = outside / f".walk.png.moskophoros-earlier-{os.getpid()}-0"
+    decoy.write_bytes(b"not ours")
+    root.mkdir()
+    earlier_tree(root)
+    real = os.replace
+
+    def replace(source, dest):
+        real(source, dest)
+        if Path(dest) == root / MANIFEST and "-new-" in Path(source).name:
+            # The last rename: the publication is complete, its cleanup begins.
+            (root / "atlas").rename(root / "atlas-aside")
+            (root / "atlas").symlink_to(outside)
+
+    monkeypatch.setattr(os, "replace", replace)
+    export(root)
+    monkeypatch.undo()
+    assert decoy.read_bytes() == b"not ours"
+    warning = capsys.readouterr().err
+    assert "warning: the earlier" in warning
+    assert "its directory is now a link" in warning
+    # The real backup is kept, where it was moved.
+    assert (root / "atlas-aside" / decoy.name).read_bytes() == body(
+        "atlas/walk.png", "earlier"
+    )
+
+
+def test_a_confinement_lookup_that_fails_skips_the_destructive_step(root, monkeypatch):
+    import re
+
+    outside = root.parent / "outside"
+    planted = outside / "walk" / "south"
+    planted.mkdir(parents=True)
+    decoy = planted / f".1.png.moskophoros-new-{os.getpid()}-0"
+    decoy.write_bytes(b"not ours")
+    armed = []
+    real_open = open
+
+    def staging_open(path, mode="r", *args, **kwargs):
+        handle = real_open(path, mode, *args, **kwargs)
+        if re.search(r"/south/\.1\.png\.", str(path)):
+            (root / "frames").rename(root / "frames-aside")
+            (root / "frames").symlink_to(outside)
+            armed.append(True)
+            return FullDisk(handle)
+        return handle
+
+    monkeypatch.setattr(publication, "open", staging_open, raising=False)
+    fail_lstat(
+        monkeypatch,
+        lambda path: bool(armed) and path == root / "frames",
+        OSError(errno.EIO, "Input/output error"),
+    )
+    with pytest.raises(OutputError) as raised:
+        export(root)
+    monkeypatch.undo()
+    message = str(raised.value)
+    assert decoy.read_bytes() == b"not ours"
+    assert "its directory could not be checked: Input/output error" in message
+    assert "the temporary file" in message
+
+
 # The positional form's publisher
 
 
