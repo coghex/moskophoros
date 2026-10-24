@@ -544,8 +544,12 @@ not apply directory-mode aliases to filenames.
 The name refusals in this subsection and expanded-template path checks below
 apply only in directory mode. The positional form checks recorded templates'
 syntax only and preserves existing output/preview naming, including names
-such as `aux` and case-colliding clips. Metadata retains original names;
-unapplied directory aliases cannot make a default legacy run fail.
+such as `aux` and case-colliding clips. Identity fields retain original names.
+In the positional form, `output_name` fields record the resolved directory-mode
+names without directory-mode validation; they are informational and may
+collide. Artifact `path` values give the actual filenames, including legacy
+preview suffixes. Unapplied directory aliases cannot make a default legacy
+run fail.
 
 **3. Formats and templates.** These defaults ship in `defaults.yaml`:
 
@@ -739,10 +743,15 @@ the 48-wide, gx=24 acceptance target is unaffected.
 
 A horizontal flip represents geometric reflection only if roll is 0 or ±1
 (the existing roll unit, half-turns), `theta_target + theta_source` is
-congruent to `-2*model_yaw` modulo 360 degrees, and a perspective camera has
+congruent to zero modulo 360 degrees, and a perspective camera has
 no sideways position offset from its vertical heading plane through the
 ground point. Orthographic position is unused. These are necessary camera
 conditions, not a claim that the subject or its lighting is symmetric.
+Here `theta = (start + i*360/N) mod 360`; `model_yaw` corrects the model to
+face +Z before the direction turn and does not enter the angle condition.
+Using `model_yaw` for anything other than facing correction is outside this
+condition's assumptions. This corrects the review-1 formula; D-17's warning
+policy is unchanged.
 Per D-17, warn once per clip/target-source pair when any condition fails,
 listing the pair and failed conditions, then export anyway. The transform
 still specifies the requested pixel operation, not guaranteed equivalence
@@ -828,7 +837,10 @@ Top-level clip `duration_s` is source duration; `fps`, `frame_count`,
 formulas. Its `stored_directions` is always an ordered nonempty index array,
 and `mirrors` is always a target-sorted array (possibly empty). Direction
 records cover the entire ring in original index order, with existing nullable
-compass `label` and the P-7 output name. Frames follow selected clip, stored
+compass `label` and the P-7 output name. In positional output, both direction
+and clip `output_name` values are informational directory-mode names, resolved
+without directory-mode name validation; actual filenames are artifact paths.
+Frames follow selected clip, stored
 direction, sample order. Locations sort by artifact index. Every enabled PNG
 representation occurs exactly once for each real sample; no preview or
 mirror is a location. Reference checks validate channels, dimensions,
@@ -943,7 +955,8 @@ fresh output root or clean their own stale files. No hidden managed cleanup,
 ownership database, pruning option or recursive directory replacement in this
 arc. This extends the current publication policy without a destructive default.
 
-One directory root holds one subject's export (D-16). Before capture, read an
+In `--output-dir` mode only, one root holds one subject's export (D-16).
+Before capture, read an
 existing `manifest.json` and refuse exit 2 if its `subject` differs from the
 new run's subject. A same-subject rerun remains allowed, including a changed
 model hash. Subject is the input stem, not a content identity. A malformed or
@@ -951,10 +964,12 @@ unreadable manifest, or one lacking a string subject, cannot establish this
 precondition: refuse before capture with the file and reason. Do not interpret
 this check as permission to reuse an old schema; replay remains current-only.
 `{subject}` is for naming inside one subject's root. This guard does not add
-pruning or multi-subject ownership tracking.
+pruning or multi-subject ownership tracking. It does not inspect or guard a
+positional `<stem>.json`: replacing a legacy sheet made from another subject
+remains allowed.
 
-**2. Preflight and staging.** Resolve and validate every planned output path
-before Blender capture, including metadata/previews, duplicate names and
+**2. Preflight and staging.** In `--output-dir` mode, resolve and validate
+every planned output path before Blender capture, including metadata/previews, duplicate names and
 file/directory prefix conflicts. The chosen output root is resolved once;
 its ancestors may be ordinary filesystem links, but no existing symlink at
 or below that resolved root may be traversed as an output component or
@@ -965,14 +980,22 @@ is the `--settings-from` document: read it completely and close it before
 capture, then allow it to be replaced in both forms, including
 `--settings-from OUT/manifest.json --output-dir OUT` and positional replay
 onto its own JSON. It receives the same staging/rollback protection as every
-other target. Do not follow a link
-outside the root. Concurrent writers to the same root are unsupported; do
+other target. In directory mode, do not follow a link outside the root.
+Concurrent writers to the same root are unsupported; do
 not promise isolation against filesystem changes by other processes.
 
-A new root may be created when its immediate parent already exists as a
+In directory mode, a new root may be created when its immediate parent already exists as a
 directory; do not create missing ancestors above the root. Nested directories
-inside the root are created as needed. The positional form still requires
-its output directory to exist. This preserves its existing preflight rules.
+inside the root are created as needed.
+
+The positional form retains exactly the existing `_check_targets` filesystem
+preflight: refuse when a target's parent is not a directory, or the target
+is a real directory (`is_dir()` and not `is_symlink()`), with exit 2. Keep
+`publish()`'s behavior of moving a symlinked target aside and replacing it
+with a regular file. Do not add directory mode's subject, symlink,
+non-regular-target or input/output-overlap refusals to this form, including
+when an input palette PNG is also an output target. In-place
+`--settings-from` replay and rollback reporting remain shared behavior.
 
 After successful rendering/encoding, create needed directories, stage every
 file on the destination filesystem, and replace files under the existing
@@ -993,23 +1016,26 @@ Bad configuration and planned path collisions are usage exit 2, invalid model
 input exit 3, geometry/depth overflow exit 4 and backend failures exit 5,
 as in today's contract. A failure publishes no valid new manifest.
 
-| Condition | Detection | Exit |
-|---|---|---|
-| Bad settings, inactive key, name/template/collision/prefix error | Before capture | 2 |
-| Existing manifest has a different subject or invalid ownership record | Before capture | 2 |
-| `--output-dir` is a file/non-directory; its immediate parent is missing/non-directory; positional output directory is missing | Before capture | 2 |
-| Target is a directory or other non-regular file; symlink at/below root; input/output overlap except the loaded reuse document | Before capture | 2 |
-| Invalid model/input | Input validation | 3 |
-| Geometry or encoded-depth overflow | Fitting/encoding | 4 |
-| Backend failure | Measure/render | 5 |
-| Filesystem access/I/O error (including reading an existing manifest), mkdir/stage/write/rename/rollback failure | At the attempted operation | 6 |
-| Output components become invalid after successful preflight | Publication recheck | 6 |
-| Handled interruption | Any stage; roll back if publication started | 130 |
+| Condition | Forms | Detection | Exit |
+|---|---|---|---|
+| Bad settings, inactive key or template syntax | Both, under their active-setting rules | Before capture | 2 |
+| Directory-mode name, expanded-path collision or prefix error | `--output-dir` only | Before capture | 2 |
+| Existing manifest has a different subject or invalid ownership record | `--output-dir` only | Before capture | 2 |
+| Root is a file/non-directory; its immediate parent is missing/non-directory | `--output-dir` only | Before capture | 2 |
+| Target is a directory or other non-regular file; symlink at/below root; input/output overlap except the loaded reuse document | `--output-dir` only | Before capture | 2 |
+| Target parent is not a directory, or target is a real directory and not a symlink | Positional only, unchanged `_check_targets` | Before capture | 2 |
+| Invalid model/input | Both | Input validation | 3 |
+| Geometry or encoded-depth overflow | Both | Fitting/encoding | 4 |
+| Backend failure | Both | Measure/render | 5 |
+| Output filesystem I/O, stage/write/rename/rollback failure; directory creation or existing-manifest read I/O where applicable | Both; root creation/manifest ownership read only in directory mode | At the attempted operation | 6 |
+| Output components become invalid after successful directory preflight | `--output-dir` only | Publication recheck | 6 |
+| Handled interruption | Both | Any stage; roll back if publication started | 130 |
 
 Manifest parse/subject errors are usage errors (2); an actual read I/O error
 is output error (6). A rollback failure preserves the original failure class
 (6 or 130) and reports backups; it never claims a complete restoration.
-These rules apply to both destination forms wherever the condition exists.
+Only the rows marked shared apply to both forms; the new directory refusals
+do not change legacy positional preflight or symlink replacement behavior.
 
 The alternative is an explicitly managed export that removes files from the
 previous manifest on rerun. It is not recommended here because it expands
@@ -1442,6 +1468,10 @@ The ledger gives one valid order, not a request to launch parallel agents.
   cannot silently discard invalid direction/mirror references; user files
   cannot activate new rows; old defaults still load and agree with active
   rows in `tests/test_settings.py`; each violating mirror pair warns once.
+  With eight directions, start 0, roll 0 and no sideways perspective offset,
+  a correct `{7: 1}` pair must not warn for a nonzero facing-correction
+  `model_yaw` (for example 90 or 30 degrees). Wrong angle pairs must warn
+  regardless of that correction.
 - **Out of scope:** encoding, filesystem mutation and command activation.
 - **Open questions:** None.
 
@@ -1494,8 +1524,10 @@ The ledger gives one valid order, not a request to launch parallel agents.
   with manifest-last publication and honest rollback.
 - **Scope:** filesystem preflight/confinement, input/output overlap checks,
   staging, replace-only-written policy, rollback, owned-empty-directory cleanup
-  and backup diagnostics. Include D-16 subject preflight, P-9's exit-code
-  table and explicit in-place-reuse exception. The publisher stays independent of image internals;
+  and backup diagnostics. Scope the new confinement/overlap/non-regular and
+  D-16 subject refusals to directory mode per P-9's Forms column; positional
+  `_check_targets` and replacement of symlinked targets remain unchanged.
+  Include the explicit in-place-reuse exception. The publisher stays independent of image internals;
   preserve existing default publication behavior.
 - **Phase:** filesystem effects.
 - **Depends on:** EXP-2.
@@ -1637,12 +1669,12 @@ designer's edits, not review approval. No findings are declined.
 | X-1 | P-13/EXP-2 specify inactive schema rows, source/key/line exit-2 refusals, active defaults/group tests and EXP-6b-only flags. EXP-6a reuse accepts only the inactive default values it emits. |
 | X-2 | P-8a/EXP-4 build manifest settings independently and require byte-identical capture settings when new manifest fields vary. EXP-6b rewrites Capture job wording for the subset, resolved-plan order and global FPS. |
 | X-3 | D-16 records owner “Refuse”; P-7/P-9 restrict roots to one subject, with a pre-capture exit-2 guard and within-root meaning for `{subject}`. |
-| X-4 | P-9 enumerates refusal/operation timing and exits 2–6/130, new-root parent behavior and rollback-failure reporting; both forms preserve legacy preflight classifications. |
+| X-4 | P-9 enumerates refusal/operation timing and exits 2–6/130, new-root parent behavior and rollback-failure reporting. Re-review 2 found the form scope partial; X-19 below explicitly limits new refusals to directory mode. |
 | X-5 | P-9 explicitly permits replacing the fully read/closed `--settings-from` document in both forms, with normal rollback protection. |
 | X-6 | P-7 limits name and expanded-template refusals to directory mode; positional output retains legacy names and checks template syntax only. |
 | X-7 | P-8a pins the full ordered member contract and complete structural example now, before EXP-4 filing; integer-keyed JSON maps are sorted arrays with explicit null/empty/all semantics. |
 | X-8 | P-7 gives exact grammar, no brace escapes/non-ASCII literals, strict frame widths, per-expansion path checks and explicit dot-component behavior. |
-| X-9 | D-17 records owner “Warn”; P-8 gives all three mirror camera conditions and once-per-pair warnings, with EXP-2 checks and EXP-6b activation/documentation. |
+| X-9 | D-17 records owner “Warn”; P-8 gives mirror camera conditions and once-per-pair warnings, with EXP-2 checks and EXP-6b activation/documentation. Re-review 2 corrected its review-1 angle formula; X-18 below applies that correction. |
 | X-10 | D-18 amends D-15 to eight slices, splitting EXP-6a schema transition from EXP-6b activation. Both have named pinned-test and design-section inventories; incidental Blender image-state match is identified, not changed. |
 | X-11 | Verification assigns each 6a/6b implementer the same-generated-model base/head comparison, exact commands, per-image SHA-256 values and current local-validation evidence; binaries stay local. |
 | X-12 | P-1/P-7/P-10/EXP-7 route maps outside `animations/` using `animations{map}/…`; only colour frames enter the consumer handoff. Historical mixed-map probe is not called consumer-ready; stale-frame validator behavior is clarified. |
@@ -1651,6 +1683,26 @@ designer's edits, not review approval. No findings are declined.
 | X-15 | Verification records the reviewer's measured 5,455-file/3.3-MB scale and 1.08/2.23-second publication probe, clearly as existing-code evidence rather than a performance promise. |
 | X-16 | D-19 records owner “Add dated note”; only the dated V-2 note is added in `docs/vision.md`, citing D-6 and distinguishing planned behavior. |
 | X-17 | P-8 qualifies cross-mode fingerprint identity and defines positional root/base names; P-7 omits `clips` from shipped defaults and states exact FPS warning provenance/equal-value/still behavior. Current `/15` evidence remains correct. |
+
+## Review 2 disposition
+
+Re-review 2 inspected `56e503e90c` and reported 15 review-1 findings resolved,
+X-4/X-9 partial, plus X-18 blocking, X-19 should fix and X-20 minor. Report:
+local `review-claude-2.md`, SHA-256
+`6e3f46d4d39363bf1c9890fd6c1d3f44e2f6d0b66680505db8b9d07fbed244b8`.
+Revision authority: manager's `dispatch-export-design-revise-2.md`, SHA-256
+`175295f64618ea92f7f0356d6fcadd6034da5939f15b3172bcec254f4ed26467`,
+2026-10-24. These corrections change no owner decision or slice boundary.
+
+| Finding | Resolution |
+|---|---|
+| X-18 (completes X-9) | P-8 uses `theta_target + theta_source ≡ 0 (mod 360)` with direction angles defined independently of the facing correction. The reviewer's `review-2/mirror_condition_probe.py`/`.log` confirms correct 45°/315° pairs for yaw 0/90/30 and rejects the old formula's wrong pairs. EXP-2 requires nonzero-yaw coverage; D-17 remains unchanged. |
+| X-19 (completes X-4) | P-9's Forms column and prose scope subject, symlink, overlap, non-regular and new-root checks to `--output-dir`. Positional output keeps exactly `_check_targets`' two filesystem refusals and `publish()`'s symlink replacement; shared failures, in-place reuse and rollback remain shared. EXP-5 repeats the boundary. |
+| X-20 | P-7/P-8a distinguish original identity from informational directory-mode `output_name` values in positional output, with no directory-name validation. Artifact paths are the actual filenames. |
+
+The reviewer said fixing X-18/X-19 makes the design ready and needs only a
+quick check. This revision addresses all three; the manager arranges that
+check. No reviewer approval of this new commit is claimed here.
 
 ## Conversation cursor
 
@@ -1700,9 +1752,11 @@ Review 1 subsequently found twelve should-fix and five minor items, with no
 blocking finding. The owner answered the four decision items through the
 manager on 2026-10-24 (D-16 through D-19). This revision addresses X-1 through
 X-17 as mapped above and retains readiness under the revision brief's express
-condition that every finding be addressed. All eight revised slices remain
-unprocessed. Publish the design and V-2 note, report done with the table, and
-stop for the manager to arrange the same reviewer's re-review. No review
+condition that every finding be addressed. The V-2 note landed with that
+revision. Re-review 2 then requested X-18 through X-20; they are addressed
+above without changing D-1 through D-19. All eight slices remain unprocessed.
+Publish this design revision, report done with one line per new finding,
+and stop for the manager to arrange the quick reviewer check. No review
 approval or issue creation is claimed. After review, `process-design-doc`
 processes the epic first and exactly one child per invocation, with separate
 approval for every tracker artifact. This session files no issues.
