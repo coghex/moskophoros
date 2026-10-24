@@ -15,8 +15,9 @@ concrete precondition
 
 - [ ] EPIC. Export configurable game-ready frames and clip atlases
 
-No child slices are defined yet. The first owner answers must establish the
-consumer boundary, timing scope and compatibility contract before decomposition.
+No child slices are defined yet. The owner has established the consumer
+boundary, timing scope and compatibility contract. Direction and output
+details, acceptance scope and delivery boundaries remain open.
 
 ## Epic contract
 
@@ -159,7 +160,7 @@ factory-startup flags, and copy inputs rather than overwrite evidence.
 The owner's selected direction is a generic project-configured export that
 can reach per-clip/per-direction frame folders, subsets with mirroring and
 clip-specific sampling. The request also asks to design per-clip atlases.
-Exact output choices and the consumer handoff are open below.
+The output choices and consumer handoff are approved in D-1 below.
 
 Established constraints: no game-specific branches or fixtures; no consumer
 file writes or configuration edits in this design session; no model
@@ -167,9 +168,11 @@ refinement; no production code or tracker creation. Portrait generation,
 extra clip naming features and automatic stale-output removal have not been
 accepted into or excluded from implementation scope.
 
-## Proposals awaiting owner signoff
+## Design directions approved in round 1
 
 ### P-1. Generic exports, consumer-owned compilation
+
+Adopted by D-1. Retained proposal ID for the round-1 record.
 
 Make frame folders and per-clip atlases independently selectable, with both
 available in one run and an optional combined sheet. Record generic metadata
@@ -182,6 +185,8 @@ replace this game's compilation step. Exact settings and CLI remain open.
 
 ### P-2. Add per-clip FPS without changing frame-count meaning
 
+Adopted by D-2. Retained proposal ID for the round-1 record.
+
 Keep existing frame-count retiming and add a per-clip FPS override. A
 one-second walk with six frames at 6 FPS lasts one second; six at 8 FPS lasts
 0.75 seconds, matching the current game's cadence. A two-second idle with
@@ -190,6 +195,8 @@ old game's two-thirds-second cadence. These numbers explain behavior; none
 is selected for the approved model. Preview cadence requires owner review.
 
 ### P-3. Preserve default images, explicitly version metadata
+
+Adopted by D-3. Retained proposal ID for the round-1 record.
 
 Keep today's combined-sheet default, sampling, image layout, map and preview
 bytes when no new option is used. Permit JSON and fingerprint changes for
@@ -200,32 +207,59 @@ of the brief needs a precise choice. Exact schema identity remains open.
 
 ## Decisions
 
-No new export behavior has owner signoff. Existing project contracts remain
-in force; P-1 through P-3 are proposals, not decisions.
+### D-1. Selectable generic exports; consumer-owned private compilation
+
+Owner signoff on 2026-10-24, via verified `mosk-manager` relay
+`c3csfyvkcf4anp6jc2nup8s382`, explicitly answering round-1 question message
+`eb4vudqbjg5ryipmrc9dvqki2w`. The owner chose:
+
+> "A: folders, atlases or both"
+
+The relay confirms this is option A as described on `round-01/index.html`.
+P-1 is adopted: independently selectable frame folders and per-clip atlases,
+both in one run, optional combined sheet, generic metadata and configurable
+paths, order and padding. The game retains its compiler and private index.
+The frame-folders-only first arc is rejected in favor of the requested
+complete format scope. This affects export, metadata, settings and acceptance;
+it does not yet settle the CLI or template grammar.
+
+### D-2. Per-clip FPS with existing frame-count retiming
+
+Owner signoff on 2026-10-24 through the same verified relay and question:
+
+> "A: per-clip fps"
+
+P-2 is adopted. Add per-clip FPS and preserve the current explicit-count
+meaning; do not add a separate source-duration-preserving sampling mode.
+Actual acceptance-model cadence is still open. This affects sampling,
+settings, metadata/reuse and preview timing. Global-FPS-only was rejected
+because clips need independent playback rates.
+
+### D-3. Default image compatibility, versioned JSON
+
+Owner signoff on 2026-10-24 through the same verified relay and question:
+
+> "A: images unchanged"
+
+P-3 is adopted: preserve default sheet/map/preview bytes when no new feature
+is selected, allow the schema, JSON and fingerprint to change, and retain
+current-schema-only reuse. No legacy JSON compatibility path is added.
+This affects every new setting's recording, reuse and regression checks;
+the exact schema identity remains open.
 
 ## Open questions
 
 ### Q-1. Output choices and consumer boundary
 
-First checkpoint: approve P-1 (generic frame folders, per-clip atlases,
-optional combined sheet, generic metadata, consumer-owned compilation), or
-limit this arc to frame folders and keep today's sheet, postponing generic
-atlases? The first is recommended because it covers the requested formats
-without coupling the tool to a consumer. A requirement for direct runtime
-drop-in would need clarification against V-1 before further design.
+Resolved by D-1.
 
 ### Q-2. Clip timing
 
-First checkpoint: add per-clip FPS while preserving existing explicit-count
-retiming (P-2, recommended); add a new duration-preserving sampling mode as
-well; or keep only global FPS? This sets the sampling scope. Actual acolyte
-counts and cadence remain for visual review after the contract is chosen.
+Resolved by D-2. Actual acolyte counts and cadence remain under Q-6.
 
 ### Q-3. Default compatibility
 
-First checkpoint: preserve default image/map/preview bytes but bump JSON
-and retain current-schema-only reuse (P-3, recommended); or require old JSON
-and fingerprint bytes too, which needs a separate compatibility design?
+Resolved by D-3.
 
 ### Q-4. Direction subsets, names and mirroring
 
@@ -273,14 +307,15 @@ groups, including current-commit local Blender evidence when selected.
 
 ## Delivery plan
 
-Zero child slices yet. Decomposition waits on Q-1 through Q-6. The processing
+Zero child slices yet. Decomposition waits on the unresolved questions. The processing
 ledger will mirror the eventual dependency-ordered plan exactly.
 
 ## Conversation cursor
 
-Round 1 asks Q-1, Q-2 and Q-3 only. Local text decision page:
+Round 1 resolved Q-1, Q-2 and Q-3 as D-1, D-2 and D-3. Local text decision page:
 `file:///Users/vincentcoghlan/.local/share/moskophoros-acceptance/export-format-design/round-01/index.html`.
 This is a new round folder, not an alteration of the approved model review.
-No visual preference is requested in this round. Later visual questions need
-labelled comparison images grouped by decision. Resume from the owner's
-answers, record their provenance, then present the next unresolved choices.
+No visual preference was requested in that round. Later visual questions need
+labelled comparison images grouped by decision. The verified manager relay
+`c3csfyvkcf4anp6jc2nup8s382` carries the owner's signoff dated 2026-10-24.
+Next: direction selection, mirror representation and output configuration.
