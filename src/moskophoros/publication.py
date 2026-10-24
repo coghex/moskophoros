@@ -403,26 +403,36 @@ def _resolve_root(given):
     shown = str(given)
     resolved = Path(os.path.realpath(given))
     try:
-        present = _exists(given)
+        if _exists(given):
+            mode = _mode(resolved)
+            if mode is None or not stat.S_ISDIR(mode):
+                if stat.S_ISLNK(os.lstat(given).st_mode):
+                    raise UsageError(
+                        f"the output directory {shown!r} is a link to "
+                        f"{str(resolved)!r}, which is not a directory"
+                    )
+                raise UsageError(f"the output directory {shown!r} is not a directory")
+            return resolved
+        mode = _mode(resolved.parent)
+        if mode is None or not stat.S_ISDIR(mode):
+            raise UsageError(
+                f"the output directory {shown!r} cannot be created: its parent "
+                f"{str(resolved.parent)!r} is not a directory"
+            )
     except OSError as error:
         raise OutputError(
             f"cannot check the output directory {shown!r}: {error.strerror or error}"
         ) from None
-    if present:
-        if not resolved.is_dir():
-            if os.path.islink(given):
-                raise UsageError(
-                    f"the output directory {shown!r} is a link to "
-                    f"{str(resolved)!r}, which is not a directory"
-                )
-            raise UsageError(f"the output directory {shown!r} is not a directory")
-        return resolved
-    if not resolved.parent.is_dir():
-        raise UsageError(
-            f"the output directory {shown!r} cannot be created: its parent "
-            f"{str(resolved.parent)!r} is not a directory"
-        )
     return resolved
+
+
+def _mode(path):
+    """The mode of what `path` names, following links, or None when nothing
+    is there. A lookup that fails for another reason raises."""
+    try:
+        return os.stat(path).st_mode
+    except (FileNotFoundError, NotADirectoryError):
+        return None
 
 
 def _component_problem(root, parts):

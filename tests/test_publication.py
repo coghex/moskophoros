@@ -218,6 +218,44 @@ def test_a_root_that_is_not_a_directory_is_a_usage_error(parent, root, kind):
     assert not (parent.parent / "nowhere").exists()
 
 
+@pytest.mark.parametrize("which", ["existing-root", "new-root-parent"])
+def test_a_failed_root_lookup_is_an_output_error_not_a_usage_error(
+    parent, root, monkeypatch, which
+):
+    if which == "existing-root":
+        root.mkdir()
+    broken = root.resolve() if which == "existing-root" else parent.resolve()
+    real = os.stat
+
+    def stat_(path, *args, **kwargs):
+        if Path(path) == broken:
+            raise OSError(errno.EIO, "Input/output error")
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "stat", stat_)
+    with pytest.raises(OutputError, match="Input/output error") as raised:
+        check(root)
+    monkeypatch.undo()
+    assert raised.value.exit_code == EXIT_OUTPUT
+    assert str(root) in str(raised.value)
+
+
+def test_a_root_link_behind_an_unreadable_ancestor_is_a_permission_failure(tmp_path):
+    if os.geteuid() == 0:
+        pytest.skip("root reads any directory")
+    locked = tmp_path / "locked"
+    (locked / "inner").mkdir(parents=True)
+    link = tmp_path / "link"
+    link.symlink_to(locked / "inner")
+    locked.chmod(0)
+    try:
+        with pytest.raises(OutputError, match="Permission denied") as raised:
+            check(link)
+    finally:
+        locked.chmod(stat.S_IRWXU)
+    assert raised.value.exit_code == EXIT_OUTPUT
+
+
 def test_a_root_whose_parent_is_a_file_is_a_usage_error(parent):
     (parent / "file").write_bytes(b"x")
     with pytest.raises(UsageError, match="its parent"):
