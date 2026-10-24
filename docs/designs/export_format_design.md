@@ -247,6 +247,95 @@ current-schema-only reuse. No legacy JSON compatibility path is added.
 This affects every new setting's recording, reuse and regression checks;
 the exact schema identity remains open.
 
+## Round-2 proposals awaiting owner signoff
+
+These are configuration and behavior choices, not approval of a mirrored
+acolyte's appearance. The actual five-view look and cadence remain Q-6.
+
+### P-4. Ordered subsets of the existing direction ring
+
+Keep the current direction count and start angle as the definition of the
+view's ring. Add an ordered list of stored direction indices, globally and
+overridable by exact clip name. Default: all directions in current order.
+An override replaces the list as a whole; no wildcard or regular-expression
+clip matching and no special handling for hand or weapon names.
+
+For eight directions starting at zero, `[0,4,3,2,1]` stores south, north,
+north-east, east and south-east in that order, matching the consumer's five
+atlas rows. An asymmetric clip can explicitly select `[0,7,6,5,4,3,2,1]`.
+These are project-authored examples, never tool defaults. Direction 4 stays
+direction 4 in frame addresses even if it becomes the second exported row.
+
+Use the existing compass label for output names when present, otherwise a
+numeric name; allow a project to give explicit output-name aliases by index.
+An alias changes the path name, never the angle, index or physical meaning
+of the existing compass label in metadata. Reject duplicate stored indices
+and colliding output names. Measure and render only stored directions, using
+one common resolved scale, cell and anchor for all selected clips. Fixed
+scale/cell/anchor settings remain the way to keep independent runs aligned.
+
+Alternative: add clip-name patterns as well as exact overrides. This is not
+recommended for the first arc because matching precedence and accidental
+asymmetric mirroring would become extra user-visible rules. Per-clip exact
+entries already fit the settings model and are easy to inspect.
+
+### P-5. Explicit runtime mirror references, no generated mirror files
+
+For each clip, record optional mappings from an omitted direction index to
+a stored source index plus a horizontal-flip operation. A global mapping may
+be replaced per clip; an empty mapping disables it for asymmetric clips.
+At eight directions, example mappings are 7 from 1, 6 from 2 and 5 from 3.
+Each source must be stored and each target omitted; no chains, cycles or
+automatic inference of symmetry. A view may simply be absent with no mirror
+mapping. The exporter does not render or write duplicate images for aliases.
+
+The generic manifest distinguishes real samples from derived views, records
+the source sample identity, and describes how to mirror the image, anchor
+and maps. A horizontal flip moves a pixel-corner anchor from `(gx,gy)` to
+`(W-gx,gy)`; camera-space normals require the X component negated, while
+depth values move with their pixels. Thus a consumer cannot correctly mirror
+normal maps merely by reversing their texel order. The exact encoding and
+metadata fields belong to the later technical contract checkpoint.
+
+This is an author declaration of an acceptable 2D substitute, not proof that
+a 3D model, animation, camera or baked light is symmetric. Owner visual
+review must compare the chosen substitutes. Synarchy's compiler and YAML
+remain its authority for its own runtime mirroring; moskophoros writes no
+game declarations and does not claim the game reads this generic manifest.
+
+Alternative: omit mirror relationships entirely and export only the subset;
+leave every missing-view relationship to the consumer. That is simpler, but
+the generic result then cannot describe a complete intended view set. Files
+containing synthesized mirrored pixels are not proposed for this arc.
+
+### P-6. A directory output mode with relative templates
+
+Keep `moskophoros [options] model.glb output.png` working as today. Add an
+explicit directory-output form, illustrated as
+`moskophoros --project look --output-dir OUT model.glb`, mutually exclusive
+with the positional output PNG. The directory mode selects frame folders,
+per-clip atlases, a combined sheet or any combination through settings, and
+always writes generic metadata. It does not imply a private consumer layout.
+
+The invocation supplies the destination root. Project settings supply relative
+templates for the files under it, with clip, direction, frame index and map
+kind available as appropriate. For example, a project could request
+`animations/{clip}/{direction}/frame_{frame:03}.png` and `atlas/{clip}.png`.
+Indices start at zero; width three means minimum width, not a 999-frame cap.
+No absolute paths, parent traversal or collisions are allowed in templates.
+Resolved output is confined to the chosen root. Root location is not part of
+the fingerprint, so moving an otherwise identical export does not change it.
+
+This checkpoint chooses the directory-root interface and configurable relative
+paths. The exact settings keys, supported tokens and format grammar, default
+paths, manifest filename/schema, existing-directory policy, map suffixes and
+transactional publication contract will be enumerated for signoff next.
+
+Alternative: keep requiring a positional `output.png` even when no combined
+sheet is wanted, using its parent and stem to name metadata and all export
+folders. This preserves one invocation shape but asks the user to name a
+PNG the tool may deliberately not write.
+
 ## Open questions
 
 ### Q-1. Output choices and consumer boundary
@@ -263,22 +352,18 @@ Resolved by D-3.
 
 ### Q-4. Direction subsets, names and mirroring
 
-Unasked. Set the ordered subset globally and per clip; determine exact-name
-overrides versus patterns, index/angle/name mapping, aliases for non-compass
-directions, and whether omitted views carry explicit mirror metadata.
-Mirroring must address off-center anchors, camera roll, asymmetric motion
-and camera-space normal maps, not just colour-image reversal. Determine
-which views participate in fitting and capture. Nothing is inferred from
-clip spelling. Actual five-view acceptance needs labelled visual evidence.
+Round 2: A (recommended), adopt P-4's ordered index subsets, exact per-clip
+overrides, explicit naming aliases and stored-view-only measurement/rendering;
+or B, add clip-name patterns too? Mirror representation has its own explicit
+checkpoint Q-8 below. Actual five-view acceptance still needs Q-6's labelled
+visual evidence. Exact settings syntax remains part of Q-9.
 
 ### Q-5. Output paths, maps, naming and publication
 
-Unasked. Set output-root/CLI behavior, template tokens and frame numbering,
-clip output-name mapping, collisions and invalid paths, atlas padding and
-order, map output naming and alignment, preview behavior, metadata/reuse,
-and whether stale files remain or an explicit managed export is desired.
-Apply deterministic naming and all-or-nothing publication to the chosen
-output set. The exact rules are not yet designed.
+Round 2: A (recommended), adopt P-6's new directory-output mode and relative
+templates while retaining the old PNG invocation; or B, retain a mandatory
+output PNG argument even for exports with no combined sheet? This settles
+the interface direction; Q-9 retains the detailed output contract.
 
 ### Q-6. Acceptance cell, anchor and optional outputs
 
@@ -292,6 +377,22 @@ is required by the brief but its scope depends on these answers.
 Unasked. Set one-PR slice boundaries and dependency order only after the
 blocking behavioral decisions. Obtain separate readiness signoff. Recheck
 tracker overlap at readiness. A document publication is not design approval.
+
+### Q-8. What does runtime mirroring mean in the export?
+
+Round 2: A (recommended), adopt P-5's explicit mirror references in generic
+metadata, with per-clip replacement/disable and no generated duplicate PNGs;
+or B, store only the subset and leave mirror relationships entirely outside
+the export? This is not visual signoff on any model's symmetry.
+
+### Q-9. Detailed settings, metadata and output contract
+
+Unasked; depends on Q-4, Q-5 and Q-8. Set settings keys and layer merge/reset
+semantics, per-clip FPS override validation and interaction with global flags,
+clip output-name mapping, templates and file validation, atlas padding,
+map alignment/naming, preview policy, manifest schema and settings reuse,
+and all-or-nothing publication including stale-file behavior. These choices
+must be explicit before affected slices become ready for issue processing.
 
 ## Verification strategy
 
@@ -319,3 +420,10 @@ No visual preference was requested in that round. Later visual questions need
 labelled comparison images grouped by decision. The verified manager relay
 `c3csfyvkcf4anp6jc2nup8s382` carries the owner's signoff dated 2026-10-24.
 Next: direction selection, mirror representation and output configuration.
+
+Round 2 asks Q-4, Q-8 and Q-5, in that order. New round folder:
+`file:///Users/vincentcoghlan/.local/share/moskophoros-acceptance/export-format-design/round-02/index.html`.
+No visual approval is requested here. P-4, P-5 and P-6 remain proposals until
+the owner answers. After these answers, settle Q-9 and Q-6 before the final
+dependency-ordered slices and readiness signoff; the three-question limit
+does not silently resolve the remaining choices.
