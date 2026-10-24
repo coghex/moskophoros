@@ -126,22 +126,31 @@ anything newer than the date below.
 
 ## Next steps
 
-1. **Export format design (with the owner, under way):** how the tool writes
-   game-ready output, chosen 2026-10-24: per-frame folders and per-clip
-   atlases, a stored subset of directions with mirroring, frames per clip,
-   cell size and ground point, all set in a project file, never built in
-   (vision V-1). A designer is writing
-   `docs/designs/export_format_design.md` with the owner; it files nothing
-   until the owner signs it off.
-   - **Test model:** Synarchy's acolyte, approved by the owner as ready on
-     2026-10-24. It is a cultist: a hooded black robe split to mid-shin, a cord
-     belt, linen pants, boots and a bone-white half-mask; realistic, 1.75 m.
-     It has a Rigify rig, `walk` and `idle`, and a robe of skirt bones baked
-     from Wiggle Bones, so nothing is installed into Blender.
+1. **Game-ready export (epic #153):** the export design is ready and
+   reviewed (`docs/designs/export_format_design.md`). It covers per-frame
+   folders and per-clip atlases, stored direction subsets with mirror
+   records, per-clip fps, `--output-dir` and the `moskophoros.export/1`
+   manifest, all set in a project file and never built in (vision V-1, with
+   the V-2 note). Its slices are EXP-1 to EXP-5, EXP-6a, EXP-6b and EXP-7,
+   filed one at a time from #154 (EXP-1). EXP-7 is the owner's visual review
+   with the latest acolyte the owner has approved.
+   - **Test model:** Synarchy's acolyte, a cultist in a hooded robe with a
+     cord belt, linen pants, boots and a bone-white half-mask; realistic,
+     1.75 m. It has a Rigify rig, `walk` and `idle`, and a robe of skirt
+     bones baked from Wiggle Bones; nothing is installed into Blender.
+     Reworked and accepted by the owner on 2026-10-24 "for now":
+     - a cool-black robe with navy highlights;
+     - peach skin;
+     - a casual walk;
+     - 6 walk frames at 8 fps and 4 idle frames at 6 fps;
+     - 48x48 cells at 24 px/m with the ground point at (24,44);
+     - five stored views plus mirrors.
    - **Files, outside git:** under
-     `~/.local/share/moskophoros-acceptance/acolyte-model/`. The final model is
-     `physics-v2/acolyte.glb` with `library-v4.yaml`; `CHANGES-2026-10-24.md`
-     has the script chain and the owner's decisions.
+     `~/.local/share/moskophoros-acceptance/acolyte-model/`. Use
+     `accepted-rework-v1/`, which holds the model, library, settings and
+     render script; the look comes from the model and library together.
+     `CHANGES-2026-10-24-rework.md` records the decisions and the script
+     chain.
    - **Later:** the owner animates more clips and adds props as separate
      models.
 2. **Deferred by the owner (2026-10-23):** a way to give materials
