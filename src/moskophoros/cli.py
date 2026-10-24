@@ -1005,6 +1005,13 @@ def read_settings(path) -> ReusedSettings:
         checked["style"] = _style(checked["style"], problems)
     if problems:
         _settings_error(path, "; ".join(problems))
+    return reused_from(checked)
+
+
+def reused_from(checked) -> ReusedSettings:
+    """The `ReusedSettings` of recorded settings already checked against
+    `_SETTINGS`, with `style` made by `_style` and `clips` a list of entries
+    that each have at least a `name`, a `loop` flag and its own `frames`."""
     view, camera, cell, ground, ground_px, shade, style = (
         checked[name]
         for name in (
@@ -1150,10 +1157,18 @@ def style_record(options: Options) -> dict:
     `reduce`, `edges`, `palette` and `materials` (the library snapshot, or
     `None`), in that order. The shade range is a setting, recorded in
     `settings.shade`."""
-    record = options.palette
+    return style_document(
+        options.reduce, options.edges, options.palette, options.materials
+    )
+
+
+def style_document(reduce, edges, record, library) -> dict:
+    """The look record of the reduction `reduce`, the edge mode `edges`, the
+    `PaletteRecord` `record` and the `MaterialsRecord` `library`, either of
+    which may be None."""
     return {
-        "reduce": options.reduce,
-        "edges": options.edges,
+        "reduce": reduce,
+        "edges": edges,
         "palette": None
         if record is None
         else {
@@ -1161,9 +1176,7 @@ def style_record(options: Options) -> dict:
             "sha256": record.sha256,
             "colors": ["#" + bytes(color).hex() for color in record.colors],
         },
-        "materials": None
-        if options.materials is None
-        else _materials_document(options.materials),
+        "materials": None if library is None else _materials_document(library),
     }
 
 
