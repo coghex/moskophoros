@@ -20,15 +20,15 @@ concrete precondition
 - [x] EXP-4. Record and reload the generic export manifest — [#157]
 - [x] EXP-5. Publish nested output files with rollback — [#158]
 - [x] EXP-6a. Switch legacy output to the complete export manifest — [#159]
-- [ ] EXP-6b. Activate configurable directory exports
+- [x] EXP-6b. Activate configurable directory exports — [#160]
 - [ ] EXP-7. Review the implemented acolyte export with the owner
 
 Eight slices approved by the owner on 2026-10-24 (D-18 amends D-15).
 All design questions are resolved. D-13 and D-14 set the model and placement policies for the
 final owner-review slice; model rework remains outside implementation.
 Design review is complete. Epic #153, EXP-1 through EXP-5 (#154–#158) and
-EXP-6a (#159) are filed; two child entries remain unprocessed and require
-separate draft signoff before creation.
+EXP-6a/EXP-6b (#159–#160) are filed; one child entry remains unprocessed
+and requires separate draft signoff before creation.
 
 ## Epic contract
 
@@ -1825,3 +1825,10 @@ EXP-6a [#159](https://github.com/coghex/moskophoros/issues/159) was created
 with that exact body and the existing `enhancement` label, and linked on its
 still-unchecked epic #153 checklist line. No review labels were added.
 Next entry: EXP-6b; two children remain to be drafted and signed off.
+
+2026-10-24: the manager signed off `drafts/exp-6b-v1.md` (SHA-256
+`313e3dfb51c64e181c29c5a1abb3955c2ac0d2214ea15fe59156ca5d75e15613`).
+EXP-6b [#160](https://github.com/coghex/moskophoros/issues/160) was created
+with that exact body and the existing `enhancement` label, and linked on its
+still-unchecked epic #153 checklist line. No review labels were added.
+Next entry: EXP-7; one child remains to be drafted and signed off.
