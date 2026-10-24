@@ -4,7 +4,7 @@ Where the project stands, for an agent or the owner arriving cold. Read it
 after [AGENTS.md](AGENTS.md), then check `git log` and the tracker for
 anything newer than the date below.
 
-**Last reconciled: 2026-10-23.**
+**Last reconciled: 2026-10-24.**
 
 **Rules for this file:**
 - **Current state only.** When something changes, replace the old line; don't
@@ -126,15 +126,24 @@ anything newer than the date below.
 
 ## Next steps
 
-1. **Synarchy's acolyte model (with the owner):** a rigged 3D acolyte to get
-   the model and output format right. Base chosen 2026-10-23 (a cultist:
-   hooded black robe split to mid-shin with a cord belt, linen pants, boots,
-   a bone-white half-mask; realistic, 1.75 m), with a Rigify rig and scripted
-   `idle` and `walk` the owner called a good start. The owner animates more by
-   hand and adds props as separate models. Files, outside git:
-   `~/.local/share/moskophoros-acceptance/acolyte-model/` (`anim-v1/` is
-   current). Open: how the tool's sheet maps to Synarchy's unit layout (per
-   clip and direction frame folders, five stored directions, 48 px cells).
+1. **Export format design (with the owner, under way):** how the tool writes
+   game-ready output, chosen 2026-10-24: per-frame folders and per-clip
+   atlases, a stored subset of directions with mirroring, frames per clip,
+   cell size and ground point, all set in a project file, never built in
+   (vision V-1). A designer is writing
+   `docs/designs/export_format_design.md` with the owner; it files nothing
+   until the owner signs it off.
+   - **Test model:** Synarchy's acolyte, approved by the owner as ready on
+     2026-10-24. It is a cultist: a hooded black robe split to mid-shin, a cord
+     belt, linen pants, boots and a bone-white half-mask; realistic, 1.75 m.
+     It has a Rigify rig, `walk` and `idle`, and a robe of skirt bones baked
+     from Wiggle Bones, so nothing is installed into Blender.
+   - **Files, outside git:** under
+     `~/.local/share/moskophoros-acceptance/acolyte-model/`. The final model is
+     `physics-v2/acolyte.glb` with `library-v4.yaml`; `CHANGES-2026-10-24.md`
+     has the script chain and the owner's decisions.
+   - **Later:** the owner animates more clips and adds props as separate
+     models.
 2. **Deferred by the owner (2026-10-23):** a way to give materials
    "texturing" waits until the main functionality is finished. A more detailed
    wood model (the alpha review's wood remark) is fine, but not worth testing
