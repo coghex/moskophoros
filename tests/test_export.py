@@ -10,6 +10,8 @@ from pathlib import Path
 import numpy as np
 import PIL
 import pytest
+import sheet_encoding
+from manifest_fixture import GENERATOR
 from PIL import Image
 from shading import DEFAULT_SHADE
 
@@ -20,17 +22,6 @@ from moskophoros.gltf import Clip, SelectedClip
 from moskophoros.sampling import NORMAL_MAP, FrameAddress, ImageFrame
 
 SHA = "ab" * 32
-GENERATOR = {
-    "tool": "moskophoros",
-    "version": "0.1.0",
-    "python": "3.13.15",
-    "numpy": "2.5.3",
-    "pillow": "12.3.0",
-    "blender": "5.2.2",
-    "renderer": "cycles",
-    "color": {"technique": "cycles-flat-emission"},
-}
-
 # The described sheet: the `side` view (east, then west), three clips at 3 fps.
 SIDE = Settings(
     view="side",
@@ -90,31 +81,66 @@ TIMES = {
     "pose": [0.25],
 }
 
-CANONICAL = (
-    '{"generator":{"blender":"5.2.2","color":{"technique":"cycles-flat-emission"},'
-    '"numpy":"2.5.3","pillow":"12.3.0","python":"3.13.15","renderer":"cycles",'
-    '"tool":"moskophoros","version":"0.1.0"},'
-    '"settings":{"camera":{"direction":[0.0,0.0,-1.0],"position":null,'
-    '"projection":"orthographic","roll":0.0},"cell":{"height":3,"width":2},'
-    '"clips":[{"frames":null,"loop":true,"name":"läuft"},'
-    '{"frames":null,"loop":false,"name":"攻撃"},'
-    '{"frames":null,"loop":true,"name":"pose"}],'
-    '"depth":false,"fps":3.0,"frames":"auto","ground_m":{"x":0.0,"y":0.0,"z":0.0},"ground_px":{"x":1,"y":2},'
-    '"light":{"ambient":0.3,"intensity":1.0,"position":null},'
-    '"model_yaw_deg":0.0,"normals":true,"pixels_per_meter":24.5,"previews":true,'
-    '"ramp":{"chroma_fade":0.3,"hue_shift_deg":-12.0,"lightness_step":0.12},'
-    '"root_motion":"error",'
-    '"shade":{"ambient_form":true,"ao_distance_m":0.3,"ao_samples":64,'
-    '"brightness":{"ceiling":1.0,"floor":0.3},"convexity_weight":1.0,'
-    '"dither":{"pattern":"off","strength":1.0},"ground":{"strength":0.0},'
-    '"key":{"direction":[-0.5183210553488161,0.604707897906952,'
-    '0.604707897906952],"strength":0.0},"mode":"ramp","occlusion_weight":0.25,'
-    '"range":[84,191],"sky":{"strength":0.0},"sky_ground_frame":"camera",'
-    '"snap":"off"},'
-    '"style":{"edges":"hard","materials":null,"palette":null,"reduce":"plain"},'
-    '"supersample":4,"view":{"directions":2,"preset":"side",'
-    '"start_angle_deg":90.0}},'
-    '"source":{"sha256":"' + SHA + '"}}'
+# The `settings` object the side sheet records (design P-8a), in order: the
+# export arc's members are at their inactive defaults.
+SETTINGS_RECORD = {
+    "view": {"preset": "side", "directions": 2, "start_angle_deg": 90.0},
+    "camera": {
+        "projection": "orthographic",
+        "direction": [0.0, 0.0, -1.0],
+        "roll": 0.0,
+        "position": None,
+    },
+    "model_yaw_deg": 0.0,
+    "fps": 3.0,
+    "frames": "auto",
+    "supersample": 4,
+    "pixels_per_meter": 24.5,
+    "cell": {"width": 2, "height": 3},
+    "ground_m": {"x": 0.0, "y": 0.0, "z": 0.0},
+    "ground_px": {"x": 1, "y": 2},
+    "root_motion": "error",
+    "previews": True,
+    "normals": True,
+    "depth": False,
+    "light": {"position": None, "intensity": 1.0, "ambient": 0.3},
+    "shade": SHADE_RECORD,
+    "ramp": {"lightness_step": 0.12, "hue_shift_deg": -12.0, "chroma_fade": 0.3},
+    "style": PLAIN,
+    "stored_directions": "all",
+    "direction_names": [],
+    "mirrors": [],
+    "export": {
+        "formats": ["sheet"],
+        "frame_path": "frames/{clip}/{direction}/frame_{frame:03}{map}.png",
+        "atlas_path": "atlases/{clip}{map}.png",
+        "sheet_path": "sheet{map}.png",
+        "atlas_padding": 0,
+    },
+    "clips": [
+        {
+            "name": name,
+            "loop": loop,
+            "frames": None,
+            "fps": None,
+            "stored_directions": None,
+            "mirrors": None,
+            "output_name": None,
+        }
+        for name, loop in (("läuft", True), ("攻撃", False), ("pose", True))
+    ],
+}
+# The fingerprint is the hash of the canonical form of the generator, the
+# settings and the source digest: sorted keys, no whitespace, non-ASCII kept.
+CANONICAL = json.dumps(
+    {
+        "generator": GENERATOR,
+        "settings": SETTINGS_RECORD,
+        "source": {"sha256": SHA},
+    },
+    sort_keys=True,
+    separators=(",", ":"),
+    ensure_ascii=False,
 )
 FINGERPRINT = "sha256:" + hashlib.sha256(CANONICAL.encode("utf-8")).hexdigest()
 
@@ -152,275 +178,142 @@ def _encode_side(frames=None, **changes):
         "selected_clips": (RUN, STRIKE, POSE),
         "image_path": Path("/tmp/out/héros.png"),
     } | changes
-    return export.encode(_side_frames() if frames is None else frames, **arguments)
-
-
-def _frame_line(clip, direction, index, time_s, x, y):
-    return (
-        "    {\n"
-        f'      "clip": "{clip}",\n'
-        f'      "direction": {direction},\n'
-        f'      "index": {index},\n'
-        f'      "time_s": {time_s},\n'
-        f'      "x": {x},\n'
-        f'      "y": {y},\n'
-        '      "w": 2,\n'
-        '      "h": 3\n'
-        "    }"
+    return sheet_encoding.encode(
+        _side_frames() if frames is None else frames, **arguments
     )
 
 
-EXPECTED_FRAMES = ",\n".join(
-    [
-        _frame_line("läuft", 0, 0, "0.0", 0, 0),
-        _frame_line("läuft", 0, 1, "0.3333333333333333", 2, 0),
-        _frame_line("läuft", 0, 2, "0.6666666666666666", 4, 0),
-        _frame_line("läuft", 1, 0, "0.0", 0, 3),
-        _frame_line("läuft", 1, 1, "0.3333333333333333", 2, 3),
-        _frame_line("läuft", 1, 2, "0.6666666666666666", 4, 3),
-        _frame_line("攻撃", 0, 0, "0.5", 0, 6),
-        _frame_line("攻撃", 0, 1, "0.8333333333333333", 2, 6),
-        _frame_line("攻撃", 0, 2, "1.1666666666666665", 4, 6),
-        _frame_line("攻撃", 0, 3, "1.5", 6, 6),
-        _frame_line("攻撃", 1, 0, "0.5", 0, 9),
-        _frame_line("攻撃", 1, 1, "0.8333333333333333", 2, 9),
-        _frame_line("攻撃", 1, 2, "1.1666666666666665", 4, 9),
-        _frame_line("攻撃", 1, 3, "1.5", 6, 9),
-        _frame_line("pose", 0, 0, "0.25", 0, 12),
-        _frame_line("pose", 1, 0, "0.25", 0, 15),
-    ]
-)
-
-EXPECTED_JSON = (
-    """{
-  "schema": "moskophoros.sheet/15",
-  "generator": {
-    "tool": "moskophoros",
-    "version": "0.1.0",
-    "python": "3.13.15",
-    "numpy": "2.5.3",
-    "pillow": "12.3.0",
-    "blender": "5.2.2",
-    "renderer": "cycles",
-    "color": {
-      "technique": "cycles-flat-emission"
-    }
-  },
-  "source": {
-    "file": "héros.glb",
-    "sha256": "@SHA@"
-  },
-  "subject": "héros",
-  "variant": "default",
-  "settings": {
-    "view": {
-      "preset": "side",
-      "directions": 2,
-      "start_angle_deg": 90.0
-    },
-    "camera": {
-      "projection": "orthographic",
-      "direction": [
-        0.0,
-        0.0,
-        -1.0
-      ],
-      "roll": 0.0,
-      "position": null
-    },
-    "model_yaw_deg": 0.0,
-    "fps": 3.0,
-    "frames": "auto",
-    "supersample": 4,
-    "pixels_per_meter": 24.5,
-    "cell": {
-      "width": 2,
-      "height": 3
-    },
-    "ground_m": {
-      "x": 0.0,
-      "y": 0.0,
-      "z": 0.0
-    },
-    "ground_px": {
-      "x": 1,
-      "y": 2
-    },
-    "root_motion": "error",
-    "previews": true,
-    "normals": true,
-    "depth": false,
-    "light": {
-      "position": null,
-      "intensity": 1.0,
-      "ambient": 0.3
-    },
-    "shade": {
-      "ao_distance_m": 0.3,
-      "ao_samples": 64,
-      "occlusion_weight": 0.25,
-      "convexity_weight": 1.0,
-      "range": [
-        84,
-        191
-      ],
-      "mode": "ramp",
-      "ambient_form": true,
-      "key": {
-        "direction": [
-          -0.5183210553488161,
-          0.604707897906952,
-          0.604707897906952
+def _frame_entry(clip, direction, index, time_s, x, y):
+    """A sample's record: its cell in the sheet's colour map (artifact 0) and
+    in its normal map (artifact 1)."""
+    return {
+        "clip": clip,
+        "direction": direction,
+        "index": index,
+        "time_s": time_s,
+        "locations": [
+            {"artifact": artifact, "x": x, "y": y, "w": 2, "h": 3}
+            for artifact in (0, 1)
         ],
-        "strength": 0.0
-      },
-      "sky": {
-        "strength": 0.0
-      },
-      "ground": {
-        "strength": 0.0
-      },
-      "sky_ground_frame": "camera",
-      "brightness": {
-        "floor": 0.3,
-        "ceiling": 1.0
-      },
-      "snap": "off",
-      "dither": {
-        "pattern": "off",
-        "strength": 1.0
-      }
-    },
-    "ramp": {
-      "lightness_step": 0.12,
-      "hue_shift_deg": -12.0,
-      "chroma_fade": 0.3
-    },
-    "style": {
-      "reduce": "plain",
-      "edges": "hard",
-      "palette": null,
-      "materials": null
-    },
+    }
+
+
+def _clip_record(name, loop, duration, count, frame_duration, output_name):
+    return {
+        "name": name,
+        "loop": loop,
+        "duration_s": duration,
+        "frame_count": count,
+        "frame_duration_s": frame_duration,
+        "time_scale": 1.0,
+        "output_name": output_name,
+        "fps": 3.0,
+        "stored_directions": [0, 1],
+        "mirrors": [],
+    }
+
+
+def _preview_record(path, clip):
+    return {
+        "kind": "preview",
+        "channel": "flat",
+        "path": path,
+        "width": 16,
+        "height": 12,
+        "clip": clip,
+    }
+
+
+def _sheet_record(channel, path):
+    return {
+        "kind": "sheet",
+        "channel": channel,
+        "path": path,
+        "width": 8,
+        "height": 18,
+        "padding": 0,
+        "cell": {"width": 2, "height": 3},
+    }
+
+
+# The side sheet is 4 columns (the longest clip, 攻撃) of 2 pixels and 6 rows
+# (three clips of two directions) of 3 pixels; its previews show both
+# directions side by side at 4 times the size.
+EXPECTED = {
+    "schema": "moskophoros.export/1",
+    "generator": GENERATOR,
+    "source": {"file": "héros.glb", "sha256": SHA},
+    "subject": "héros",
+    "variant": "default",
+    "settings": SETTINGS_RECORD,
+    "fingerprint": FINGERPRINT,
+    "artifacts": [
+        _sheet_record("color", "héros.png"),
+        _sheet_record("normal", "héros.normal.png"),
+        _preview_record("héros.l_uft.gif", "läuft"),
+        _preview_record("héros.__.gif", "攻撃"),
+        _preview_record("héros.pose.gif", "pose"),
+    ],
+    "directions": [
+        {"index": 0, "angle_deg": 90.0, "label": "east", "output_name": "east"},
+        {"index": 1, "angle_deg": 270.0, "label": "west", "output_name": "west"},
+    ],
     "clips": [
-      {
-        "name": "läuft",
-        "loop": true,
-        "frames": null
-      },
-      {
-        "name": "攻撃",
-        "loop": false,
-        "frames": null
-      },
-      {
-        "name": "pose",
-        "loop": true,
-        "frames": null
-      }
-    ]
-  },
-  "fingerprint": "@FINGERPRINT@",
-  "image": {
-    "file": "héros.png",
-    "width": 8,
-    "height": 18
-  },
-  "maps": {
-    "normal": {
-      "file": "héros.normal.png"
-    },
-    "depth": null
-  },
-  "directions": [
-    {
-      "index": 0,
-      "angle_deg": 90.0,
-      "label": "east"
-    },
-    {
-      "index": 1,
-      "angle_deg": 270.0,
-      "label": "west"
-    }
-  ],
-  "clips": [
-    {
-      "name": "läuft",
-      "loop": true,
-      "duration_s": 1.0,
-      "frame_count": 3,
-      "frame_duration_s": 0.3333333333333333,
-      "time_scale": 1.0
-    },
-    {
-      "name": "攻撃",
-      "loop": false,
-      "duration_s": 1.0,
-      "frame_count": 4,
-      "frame_duration_s": 0.3333333333333333,
-      "time_scale": 1.0
-    },
-    {
-      "name": "pose",
-      "loop": true,
-      "duration_s": 0.0,
-      "frame_count": 1,
-      "frame_duration_s": 0.3333333333333333,
-      "time_scale": 1.0
-    }
-  ],
-  "frames": [
-@FRAMES@
-  ]
+        _clip_record("läuft", True, 1.0, 3, 0.3333333333333333, "l_uft"),
+        _clip_record("攻撃", False, 1.0, 4, 0.3333333333333333, "__"),
+        _clip_record("pose", True, 0.0, 1, 0.3333333333333333, "pose"),
+    ],
+    "frames": [
+        _frame_entry("läuft", 0, 0, 0.0, 0, 0),
+        _frame_entry("läuft", 0, 1, 0.3333333333333333, 2, 0),
+        _frame_entry("läuft", 0, 2, 0.6666666666666666, 4, 0),
+        _frame_entry("läuft", 1, 0, 0.0, 0, 3),
+        _frame_entry("läuft", 1, 1, 0.3333333333333333, 2, 3),
+        _frame_entry("läuft", 1, 2, 0.6666666666666666, 4, 3),
+        _frame_entry("攻撃", 0, 0, 0.5, 0, 6),
+        _frame_entry("攻撃", 0, 1, 0.8333333333333333, 2, 6),
+        _frame_entry("攻撃", 0, 2, 1.1666666666666665, 4, 6),
+        _frame_entry("攻撃", 0, 3, 1.5, 6, 6),
+        _frame_entry("攻撃", 1, 0, 0.5, 0, 9),
+        _frame_entry("攻撃", 1, 1, 0.8333333333333333, 2, 9),
+        _frame_entry("攻撃", 1, 2, 1.1666666666666665, 4, 9),
+        _frame_entry("攻撃", 1, 3, 1.5, 6, 9),
+        _frame_entry("pose", 0, 0, 0.25, 0, 12),
+        _frame_entry("pose", 1, 0, 0.25, 0, 15),
+    ],
 }
-""".replace("@SHA@", SHA)
-    .replace("@FINGERPRINT@", FINGERPRINT)
-    .replace("@FRAMES@", EXPECTED_FRAMES)
-    .encode("utf-8")
-)
+EXPECTED_JSON = (json.dumps(EXPECTED, indent=2, ensure_ascii=False) + "\n").encode()
 
 
 def test_the_description_matches_the_expected_document_byte_for_byte():
     assert _encode_side().json == EXPECTED_JSON
 
 
+def test_the_description_lists_the_sheet_maps_and_previews_as_artifacts():
+    document = _encode_side().document
+    assert list(document) == [
+        "schema",
+        "generator",
+        "source",
+        "subject",
+        "variant",
+        "settings",
+        "fingerprint",
+        "artifacts",
+        "directions",
+        "clips",
+        "frames",
+    ]
+    assert "image" not in document and "maps" not in document
+    # Without the maps and the previews only the colour sheet remains: an
+    # output that is off has no entry, not a null.
+    bare = _encode_side(normals=False, previews=False).document
+    assert [a["path"] for a in bare["artifacts"]] == ["héros.png"]
+    assert all(len(f["locations"]) == 1 for f in bare["frames"])
+
+
 def test_the_fingerprint_hashes_the_canonical_mirrored_object():
-    settings = {
-        "view": {
-            "preset": "side",
-            "directions": 2,
-            "start_angle_deg": 90.0,
-        },
-        "camera": {
-            "projection": "orthographic",
-            "direction": [0.0, 0.0, -1.0],
-            "roll": 0.0,
-            "position": None,
-        },
-        "model_yaw_deg": 0.0,
-        "fps": 3.0,
-        "frames": "auto",
-        "supersample": 4,
-        "pixels_per_meter": 24.5,
-        "cell": {"width": 2, "height": 3},
-        "ground_m": {"x": 0.0, "y": 0.0, "z": 0.0},
-        "ground_px": {"x": 1, "y": 2},
-        "root_motion": "error",
-        "previews": True,
-        "normals": True,
-        "depth": False,
-        "light": {"position": None, "intensity": 1.0, "ambient": 0.3},
-        "shade": SHADE_RECORD,
-        "ramp": {"lightness_step": 0.12, "hue_shift_deg": -12.0, "chroma_fade": 0.3},
-        "style": PLAIN,
-        "clips": [
-            {"name": "läuft", "loop": True, "frames": None},
-            {"name": "攻撃", "loop": False, "frames": None},
-            {"name": "pose", "loop": True, "frames": None},
-        ],
-    }
-    assert export.fingerprint(GENERATOR, settings, SHA) == FINGERPRINT
+    assert export.fingerprint(GENERATOR, SETTINGS_RECORD, SHA) == FINGERPRINT
 
 
 def test_the_fingerprint_ignores_file_names_and_paths():
@@ -433,14 +326,17 @@ def test_the_fingerprint_ignores_file_names_and_paths():
     "changes",
     [
         {"generator": GENERATOR | {"blender": "5.2.3"}},
-        {"generator": GENERATOR | {"color": {"technique": "another"}}},
+        {
+            "generator": GENERATOR
+            | {"color": GENERATOR["color"] | {"technique": "another"}}
+        },
         {"generator": GENERATOR | {"pillow": "12.3.1"}},
         {"settings": replace(SIDE, supersample=8)},
         {"settings": replace(SIDE, ppm=24.25)},
         {"settings": replace(SIDE, root_motion="keep")},
         {"source": Source(SOURCE.path, "cd" * 32, 0)},
         {"selected_clips": (RUN, STRIKE, replace(POSE, one_shot=True))},
-        {"style": {"reduce": "mode", "palette": None}},
+        {"style": PLAIN | {"reduce": "mode"}},
     ],
     ids=[
         "blender",
@@ -460,21 +356,21 @@ def test_the_fingerprint_changes_with_any_hashed_input(changes):
     assert b'"fingerprint": "sha256:' in sheet.json
 
 
+def _record(style=PLAIN, selected=(RUN, STRIKE, POSE), **options):
+    return sheet_encoding.settings_record(
+        SIDE, "héros", selected, style, shade_range=RANGE, **options
+    )
+
+
 def test_the_fingerprint_covers_the_style_record():
-    settings = export.sheet_settings(
-        SIDE, (RUN, STRIKE, POSE), PLAIN, shade_range=RANGE
-    )
-    restyled = export.sheet_settings(
-        SIDE, (RUN, STRIKE, POSE), {"reduce": "plain", "palette": []}, shade_range=RANGE
-    )
+    settings = _record()
+    restyled = _record({"reduce": "plain", "palette": []})
     assert export.fingerprint(GENERATOR, settings, SHA) == FINGERPRINT
     assert export.fingerprint(GENERATOR, restyled, SHA) != FINGERPRINT
     unstyled = {key: value for key, value in settings.items() if key != "style"}
     assert export.fingerprint(GENERATOR, unstyled, SHA) != FINGERPRINT
     # The edges rule is inside the fingerprint (alpha design D-9).
-    soft = export.sheet_settings(
-        SIDE, (RUN, STRIKE, POSE), PLAIN | {"edges": "soft"}, shade_range=RANGE
-    )
+    soft = _record(PLAIN | {"edges": "soft"})
     assert soft["style"] == {
         "reduce": "plain",
         "edges": "soft",
@@ -486,13 +382,11 @@ def test_the_fingerprint_covers_the_style_record():
 
 @pytest.mark.parametrize("normals", [True, False])
 @pytest.mark.parametrize("previews", [True, False])
-def test_previews_normals_shade_and_the_style_record_sit_just_before_clips(
+def test_previews_normals_shade_and_the_style_record_sit_before_the_export_members(
     previews, normals
 ):
-    settings = export.sheet_settings(
-        SIDE, (RUN,), PLAIN, shade_range=RANGE, previews=previews, normals=normals
-    )
-    assert list(settings)[-9:] == [
+    settings = _record(selected=(RUN,), previews=previews, normals=normals)
+    assert list(settings)[-13:] == [
         "root_motion",
         "previews",
         "normals",
@@ -501,6 +395,10 @@ def test_previews_normals_shade_and_the_style_record_sit_just_before_clips(
         "shade",
         "ramp",
         "style",
+        "stored_directions",
+        "direction_names",
+        "mirrors",
+        "export",
         "clips",
     ]
     assert settings["style"] == PLAIN
@@ -526,15 +424,18 @@ def test_previews_normals_shade_and_the_style_record_sit_just_before_clips(
     assert list(settings["shade"]["key"]) == ["direction", "strength"]
     assert list(settings["shade"]["brightness"]) == ["floor", "ceiling"]
     assert list(settings["shade"]["dither"]) == ["pattern", "strength"]
-    rest = {
-        k: v
-        for k, v in settings.items()
-        if k not in ("style", "previews", "normals", "depth", "light", "ramp")
-    }
+    # The capture job's values are the manifest's, though the manifest builds
+    # its settings on its own and the job holds none of the export members.
     job = settings_document(SIDE, (RUN,))
     capture = {key: value for key, value in job["shade"].items() if key != "materials"}
-    assert rest == job | {"shade": SHADE_RECORD}
+    rest = {
+        k: v for k, v in settings.items() if k in job and k not in ("shade", "clips")
+    }
+    assert rest == {k: v for k, v in job.items() if k not in ("shade", "clips")}
     assert {k: SHADE_RECORD[k] for k in capture} == capture
+    assert [(c["name"], c["loop"], c["frames"]) for c in settings["clips"]] == [
+        (c["name"], c["loop"], c["frames"]) for c in job["clips"]
+    ]
 
 
 def test_the_sheet_records_the_shade_values_used_and_fingerprints_them():
@@ -565,23 +466,23 @@ def test_the_previews_flag_is_recorded_and_fingerprinted():
     }
 
 
-def test_export_records_any_style_record_as_given():
-    # Export knows no reductions or palettes: a record from a later look is
-    # written and fingerprinted as it is.
-    style = {
-        "reduce": "unknown-look",
-        "palette": {"source": "p.gpl", "sha256": SHA, "colors": ["#123abc"]},
-    }
+def test_export_records_the_style_record_as_given():
+    # The manifest checks the look it records as a settings file's would be,
+    # so a different valid look is written and fingerprinted as it is.
+    style = {"reduce": "mode", "edges": "soft", "palette": None, "materials": None}
     sheet = _encode_side(style=style)
     description = json.loads(sheet.json)
     assert description["settings"]["style"] == style
     assert description["fingerprint"] == export.fingerprint(
-        GENERATOR,
-        export.sheet_settings(SIDE, (RUN, STRIKE, POSE), style, shade_range=RANGE),
-        SHA,
+        GENERATOR, _record(style), SHA
     )
     assert description["fingerprint"] != FINGERPRINT
     assert sheet.png == _encode_side().png
+
+
+def test_a_look_the_manifest_reader_refuses_is_never_written():
+    with pytest.raises(ValueError, match="manifest written is invalid"):
+        _encode_side(style={})
 
 
 def test_the_fingerprint_rejects_a_malformed_digest():
@@ -638,7 +539,7 @@ def _grid_frames():
 
 
 def _encode_grid(frames):
-    return export.encode(
+    return sheet_encoding.encode(
         frames,
         generator=GENERATOR,
         source=Source(Path("/m/grid.glb"), SHA, 0),
@@ -700,7 +601,7 @@ def test_the_static_clip_is_one_frame_at_zero():
         np.zeros((3, 2, 4), dtype=np.uint8),
         buffers=_facing(3, 2),
     )
-    sheet = export.encode(
+    sheet = sheet_encoding.encode(
         [frame],
         generator=GENERATOR,
         source=Source(Path("/m/box.glb"), SHA, 0),
@@ -711,21 +612,31 @@ def test_the_static_clip_is_one_frame_at_zero():
         selected_clips=(static,),
         image_path="box.png",
     )
-    text = sheet.json.decode()
-    assert (
-        '  "clips": [\n'
-        "    {\n"
-        '      "name": "static",\n'
-        '      "loop": true,\n'
-        '      "duration_s": 0.0,\n'
-        '      "frame_count": 1,\n'
-        '      "frame_duration_s": 0.08333333333333333,\n'
-        '      "time_scale": 1.0\n'
-        "    }\n"
-        "  ],\n"
-    ) in text
-    assert '"time_s": 0.0,' in text
-    assert '"width": 2,\n    "height": 3\n' in text
+    document = sheet.document
+    assert document["clips"] == [
+        {
+            "name": "static",
+            "loop": True,
+            "duration_s": 0.0,
+            "frame_count": 1,
+            "frame_duration_s": 0.08333333333333333,
+            "time_scale": 1.0,
+            "output_name": "static",
+            "fps": 12.0,
+            "stored_directions": [0],
+            "mirrors": [],
+        }
+    ]
+    assert [f["time_s"] for f in document["frames"]] == [0.0]
+    # One cell of 2 by 3 pixels: the sheet, its normal map and the preview.
+    assert [
+        (a["kind"], a["channel"], a["width"], a["height"])
+        for a in document["artifacts"]
+    ] == [
+        ("sheet", "color", 2, 3),
+        ("sheet", "normal", 2, 3),
+        ("preview", "flat", 8, 12),
+    ]
 
 
 # Rejected frames
@@ -819,7 +730,7 @@ def test_the_generator_records_this_tool_and_the_render_provenance():
         "color": {"technique": "cycles-flat-emission"},
         "shade": SHADE,
     }
-    assert list(export.generator(backend)) == [*GENERATOR, "shade"]
+    assert list(export.generator(backend)) == list(GENERATOR)
 
 
 def test_the_generator_needs_render_provenance():
@@ -891,16 +802,6 @@ def test_the_colour_record_is_copied_and_fingerprinted(change):
 
     assert fingerprint(COLOR) != fingerprint(COLOR | change)
     assert fingerprint(COLOR) == fingerprint(dict(COLOR))
-
-
-def test_write_puts_the_bytes_at_the_given_paths(tmp_path):
-    sheet = _encode_side()
-    png, json_path = tmp_path / "a" / "sheet.png", tmp_path / "b.json"
-    png.parent.mkdir()
-    export.write(sheet, png, json_path)
-    assert png.read_bytes() == sheet.png
-    assert json_path.read_bytes() == sheet.json
-    assert sorted(p.name for p in tmp_path.rglob("*")) == ["a", "b.json", "sheet.png"]
 
 
 def test_stylized_frames_export_directly():

@@ -38,8 +38,9 @@ A run writes, beside each other:
   would, beside the flat one; the light is in sheet pixels from the ground
   point (x right, y up, z toward the viewer), `--light-intensity` and
   `--light-ambient` set its strength, and the sheet itself stays flat;
-- `hero.json`, the `moskophoros.sheet/15` description of every frame, the
-  settings and style used and a fingerprint of them, naming the maps;
+- `hero.json`, the `moskophoros.export/1` manifest: the settings and style
+  used and a fingerprint of them, every file written as an artifact (the
+  sheet and its maps, and the previews) and where each frame is in them;
 - `hero.<clip>.gif`, an animated preview of each clip in every direction,
   unless `--no-preview` is given.
 
@@ -55,12 +56,15 @@ moskophoros --clip walk --cell 48x48 hero.glb out/hero-small.png
 
 Outputs are published only when the whole run succeeds, so a failed run leaves
 earlier outputs as they were. `--settings-from hero.json` loads every setting
-of an earlier sheet: its view, scale, cell, ground point, style, previews,
+of an earlier manifest: its view, scale, cell, ground point, style, previews,
 normal and depth maps, light and clip selection. Rerun with the same model and nothing else, it reproduces the
 sheet byte for byte. Give `--clip` to choose other clips that line up with it:
 the scale, cell and ground pixel are fixed rather than fitted again, and a
-new frame that does not fit the cell is an overflow error (exit 4). Only
-sheets from this version load; generate older ones again.
+new frame that does not fit the cell is an overflow error (exit 4). Only a
+complete `moskophoros.export/1` manifest loads, checked whole; a
+`moskophoros.sheet/15` or older sheet, or a manifest that records any of the
+export settings the command cannot run yet away from its defaults, is refused,
+so generate older ones again.
 `--reduce mode` keeps the most common colour in each supersampled block.
 The sheet has 8-bit alpha. `--edges hard`, the default, keeps outlines and
 cut-out edges crisp: a pixel shows when at least half its block shows a
@@ -69,14 +73,14 @@ edges keep the partial transparency of the reduction; the maps copy the
 alpha, and the previews blend partial pixels over their grey.
 `--palette colours.hex` (also `.gpl` or `.png`) adds palette mapping: plain maps
 after averaging; mode maps before voting, so nearby shades pool their votes.
-An earlier sheet's palette is reused from its JSON without the original file;
+An earlier manifest's palette is reused from its JSON without the original file;
 `--palette FILE` replaces it and `--no-palette` drops it.
 `--materials library.yaml` draws each named material in the model from the
 ramps of a shared YAML material library (`.yaml` or `.yml`; JSON libraries are
 refused), on the palette (so it needs one): the same
 `steel` on another model gets the same colours, and a material the library does
 not know takes its default ramp or the ordinary look, named in a warning.
-The library is recorded in the sheet's JSON and reused with `--settings-from`
+The library is recorded in the manifest and reused with `--settings-from`
 without the original file; `--materials FILE` replaces it and `--no-materials`
 drops it. See [docs/design.md](docs/design.md#material-libraries) for the file
 format. A library is `schema: moskophoros.materials/4`; `/3` and `/2` libraries
@@ -103,7 +107,7 @@ materials:
   Cloth: {ramp: {base: "#7a3b2e", bands: 3}}
 ```
 
-The sheet records each generated ramp's indices, so `--settings-from`
+The manifest records each generated ramp's indices, so `--settings-from`
 reproduces it without generating again; an explicit `--ramp-*` value
 regenerates the ramps it reaches.
 
@@ -112,7 +116,7 @@ surface's own curvature. `--ao-distance M` (default 0.3), `--ao-samples N`
 (1 to 128, default 64), `--occlusion-weight W` (default 0.25) and
 `--convexity-weight W` (default 1.0) tune it, and `--shade-range LO,HI`
 (default 84,191) sets the shade values a ramp spans. For example,
-`--convexity-weight 0` drops the curvature term. The sheet records the values,
+`--convexity-weight 0` drops the curvature term. The manifest records the values,
 so `--settings-from` reproduces the look. A library entry may give its
 material its own values, which beat the global ones (a warning says so when
 you set a global it overrides); AO samples stay global:
@@ -128,7 +132,7 @@ Baked shading: by default a sprite's colour is flat apart from the ambient
 shade a library's ramps pick from. The shading options bake light into the colour as well, for
 art whose lighting is part of the picture rather than done live; the normal and
 depth maps stay geometry, and nothing changes unless you ask. Everything below
-is also a `shade` setting in a settings file or a library, and the sheet
+is also a `shade` setting in a settings file or a library, and the manifest
 records it all, so `--settings-from` reproduces the look without the palette or
 library files.
 
@@ -247,7 +251,7 @@ ramp:              # generated ramps: setting C, the high-contrast one
 A `view` replaces the direction, direction count and start angle set below
 it; a file gives `pitch` or `camera.direction`, never both.
 `blender` and `any_blender` choose Blender; they are never recorded in a
-sheet. The global file never changes a sheet loaded with `--settings-from`,
+manifest. The global file never changes a manifest loaded with `--settings-from`,
 except for those two, while a project does. `--no-user-config` uses no global
 file. See
 [docs/design.md](docs/design.md#settings-files).

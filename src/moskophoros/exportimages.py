@@ -8,10 +8,9 @@ descriptors and sample locations a manifest needs. The artifacts follow the
 `outputs.OutputPlan` the caller made for the same request, which names their
 paths; nothing here chooses a path, creates a file or serializes metadata.
 
-The legacy `export.encode`, `export.previews` and `export.lit_previews` stay
-the public path until the schema switch. This module shares their image
-operations, so with every direction stored, one global rate and no mirrors
-its sheet, maps and previews are byte-identical to theirs. Everything here is
+The command encodes through this module. With every direction stored, one
+global rate and no mirrors, its sheet, maps and previews are byte-identical to
+those of the sheet encoder it replaced (export design D-3). Everything here is
 pure.
 """
 

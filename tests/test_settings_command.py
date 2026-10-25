@@ -18,6 +18,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from export_document import refit
 from test_command import Setup, run
 from test_materials_command import (
     COLORS,
@@ -1061,7 +1062,7 @@ def test_the_jobs_carry_the_capture_values_and_the_sheet_records_every_shade_val
         assert job["settings"]["shade"] == capture | {"materials": []}
     sheet = json.loads(setup.json.read_text())
     assert sheet["settings"]["shade"] == capture | {"range": [120, 188]} | NEW_SHADE
-    assert list(sheet["settings"])[-9:] == [
+    assert list(sheet["settings"])[-13:] == [
         "root_motion",
         "previews",
         "normals",
@@ -1070,6 +1071,10 @@ def test_the_jobs_carry_the_capture_values_and_the_sheet_records_every_shade_val
         "shade",
         "ramp",
         "style",
+        "stored_directions",
+        "direction_names",
+        "mirrors",
+        "export",
         "clips",
     ]
     assert "shade_range" not in sheet["settings"]["style"]
@@ -1160,6 +1165,20 @@ def reload(setup, sheet, *options):
     ]
 
 
+def own(name, loop):
+    """A selected clip as the manifest's settings record it, with no count and
+    no export override of its own."""
+    return {
+        "name": name,
+        "loop": loop,
+        "frames": None,
+        "fps": None,
+        "stored_directions": None,
+        "mirrors": None,
+        "output_name": None,
+    }
+
+
 def recorded_clips(setup):
     return json.loads(setup.json.read_text())["settings"]["clips"]
 
@@ -1167,10 +1186,7 @@ def recorded_clips(setup):
 def test_neither_clip_nor_once_keeps_the_loaded_selection(setup, capsys):
     sheet = sheet_from_a_run(setup, capsys)
     before = recorded_clips(setup)
-    assert before == [
-        {"name": "walk", "loop": True, "frames": None},
-        {"name": "attack", "loop": False, "frames": None},
-    ]
+    assert before == [own("walk", True), own("attack", False)]
     assert run(capsys, reload(setup, sheet))[0] == 0
     assert recorded_clips(setup) == before
 
@@ -1178,10 +1194,7 @@ def test_neither_clip_nor_once_keeps_the_loaded_selection(setup, capsys):
 def test_once_alone_replaces_the_loaded_marks(setup, capsys):
     sheet = sheet_from_a_run(setup, capsys)
     assert run(capsys, reload(setup, sheet, "--once", "walk"))[0] == 0
-    assert recorded_clips(setup) == [
-        {"name": "walk", "loop": False, "frames": None},
-        {"name": "attack", "loop": True, "frames": None},
-    ]
+    assert recorded_clips(setup) == [own("walk", False), own("attack", True)]
 
 
 def test_once_naming_a_clip_outside_the_loaded_list_is_exit_2(
@@ -1191,8 +1204,8 @@ def test_once_naming_a_clip_outside_the_loaded_list_is_exit_2(
     # Narrow the loaded list to `walk`: `attack` exists in the model but not
     # in the list.
     document = json.loads(sheet.read_text())
-    document["settings"]["clips"] = [{"name": "walk", "loop": True, "frames": None}]
-    sheet.write_text(json.dumps(document))
+    settings = document["settings"] | {"clips": [own("walk", True)]}
+    sheet.write_text(json.dumps(refit(document, settings)))
     forbid_blender(monkeypatch)
     status, _, err = run(capsys, reload(setup, sheet, "--once", "attack"))
     assert status == 2
@@ -1202,14 +1215,15 @@ def test_once_naming_a_clip_outside_the_loaded_list_is_exit_2(
 def test_clip_resets_the_loaded_selection(setup, capsys):
     sheet = sheet_from_a_run(setup, capsys)
     assert run(capsys, reload(setup, sheet, "--clip", "attack"))[0] == 0
-    assert recorded_clips(setup) == [{"name": "attack", "loop": True, "frames": None}]
+    assert recorded_clips(setup) == [own("attack", True)]
 
 
 def test_a_recorded_clip_missing_from_the_model_is_exit_3(setup, capsys):
     sheet = sheet_from_a_run(setup, capsys)
     document = json.loads(sheet.read_text())
-    document["settings"]["clips"].append({"name": "leap", "loop": True, "frames": None})
-    sheet.write_text(json.dumps(document))
+    settings = document["settings"]
+    settings["clips"].append(own("leap", True))
+    sheet.write_text(json.dumps(refit(document, settings)))
     status, _, err = run(capsys, reload(setup, sheet))
     assert status == 3
     assert "no clip is named 'leap'" in err
@@ -1224,7 +1238,7 @@ def test_an_older_sheet_is_exit_2_naming_its_schema_and_the_supported_one(
     forbid_blender(monkeypatch)
     status, _, err = run(capsys, reload(setup, sheet))
     assert status == 2
-    assert "moskophoros.sheet/3" in err and "moskophoros.sheet/15" in err
+    assert "moskophoros.sheet/3" in err and "moskophoros.export/1" in err
 
 
 def test_a_reloaded_sheet_without_previews_writes_none(setup, capsys):

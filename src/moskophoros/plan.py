@@ -1,8 +1,7 @@
 """The request plan: each selected clip's effective timing, stored directions
 and logical mirrors, with the addressed frames they make.
 
-This is a pure planner, preparatory to the export arc (design §Clips and
-sampling). It reads no file, imports no Blender and mutates nothing, and it
+This is a pure planner (design §Clips and sampling). It reads no file, imports no Blender and mutates nothing, and it
 reuses `sampling.sample` and `views.directions` rather than restating their
 rules. Settings parsing, layer merging and warnings are the caller's: the
 planner takes resolved values and raises `ValueError`, naming the clip or the

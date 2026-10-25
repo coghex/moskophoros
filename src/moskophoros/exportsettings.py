@@ -11,9 +11,11 @@ so a clip's own `fps` leaves its lower-layer `frames` alone and an explicit
 against the actual view, naming the clip and the settings that contribute to
 a clash, and builds the `plan.RequestPlan` with the typed per-clip overrides.
 
-This is internal preparation: the command does not call it yet, and the
-settings it reads are inactive for every settings file (`settings`).
-Everything here is pure.
+The command resolves through it with the layers it has: the internal defaults
+and its own `fps` and frame counts. The other settings it reads are inactive
+for every settings file (`settings`) and for a loaded manifest
+(`cli.read_settings`), so they stay at their defaults. Everything here is
+pure.
 """
 
 from collections.abc import Mapping

@@ -9,6 +9,7 @@ import struct
 
 import numpy as np
 import pytest
+import sheet_encoding
 from PIL import Image
 from test_command import Setup, earlier_outputs, run
 from test_export import GENERATOR, PLAIN, POSE, RANGE, RUN, SIDE, SOURCE, STRIKE
@@ -81,7 +82,7 @@ def encode(frames, **changes):
         "image_path": "héros.png",
         "depth": True,
     } | changes
-    return export.encode(frames, **arguments)
+    return sheet_encoding.encode(frames, **arguments)
 
 
 def test_the_map_is_16_bit_greyscale_with_no_text_or_time_chunks():
@@ -102,9 +103,12 @@ def test_covered_pixels_hold_their_code_in_their_cell_and_all_else_is_0():
     by_address = {
         (f.address.clip, f.address.direction, f.address.time_s): f for f in frames
     }
-    for entry in json.loads(sheet.json)["frames"]:
+    document = json.loads(sheet.json)
+    for entry in document["frames"]:
         frame = by_address[(entry["clip"], entry["direction"], entry["time_s"])]
-        cell = codes[entry["y"] : entry["y"] + 3, entry["x"] : entry["x"] + 2]
+        place = sheet_encoding.cell(document, entry, "depth")
+        x, y = place["x"], place["y"]
+        cell = codes[y : y + place["h"], x : x + place["w"]]
         covered = frame.pixels[..., 3] == 255
         expected = 32768 + 16 * frame.buffers[DEPTH_MAP][covered]
         np.testing.assert_array_equal(cell[covered], expected)
@@ -190,7 +194,7 @@ def test_without_depth_nothing_is_checked_or_encoded():
     sheet = encode(frames, depth=False)
     document = json.loads(sheet.json)
     assert sheet.depth is None
-    assert document["maps"]["depth"] is None
+    assert sheet_encoding.path_of(document, "sheet", "depth") is None
     assert document["settings"]["depth"] is False
 
 
@@ -200,17 +204,15 @@ def test_the_record_and_the_fingerprint():
         json.loads(encode(frames).json),
         json.loads(encode(frames, depth=False).json),
     )
-    assert on["maps"] == {
-        "normal": {"file": "héros.normal.png"},
-        "depth": {"file": "héros.depth.png"},
-    }
+    assert sheet_encoding.path_of(on, "sheet", "normal") == "héros.normal.png"
+    assert sheet_encoding.path_of(on, "sheet", "depth") == "héros.depth.png"
+    assert sheet_encoding.path_of(off, "sheet", "depth") is None
     keys = list(on["settings"])
     assert keys[keys.index("normals") + 1] == "depth"
     assert on["settings"]["depth"] is True
     assert on["fingerprint"] != off["fingerprint"]
-    assert {
-        k: v for k, v in on.items() if k not in ("maps", "settings", "fingerprint")
-    } == {k: v for k, v in off.items() if k not in ("maps", "settings", "fingerprint")}
+    same = ("generator", "source", "subject", "variant", "directions", "clips")
+    assert {k: on[k] for k in same} == {k: off[k] for k in same}
     assert export.depth_path("out/hero.png").as_posix() == "out/hero.depth.png"
 
 
@@ -227,7 +229,7 @@ def test_depth_writes_the_map_beside_the_sheet(setup, capsys):
     assert run(capsys, setup.argv("--depth"))[0] == 0
     assert "hero.depth.png" in setup.listing()
     document = json.loads(setup.json.read_text())
-    assert document["maps"]["depth"] == {"file": "hero.depth.png"}
+    assert sheet_encoding.path_of(document, "sheet", "depth") == "hero.depth.png"
     assert document["settings"]["depth"] is True
     codes = decoded((setup.out / "hero.depth.png").read_bytes())
     colour = decoded(setup.png.read_bytes())
@@ -242,7 +244,8 @@ def test_depth_without_normals_or_previews(setup, capsys):
     assert run(capsys, setup.argv("--depth", "--no-normals", "--no-preview"))[0] == 0
     assert sorted(setup.listing()) == ["hero.depth.png", "hero.json", "hero.png"]
     document = json.loads(setup.json.read_text())
-    assert document["maps"] == {"normal": None, "depth": {"file": "hero.depth.png"}}
+    assert sheet_encoding.path_of(document, "sheet", "normal") is None
+    assert sheet_encoding.path_of(document, "sheet", "depth") == "hero.depth.png"
 
 
 def test_off_by_default_writes_none_and_keeps_an_earlier_map(setup, capsys):
@@ -250,7 +253,7 @@ def test_off_by_default_writes_none_and_keeps_an_earlier_map(setup, capsys):
     assert run(capsys, setup.argv())[0] == 0
     assert setup.listing()["hero.depth.png"] == earlier["hero.depth.png"]
     document = json.loads(setup.json.read_text())
-    assert document["maps"]["depth"] is None
+    assert sheet_encoding.path_of(document, "sheet", "depth") is None
     assert document["settings"]["depth"] is False
 
 

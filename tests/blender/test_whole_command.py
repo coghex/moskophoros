@@ -179,7 +179,18 @@ def test_the_complete_output_set(earlier):
         assert image.getextrema()[3] == (0, 255)  # drawn, and transparent around
         colour = np.asarray(image)
     # The normal map: the sheet's size and alpha, a unit normal per pixel.
-    assert description["maps"] == {"normal": {"file": "hero.normal.png"}, "depth": None}
+    assert description["schema"] == "moskophoros.export/1"
+    assert [
+        (a["kind"], a["channel"], a["path"], a["width"], a["height"])
+        for a in description["artifacts"]
+    ] == [
+        ("sheet", "color", "hero.png", 4 * 16, 2 * 8 * 16),
+        ("sheet", "normal", "hero.normal.png", 4 * 16, 2 * 8 * 16),
+        ("preview", "flat", "hero.walk.gif", 8 * 16 * 4, 16 * 4),
+        ("preview", "flat", "hero.attack.gif", 8 * 16 * 4, 16 * 4),
+    ]
+    assert "image" not in description and "maps" not in description
+    assert all(len(frame["locations"]) == 2 for frame in description["frames"])
     with Image.open(earlier / "hero.normal.png") as image:
         assert image.mode == "RGBA"
         normal = np.asarray(image)

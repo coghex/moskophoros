@@ -8,21 +8,22 @@ input file, the filesystem or Blender belong to the stages that use them.
 
 `resolve_settings` lays the settings layers under the parsed options,
 following design §CLI, Settings files, and §Scale and ground point, Reuse:
-the shipped defaults, the global file, a loaded sheet (`--settings-from`) and
-a project file (`--project`). `read_settings` reads and checks the loaded sheet's
-`settings`, and `apply_settings` merges them with the options. It also reads
-the selected palette and material library snapshots; these reads precede any
-Blender invocation.
+the shipped defaults, the global file, a loaded manifest (`--settings-from`)
+and a project file (`--project`). `read_settings` reads and checks the whole
+`moskophoros.export/1` manifest, and `apply_settings` merges its settings with
+the options. It also reads the selected palette and material library
+snapshots; these reads precede any Blender invocation.
 
 `capture_settings` gives the settings capture and export share, the
-shade's capture values among them, and `style_record` the style the sheet
+shade's capture values among them, and `style_record` the style the manifest
 records beside them, following design §Export: the reduction, the palette and
 the material library. The style and the shade range never reach the capture
 job.
 
 `main` runs the whole command, following design §CLI and §Pipeline: read and
 measure the model, check root motion, fit, render, stylize, clean up and
-export, then publish every output all or nothing. `run` does the same and
+export (the sheet, its maps and previews, and the manifest that describes
+them), then publish every output all or nothing. `run` does the same and
 returns the exit status of design §Exit codes.
 """
 
@@ -47,16 +48,20 @@ from types import MappingProxyType
 from moskophoros import (
     cleanup,
     export,
+    exportimages,
+    exportsettings,
     fit,
     gltf,
     imageops,
     lighting,
     materials,
+    outputs,
     palette,
     publication,
     sampling,
     shading_resolve,
     stylize,
+    usage,
     views,
 )
 from moskophoros import settings as layered
@@ -107,8 +112,6 @@ ROOT_MOTION_MODES = layered.ROOT_MOTION_MODES
 REDUCTIONS = layered.REDUCTIONS
 # The values --projection accepts; the first is the default.
 PROJECTIONS = layered.PROJECTIONS
-# The only sheet schema `--settings-from` loads (settings design D-24).
-SHEET_SCHEMA = "moskophoros.sheet/15"
 _MAX_DIGITS = 4300
 # The view's values a preset gives, which an override replaces. `--pitch` and
 # `--camera-direction` both set the direction.
@@ -946,64 +949,52 @@ def _formula(options):
 
 
 def read_settings(path) -> ReusedSettings:
-    """Read and check the reusable `settings` of the sheet description at
+    """Read and check the reusable `settings` of the export manifest at
     `path`. Reading that file is the only effect.
 
-    Raises `UsageError`, reported as `parse_args` reports one, naming the
-    file and the problem: the file cannot be read, is not UTF-8 JSON, repeats
-    a key, is not a `SHEET_SCHEMA` document with a `settings` object
-    (another sheet schema is named), or its `settings` has a missing, unknown
-    or unacceptable field. Every field is checked as its option checks it,
-    including fields an explicit option will replace: the style, with a
-    recorded material library checked against the recorded palette, the
-    previews and normals flags, and the clip selection, a nonempty list of distinct clips
-    each with exactly a name, a loop flag and its own frame count as given:
-    a count of 1 or more (never a boolean), `"auto"`, or null to take the
-    global count. Nothing beyond `schema` and `settings` is read.
+    The file must be a complete `moskophoros.export/1` manifest, checked as
+    `manifest.decode` checks one, every member and every record the settings
+    imply, whether or not an explicit option will replace the setting. Raises
+    `UsageError`, reported as `parse_args` reports one, naming the file and the
+    problem: the file cannot be read, is not UTF-8 JSON, is another schema
+    (an older sheet is named, and the user is told to generate it again), or
+    has a missing, unknown, inconsistent or unacceptable member. Until the
+    export settings are available, a manifest that records any of them at
+    other than its inactive default is refused as `settings.<key>: not
+    available yet` (`_refuse_unavailable`).
     """
-    path = Path(path)
+    # The manifest reader is built on this module's checks, so it is imported
+    # where it is used.
+    from moskophoros import manifest
+
+    label = f"--settings-from {str(path)!r}"
     try:
-        data = path.read_bytes()
-    except OSError as error:
-        _settings_error(path, f"cannot be read: {error.strerror or error}")
-    try:
-        document = json.loads(
-            data.decode("utf-8"),
-            object_pairs_hook=_unique_keys,
-            parse_constant=_no_constant,
-        )
-    except UnicodeDecodeError as error:
-        _settings_error(path, f"is not UTF-8: {error.reason} at byte {error.start}")
-    except _DuplicateKey as error:
-        _settings_error(path, str(error))
-    except ValueError as error:
-        _settings_error(path, f"is not valid JSON: {error}")
-    except RecursionError:
-        _settings_error(path, "is not valid JSON: it is nested too deeply")
-    not_a_sheet = f"is not a {SHEET_SCHEMA} document"
-    if not isinstance(document, dict):
-        _settings_error(path, f"{not_a_sheet}: not a JSON object")
-    if "schema" not in document:
-        _settings_error(path, f"{not_a_sheet}: schema is missing")
-    schema = document["schema"]
-    if isinstance(schema, str) and schema.startswith(_SHEET_PREFIX):
-        if schema != SHEET_SCHEMA:
-            _settings_error(
-                path,
-                f"is a {schema} sheet; only {SHEET_SCHEMA} sheets load, so "
-                "generate it again",
-            )
-    else:
-        _settings_error(path, f"{not_a_sheet}: schema is {_shown(schema)}")
-    if "settings" not in document:
-        _settings_error(path, "settings: missing")
+        loaded = manifest.read(path, label)
+    except usage.UsageError as error:
+        _build_parser()[0].error(str(error))
+    _refuse_unavailable(label, loaded.layer)
+    return loaded.reused
+
+
+def _refuse_unavailable(label, layer):
+    """Refuse a loaded manifest's export settings that are not at their
+    inactive defaults, each named by its key or clip position.
+
+    No command option or settings file can set them yet, so loading a
+    document that does would accept a setting and run without it. The test is
+    on the recorded value, not its effect: a clip's own `stored_directions`
+    of `"all"` still differs from the null that inherits.
+    """
     problems = []
-    checked = _check_shape(_SETTINGS, document["settings"], "settings", problems)
-    if not problems:
-        checked["style"] = _style(checked["style"], problems)
+    for key in exportsettings.GLOBAL_KEYS:
+        if key not in ("fps", "frames") and layer[key] != layered.ALL_DEFAULTS[key]:
+            problems.append(f"settings.{key}: {layered.NOT_YET}")
+    for position, leaves in enumerate(layer["clips"].values()):
+        for leaf in exportsettings.CLIP_LEAVES:
+            if leaf != "frames" and leaves[leaf] is not None:
+                problems.append(f"settings.clips[{position}].{leaf}: {layered.NOT_YET}")
     if problems:
-        _settings_error(path, "; ".join(problems))
-    return reused_from(checked)
+        _build_parser()[0].error(f"{label}: " + "; ".join(problems))
 
 
 def reused_from(checked) -> ReusedSettings:
@@ -1290,8 +1281,11 @@ def _report(kind, message):
 
 def _command(options):
     """Run the stages for parsed and merged `options`, then publish."""
+    # The manifest writer is built on this module's checks, so it is imported
+    # where it is used.
+    from moskophoros import manifest
+
     outfile = options.outfile
-    json_path = outfile.with_name(outfile.name.removesuffix(".png") + ".json")
     source, subject = _read_source(options.infile)
     if subject.material_count > backend.MAX_MATERIALS:
         raise gltf.InputError(
@@ -1305,12 +1299,23 @@ def _command(options):
     )
     for warning in _frame_warnings(options, selected):
         _report("warning", warning)
-    preview_paths = export.preview_paths(outfile, selected) if options.previews else ()
-    normal_paths = [export.normal_path(outfile)] if options.normals else []
-    depth_paths = [export.depth_path(outfile)] if options.depth else []
+    view = views.View(options.directions, options.start_angle, options.model_yaw)
+    resolved_export = exportsettings.resolve(_export_layers(options, selected))
+    planned = exportsettings.request(resolved_export, subject.name, selected, view)
+    requested = planned.plan.frames
+    names = outputs.resolve_names(selected, view, subject=subject.name, directory=False)
     light = export.Light(options.light, options.light_intensity, options.light_ambient)
     lit = options.previews and light.position is not None
-    lit_paths = export.lit_preview_paths(outfile, selected) if lit else ()
+    layout = outputs.plan_outputs(
+        planned.plan,
+        names,
+        resolved_export,
+        destination=outputs.Positional(outfile.name),
+        normals=options.normals,
+        depth=options.depth,
+        previews=options.previews,
+        lit=lit,
+    )
     if light.position is not None and not options.previews:
         _report(
             "warning",
@@ -1318,15 +1323,21 @@ def _command(options):
             "previews are off, so no lit preview is written",
         )
     _check_targets(
-        [outfile, json_path, *normal_paths, *depth_paths, *preview_paths, *lit_paths]
-    )
-    view = views.View(options.directions, options.start_angle, options.model_yaw)
-    requested = sampling.frames(
-        subject.name, selected, view, options.fps, options.frames
+        [outfile.parent / output.path for output in layout.artifacts]
+        + [outfile.parent / layout.manifest.path]
     )
     settings = capture_settings(options)
     sheet_style = style_record(options)
     resolved = _resolved_shading(options)
+    record_options = {
+        "shade_range": options.shade_range,
+        "previews": options.previews,
+        "normals": options.normals,
+        "depth": options.depth,
+        "light": light,
+        "ramp": _formula(options),
+        "shading": resolved.settings,
+    }
     if options.materials is not None:
         library = options.materials.library
         for warning in materials.warnings(subject.primitive_materials, library):
@@ -1412,20 +1423,17 @@ def _command(options):
         )
         lookup = backend.material_lookup(rendered, subject)
         generator = export.generator(rendered.backend)
+        # The manifest's own settings record, so the fingerprint on the
+        # addressed frames is the one the manifest ends with.
         metadata = {
             "fingerprint": export.fingerprint(
                 generator,
-                export.sheet_settings(
+                manifest.settings_record(
                     settings,
-                    selected,
+                    resolved_export,
+                    planned.plan,
                     sheet_style,
-                    shade_range=options.shade_range,
-                    previews=options.previews,
-                    normals=options.normals,
-                    depth=options.depth,
-                    light=light,
-                    ramp=_formula(options),
-                    shading=resolved.settings,
+                    **record_options,
                 ),
                 source.sha256,
             )
@@ -1469,53 +1477,61 @@ def _command(options):
             )
         frames = cleanup.passthrough(reduced)
 
-    sheet = export.encode(
+    encoded = exportimages.encode(
         frames,
+        request=planned.plan,
+        output_plan=layout,
+        settings=settings,
+        formats=resolved_export.formats,
+        atlas_padding=resolved_export.atlas_padding,
+        normals=options.normals,
+        depth=options.depth,
+        previews=options.previews,
+        light=light,
+    )
+    description = manifest.encode(
         generator=generator,
         source=source,
         subject=subject.name,
         settings=settings,
         style=sheet_style,
-        shade_range=options.shade_range,
-        previews=options.previews,
-        normals=options.normals,
-        depth=options.depth,
-        light=light,
-        ramp=_formula(options),
-        shading=resolved.settings,
-        selected_clips=selected,
-        image_path=outfile,
+        resolved=resolved_export,
+        request=planned.plan,
+        names=names,
+        encoded=encoded,
+        **record_options,
     )
-    outputs = [(outfile, sheet.png), (json_path, sheet.json)]
-    outputs += [(path, sheet.normal) for path in normal_paths]
-    outputs += [(path, sheet.depth) for path in depth_paths]
-    if options.previews:
-        previews = export.previews(
-            frames, subject=subject.name, settings=settings, selected_clips=selected
-        )
-        for preview in previews:
-            for warning in preview.warnings:
-                _report("warning", warning)
-        outputs += zip(
-            preview_paths, (preview.gif for preview in previews), strict=True
-        )
-    if lit:
-        # The depth range is checked here too: the lit previews use the
-        # encoded depth (lighting sheet design D-21, D-24).
-        lit_previews = export.lit_previews(
-            frames,
-            subject=subject.name,
-            settings=settings,
-            selected_clips=selected,
-            light=light,
-        )
-        for preview in lit_previews:
-            for warning in preview.warnings:
-                _report("warning", warning)
-        outputs += zip(
-            lit_paths, (preview.gif for preview in lit_previews), strict=True
-        )
-    publication.publish(outputs)
+    # The files go out in the order the positional form has always published
+    # them (and its warnings and rollback follow): the sheet, the metadata, the
+    # maps, then the flat previews and the lit ones.
+    sheet, *maps = (a for a in encoded.artifacts if a.kind == outputs.SHEET)
+    previews = [a for a in encoded.artifacts if a.kind == outputs.PREVIEW]
+    flat = [a for a in previews if a.channel == outputs.FLAT]
+    lit = [a for a in previews if a.channel == outputs.LIT]
+    for artifact in (*flat, *lit):
+        for warning in artifact.warnings:
+            _report("warning", warning)
+    directory = outfile.parent
+    files = [(directory / sheet.path, sheet.data)]
+    files.append((directory / layout.manifest.path, description))
+    files += [(directory / a.path, a.data) for a in (*maps, *flat, *lit)]
+    publication.publish(files)
+
+
+def _export_layers(options, selected):
+    """The layers the export settings resolve from: the internal defaults,
+    then the command's own sampling settings, the only export settings that
+    are available. A loaded manifest's other export settings are at their
+    defaults too (`read_settings`), so nothing else is layered."""
+    own = {
+        "fps": options.fps,
+        "frames": options.frames,
+        "clips": {chosen.clip.name: {"frames": chosen.frames} for chosen in selected},
+    }
+    return [
+        exportsettings.Source(exportsettings.DEFAULTS, exportsettings.SHIPPED, {}),
+        exportsettings.Source(exportsettings.OPTION, "the command line", own),
+    ]
 
 
 def _coordinates(point):
@@ -2377,8 +2393,9 @@ def _build_parser():
         "FILE",
         _path,
         None,
-        "load every setting of an earlier sheet's JSON, a "
-        f"{SHEET_SCHEMA} sheet (default: none)",
+        "load every setting of an earlier export's JSON, a "
+        "moskophoros.export/1 manifest; its export settings must be at their "
+        "defaults for now (default: none)",
     )
     single(
         "--config",
@@ -2593,10 +2610,6 @@ def _no_constant(name):
     raise ValueError(f"{name} is not a JSON value")
 
 
-def _settings_error(path, problem):
-    _build_parser()[0].error(f"--settings-from {str(path)!r}: {problem}")
-
-
 def _shown(value):
     """`value` as JSON, cut short when long."""
     text = json.dumps(value, ensure_ascii=False)
@@ -2641,7 +2654,6 @@ def _one_of(*choices):
 # library record `_MATERIALS`.
 _PALETTE = object()
 _MATERIALS = object()
-_SHEET_PREFIX = "moskophoros.sheet/"
 
 
 class _Nullable:

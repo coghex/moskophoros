@@ -8,16 +8,16 @@ import io
 import itertools
 import random
 from dataclasses import replace
-from pathlib import Path
 from types import SimpleNamespace
 
+import legacy_encoder
 import numpy as np
 import pytest
 from PIL import Image, ImageSequence
 from shading import DEFAULT_SHADE
 
 from moskophoros import export, exportimages, imageops, outputs, plan, views
-from moskophoros.capture.backend import Settings, Source
+from moskophoros.capture.backend import Settings
 from moskophoros.gltf import Clip, SelectedClip
 from moskophoros.sampling import DEPTH_MAP, NORMAL_MAP, ImageFrame
 
@@ -910,7 +910,13 @@ def test_gif_limits_are_usage_errors_naming_the_clip():
         preview_only_run(1, 1e-4)
 
 
-# The legacy path, kept for comparison
+# The default bytes, as the sheet encoder wrote them before the schema switch
+#
+# `legacy_encoder` is a frozen copy of the encoder that this encoder replaced
+# (commit 4a22102519). Both sides compress with the same library, so the
+# comparison holds on every platform, unlike a digest of a PNG, which depends
+# on the zlib build. It pins design D-3: the default sheet, maps and previews
+# never change a byte.
 
 
 LEGACY = Settings(
@@ -945,19 +951,13 @@ def test_default_bytes_equal_the_legacy_encoder_on_identical_inputs(
     view = views.View(LEGACY.directions, LEGACY.start_angle, LEGACY.model_yaw)
     request = plan.plan("héros", selected, view, LEGACY.fps)
     frames = make_frames(request, seed=11)
-    legacy = export.encode(
+    legacy = legacy_encoder.sheet(
         frames,
-        generator={"tool": "moskophoros"},
-        source=Source(Path("/work/héros.glb"), "ab" * 32, 0),
         subject="héros",
         settings=LEGACY,
-        style={"reduce": "plain", "edges": "hard", "palette": None, "materials": None},
         selected_clips=selected,
-        image_path=Path("out/héros.png"),
-        shade_range=(84, 191),
         normals=normals,
         depth=depth,
-        light=light,
     )
     lit = light.position is not None
     names = outputs.resolve_names(selected, view, subject="héros", directory=False)
@@ -986,12 +986,12 @@ def test_default_bytes_equal_the_legacy_encoder_on_identical_inputs(
         assert sheets[1].data == legacy.normal
     if depth:
         assert sheets[-1].data == legacy.depth
-    flat = export.previews(
+    flat = legacy_encoder.previews(
         frames, subject="héros", settings=LEGACY, selected_clips=selected
     )
     expected = [(p.clip, "flat", p.gif, p.warnings) for p in flat]
     if lit:
-        lit_set = export.lit_previews(
+        lit_set = legacy_encoder.lit_previews(
             frames,
             subject="héros",
             settings=LEGACY,

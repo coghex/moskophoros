@@ -12,6 +12,9 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import sheet_encoding
+from export_document import document
+from manifest_fixture import GENERATOR
 from shading import DEFAULT_RANGE, DEFAULT_SHADE
 
 from moskophoros import cli, export, fit, gltf, ramps, sampling, stylize, views
@@ -125,10 +128,11 @@ REUSED = {
 }
 
 
-def write_sheet(tmp_path, settings=None, name="old.json", **document):
+def write_sheet(tmp_path, settings=None, name="old.json", **members):
+    """A complete export manifest holding `settings` (the sheet-era shape, see
+    `export_document`), with any `members` replacing the document's own."""
     path = tmp_path / name
-    contents = {"schema": "moskophoros.sheet/15"} | document
-    contents["settings"] = copy.deepcopy(SETTINGS if settings is None else settings)
+    contents = document(SETTINGS if settings is None else settings) | members
     path.write_text(json.dumps(contents, ensure_ascii=False), encoding="utf-8")
     return path
 
@@ -376,6 +380,10 @@ def test_once_naming_a_clip_outside_the_loaded_list_is_a_usage_error(tmp_path, c
     assert capsys.readouterr().err.splitlines()[0] == USAGE_LINE
 
 
+# The members of a recorded clip, as the reader names them.
+EXACT = "expected exactly name, loop, frames, fps, stored_directions, mirrors, output_name, "
+
+
 @pytest.mark.parametrize(
     ("clips", "problem"),
     [
@@ -384,18 +392,19 @@ def test_once_naming_a_clip_outside_the_loaded_list_is_a_usage_error(tmp_path, c
         ({}, "expected a nonempty list of clips, got {}"),
         (
             [{"name": "walk", "loop": True}],
-            '[0]: expected exactly {"name": NAME, "loop": BOOLEAN, "frames": FRAMES}, '
-            'got {"name": "walk", "loop": true}',
+            "[0]: "
+            + EXACT
+            + 'got {"name": "walk", "loop": true, "fps": null, "stored_direc...',
         ),
         (
             [{"name": "walk", "loop": True, "frames": None, "extra": 1}],
-            '[0]: expected exactly {"name": NAME, "loop": BOOLEAN, "frames": FRAMES}, '
-            'got {"name": "walk", "loop": true, "frames": null, "extra": 1}',
+            "[0]: "
+            + EXACT
+            + 'got {"name": "walk", "loop": true, "frames": null, "extra": 1...',
         ),
         (
             ["walk"],
-            '[0]: expected exactly {"name": NAME, "loop": BOOLEAN, "frames": FRAMES}, '
-            'got "walk"',
+            "[0]: " + EXACT + 'got "walk"',
         ),
         (
             [{"name": 5, "loop": True, "frames": None}],
@@ -411,19 +420,19 @@ def test_once_naming_a_clip_outside_the_loaded_list_is_a_usage_error(tmp_path, c
         ),
         (
             [{"name": "a", "loop": True, "frames": 0}],
-            "[0].frames: expected a whole number 1 or more, 'auto' or null, got 0",
+            "[0].frames: expected a whole number 1 or more, auto or null, got 0",
         ),
         (
             [{"name": "a", "loop": True, "frames": 8.0}],
-            "[0].frames: expected a whole number 1 or more, 'auto' or null, got 8.0",
+            "[0].frames: expected a whole number 1 or more, auto or null, got 8.0",
         ),
         (
             [{"name": "a", "loop": True, "frames": True}],
-            "[0].frames: expected a whole number 1 or more, 'auto' or null, got true",
+            "[0].frames: expected a whole number 1 or more, auto or null, got true",
         ),
         (
             [{"name": "a", "loop": True, "frames": "8"}],
-            "[0].frames: expected a whole number 1 or more, 'auto' or null, got \"8\"",
+            "[0].frames: expected a whole number 1 or more, auto or null, got '8'",
         ),
         (
             [
@@ -462,25 +471,124 @@ def test_previews_must_be_a_boolean(tmp_path, capsys, value):
 # What the file must be
 
 
-def test_a_document_with_only_schema_and_settings_is_enough(tmp_path):
+MISSING = (
+    "generator: missing; source: missing; subject: missing; variant: missing; "
+    "fingerprint: missing; artifacts: missing; directions: missing; clips: "
+    "missing; frames: missing"
+)
+
+
+def test_a_document_with_only_schema_and_settings_is_refused(tmp_path, capsys):
     path = tmp_path / "minimal.json"
     path.write_text(
-        json.dumps({"schema": "moskophoros.sheet/15", "settings": SETTINGS})
+        json.dumps({"schema": "moskophoros.export/1", "settings": SETTINGS})
     )
-    assert values(reuse(path)) == REUSED
+    assert rejected(capsys, path) == MISSING
 
 
-def test_the_rest_of_the_sheet_is_not_checked(tmp_path):
-    path = write_sheet(
-        tmp_path,
-        generator=None,
-        source="anything",
-        fingerprint=5,
-        image=[],
-        frames={"unknown": True},
-        extra="ignored",
-    )
-    assert values(reuse(path)) == REUSED
+def _without_artifact(contents):
+    contents["artifacts"] = contents["artifacts"][1:]
+
+
+def _without_location(contents):
+    contents["frames"][0]["locations"] = []
+
+
+def _dangling_location(contents):
+    contents["frames"][0]["locations"][0]["artifact"] = 99
+
+
+def _wrong_size(contents):
+    contents["artifacts"][0]["width"] += 1
+
+
+def _without_sample(contents):
+    contents["frames"] = contents["frames"][1:]
+
+
+def _wrong_count(contents):
+    contents["clips"][0]["frame_count"] = 99
+
+
+@pytest.mark.parametrize(
+    ("members", "problem"),
+    [
+        ({"generator": None}, "generator: expected an object, got null"),
+        ({"extra": 1}, "extra: unknown member"),
+        (
+            {"fingerprint": 5},
+            "fingerprint: expected sha256: and 64 lowercase hexadecimal digits, got 5",
+        ),
+        (
+            {"frames": {"unknown": True}},
+            'frames: expected an array, got {"unknown": true}',
+        ),
+        ({"subject": ""}, 'subject: expected a nonempty string, got ""'),
+    ],
+)
+def test_every_member_of_the_document_is_checked(tmp_path, capsys, members, problem):
+    path = write_sheet(tmp_path, **members)
+    assert rejected(capsys, path) == problem
+
+
+@pytest.mark.parametrize(
+    ("damage", "problem"),
+    [
+        (
+            _without_artifact,
+            "artifacts: has 1 entries, but the recorded formats, maps, previews and "
+            "clips imply 2",
+        ),
+        (
+            _wrong_size,
+            "artifacts[0].width: expected 384, got 385; the recorded settings imply "
+            "this artifact in this order",
+        ),
+        (
+            _without_location,
+            "frames[0].locations: does not hold exactly one location in each png "
+            "artifact of the sample; missing [0, 1], unexpected []",
+        ),
+        (
+            _dangling_location,
+            "frames[0].locations[0].artifact: 99 is not one of the 2 artifacts",
+        ),
+        (
+            _without_sample,
+            "frames: has 27 records, but the clips and stored directions imply 28",
+        ),
+        (
+            _wrong_count,
+            "clips[0].frame_count: expected 8, got 99; the recorded settings "
+            "resolve to this",
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "options", [(), ("--fps", "6", "--ppm", "10", "--clip", "walk")]
+)
+def test_a_missing_or_corrupt_reference_is_refused_whatever_overrides_it(
+    tmp_path, capsys, damage, problem, options
+):
+    contents = document(SETTINGS)
+    damage(contents)
+    path = write_sheet(tmp_path, **contents)
+    assert rejected(capsys, path, *options) == problem
+
+
+def test_a_fingerprint_that_does_not_match_the_settings_is_refused(tmp_path, capsys):
+    path = write_sheet(tmp_path, fingerprint="sha256:" + "0" * 64)
+    problem = rejected(capsys, path)
+    assert problem.startswith("fingerprint: is sha256:0000")
+    assert "but the generator, the source digest and the settings hash to" in problem
+
+
+def test_an_edited_setting_needs_its_fingerprint_made_again(tmp_path, capsys):
+    path = write_sheet(tmp_path)
+    contents = json.loads(path.read_text())
+    contents["settings"]["supersample"] = 8
+    path.write_text(json.dumps(contents))
+    assert rejected(capsys, path).startswith("fingerprint: is sha256:")
 
 
 def test_a_whole_float_ground_pixel_is_accepted_as_its_option_accepts_it(tmp_path):
@@ -562,57 +670,79 @@ def test_a_repeated_key_anywhere_is_rejected(tmp_path, capsys, text, key):
     assert rejected(capsys, path) == f"repeats the key {key!r}"
 
 
-NOT_A_SHEET = "is not a moskophoros.sheet/15 document"
+NOT_A_MANIFEST = "is not a moskophoros.export/1 document"
 
 
 def older(schema):
-    return f"is a {schema} sheet; only moskophoros.sheet/15 sheets load, so generate it again"
+    return (
+        f"is a {schema} sheet, which no longer loads; only moskophoros.export/1 "
+        "manifests do, so generate it again from the model or project"
+    )
+
+
+OLD_SCHEMAS = [f"moskophoros.sheet/{number}" for number in range(15, 0, -1)]
 
 
 @pytest.mark.parametrize(
-    ("document", "problem"),
+    ("contents", "problem"),
     [
-        ([], f"{NOT_A_SHEET}: not a JSON object"),
-        ({}, f"{NOT_A_SHEET}: schema is missing"),
-        ({"schema": "moskophoros.sheet/3"}, older("moskophoros.sheet/3")),
-        ({"schema": "moskophoros.sheet/2"}, older("moskophoros.sheet/2")),
-        ({"schema": "moskophoros.sheet/1"}, older("moskophoros.sheet/1")),
-        ({"schema": "moskophoros.sheet/6"}, older("moskophoros.sheet/6")),
-        ({"schema": "moskophoros.sheet/5"}, older("moskophoros.sheet/5")),
-        ({"schema": "moskophoros.sheet/4"}, older("moskophoros.sheet/4")),
-        ({"schema": "moskophoros.sheet/14"}, older("moskophoros.sheet/14")),
-        ({"schema": "moskophoros.sheet/13"}, older("moskophoros.sheet/13")),
-        ({"schema": "moskophoros.sheet/12"}, older("moskophoros.sheet/12")),
-        ({"schema": "moskophoros.sheet/11"}, older("moskophoros.sheet/11")),
-        ({"schema": "moskophoros.sheet/10"}, older("moskophoros.sheet/10")),
-        ({"schema": "moskophoros.sheet/9"}, older("moskophoros.sheet/9")),
-        ({"schema": "moskophoros.sheet/8"}, older("moskophoros.sheet/8")),
-        ({"schema": "moskophoros.sheet/7"}, older("moskophoros.sheet/7")),
+        ([], f"{NOT_A_MANIFEST}: not a JSON object"),
+        ({}, f"{NOT_A_MANIFEST}: schema is missing"),
+        *[({"schema": schema}, older(schema)) for schema in OLD_SCHEMAS],
         (
             {"schema": " moskophoros.sheet/4"},
-            f'{NOT_A_SHEET}: schema is " moskophoros.sheet/4"',
+            f'{NOT_A_MANIFEST}: schema is " moskophoros.sheet/4"',
         ),
-        ({"schema": 1}, f"{NOT_A_SHEET}: schema is 1"),
+        ({"schema": 1}, f"{NOT_A_MANIFEST}: schema is 1"),
         (
-            {"schema": ["moskophoros.sheet/15"]},
-            f'{NOT_A_SHEET}: schema is ["moskophoros.sheet/15"]',
+            {"schema": ["moskophoros.export/1"]},
+            f'{NOT_A_MANIFEST}: schema is ["moskophoros.export/1"]',
         ),
-        ({"schema": None}, f"{NOT_A_SHEET}: schema is null"),
-        ({"schema": "moskophoros.sheet/15"}, "settings: missing"),
+        ({"schema": None}, f"{NOT_A_MANIFEST}: schema is null"),
         (
-            {"schema": "moskophoros.sheet/15", "settings": None},
-            "settings: must be set, got null",
+            {"schema": "moskophoros.export/2"},
+            f'{NOT_A_MANIFEST}: schema is "moskophoros.export/2"',
         ),
         (
-            {"schema": "moskophoros.sheet/15", "settings": []},
-            "settings: expected an object, got []",
+            {"schema": "moskophoros.export/1"},
+            MISSING.replace(
+                "variant: missing; ", "variant: missing; settings: missing; "
+            ),
         ),
     ],
 )
-def test_a_file_that_is_not_a_sheet_is_rejected(tmp_path, capsys, document, problem):
+def test_a_file_that_is_not_a_manifest_is_rejected(tmp_path, capsys, contents, problem):
     path = tmp_path / "other.json"
-    path.write_text(json.dumps(document))
+    path.write_text(json.dumps(contents))
     assert rejected(capsys, path) == problem
+
+
+@pytest.mark.parametrize(
+    ("settings", "problem"),
+    [
+        (None, "settings: must be set, got null"),
+        ([], "settings: expected an object, got []"),
+    ],
+)
+def test_a_manifest_whose_settings_are_not_an_object_is_rejected(
+    tmp_path, capsys, settings, problem
+):
+    path = write_sheet(tmp_path, settings=None)
+    contents = json.loads(path.read_text())
+    contents["settings"] = settings
+    path.write_text(json.dumps(contents))
+    assert rejected(capsys, path) == problem
+
+
+@pytest.mark.parametrize("schema", OLD_SCHEMAS)
+@pytest.mark.parametrize("options", [(), ("--reduce", "plain"), ("--clip", "walk")])
+def test_an_older_sheet_is_a_usage_error_whatever_overrides_it(
+    tmp_path, capsys, schema, options
+):
+    contents = write_sheet(tmp_path).read_text()
+    path = tmp_path / "older.json"
+    path.write_text(json.dumps(json.loads(contents) | {"schema": schema}))
+    assert rejected(capsys, path, *options) == older(schema)
 
 
 # Rejections: the settings
@@ -989,33 +1119,6 @@ def test_an_explicit_reduce_overrides_the_reused_one(tmp_path, sheet, explicit):
     assert values(options) == REUSED | {"reduce": explicit}
 
 
-@pytest.mark.parametrize(
-    "schema",
-    [
-        "moskophoros.sheet/14",
-        "moskophoros.sheet/13",
-        "moskophoros.sheet/12",
-        "moskophoros.sheet/11",
-        "moskophoros.sheet/10",
-        "moskophoros.sheet/9",
-        "moskophoros.sheet/8",
-        "moskophoros.sheet/7",
-        "moskophoros.sheet/6",
-        "moskophoros.sheet/5",
-        "moskophoros.sheet/4",
-        "moskophoros.sheet/3",
-        "moskophoros.sheet/2",
-        "moskophoros.sheet/1",
-    ],
-)
-@pytest.mark.parametrize("options", [(), ("--reduce", "plain"), ("--clip", "walk")])
-def test_an_older_sheet_is_a_usage_error_whatever_overrides_it(
-    tmp_path, capsys, schema, options
-):
-    path = write_sheet(tmp_path, schema=schema)
-    assert rejected(capsys, path, *options) == older(schema)
-
-
 # Fixed configuration
 
 
@@ -1055,16 +1158,6 @@ def test_a_clip_that_no_longer_fits_overflows_and_is_never_shrunk(tmp_path):
 
 # Round trip through the tool's own sheets
 
-GENERATOR = {
-    "tool": "moskophoros",
-    "version": "0.1.0",
-    "python": "3.13.15",
-    "numpy": "2.5.3",
-    "pillow": "12.3.0",
-    "blender": "5.2.2",
-    "renderer": "cycles",
-    "color": {"technique": "cycles-flat-emission"},
-}
 SOURCE = Source(Path("/models/hero.glb"), "cd" * 32, 0)
 SUBJECT = gltf.Subject(
     Path("/models/hero.glb"),
@@ -1186,7 +1279,7 @@ def _encode(
         frame(requested.address)
         for requested in sampling.frames("hero", selected, view, settings.fps)
     ]
-    sheet = export.encode(
+    return sheet_encoding.encode(
         frames,
         generator=GENERATOR,
         source=SOURCE,
@@ -1202,19 +1295,6 @@ def _encode(
         selected_clips=selected,
         image_path=Path("hero.png"),
     )
-    lit = ()
-    if previews and light.position is not None:
-        lit = tuple(
-            preview.gif
-            for preview in export.lit_previews(
-                frames,
-                subject="hero",
-                settings=settings,
-                selected_clips=selected,
-                light=light,
-            )
-        )
-    return SimpleNamespace(**vars(sheet), lit=lit)
 
 
 def _rerun(path, *options):
@@ -1282,6 +1362,7 @@ def test_loading_a_sheet_with_no_options_reproduces_it(
     clip selection, its one-shot marks and the previews, normals and depth
     flags included; each map is reproduced byte for byte, or not written."""
     parsed = cli.parse_args([*selection, "in.glb", "out.png"])
+    selection_clips = parsed.clip or ("walk", "attack")
     original = _encode(
         ORIGINALS["iso-true"],
         parsed.clip or (),
@@ -1307,10 +1388,20 @@ def test_loading_a_sheet_with_no_options_reproduces_it(
     assert document["settings"]["previews"] is previews
     assert document["settings"]["normals"] is normals
     assert document["settings"]["depth"] is depth
-    assert document["maps"] == {
-        "normal": {"file": "hero.normal.png"} if normals else None,
-        "depth": {"file": "hero.depth.png"} if depth else None,
-    }
+    assert [(a["kind"], a["channel"], a["path"]) for a in document["artifacts"]] == [
+        ("sheet", "color", "hero.png"),
+        *[("sheet", "normal", "hero.normal.png")] * normals,
+        *[("sheet", "depth", "hero.depth.png")] * depth,
+        *[
+            (kind, channel, path)
+            for clip in selection_clips
+            for kind, channel, path in (
+                *[("preview", "flat", f"hero.{clip}.gif")] * previews,
+                *[("preview", "lit", f"hero-lit.{clip}.gif")]
+                * (previews and light.position is not None),
+            )
+        ],
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1531,7 +1622,7 @@ def _styled(resolved):
     light = export.Light(
         resolved.light, resolved.light_intensity, resolved.light_ambient
     )
-    sheet = export.encode(
+    sheet = sheet_encoding.encode(
         frames,
         generator=GENERATOR,
         source=SOURCE,
@@ -1547,18 +1638,22 @@ def _styled(resolved):
         selected_clips=selected,
         image_path=Path("hero.png"),
     )
-    flat = export.previews(
+    flat = sheet_encoding.previews(
         frames, subject="hero", settings=settings, selected_clips=selected
     )
-    lit = export.lit_previews(
+    lit = sheet_encoding.lit_previews(
         frames, subject="hero", settings=settings, selected_clips=selected, light=light
     )
     alphas = {int(a) for frame in frames for a in np.unique(frame.pixels[..., 3])}
     return SimpleNamespace(
-        **vars(sheet),
-        flat=tuple(preview.gif for preview in flat),
-        lit=tuple(preview.gif for preview in lit),
-        alphas=alphas,
+        **(
+            vars(sheet)
+            | {
+                "flat": tuple(preview.gif for preview in flat),
+                "lit": tuple(preview.gif for preview in lit),
+                "alphas": alphas,
+            }
+        )
     )
 
 

@@ -8,6 +8,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import sheet_encoding
+from manifest_fixture import GENERATOR, PLAIN
 from PIL import Image
 from shading import DEFAULT_SHADE
 
@@ -167,7 +169,6 @@ def test_hard_keeps_todays_outlines_and_soft_gives_the_block_mean(
 CELL = (4, 1)
 SUBJECT = Subject(Path("/models/hero.glb"), "hero", 0, (Clip(0, "walk", 0.0, 0.5, ()),))
 SELECTED = (SelectedClip(SUBJECT.clips[0], one_shot=False),)
-GENERATOR = {"tool": "moskophoros", "version": "0.1.0"}
 SOURCE = Source(Path("/models/hero.glb"), "ab" * 32, 0)
 
 
@@ -196,7 +197,7 @@ def _sheet(look, edges, depth_m=DEPTH_M):
     one = frame(*(block(2, k, depth_m) for k in (1, 2, 3, 4)))
     captured = ImageFrame(requested.address, one.pixels, {}, one.buffers)
     frames = look([captured], 2, pixels_per_meter=PPM, edges=edges)
-    sheet = export.encode(
+    sheet = sheet_encoding.encode(
         frames,
         generator=GENERATOR,
         source=SOURCE,
@@ -253,13 +254,13 @@ def test_depth_overflow_applies_to_partial_pixels(look):
     for edges in ("hard", "soft"):
         frames = look([captured], 2, pixels_per_meter=PPM, edges=edges)
         try:
-            export.encode(
+            sheet_encoding.encode(
                 frames,
                 generator=GENERATOR,
                 source=SOURCE,
                 subject="hero",
                 settings=settings,
-                style={},
+                style=PLAIN,
                 selected_clips=SELECTED,
                 image_path=Path("hero.png"),
                 shade_range=(84, 191),
