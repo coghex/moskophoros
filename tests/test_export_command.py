@@ -7,7 +7,9 @@ Blender is faked, so these tests inspect the jobs it is given and the files
 the command writes; what the pixels look like is the real-Blender tests'.
 """
 
+import errno
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -862,17 +864,24 @@ def test_a_manifest_that_cannot_establish_the_subject_is_refused(
     assert setup.calls() == [] and tree(out) == {"manifest.json": content}
 
 
-def test_an_unreadable_manifest_is_an_output_error(setup, capsys, tmp_path):
+def test_an_unreadable_manifest_is_an_output_error(
+    setup, capsys, tmp_path, monkeypatch
+):
     out = tmp_path / "export"
     out.mkdir()
-    manifest = out / "manifest.json"
-    manifest.write_bytes(b"{}")
-    manifest.chmod(0)
-    try:
-        status, _, err = run(capsys, to_dir(setup, out))
-    finally:
-        manifest.chmod(0o644)
+    (out / "manifest.json").write_bytes(b"{}")
+    real = os.open
+
+    def denied(path, *args, **kwargs):
+        if Path(path).name == "manifest.json":
+            raise PermissionError(errno.EACCES, "Permission denied")
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", denied)
+    status, _, err = run(capsys, to_dir(setup, out))
+    monkeypatch.undo()
     assert status == 6
+    assert "Permission denied" in err
     assert setup.calls() == []
 
 
@@ -968,8 +977,6 @@ def test_the_loaded_manifest_may_be_replaced_in_place_in_both_forms(
 def test_a_failed_publication_is_an_output_error_that_restores_the_files(
     setup, capsys, tmp_path, monkeypatch
 ):
-    import os
-
     out = first_export(setup, capsys, tmp_path, "--formats", "sheet,frames")
     before = tree(out)
     real = os.replace
@@ -993,8 +1000,6 @@ def test_a_failed_publication_is_an_output_error_that_restores_the_files(
 def test_an_interruption_during_publication_is_130_and_restores_the_files(
     setup, capsys, tmp_path, monkeypatch
 ):
-    import os
-
     out = first_export(setup, capsys, tmp_path, "--formats", "sheet,frames")
     before = tree(out)
     real = os.replace
