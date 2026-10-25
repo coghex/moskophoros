@@ -547,6 +547,9 @@ is why the workflow grants `actions: read`, and waits in two bounded steps:
 1. for the plan job to finish, up to 15 minutes;
 2. for every group job the plan started to finish, up to 30 minutes. A group
    job that has not appeared within 5 minutes of planning counts as missing.
+   Each group's commands share a 20-minute limit, and its job a 25-minute
+   allowance, so the job can still record a timeout after checkout, image pull,
+   install and the record upload.
 
 It then reads the plan and group records and decides as below. A job is
 finished only when all its steps are, including uploading its record. If a
@@ -577,7 +580,7 @@ It passes only when all of these hold, and fails otherwise:
 |---|---|
 | The plan was produced | the plan job left no record; the body could not be read from the API before planning; or the planner stopped with an error, such as a malformed request or an unknown group. |
 | Local-only obligations (pull requests only) | a selected local-only group has no report, or a report that is malformed, stale, `failed` or `not-run` ([Local-only reports](#local-only-reports)). |
-| Every selected group ran and passed | a group failed, timed out (15 minutes per group), was skipped, was cancelled, or recorded no result; ran at another revision, in another image, or in another run or attempt; or ran without being selected. |
+| Every selected group ran and passed | a group failed, timed out (20 minutes per group), was skipped, was cancelled, or recorded no result; ran at another revision, in another image, or in another run or attempt; or ran without being selected. |
 | This run finished in time | the plan job or a group job did not finish, or never appeared, within [`build-test`'s waits](#when-build-test-appears), or the run's jobs could not be read. |
 | The image is confirmed | the descriptor is missing or malformed; its recipe fingerprint is not the tested revision's; or the image it names cannot be pulled or inspected, or records a fingerprint or version that differs from the descriptor, or a pytest or ruff version that differs from the lock ([Confirming the image](#confirming-the-image)). No group runs, and the diagnostic names the field that differs or says why the image could not be checked. |
 | The body did not change (pull requests only) | the body read just before concluding differs from the one planned from, or cannot be read. A body that cannot be read is a failure, never an empty body. |

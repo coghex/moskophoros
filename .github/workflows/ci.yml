@@ -98,7 +98,7 @@ jobs:
     # from taking the name of a required check, whatever the catalog holds.
     name: group/${{ matrix.group }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
