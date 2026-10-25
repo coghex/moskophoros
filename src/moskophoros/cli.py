@@ -33,17 +33,14 @@ import math
 import os
 import re
 import shutil
-import signal
 import sys
 import tempfile
-import threading
 import traceback
 from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, fields, replace
 from dataclasses import field as dataclass_field
 from decimal import Decimal, InvalidOperation
-from itertools import count
 from pathlib import Path
 from types import MappingProxyType
 
@@ -56,6 +53,7 @@ from moskophoros import (
     lighting,
     materials,
     palette,
+    publication,
     sampling,
     shading_resolve,
     stylize,
@@ -65,11 +63,11 @@ from moskophoros import settings as layered
 from moskophoros import shading as shading_model
 from moskophoros.capture import backend, blender
 
-PROG = "moskophoros"
+PROG = publication.PROG
 USAGE = f"{PROG} [options] <infile.glb> <outfile.png>"
 INTERNAL_ERROR = 1
 USAGE_ERROR = 2
-OUTPUT_ERROR = 6
+OUTPUT_ERROR = publication.OUTPUT_ERROR
 INTERRUPTED = 130
 # Root travel above this is an input error under `--root-motion error`.
 MAX_ROOT_TRAVEL_M = 0.02
@@ -1244,8 +1242,10 @@ def run(argv: Sequence[str]) -> int:
     Errors are reported on stderr as `moskophoros: error: <message>`, and a
     usage error after the usage synopsis. An internal error prints its
     traceback first. An output that cannot be written returns 6, with the
-    earlier outputs kept. An interruption publishes nothing, is reported as
-    `interrupted` and returns 130.
+    earlier outputs kept, or, when a rollback step fails, the targets left
+    unrestored and the backups that hold their earlier files named. An
+    interruption publishes nothing, is reported as `interrupted` and returns
+    130; it names what a failed rollback left.
     """
     try:
         try:
@@ -1255,8 +1255,9 @@ def run(argv: Sequence[str]) -> int:
             return exit.code
         _command(options)
         return 0
-    except KeyboardInterrupt:
-        _report("error", "interrupted")
+    except KeyboardInterrupt as interruption:
+        # A failed rollback after the interruption says what is left.
+        _report("error", str(interruption) or "interrupted")
         return INTERRUPTED
     except (fit.UsageError, export.UsageError, _CommandUsageError) as error:
         _build_parser()[0].print_usage(sys.stderr)
@@ -1268,7 +1269,7 @@ def run(argv: Sequence[str]) -> int:
         fit.NearOverflow,
         export.DepthOverflow,
         backend.BackendError,
-        _OutputError,
+        publication.OutputError,
     ) as error:
         _report("error", str(error))
         return error.exit_code
@@ -1281,13 +1282,6 @@ def run(argv: Sequence[str]) -> int:
 class _CommandUsageError(Exception):
     """A usage error found while running: an output or work directory that
     cannot be used. Exit classification 2."""
-
-
-class _OutputError(Exception):
-    """An output that could not be written, such as on a full disk or without
-    permission; the earlier outputs are kept. Exit classification 6."""
-
-    exit_code = OUTPUT_ERROR
 
 
 def _report(kind, message):
@@ -1521,7 +1515,7 @@ def _command(options):
         outputs += zip(
             lit_paths, (preview.gif for preview in lit_previews), strict=True
         )
-    publish(outputs)
+    publication.publish(outputs)
 
 
 def _coordinates(point):
@@ -1742,148 +1736,6 @@ def _workspace(work_dir):
                 f"--work-dir {shown!r} cannot be created: {error.strerror or error}"
             ) from None
     yield path
-
-
-def publish(outputs):
-    """Write each `(path, bytes)` in `outputs`, all or nothing.
-
-    Every output is first written to a temporary file beside its target.
-    Then, target by target, an existing file is moved aside and the new one
-    renamed into place. If anything fails or is interrupted before every
-    output is in place, each output placed is removed, each earlier file is
-    moved back, and the error propagates. Once every output is in place the
-    publication is complete: the earlier files are deleted, and an
-    interruption then no longer stops the run. Nothing else in the output
-    directories is touched.
-
-    While publishing, an interruption is deferred to the next step, so no
-    rename is ever left out of the record the rollback reads, and the
-    rollback itself runs to the end. A failure to write is an `_OutputError`
-    naming the output.
-    """
-    outputs = [(Path(target), data) for target, data in outputs]
-    interrupted = []
-    staged, moved, placed = [], [], []
-    target = None
-    with _deferred_interrupts(interrupted):
-        try:
-            try:
-                for target, data in outputs:
-                    _stop_if(interrupted)
-                    staged.append((target, _stage(target, data)))
-                for target, temporary in staged:
-                    _stop_if(interrupted)
-                    if os.path.lexists(target):
-                        backup = _unused_name(target, "earlier")
-                        # Recorded first: the rollback checks which renames
-                        # happened.
-                        moved.append((target, backup))
-                        os.replace(target, backup)
-                    placed.append((target, temporary))
-                    os.replace(temporary, target)
-                _stop_if(interrupted)
-            except BaseException:
-                _roll_back(placed, moved)
-                raise
-            finally:
-                for _, temporary in staged:
-                    _remove_quietly(temporary)
-        except OSError as error:
-            raise _OutputError(
-                f"cannot write {str(target)!r}: {error.strerror or error}; "
-                "earlier outputs are kept"
-            ) from None
-        for target, backup in moved:
-            try:
-                os.remove(backup)
-            except OSError as error:
-                _report(
-                    "warning",
-                    f"the earlier {str(target)!r} could not be deleted from "
-                    f"{str(backup)!r}: {error.strerror or error}",
-                )
-
-
-@contextmanager
-def _deferred_interrupts(received):
-    """Record Ctrl-C in `received` instead of raising it, in the main thread,
-    where Python delivers signals."""
-    if threading.current_thread() is not threading.main_thread():
-        yield
-        return
-    previous = signal.signal(
-        signal.SIGINT, lambda signum, frame: received.append(signum)
-    )
-    try:
-        yield
-    finally:
-        signal.signal(signal.SIGINT, previous)
-
-
-def _stop_if(interrupted):
-    if interrupted:
-        raise KeyboardInterrupt
-
-
-def _stage(target, data):
-    """Write `data` to a new temporary file beside `target`; return its path.
-
-    It is created like any new file, so the umask sets its permissions.
-    """
-    path = _unused_name(target, "new")
-    handle = open(path, "xb")
-    try:
-        with handle:
-            handle.write(data)
-    except BaseException:
-        # Only the file this call created, after a write such as on a full
-        # disk fails partway.
-        _remove_quietly(path)
-        raise
-    return path
-
-
-def _unused_name(target, purpose):
-    """A name beside `target`, hidden and unused, for a `purpose` file."""
-    for n in count():
-        path = target.with_name(f".{target.name}.{PROG}-{purpose}-{os.getpid()}-{n}")
-        if not os.path.lexists(path):
-            return path
-
-
-def _roll_back(placed, moved):
-    """Undo a partial publication: remove each output whose rename into place
-    happened, then move each earlier file that was moved aside back. A step
-    that fails is reported, and the rest still run."""
-    for target, temporary in reversed(placed):
-        if os.path.lexists(temporary):
-            continue  # its rename never happened
-        try:
-            os.remove(target)
-        except OSError as error:
-            _report(
-                "error",
-                f"rolling back, {str(target)!r} could not be removed: "
-                f"{error.strerror or error}",
-            )
-    for target, backup in reversed(moved):
-        if not os.path.lexists(backup):
-            continue  # its rename never happened
-        try:
-            os.replace(backup, target)
-        except OSError as error:
-            _report(
-                "error",
-                f"rolling back, the earlier {str(target)!r} could not be restored "
-                f"and is kept at {str(backup)!r}: {error.strerror or error}",
-            )
-
-
-def _remove_quietly(path):
-    try:
-        os.remove(path)
-    except OSError:
-        pass
 
 
 class _Parser(argparse.ArgumentParser):

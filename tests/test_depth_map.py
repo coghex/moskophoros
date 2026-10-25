@@ -15,7 +15,7 @@ from test_export import GENERATOR, PLAIN, POSE, RANGE, RUN, SIDE, SOURCE, STRIKE
 from test_export import TIMES as SIDE_TIMES
 from test_materials_command import forbid_blender
 
-from moskophoros import cli, export, imageops
+from moskophoros import export, imageops, publication
 from moskophoros.sampling import DEPTH_MAP, NORMAL_MAP, FrameAddress, ImageFrame
 
 LIMIT = 2047.9375
@@ -352,7 +352,7 @@ def test_the_map_is_named_in_an_output_error(setup, capsys, monkeypatch):
             raise PermissionError(13, "Permission denied", str(path))
         return real_open(path, mode, *args, **kwargs)
 
-    monkeypatch.setattr(cli, "open", staged_open, raising=False)
+    monkeypatch.setattr(publication, "open", staged_open, raising=False)
     status, _, err = run(capsys, setup.argv("--depth"))
     assert status == 6
     assert f"cannot write {str(setup.out / 'hero.depth.png')!r}" in err
