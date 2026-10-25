@@ -13,6 +13,7 @@ import moskophoros.gltf
 import moskophoros.imageops
 import moskophoros.outputs
 import moskophoros.plan
+import moskophoros.publication
 import moskophoros.sampling
 import moskophoros.stylize
 import moskophoros.templates
@@ -39,6 +40,7 @@ def test_the_package_namespace_holds_only_its_submodules():
         "imageops",
         "outputs",
         "plan",
+        "publication",
         "sampling",
         "stylize",
         "templates",
