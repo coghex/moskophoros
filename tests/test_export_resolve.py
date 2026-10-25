@@ -24,9 +24,7 @@ from moskophoros.views import View
 
 
 def read(text):
-    return settings._read_document(
-        text.encode(), source="f.yaml", directory="/s", open_gate=True
-    )
+    return settings.read_bytes(text.encode(), source="f.yaml", directory="/s")
 
 
 def source(kind, label, text):
@@ -65,10 +63,14 @@ def test_the_shipped_defaults_layer_changes_nothing_but_the_origin():
     assert resolved.fps == bare.fps == 12.0
     assert resolved.frames == bare.frames == "auto"
     assert resolved.fps_kind == DEFAULTS
-    # Only the active settings are in the shipped file.
+    # Every setting is in the shipped file; with no layer at all each takes the
+    # internal default and says so.
     assert resolved.origins["fps"].startswith("the shipped defaults line ")
-    assert resolved.origins["stored_directions"] == "the shipped default"
-    assert resolved.stored_directions == "all"
+    assert resolved.origins["stored_directions"].startswith(
+        "the shipped defaults line "
+    )
+    assert bare.origins["stored_directions"] == "the shipped default"
+    assert resolved.stored_directions == bare.stored_directions == "all"
 
 
 def test_the_highest_layer_that_sets_a_value_wins_and_is_named_with_its_position():

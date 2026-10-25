@@ -13,7 +13,7 @@ import pytest
 from glb_writer import GlbWriter
 from shading import DEFAULT_SHADE
 
-from moskophoros import gltf, sampling, views
+from moskophoros import gltf, plan, views
 from moskophoros.capture import backend, blender
 
 pytestmark = pytest.mark.blender
@@ -67,7 +67,7 @@ def measure(
         roll=roll,
     )
     view = views.View(directions, start, yaw)
-    frames = sampling.frames(subject.name, clips, view, fps)
+    frames = plan.plan(subject.name, clips, view, fps)
     root = tmp_path / workspace
     root.mkdir()
     source = backend.Source(
@@ -577,7 +577,7 @@ def valid_job_text(found, tmp_path):
         "error",
         DEFAULT_SHADE,
     )
-    frames = sampling.frames(subject.name, clips, views.View(1, 0.0), 4.0)
+    frames = plan.plan(subject.name, clips, views.View(1, 0.0), 4.0)
     job = backend.build_job(
         "measure",
         backend.Source(
@@ -1184,7 +1184,7 @@ def test_the_script_refuses_what_the_input_contract_rejects(
         "error",
         DEFAULT_SHADE,
     )
-    frames = sampling.frames(path.stem, clips, views.View(1, 0.0), 4.0)
+    frames = plan.plan(path.stem, clips, views.View(1, 0.0), 4.0)
     workspace = tmp_path / "work"
     workspace.mkdir()
     job = backend.build_job(

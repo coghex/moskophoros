@@ -339,7 +339,7 @@ NEW_SETTINGS = [f"shade.{path}" for path in model.DEFAULTS]
 
 
 def test_the_public_schema_holds_every_shading_leaf_after_the_range():
-    assert settings.GROUPS == {"camera", "shade", "light", "ramp"}
+    assert settings.GROUPS == {"camera", "shade", "light", "ramp", "export"}
     shade = [name for name in settings.SCHEMA if name.startswith("shade.")]
     assert shade == [
         "shade.ao_distance_m",
@@ -352,7 +352,7 @@ def test_the_public_schema_holds_every_shading_leaf_after_the_range():
     # The new sub-groups are no top-level groups.
     assert not {"key", "sky", "ground", "brightness", "dither"} & settings.GROUPS
     shipped = settings.read_defaults()
-    assert list(shipped) == list(settings.ACTIVE_SCHEMA)
+    assert list(shipped) == list(settings.SCHEMA)
     for name in NEW_SETTINGS:
         assert shipped[name] == settings.DEFAULTS[name]
         assert shipped.where[name][0] > 0

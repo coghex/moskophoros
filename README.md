@@ -12,7 +12,11 @@ configurable: top-down, side or isometric, with 1, 2, 4 or 8 directions.
 
 ```
 moskophoros [options] <infile.glb> <outfile.png>
+moskophoros [options] <infile.glb> --output-dir <dir>
 ```
+
+The first writes a sheet and the files beside it; the second writes an export
+into a directory (see below). Give exactly one.
 
 For example, to render a model's `walk` loop and its one-shot `attack` in the
 eight isometric directions, in 64×64 cells:
@@ -61,10 +65,42 @@ normal and depth maps, light and clip selection. Rerun with the same model and n
 sheet byte for byte. Give `--clip` to choose other clips that line up with it:
 the scale, cell and ground pixel are fixed rather than fitted again, and a
 new frame that does not fit the cell is an overflow error (exit 4). Only a
-complete `moskophoros.export/1` manifest loads, checked whole; a
-`moskophoros.sheet/15` or older sheet, or a manifest that records any of the
-export settings the command cannot run yet away from its defaults, is refused,
-so generate older ones again.
+complete `moskophoros.export/1` manifest loads, checked whole, with every export
+setting it records; a `moskophoros.sheet/15` or older sheet is refused, so
+generate older ones again.
+### Exporting to a directory
+
+`--output-dir out/hero` writes `manifest.json`, the previews and whichever of
+three things `--formats` or a settings file's `export.formats` selects: `sheet`,
+the combined sheet; `atlases`, one image per clip; `frames`, one PNG per frame
+in folders by clip and direction. Any nonempty combination works, written from
+the same captured frames, with the normal and depth maps beside each:
+
+```
+moskophoros --config look.yaml --formats frames,atlases hero.glb --output-dir out/hero
+```
+
+The settings file chooses what is stored and where, for example:
+
+```yaml
+stored_directions: [0, 4, 3, 2, 1]   # capture these directions only, in this order
+mirrors: {7: 1, 6: 2, 5: 3}          # take these from a stored one's picture, reversed
+export:
+  frame_path: frames/{clip}/{direction}/frame_{frame:03}{map}.png
+  atlas_padding: 1                   # repeat edge pixels around each atlas cell
+clips:
+  walk: {frames: 6, fps: 8}          # a clip's own count and rate
+  attack: {stored_directions: all, mirrors: {}, output_name: strike}
+```
+
+Only stored directions are rendered, measured and fitted; a mirror is a record
+in the manifest, not a picture, and warns once if its camera conditions do not
+make a flip a reflection. A clip's own `fps` beats `--fps`. The directory holds
+one subject's export; a rerun replaces the files it writes and keeps the rest,
+and `--settings-from out/hero/manifest.json --output-dir elsewhere` reproduces
+it byte for byte from the manifest alone. The full contract is in
+[docs/design.md](docs/design.md).
+
 `--reduce mode` keeps the most common colour in each supersampled block.
 The sheet has 8-bit alpha. `--edges hard`, the default, keeps outlines and
 cut-out edges crisp: a pixel shows when at least half its block shows a

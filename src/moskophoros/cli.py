@@ -9,9 +9,11 @@ input file, the filesystem or Blender belong to the stages that use them.
 `resolve_settings` lays the settings layers under the parsed options,
 following design §CLI, Settings files, and §Scale and ground point, Reuse:
 the shipped defaults, the global file, a loaded manifest (`--settings-from`)
-and a project file (`--project`). `read_settings` reads and checks the whole
-`moskophoros.export/1` manifest, and `apply_settings` merges its settings with
-the options. It also reads the selected palette and material library
+and a project file (`--project`). The export settings, the per-clip ones
+included, stay layered in `Options.export_sources` for `exportsettings` to
+resolve. `read_manifest` reads and checks the whole `moskophoros.export/1`
+manifest (`read_settings` gives its reused values), and `apply_settings` merges
+them with the options. It also reads the selected palette and material library
 snapshots; these reads precede any Blender invocation.
 
 `capture_settings` gives the settings capture and export share, the
@@ -20,11 +22,14 @@ records beside them, following design §Export: the reduction, the palette and
 the material library. The style and the shade range never reach the capture
 job.
 
-`main` runs the whole command, following design §CLI and §Pipeline: read and
-measure the model, check root motion, fit, render, stylize, clean up and
-export (the sheet, its maps and previews, and the manifest that describes
-them), then publish every output all or nothing. `run` does the same and
-returns the exit status of design §Exit codes.
+`main` runs the whole command, following design §CLI and §Pipeline: plan every
+clip's samples (`exportsettings`, `plan`) and every output path, check the
+destination, read and measure the model, check root motion, fit, render,
+stylize, clean up and export (the sheet, atlases and frame images the settings
+select, their maps and previews, and the manifest that describes them), then
+publish every output all or nothing, to a PNG's folder or an output
+directory. `run` does the same and returns the exit status of design §Exit
+codes.
 """
 
 import argparse
@@ -47,6 +52,7 @@ from types import MappingProxyType
 
 from moskophoros import (
     cleanup,
+    diagnostics,
     export,
     exportimages,
     exportsettings,
@@ -69,7 +75,7 @@ from moskophoros import shading as shading_model
 from moskophoros.capture import backend, blender
 
 PROG = publication.PROG
-USAGE = f"{PROG} [options] <infile.glb> <outfile.png>"
+USAGE = f"{PROG} [options] <infile.glb> (<outfile.png> | --output-dir <dir>)"
 INTERNAL_ERROR = 1
 USAGE_ERROR = 2
 OUTPUT_ERROR = publication.OUTPUT_ERROR
@@ -174,6 +180,10 @@ _PATH_FIELDS = MappingProxyType(
         "materials": ("materials_file", "no_materials"),
     }
 )
+# The export settings other than the sampling pair, which `Options` holds:
+# they resolve through `exportsettings`, from the layers in
+# `Options.export_sources`.
+_EXPORT_ONLY = frozenset(exportsettings.GLOBAL_KEYS) - {"fps", "frames"}
 _HELP = frozenset({"-h", "--help"})
 
 
@@ -203,6 +213,8 @@ class MaterialsRecord:
 class Options:
     """Validated options.
 
+    `outfile` or `output_dir` is the destination: exactly one is set.
+    `formats` is the `--formats` list in canonical order, or None.
     `explicit` holds the field names of the options given on the command
     line, as distinct from defaults and preset-derived values; once
     `resolve_settings` has run, it also holds the fields a project file set,
@@ -218,7 +230,7 @@ class Options:
     """
 
     infile: Path
-    outfile: Path
+    outfile: Path | None
     view: str
     direction: tuple[float, float, float]
     directions: int
@@ -280,11 +292,9 @@ class Options:
     no_user_config: bool = False
     project: str | None = None
     origins: MappingProxyType = MappingProxyType({})
-    # The global frame count as given, "auto" or a count, and each clip's own
-    # by name: a count, "auto", or None to take the global (settings design
-    # D-13, D-31).
+    # The global frame count as given, "auto" or a count (settings design
+    # D-13, D-31). Each clip's own comes from the export settings.
     frames: int | str = layered.DEFAULTS["frames"]
-    clip_frames: MappingProxyType = MappingProxyType({})
     # How a pixel's alpha comes from its block, hard or soft (alpha design
     # D-4, D-9).
     edges: str = layered.DEFAULTS["edges"]
@@ -309,6 +319,15 @@ class Options:
     camera_position: tuple[float, float, float] | None = layered.DEFAULTS[
         "camera.position"
     ]
+    # The output directory of the directory form, in place of `outfile`, and
+    # the formats `--formats` names (export design P-7, part 3).
+    output_dir: Path | None = None
+    formats: tuple[str, ...] | None = None
+    # The export settings' layers under the command line's, lowest first, as
+    # `exportsettings.Source`s, and the settings files the run read. They are
+    # derived from the layers, so they take no part in comparing options.
+    export_sources: tuple = dataclass_field(default=(), compare=False)
+    read_files: tuple = dataclass_field(default=(), compare=False)
 
 
 class UsageError(SystemExit):
@@ -351,6 +370,16 @@ def parse_args(argv: Sequence[str]) -> Options:
             "the camera's direction"
         )
 
+    if args.outfile is not None and args.output_dir is not None:
+        parser.error(
+            "give either <outfile.png> or --output-dir, not both: one destination"
+        )
+    if args.outfile is None and args.output_dir is None:
+        parser.error(
+            "a destination is required: give <outfile.png>, or --output-dir <dir> "
+            "for frames, atlases or a sheet in a directory"
+        )
+
     once = tuple(args.once or ())
     clip = None if args.clip is None else tuple(args.clip)
     if clip is not None:
@@ -381,6 +410,8 @@ def parse_args(argv: Sequence[str]) -> Options:
     return Options(
         infile=args.infile,
         outfile=args.outfile,
+        output_dir=args.output_dir,
+        formats=args.formats,
         view=CUSTOM_VIEW if overrides else args.view,
         direction=direction,
         projection=args.projection,
@@ -538,22 +569,24 @@ def resolve_settings(options: Options, environ=None) -> Options:
     survive the merge are read.
     """
     environ = os.environ if environ is None else environ
-    defaults, global_, projects = _read_layers(options, environ)
+    defaults, global_, projects, read_files = _read_layers(options, environ)
     command_line_view = _command_line_view(options)
+    command_line_export = _command_line_export(options)
     given = options.explicit
     options = _apply_layer(
         options, layered.merge(*(values for _, values in projects)), projects
     )
     reused = reused_colors = None
-    clip_layers = [] if global_ is None else [global_[1].get("clips", {})]
+    export_sources = []
+    if global_ is not None:
+        export_sources.append(exportsettings.Source(exportsettings.GLOBAL, *global_))
     if options.settings_from is not None:
-        reused = read_settings(options.settings_from)
+        loaded = read_manifest(options.settings_from)
+        reused = loaded.reused
+        export_sources.append(loaded.source())
         options = apply_settings(options, reused)
         if reused.palette is not None:
             reused_colors = reused.palette.colors
-        clip_layers.append(
-            {name: {"frames": count} for name, count in reused.clip_frames.items()}
-        )
         options = _apply_defaults(options, defaults, global_, layered.APP_SETTINGS)
     else:
         options = _apply_defaults(options, defaults, global_)
@@ -564,16 +597,20 @@ def resolve_settings(options: Options, environ=None) -> Options:
         view_layers = [("--settings-from", reused)]
     options = _resolve_view(options, [*view_layers, *projects, command_line_view])
     _check_camera(options)
-    # Each clip's own frame count merges by clip name, the loaded sheet's
-    # included, a higher layer's null clearing a lower one's count; per-clip
-    # values come from files and the sheet only (settings design D-17, D-39).
-    clip_layers += [values.get("clips", {}) for _, values in projects]
-    merged = {
-        name: leaves["frames"]
-        for name, leaves in layered.merge_clips(*clip_layers).items()
-        if "frames" in leaves
-    }
-    options = replace(options, clip_frames=MappingProxyType(merged))
+    # The export settings resolve through these layers, lowest first. Each
+    # clip's own values merge by clip name and leaf, a higher layer's null
+    # clearing a lower one's; they come from files and the loaded manifest
+    # only (settings design D-17, D-39; export design P-7, part 1).
+    export_sources += [
+        exportsettings.Source(exportsettings.PROJECT, label, values)
+        for label, values in projects
+    ]
+    export_sources.append(command_line_export)
+    options = replace(
+        options,
+        export_sources=tuple(export_sources),
+        read_files=tuple(read_files),
+    )
     options = _resolve_palette(options)
     options = _resolve_materials(options, reused_colors)
     return _resolve_shading(options, given, global_, projects)
@@ -653,24 +690,29 @@ def _check_camera(options):
 
 def _read_layers(options, environ):
     """The shipped defaults, the global file's label and layer (or None),
-    and the project file's label and layer in a list, empty without
-    `--project`. A missing `--config` file or project file is an error; a
-    missing user file is not. Nothing is created."""
+    the project file's label and layer in a list, empty without `--project`,
+    and the paths of the settings files that were read. A missing `--config`
+    file or project file is an error; a missing user file is not. Nothing is
+    created."""
     parser = _build_parser()[0]
     try:
         defaults = layered.read_defaults()
         global_ = None
+        read = []
         if options.config is not None:
             label = f"--config {str(options.config)!r}"
             global_ = (
                 label,
                 layered.read_file(options.config, source=label, required=True),
             )
+            read.append(options.config)
         elif not options.no_user_config:
             path = layered.user_file(environ)
             label = f"the user settings {str(path)!r}"
             values = layered.read_file(path, source=label, required=False)
             global_ = None if values is None else (label, values)
+            if values is not None:
+                read.append(path)
         projects = []
         if options.project is not None:
             path = layered.project_file(environ, options.project)
@@ -678,9 +720,10 @@ def _read_layers(options, environ):
             projects.append(
                 (label, layered.read_file(path, source=label, required=True))
             )
+            read.append(path)
     except layered.SettingsError as error:
         parser.error(str(error))
-    return defaults, global_, projects
+    return defaults, global_, projects, read
 
 
 def _apply_layer(options, values, sources, mark=True):
@@ -693,7 +736,7 @@ def _apply_layer(options, values, sources, mark=True):
     changes = {}
     origins = dict(options.origins)
     for name, value in values.items():
-        if name == "clips" or name in layered.VIEW_SETTINGS:
+        if name == "clips" or name in layered.VIEW_SETTINGS or name in _EXPORT_ONLY:
             continue
         if name not in _PATH_FIELDS:
             field = _SETTING_FIELDS.get(name, name)
@@ -948,9 +991,11 @@ def _formula(options):
     }
 
 
-def read_settings(path) -> ReusedSettings:
-    """Read and check the reusable `settings` of the export manifest at
-    `path`. Reading that file is the only effect.
+def read_manifest(path):
+    """Read and check the export manifest at `path`, returning the
+    `manifest.Manifest`: the reusable settings (`reused`), every export
+    setting as a layer (`source`) and the document. Reading that file is the
+    only effect.
 
     The file must be a complete `moskophoros.export/1` manifest, checked as
     `manifest.decode` checks one, every member and every record the settings
@@ -958,10 +1003,7 @@ def read_settings(path) -> ReusedSettings:
     `UsageError`, reported as `parse_args` reports one, naming the file and the
     problem: the file cannot be read, is not UTF-8 JSON, is another schema
     (an older sheet is named, and the user is told to generate it again), or
-    has a missing, unknown, inconsistent or unacceptable member. Until the
-    export settings are available, a manifest that records any of them at
-    other than its inactive default is refused as `settings.<key>: not
-    available yet` (`_refuse_unavailable`).
+    has a missing, unknown, inconsistent or unacceptable member.
     """
     # The manifest reader is built on this module's checks, so it is imported
     # where it is used.
@@ -969,32 +1011,14 @@ def read_settings(path) -> ReusedSettings:
 
     label = f"--settings-from {str(path)!r}"
     try:
-        loaded = manifest.read(path, label)
+        return manifest.read(path, label)
     except usage.UsageError as error:
         _build_parser()[0].error(str(error))
-    _refuse_unavailable(label, loaded.layer)
-    return loaded.reused
 
 
-def _refuse_unavailable(label, layer):
-    """Refuse a loaded manifest's export settings that are not at their
-    inactive defaults, each named by its key or clip position.
-
-    No command option or settings file can set them yet, so loading a
-    document that does would accept a setting and run without it. The test is
-    on the recorded value, not its effect: a clip's own `stored_directions`
-    of `"all"` still differs from the null that inherits.
-    """
-    problems = []
-    for key in exportsettings.GLOBAL_KEYS:
-        if key not in ("fps", "frames") and layer[key] != layered.ALL_DEFAULTS[key]:
-            problems.append(f"settings.{key}: {layered.NOT_YET}")
-    for position, leaves in enumerate(layer["clips"].values()):
-        for leaf in exportsettings.CLIP_LEAVES:
-            if leaf != "frames" and leaves[leaf] is not None:
-                problems.append(f"settings.clips[{position}].{leaf}: {layered.NOT_YET}")
-    if problems:
-        _build_parser()[0].error(f"{label}: " + "; ".join(problems))
+def read_settings(path) -> ReusedSettings:
+    """The `ReusedSettings` of the manifest at `path` (`read_manifest`)."""
+    return read_manifest(path).reused
 
 
 def reused_from(checked) -> ReusedSettings:
@@ -1250,7 +1274,12 @@ def run(argv: Sequence[str]) -> int:
         # A failed rollback after the interruption says what is left.
         _report("error", str(interruption) or "interrupted")
         return INTERRUPTED
-    except (fit.UsageError, export.UsageError, _CommandUsageError) as error:
+    except (
+        fit.UsageError,
+        export.UsageError,
+        usage.UsageError,
+        _CommandUsageError,
+    ) as error:
         _build_parser()[0].print_usage(sys.stderr)
         _report("error", str(error))
         return USAGE_ERROR
@@ -1286,6 +1315,7 @@ def _command(options):
     from moskophoros import manifest
 
     outfile = options.outfile
+    directory_mode = options.output_dir is not None
     source, subject = _read_source(options.infile)
     if subject.material_count > backend.MAX_MATERIALS:
         raise gltf.InputError(
@@ -1293,24 +1323,53 @@ def _command(options):
             f"has {subject.material_count} materials; the material-ID buffer "
             f"holds at most {backend.MAX_MATERIALS}",
         )
-    selected = tuple(
-        replace(selected, frames=options.clip_frames.get(selected.clip.name))
-        for selected in gltf.select_clips(subject, options.clip or (), options.once)
+    view = views.View(options.directions, options.start_angle, options.model_yaw)
+    resolved_export = exportsettings.resolve(
+        [
+            exportsettings.Source(exportsettings.DEFAULTS, exportsettings.SHIPPED, {}),
+            *options.export_sources,
+        ]
     )
+    planned = exportsettings.request(
+        resolved_export,
+        subject.name,
+        gltf.select_clips(subject, options.clip or (), options.once),
+        view,
+    )
+    selected = planned.selected
+    requested = planned.plan
     for warning in _frame_warnings(options, selected):
         _report("warning", warning)
-    view = views.View(options.directions, options.start_angle, options.model_yaw)
-    resolved_export = exportsettings.resolve(_export_layers(options, selected))
-    planned = exportsettings.request(resolved_export, subject.name, selected, view)
-    requested = planned.plan.frames
-    names = outputs.resolve_names(selected, view, subject=subject.name, directory=False)
+    for warning in diagnostics.fps_warnings(resolved_export, selected):
+        _report("warning", warning)
+    for warning in diagnostics.mirror_warnings(
+        planned.plan,
+        view,
+        roll=options.roll,
+        projection=options.projection,
+        direction=options.direction,
+        position=options.camera_position,
+    ):
+        _report("warning", warning.message)
+    names = outputs.resolve_names(
+        selected,
+        view,
+        subject=subject.name,
+        clip_aliases={
+            name: own.output_name for name, own in resolved_export.clips.items()
+        },
+        direction_aliases=dict(resolved_export.direction_names),
+        directory=directory_mode,
+    )
     light = export.Light(options.light, options.light_intensity, options.light_ambient)
     lit = options.previews and light.position is not None
     layout = outputs.plan_outputs(
         planned.plan,
         names,
         resolved_export,
-        destination=outputs.Positional(outfile.name),
+        destination=(
+            outputs.Directory() if directory_mode else outputs.Positional(outfile.name)
+        ),
         normals=options.normals,
         depth=options.depth,
         previews=options.previews,
@@ -1322,10 +1381,19 @@ def _command(options):
             f"the light at {_coordinates(light.position)} is recorded but unused: "
             "previews are off, so no lit preview is written",
         )
-    _check_targets(
-        [outfile.parent / output.path for output in layout.artifacts]
-        + [outfile.parent / layout.manifest.path]
-    )
+    if directory_mode:
+        target = publication.check_directory(
+            options.output_dir,
+            layout,
+            subject=subject.name,
+            inputs=_input_files(options),
+            reuse=options.settings_from,
+        )
+    else:
+        _check_targets(
+            [outfile.parent / output.path for output in layout.artifacts]
+            + [outfile.parent / layout.manifest.path]
+        )
     settings = capture_settings(options)
     sheet_style = style_record(options)
     resolved = _resolved_shading(options)
@@ -1501,16 +1569,21 @@ def _command(options):
         encoded=encoded,
         **record_options,
     )
-    # The files go out in the order the positional form has always published
-    # them (and its warnings and rollback follow): the sheet, the metadata, the
-    # maps, then the flat previews and the lit ones.
-    sheet, *maps = (a for a in encoded.artifacts if a.kind == outputs.SHEET)
     previews = [a for a in encoded.artifacts if a.kind == outputs.PREVIEW]
     flat = [a for a in previews if a.channel == outputs.FLAT]
     lit = [a for a in previews if a.channel == outputs.LIT]
     for artifact in (*flat, *lit):
         for warning in artifact.warnings:
             _report("warning", warning)
+    if directory_mode:
+        publication.publish_directory(
+            target, [(a.path, a.data) for a in encoded.artifacts], description
+        )
+        return
+    # The files go out in the order the positional form has always published
+    # them (and its warnings and rollback follow): the sheet, the metadata, the
+    # maps, then the flat previews and the lit ones.
+    sheet, *maps = (a for a in encoded.artifacts if a.kind == outputs.SHEET)
     directory = outfile.parent
     files = [(directory / sheet.path, sheet.data)]
     files.append((directory / layout.manifest.path, description))
@@ -1518,20 +1591,29 @@ def _command(options):
     publication.publish(files)
 
 
-def _export_layers(options, selected):
-    """The layers the export settings resolve from: the internal defaults,
-    then the command's own sampling settings, the only export settings that
-    are available. A loaded manifest's other export settings are at their
-    defaults too (`read_settings`), so nothing else is layered."""
-    own = {
-        "fps": options.fps,
-        "frames": options.frames,
-        "clips": {chosen.clip.name: {"frames": chosen.frames} for chosen in selected},
-    }
-    return [
-        exportsettings.Source(exportsettings.DEFAULTS, exportsettings.SHIPPED, {}),
-        exportsettings.Source(exportsettings.OPTION, "the command line", own),
-    ]
+def _input_files(options):
+    """The files the run reads, which no output may replace: the model, the
+    settings files, the palette and the material library. The loaded
+    manifest is not among them (`publication.check_directory`'s `reuse`)."""
+    files = [options.infile, *options.read_files]
+    files += [path for path in (options.palette_file, options.materials_file) if path]
+    return files
+
+
+def _command_line_export(options):
+    """The command line's export settings as a layer: `--fps`, `--frames` and
+    `--formats`, each only when given. The others are files-only."""
+    explicit = options.explicit
+    values = {}
+    if "fps" in explicit:
+        values["fps"] = options.fps
+    if "frames" in explicit:
+        values["frames"] = options.frames
+    if "formats" in explicit:
+        values["export.formats"] = options.formats
+    return exportsettings.Source(
+        exportsettings.OPTION, "the command line", layered.Layer(values)
+    )
 
 
 def _coordinates(point):
@@ -1981,6 +2063,29 @@ def _project_name(text):
     return text
 
 
+def _output_dir(text):
+    if not text:
+        raise argparse.ArgumentTypeError("expected a directory, got ''")
+    return Path(text)
+
+
+def _formats_option(text):
+    """The formats `--formats` names, in canonical order: a nonempty,
+    duplicate-free, comma-separated subset of `sheet`, `frames` and
+    `atlases`."""
+    names = text.split(",")
+    for name in names:
+        if name not in layered.FORMATS:
+            raise argparse.ArgumentTypeError(
+                f"expected a comma-separated list of {', '.join(layered.FORMATS)}, "
+                f"got {text!r}: {name!r} is not one of them"
+            )
+    for name in names:
+        if names.count(name) > 1:
+            raise argparse.ArgumentTypeError(f"{name!r} is listed twice in {text!r}")
+    return tuple(name for name in layered.FORMATS if name in names)
+
+
 def _outfile(text):
     if not text.endswith(".png"):
         raise argparse.ArgumentTypeError(f"must end in .png, got {text!r}")
@@ -2001,7 +2106,9 @@ def _build_parser():
         "outfile",
         metavar="<outfile.png>",
         type=_outfile,
-        help="output sheet; its JSON is written beside it",
+        nargs="?",
+        help="output sheet; its JSON is written beside it (the destination, "
+        "unless --output-dir is given)",
     )
 
     value_options = set()
@@ -2115,6 +2222,25 @@ def _build_parser():
         "how many frames each clip is sampled to, retimed so each lasts 1/fps, "
         "1 or more, or auto: sampled by duration; a settings file's clips "
         "mapping may give a clip its own (default: auto)",
+    )
+    single(
+        "--output-dir",
+        "DIR",
+        _output_dir,
+        None,
+        "write the export into DIR instead of an <outfile.png>: its manifest.json "
+        "and whichever of the combined sheet, per-clip atlases and per-frame PNGs "
+        "--formats and the settings select, under the paths the export settings "
+        "give; DIR holds one subject's export (default: the <outfile.png> form)",
+    )
+    single(
+        "--formats",
+        "LIST",
+        _formats_option,
+        None,
+        "what to write, a comma-separated nonempty list of sheet, frames and "
+        "atlases, replacing export.formats; <outfile.png> needs sheet only "
+        "(default: sheet)",
     )
     single(
         "--ppm",

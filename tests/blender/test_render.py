@@ -18,7 +18,7 @@ from glb_writer import GlbWriter
 from PIL import Image
 from shading import DEFAULT_SHADE
 
-from moskophoros import gltf, sampling, views
+from moskophoros import gltf, plan, views
 from moskophoros.capture import backend, blender
 
 pytestmark = pytest.mark.blender
@@ -119,9 +119,7 @@ def render(
         shade,
         roll=roll,
     )
-    frames = sampling.frames(
-        subject.name, clips, views.View(directions, start, yaw), fps
-    )
+    frames = plan.plan(subject.name, clips, views.View(directions, start, yaw), fps)
     root = tmp_path / workspace
     root.mkdir()
     source = backend.Source(

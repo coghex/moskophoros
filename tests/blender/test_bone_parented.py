@@ -21,7 +21,7 @@ from glb_writer import GlbWriter
 from PIL import Image
 from shading import DEFAULT_SHADE
 
-from moskophoros import gltf, sampling, views
+from moskophoros import gltf, plan, views
 from moskophoros.capture import backend, blender
 
 pytestmark = pytest.mark.blender
@@ -184,7 +184,7 @@ def run(found, path, tmp_path, mode, **fitted):
         "error",
         DEFAULT_SHADE,
     )
-    frames = sampling.frames(subject.name, clips, views.View(1, 0.0, 0.0), settings.fps)
+    frames = plan.plan(subject.name, clips, views.View(1, 0.0, 0.0), settings.fps)
     root = tmp_path / mode
     root.mkdir()
     source = backend.Source(

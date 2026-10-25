@@ -1,8 +1,8 @@
-"""The export settings in the schema table and the internal reader (export
-design P-7, part 1; P-13, EXP-2).
+"""The export settings in the schema table and the settings reader (export
+design P-7, part 1).
 
-The settings are defined but inactive: `read_bytes` refuses them, and these
-tests read them through the internal reader that opens the gate.
+The settings are as public as any other: a settings file may set them, the
+shipped defaults hold them, and the reader checks every one the same way.
 """
 
 from types import MappingProxyType
@@ -14,9 +14,7 @@ from moskophoros.settings import SettingsError, merge, merge_clips, read_bytes
 
 
 def read(text):
-    return settings._read_document(
-        text.encode("utf-8"), source="s.yaml", directory="/s", open_gate=True
-    )
+    return settings.read_bytes(text.encode("utf-8"), source="s.yaml", directory="/s")
 
 
 def refused(text):
@@ -25,7 +23,7 @@ def refused(text):
     return raised.value.problem
 
 
-# The table: what is defined, what is active
+# The table: what is defined and what ships
 
 
 NEW_GLOBAL = [
@@ -40,12 +38,9 @@ NEW_GLOBAL = [
 ]
 
 
-def test_the_new_settings_are_defined_after_the_active_ones_and_inactive():
+def test_the_new_settings_follow_the_older_ones_in_the_one_table():
     names = list(settings.SCHEMA)
     assert names[-len(NEW_GLOBAL) :] == NEW_GLOBAL
-    assert list(settings.ACTIVE_SCHEMA) == names[: -len(NEW_GLOBAL)]
-    assert not any(settings.SCHEMA[name].active for name in NEW_GLOBAL)
-    assert all(settings.SCHEMA[name].active for name in settings.ACTIVE_SCHEMA)
     assert list(settings.CLIP_SCHEMA) == [
         "frames",
         "fps",
@@ -53,21 +48,21 @@ def test_the_new_settings_are_defined_after_the_active_ones_and_inactive():
         "mirrors",
         "output_name",
     ]
-    assert list(settings.ACTIVE_CLIP_SCHEMA) == ["frames"]
 
 
-def test_the_public_groups_and_defaults_leave_the_inactive_rows_out():
-    assert settings.GROUPS == {"camera", "shade", "light", "ramp"}
-    assert settings.ALL_GROUPS == settings.GROUPS | {"export"}
-    assert set(settings.DEFAULTS) == set(settings.ACTIVE_SCHEMA)
-    assert not set(NEW_GLOBAL) & set(settings.DEFAULTS)
+def test_the_groups_and_defaults_hold_every_setting():
+    assert settings.GROUPS == {"camera", "shade", "light", "ramp", "export"}
+    assert set(settings.DEFAULTS) == set(settings.SCHEMA)
     shipped = settings.read_defaults()
-    assert list(shipped) == list(settings.ACTIVE_SCHEMA)
+    assert list(shipped) == list(settings.SCHEMA)
+    assert shipped == dict(settings.DEFAULTS)
+    # Clips keep their own handling: the shipped file lists none.
     assert "clips" not in shipped
 
 
-def test_every_new_setting_has_its_internal_default():
-    assert {name: settings.ALL_DEFAULTS[name] for name in NEW_GLOBAL} == {
+def test_every_new_setting_ships_its_default():
+    shipped = settings.read_defaults()
+    assert {name: shipped[name] for name in NEW_GLOBAL} == {
         "stored_directions": "all",
         "direction_names": {},
         "mirrors": {},
@@ -82,58 +77,37 @@ def test_every_new_setting_has_its_internal_default():
         for name, setting in settings.CLIP_SCHEMA.items()
         if name != "frames"
     } == {"fps": None, "stored_directions": None, "mirrors": None, "output_name": None}
-    assert set(settings.ALL_DEFAULTS) == set(settings.SCHEMA)
 
 
-def test_the_shipped_defaults_file_holds_no_inactive_setting():
+def test_the_shipped_defaults_file_adds_no_clips():
     text = settings.resources.files("moskophoros").joinpath("defaults.yaml")
     document = text.read_text("utf-8")
-    for name in ("stored_directions", "direction_names", "mirrors", "export", "clips:"):
-        assert f"\n{name}" not in document
+    assert "\nclips" not in document
+    for name in ("stored_directions", "direction_names", "mirrors", "export"):
+        assert f"\n{name}:" in document
 
 
-# The public reader keeps the gate shut
+# A file may set any of them
 
 
 @pytest.mark.parametrize(
-    ("text", "problem"),
+    "text",
     [
-        (
-            "stored_directions: all\n",
-            "stored_directions: not available yet at line 1, column 1",
-        ),
-        (
-            "direction_names: {}\n",
-            "direction_names: not available yet at line 1, column 1",
-        ),
-        ("version: 1\nmirrors: {}\n", "mirrors: not available yet at line 2, column 1"),
-        ("export: {}\n", "export: not available yet at line 1, column 1"),
-        ("export: 5\n", "export: not available yet at line 1, column 1"),
-        (
-            "export:\n  formats: [sheet]\n",
-            "export: not available yet at line 1, column 1",
-        ),
-        (
-            "clips:\n  Walk:\n    fps: null\n",
-            "clips.Walk.fps: not available yet at line 3, column 5",
-        ),
-        (
-            "clips:\n  Walk: {output_name: null}\n",
-            "clips.Walk.output_name: not available yet at line 2, column 10",
-        ),
+        "stored_directions: all\n",
+        "direction_names: {}\n",
+        "version: 1\nmirrors: {}\n",
+        "export: {}\n",
+        "export:\n  formats: [sheet]\n",
+        "clips:\n  Walk:\n    fps: null\n",
+        "clips:\n  Walk: {output_name: null}\n",
     ],
 )
-def test_the_public_reader_refuses_every_inactive_key_as_not_available_yet(
-    text, problem
-):
-    with pytest.raises(SettingsError) as raised:
-        read_bytes(text.encode(), source="s.yaml", directory="/s")
-    assert raised.value.problem == problem
-    with pytest.raises(SettingsError):
-        read_bytes(text.encode(), source="s.yaml", directory="/s", shipped=True)
+def test_a_settings_file_may_set_each_export_setting(text):
+    read(text)
+    read_bytes(text.encode(), source="s.yaml", directory="/s", shipped=True)
 
 
-def test_an_empty_clip_entry_and_a_count_are_still_accepted_publicly():
+def test_an_empty_clip_entry_and_a_count_are_accepted():
     layer = read_bytes(
         b"clips:\n  A: {}\n  B: {frames: 3}\n", source="s.yaml", directory="/s"
     )

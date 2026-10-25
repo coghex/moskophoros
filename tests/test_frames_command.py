@@ -305,7 +305,6 @@ def test_the_output_does_not_change_with_the_warnings(setup, capsys):
         ("clips:\n  walk: {frames: 2, speed: 1}\n", "clips.walk.speed: unknown key"),
         # Entries for clips not selected or missing are still checked.
         ("clips:\n  leap: {frames: 0}\n", "clips.leap.frames:"),
-        ("clips:\n  pose: {fps: 3}\n", "clips.pose.fps: not available yet"),
     ],
 )
 def test_a_bad_count_in_a_file_is_exit_2_before_blender(

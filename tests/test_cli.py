@@ -9,7 +9,9 @@ from moskophoros import cli
 from moskophoros.views import normalise, pitch_direction
 
 POSITIONALS = ["in.glb", "out.png"]
-USAGE_LINE = "usage: moskophoros [options] <infile.glb> <outfile.png>"
+USAGE_LINE = (
+    "usage: moskophoros [options] <infile.glb> (<outfile.png> | --output-dir <dir>)"
+)
 
 
 def parse(*options):
@@ -185,6 +187,7 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
             *["--ao-distance", "1.2", "--ao-samples", "128"],
             *["--occlusion-weight", "0.5", "--convexity-weight", "0"],
             *["--shade-range", "120,188", "--frames", "8"],
+            *["--formats", "atlases,sheet"],
             *["--settings-from", "old.json", "--no-preview", "--no-normals"],
             "--depth",
             *["--light", "-20,30,40", "--light-intensity", "2"],
@@ -206,6 +209,8 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
     assert options.explicit == fields - {
         "infile",
         "outfile",
+        # The other destination: it cannot accompany the PNG.
+        "output_dir",
         "explicit",
         "palette_file",
         "palette",
@@ -217,7 +222,8 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         # Derived from the settings, by `resolve_settings`.
         "shading",
         "shading_origins",
-        "clip_frames",
+        "export_sources",
+        "read_files",
         # It cannot accompany --config; recorded as explicit below.
         "no_user_config",
         # The preset --view names, recorded as `view`.
@@ -259,6 +265,7 @@ def test_every_option_can_be_recorded_as_explicit(tmp_path):
         convexity_weight=0.0,
         shade_range=(120, 188),
         frames=8,
+        formats=("sheet", "atlases"),
         normals=False,
         depth=True,
         light=(-20.0, 30.0, 40.0),
@@ -648,11 +655,8 @@ def test_a_repeat_names_the_values_given(capsys, argv, message):
             "argument --clip: expected one argument",
         ),
         ([*POSITIONALS, "extra.png"], "unrecognized arguments: extra.png"),
-        (["in.glb"], "the following arguments are required: <outfile.png>"),
-        (
-            [],
-            "the following arguments are required: <infile.glb>, <outfile.png>",
-        ),
+        (["in.glb"], "a destination is required: give <outfile.png>, or --output-dir"),
+        ([], "the following arguments are required: <infile.glb>"),
     ],
 )
 def test_unknown_options_and_wrong_positional_counts_are_rejected(

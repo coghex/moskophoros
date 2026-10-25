@@ -33,8 +33,8 @@ def refused(data):
 # The schema table and the shipped defaults
 
 
-def test_the_active_schema_holds_this_slices_settings():
-    assert list(settings.ACTIVE_SCHEMA) == [
+def test_the_schema_holds_every_setting_in_order():
+    assert list(settings.SCHEMA) == [
         "view",
         "pitch",
         "camera.projection",
@@ -84,8 +84,16 @@ def test_the_active_schema_holds_this_slices_settings():
         "ramp.lightness_step",
         "ramp.hue_shift_deg",
         "ramp.chroma_fade",
+        "stored_directions",
+        "direction_names",
+        "mirrors",
+        "export.formats",
+        "export.frame_path",
+        "export.atlas_path",
+        "export.sheet_path",
+        "export.atlas_padding",
     ]
-    assert settings.GROUPS == {"camera", "shade", "light", "ramp"}
+    assert settings.GROUPS == {"camera", "shade", "light", "ramp", "export"}
     for name, setting in settings.SCHEMA.items():
         assert setting.kind, name
         assert callable(setting.check), name
@@ -103,7 +111,7 @@ def test_the_design_s_example_settings_file_loads():
 
 def test_the_defaults_file_and_the_schema_table_agree():
     shipped = settings.read_defaults()
-    assert list(shipped) == list(settings.ACTIVE_SCHEMA)
+    assert list(shipped) == list(settings.SCHEMA)
     assert shipped == dict(settings.DEFAULTS)
     assert shipped == {
         # The view, scale and framing settings and the app settings
@@ -167,6 +175,15 @@ def test_the_defaults_file_and_the_schema_table_agree():
         "ramp.lightness_step": 0.12,
         "ramp.hue_shift_deg": -12.0,
         "ramp.chroma_fade": 0.3,
+        # The export settings (export design P-7).
+        "stored_directions": "all",
+        "direction_names": {},
+        "mirrors": {},
+        "export.formats": ("sheet",),
+        "export.frame_path": "frames/{clip}/{direction}/frame_{frame:03}{map}.png",
+        "export.atlas_path": "atlases/{clip}{map}.png",
+        "export.sheet_path": "sheet{map}.png",
+        "export.atlas_padding": 0,
     }
 
 
@@ -176,7 +193,7 @@ def test_the_defaults_file_gives_every_default_as_the_table_writes_it():
 
     document = yamlfile.load(text.encode("utf-8"))
     expected = {"version": 1}
-    for name, setting in settings.ACTIVE_SCHEMA.items():
+    for name, setting in settings.SCHEMA.items():
         *groups, member = name.split(".")
         target = expected
         for group in groups:
@@ -884,9 +901,16 @@ def test_an_unknown_clip_key_names_its_key_path_and_line():
     )
 
 
-def test_a_clip_leaf_not_available_yet_names_its_key_path_and_line():
-    assert refused("clips:\n  Jump:\n    frames: 6\n    fps: 24\n") == (
-        "clips.Jump.fps: not available yet at line 4, column 5"
+def test_a_clip_leaf_is_checked_and_names_its_key_path_and_line():
+    layer = read_bytes(
+        b"clips:\n  Jump:\n    frames: 6\n    fps: 24\n",
+        source="s.yaml",
+        directory="/settings",
+    )
+    assert layer["clips"] == {"Jump": {"frames": 6, "fps": 24.0}}
+    assert layer.where[("clips", "Jump", "fps")] == (4, 5)
+    assert refused("clips:\n  Jump:\n    frames: 6\n    fps: 0\n").startswith(
+        "clips.Jump.fps: "
     )
 
 

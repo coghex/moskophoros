@@ -11,11 +11,9 @@ so a clip's own `fps` leaves its lower-layer `frames` alone and an explicit
 against the actual view, naming the clip and the settings that contribute to
 a clash, and builds the `plan.RequestPlan` with the typed per-clip overrides.
 
-The command resolves through it with the layers it has: the internal defaults
-and its own `fps` and frame counts. The other settings it reads are inactive
-for every settings file (`settings`) and for a loaded manifest
-(`cli.read_settings`), so they stay at their defaults. Everything here is
-pure.
+The command resolves through it with every layer it has: the shipped defaults,
+the global file, a loaded manifest, the project file and the command line
+(`cli.export_sources`). Everything here is pure.
 """
 
 from collections.abc import Mapping
@@ -122,7 +120,7 @@ def resolve(sources):
                 kinds[key] = source.kind
                 break
         else:
-            values[key] = settings.ALL_DEFAULTS[key]
+            values[key] = settings.DEFAULTS[key]
             origins[key] = SHIPPED
             kinds[key] = DEFAULTS
     merged = settings.merge_clips(*(s.layer.get("clips", {}) for s in sources))

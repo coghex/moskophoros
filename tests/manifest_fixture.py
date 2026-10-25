@@ -68,9 +68,7 @@ IDLE = clip(1, "idle", count=1)
 
 
 def read(text):
-    return layered._read_document(
-        text.encode(), source="f.yaml", directory="/s", open_gate=True
-    )
+    return layered.read_bytes(text.encode(), source="f.yaml", directory="/s")
 
 
 def sources(text):

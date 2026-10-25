@@ -1,8 +1,8 @@
 """Replaying an export from its manifest alone (export design P-8, part 4):
 with the same model and generator, the manifest restores the settings, the
 fingerprint, the images and the metadata without the original config,
-project, palette or library files. The command does not do this yet, so the
-stages are chained here as the command will chain them."""
+project, palette or library files. The stages are chained here as the command
+chains them, over generated frames, so that no Blender is needed."""
 
 from dataclasses import replace
 
@@ -86,7 +86,7 @@ def replay(
             str(tmp_path / "out.png"),
         ]
     )
-    monkeypatch.setattr(cli, "read_settings", lambda path: loaded.reused)
+    monkeypatch.setattr(cli, "read_manifest", lambda path: loaded)
     options = cli.resolve_settings(parsed, environ={"HOME": str(tmp_path)})
     by_name = {c.clip.name: c for c in model}
     selected = tuple(

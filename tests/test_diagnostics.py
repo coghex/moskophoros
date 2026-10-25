@@ -14,9 +14,7 @@ from moskophoros.views import View
 
 
 def read(text):
-    return settings._read_document(
-        text.encode(), source="f.yaml", directory="/s", open_gate=True
-    )
+    return settings.read_bytes(text.encode(), source="f.yaml", directory="/s")
 
 
 def sel(name, t1=1.0, animated=True):

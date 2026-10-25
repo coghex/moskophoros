@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 from export_document import refit
+from manifest_fixture import clip as fixture_clip
+from manifest_fixture import export_for
 from test_command import Setup, run
 from test_materials_command import (
     COLORS,
@@ -31,7 +33,7 @@ from test_materials_command import (
 )
 from test_reuse import write_sheet
 
-from moskophoros import cli, views
+from moskophoros import cli, exportsettings, views
 from moskophoros import settings as settings_module
 
 POSITIONALS = ["in.glb", "out.png"]
@@ -1289,6 +1291,8 @@ EQUIVALENTS = [
 PROVENANCE = {
     "explicit",
     "origins",
+    "export_sources",
+    "read_files",
     "preset",
     "config",
     "project",
@@ -1915,3 +1919,138 @@ def test_a_bad_new_setting_is_exit_2_naming_file_key_and_line(
     assert err.splitlines()[-1] == (
         f"moskophoros: error: {label}: {key}: {problem} at line 2, column 1"
     )
+
+
+# The export settings across the layers (export design P-7, part 1)
+
+
+def export_resolved(*args):
+    """What the layers give the export settings, per `Options.export_sources`."""
+    return exportsettings.resolve(resolved(*args).export_sources)
+
+
+def test_the_export_settings_ship_their_defaults():
+    got = export_resolved()
+    assert got.stored_directions == "all"
+    assert (dict(got.direction_names), dict(got.mirrors)) == ({}, {})
+    assert (got.formats, got.atlas_padding) == (("sheet",), 0)
+    assert got.frame_path == "frames/{clip}/{direction}/frame_{frame:03}{map}.png"
+    assert (got.atlas_path, got.sheet_path) == (
+        "atlases/{clip}{map}.png",
+        "sheet{map}.png",
+    )
+    assert dict(got.clips) == {}
+
+
+def test_a_file_a_project_and_an_option_layer_the_export_settings(tmp_path):
+    user_file(
+        "stored_directions: [0, 4]\nmirrors: {7: 1}\n"
+        "export: {formats: [frames], atlas_padding: 3, sheet_path: 'g{map}.png'}\n"
+    )
+    got = export_resolved()
+    assert (got.stored_directions, dict(got.mirrors)) == ((0, 4), {7: 1})
+    assert (got.formats, got.atlas_padding, got.sheet_path) == (
+        ("frames",),
+        3,
+        "g{map}.png",
+    )
+    assert "user settings" in got.origins["export.atlas_padding"]
+    project_file(
+        "stored_directions: all\n"
+        "export: {formats: [atlases, sheet], atlas_padding: 5}\n"
+    )
+    got = export_resolved("--project", "look")
+    # The whole list replaces; the leaves merge one by one.
+    assert (got.stored_directions, dict(got.mirrors)) == ("all", {7: 1})
+    assert (got.formats, got.atlas_padding, got.sheet_path) == (
+        ("sheet", "atlases"),
+        5,
+        "g{map}.png",
+    )
+    assert "--project" in got.origins["export.atlas_padding"]
+    got = export_resolved("--project", "look", "--formats", "frames")
+    assert got.formats == ("frames",)
+    assert got.origins["export.formats"] == "the command line"
+    assert got.atlas_padding == 5
+
+
+def test_a_clips_leaves_merge_by_name_and_leaf_across_files(tmp_path):
+    user_file(
+        "stored_directions: [0, 4]\nmirrors: {7: 1}\n"
+        "clips:\n"
+        "  walk: {fps: 6, frames: 3, stored_directions: [0, 4, 3], mirrors: {5: 3}}\n"
+        "  idle: {mirrors: {6: 2}, stored_directions: [0, 2]}\n"
+        "  run: {output_name: sprint}\n"
+    )
+    project_file(
+        "clips:\n"
+        "  walk: {fps: null, stored_directions: all}\n"
+        "  idle: {mirrors: {}}\n"
+        "  run: {frames: 2}\n"
+    )
+    got = export_resolved("--project", "look").clips
+    walk, idle, run_ = got["walk"], got["idle"], got["run"]
+    # Omission inherits the lower file's value, null clears it, `all`
+    # restores every direction and `{}` disables the mirrors.
+    assert (walk.frames, walk.fps) == (3, None)
+    assert walk.stored_directions == "all" and dict(walk.mirrors) == {5: 3}
+    assert idle.stored_directions == (0, 2) and dict(idle.mirrors) == {}
+    assert (run_.output_name, run_.frames) == ("sprint", 2)
+    assert "--project" in walk.origins["fps"]
+    assert "user settings" in walk.origins["frames"]
+
+
+def test_a_loaded_manifests_values_sit_above_the_global_file_and_below_a_project(
+    tmp_path,
+):
+    sheet = tmp_path / "recorded.json"
+    sheet.write_bytes(
+        export_for(
+            "stored_directions: [2, 0]\nexport: {atlas_padding: 4}\n"
+            "clips:\n  walk: {frames: 2, fps: 6}\n",
+            clips=(fixture_clip(0, "walk"),),
+            view=views.View(4, 0.0),
+        ).data
+    )
+    user_file(
+        "stored_directions: [1]\nexport: {atlas_padding: 9, formats: [atlases]}\n"
+        "clips:\n  walk: {fps: 2, output_name: g}\n  idle: {fps: 3}\n"
+    )
+    project_file("export: {atlas_padding: 7}\nclips:\n  walk: {frames: 5}\n")
+    got = export_resolved("--settings-from", str(sheet))
+    # The loaded manifest records every setting, so it beats the file's.
+    assert got.stored_directions == (2, 0) and got.atlas_padding == 4
+    assert got.formats == ("sheet",)
+    # A clip it lists has all its leaves, the nulls clearing the file's.
+    assert (got.clips["walk"].fps, got.clips["walk"].output_name) == (6.0, None)
+    # A clip it does not list keeps the file's.
+    assert got.clips["idle"].fps == 3.0
+    got = export_resolved("--settings-from", str(sheet), "--project", "look")
+    assert (got.atlas_padding, got.clips["walk"].frames) == (7, 5)
+    assert got.stored_directions == (2, 0)
+    assert got.origins["export.atlas_padding"].startswith("--project")
+    got = export_resolved(
+        "--settings-from", str(sheet), "--project", "look", "--fps", "9"
+    )
+    assert (got.fps, got.fps_kind) == (9.0, exportsettings.OPTION)
+
+
+def test_the_export_settings_of_a_bad_file_are_refused_at_their_key(capsys):
+    path = user_file("export:\n  atlas_padding: 65\n")
+    message = refused(capsys)
+    assert message.startswith(
+        f"the user settings {str(path)!r}: export.atlas_padding: "
+    )
+    assert "at line 2, column 3" in message
+    user_file("clips:\n  walk: {fps: 0}\n")
+    assert refused(capsys).startswith(
+        f"the user settings {str(path)!r}: clips.walk.fps: "
+    )
+
+
+def test_a_clips_own_rate_and_the_command_lines_both_reach_the_plan(tmp_path):
+    user_file("clips:\n  walk: {fps: 8}\n")
+    options = resolved("--fps", "4")
+    got = exportsettings.resolve(options.export_sources)
+    assert (got.fps, got.clips["walk"].fps) == (4.0, 8.0)
+    assert options.fps == 4.0

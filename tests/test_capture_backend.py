@@ -19,7 +19,7 @@ from capture_buffers import (
 from PIL import Image
 from shading import DEFAULT_SHADE
 
-from moskophoros import fit, sampling, views
+from moskophoros import fit, plan, sampling, views
 from moskophoros.capture.backend import (
     BackendError,
     MalformedJob,
@@ -63,15 +63,20 @@ def frames(clips=CLIPS):
     return sampling.frames("hero", clips, VIEW, 4.0)
 
 
+def requested(clips=CLIPS, count=sampling.AUTO):
+    """The resolved plan of `clips`, with every direction stored."""
+    return plan.plan("hero", clips, VIEW, 4.0, count)
+
+
 def measure_job(output_dir="/work/measure"):
     return build_job(
-        "measure", SOURCE, "hero", MEASURE_SETTINGS, CLIPS, frames(), output_dir
+        "measure", SOURCE, "hero", MEASURE_SETTINGS, CLIPS, requested(), output_dir
     )
 
 
 def render_job(output_dir="/work/render"):
     return build_job(
-        "render", SOURCE, "hero", RENDER_SETTINGS, CLIPS, frames(), output_dir
+        "render", SOURCE, "hero", RENDER_SETTINGS, CLIPS, requested(), output_dir
     )
 
 
@@ -197,7 +202,7 @@ def test_a_render_job():
 
 def test_a_measure_job_leaves_fixed_values_null():
     job = build_job(
-        "measure", SOURCE, "hero", RENDER_SETTINGS, CLIPS, frames(), "/work/measure"
+        "measure", SOURCE, "hero", RENDER_SETTINGS, CLIPS, requested(), "/work/measure"
     )
     settings = job["settings"]
     assert (settings["pixels_per_meter"], settings["cell"], settings["ground_px"]) == (
@@ -215,7 +220,7 @@ def test_the_static_clip_has_a_null_index_and_no_roots():
         "hero",
         MEASURE_SETTINGS,
         static,
-        frames(static),
+        requested(static),
         "/work/measure",
     )
     assert job["clips"] == [
@@ -258,7 +263,7 @@ def test_frames_must_be_the_ones_the_clips_and_settings_give(name):
             "hero",
             MEASURE_SETTINGS,
             CLIPS,
-            bad_frames()[name],
+            replace(requested(), frames=bad_frames()[name]),
             "/work/measure",
         )
     assert raised.value.exit_code == 1
@@ -421,7 +426,7 @@ def test_a_malformed_job_is_an_internal_error(change, message):
             arguments["subject"],
             arguments["settings"],
             arguments["clips"],
-            frames(),
+            requested(),
             arguments["output_dir"],
         )
     assert raised.value.exit_code == 1
@@ -569,7 +574,7 @@ PERSPECTIVE_SETTINGS = replace(
 
 def perspective_job(output_dir="/work/measure"):
     return build_job(
-        "measure", SOURCE, "hero", PERSPECTIVE_SETTINGS, CLIPS, frames(), output_dir
+        "measure", SOURCE, "hero", PERSPECTIVE_SETTINGS, CLIPS, requested(), output_dir
     )
 
 
@@ -711,7 +716,7 @@ def test_a_perspective_render_job_carries_its_clipping():
         "hero",
         settings,
         CLIPS,
-        frames(),
+        requested(),
         "/work/render",
         Clipping(0.625, 10.0, (1.25, 4.5)),
     )
@@ -740,7 +745,7 @@ def test_clipping_belongs_to_a_perspective_render_job_alone():
     ]
     for mode, settings, clip, message in cases:
         with pytest.raises(MalformedJob, match=message):
-            build_job(mode, SOURCE, "hero", settings, CLIPS, frames(), "/w", clip)
+            build_job(mode, SOURCE, "hero", settings, CLIPS, requested(), "/w", clip)
 
 
 @pytest.mark.parametrize(
@@ -754,7 +759,7 @@ def test_clipping_belongs_to_a_perspective_render_job_alone():
 def test_a_perspective_job_needs_the_ground_point_in_front(position, message):
     settings = replace(PERSPECTIVE_SETTINGS, position=position)
     with pytest.raises(MalformedJob, match=message):
-        build_job("measure", SOURCE, "hero", settings, CLIPS, frames(), "/w")
+        build_job("measure", SOURCE, "hero", settings, CLIPS, requested(), "/w")
 
 
 @pytest.mark.parametrize(
@@ -1275,7 +1280,7 @@ def test_the_job_carries_the_capture_values_and_not_the_range():
         "hero",
         replace(RENDER_SETTINGS, shade=shade),
         CLIPS,
-        frames(),
+        requested(),
         "/work/render",
     )
     assert job["settings"]["shade"] == {
@@ -1305,7 +1310,7 @@ def test_each_capture_value_changes_the_job_s_digest(changed):
             "hero",
             replace(RENDER_SETTINGS, shade=shade),
             CLIPS,
-            frames(),
+            requested(),
             "/work/render",
         )
         return job_sha256(job)
@@ -1325,7 +1330,7 @@ def test_an_invalid_global_frame_count_is_a_malformed_job(value):
             "hero",
             replace(MEASURE_SETTINGS, frames=value),
             CLIPS,
-            frames(),
+            requested(),
             "/work/measure",
         )
 
@@ -1340,32 +1345,32 @@ def test_an_invalid_clip_frame_count_is_a_malformed_job(value):
             "hero",
             MEASURE_SETTINGS,
             clips,
-            frames(),
+            requested(),
             "/work/measure",
         )
 
 
 def test_frames_inconsistent_with_the_counts_are_a_malformed_job():
     counted = (replace(CLIPS[0], frames=3), CLIPS[1])
-    # Frames sampled automatically do not match a clip counted to 3.
-    with pytest.raises(MalformedJob, match="frames are not the ones"):
+    # A plan of automatic sampling is not the plan of a clip counted to 3.
+    with pytest.raises(MalformedJob, match="planned clips are not the selected"):
         build_job(
             "measure",
             SOURCE,
             "hero",
             MEASURE_SETTINGS,
             counted,
-            frames(),
+            requested(),
             "/work/measure",
         )
-    with pytest.raises(MalformedJob, match="frames are not the ones"):
+    with pytest.raises(MalformedJob, match="not timed as its rate and count give"):
         build_job(
             "measure",
             SOURCE,
             "hero",
             replace(MEASURE_SETTINGS, frames=5),
             CLIPS,
-            frames(),
+            requested(),
             "/work/measure",
         )
 
@@ -1374,8 +1379,9 @@ def test_the_job_carries_the_counts_and_a_changed_count_changes_its_digest():
     def job(global_, own):
         clips = (replace(CLIPS[0], frames=own), CLIPS[1])
         settings = replace(MEASURE_SETTINGS, frames=global_)
-        requested = sampling.frames("hero", clips, VIEW, 4.0, global_)
-        return build_job("measure", SOURCE, "hero", settings, clips, requested, "/w")
+        return build_job(
+            "measure", SOURCE, "hero", settings, clips, requested(clips, global_), "/w"
+        )
 
     base = job(3, None)
     assert base["settings"]["frames"] == 3

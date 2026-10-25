@@ -1,8 +1,8 @@
 """The positional command writes and reloads the complete `moskophoros.export/1`
-manifest (export design P-8, P-8a, P-13; EXP-6a): all of its members, with the
-new settings at their inactive defaults; reload of its own output byte for
-byte; and a loaded manifest that records any other value of an export setting
-refused, before Blender, since the command could not honor it yet."""
+manifest (export design P-8, P-8a): all of its members, with the export
+settings at their defaults; reload of its own output byte for byte; and a
+loaded manifest that records any other value of an export setting, which
+loads and layers like any other."""
 
 import json
 import re
@@ -14,7 +14,6 @@ import pytest
 from manifest_fixture import clip as fixture_clip
 from manifest_fixture import export_for
 from test_command import Setup, run
-from test_materials_command import forbid_blender
 from test_settings_command import own
 
 from moskophoros import cli, export, exportsettings, outputs, stylize, views
@@ -65,7 +64,7 @@ def written(setup, capsys, *options):
 # What a run writes
 
 
-def test_a_run_records_every_inactive_default(setup, capsys):
+def test_a_run_records_every_export_default(setup, capsys):
     settings = written(setup, capsys)["settings"]
     for name, value in DEFAULT_EXPORT.items():
         assert settings[name] == value
@@ -77,12 +76,12 @@ def test_a_run_records_every_inactive_default(setup, capsys):
 
 def test_the_defaults_recorded_are_the_schema_authority_s(setup, capsys):
     settings = written(setup, capsys)["settings"]
-    assert settings["stored_directions"] == layered.ALL_DEFAULTS["stored_directions"]
-    assert settings["direction_names"] == list(layered.ALL_DEFAULTS["direction_names"])
-    assert settings["mirrors"] == list(layered.ALL_DEFAULTS["mirrors"])
+    assert settings["stored_directions"] == layered.DEFAULTS["stored_directions"]
+    assert settings["direction_names"] == list(layered.DEFAULTS["direction_names"])
+    assert settings["mirrors"] == list(layered.DEFAULTS["mirrors"])
     for key in ("frame_path", "atlas_path", "sheet_path", "atlas_padding"):
-        assert settings["export"][key] == layered.ALL_DEFAULTS[f"export.{key}"]
-    assert settings["export"]["formats"] == list(layered.ALL_DEFAULTS["export.formats"])
+        assert settings["export"][key] == layered.DEFAULTS[f"export.{key}"]
+    assert settings["export"]["formats"] == list(layered.DEFAULTS["export.formats"])
 
 
 def test_the_samples_keep_the_full_ring_and_global_timing(setup, capsys):
@@ -220,128 +219,85 @@ def test_the_loaded_values_keep_their_precedence(setup, capsys):
     ]
 
 
-# Export settings that are not available yet
+# Export settings a loaded manifest records
 
 
 def manifest_with(text, tmp_path, clips=(WALK,)):
     """A complete manifest whose settings include the export settings `text`
-    sets, made by the writer: the unavailable values a loaded document may
-    hold."""
+    sets, made by the writer."""
     made = export_for(text, clips=clips)
-    path = tmp_path / "unavailable.json"
+    path = tmp_path / "recorded.json"
     path.write_bytes(made.data)
     return path
 
 
-# Each text sets export settings away from their inactive defaults, or to an
-# equivalent that the null override and the global value would still differ
-# from: the keys the command names.
-UNAVAILABLE = [
-    ("stored_directions: [0, 1, 2, 3, 4, 5, 6, 7]\n", ["settings.stored_directions"]),
-    ("stored_directions: [0, 4]\n", ["settings.stored_directions"]),
-    ("direction_names: {1: right}\n", ["settings.direction_names"]),
-    (
-        "stored_directions: [0, 1, 2, 3, 4, 5, 6]\nmirrors: {7: 1}\n",
-        ["settings.stored_directions", "settings.mirrors"],
-    ),
-    ("export: {formats: [frames]}\n", ["settings.export.formats"]),
-    ("export: {formats: [atlases, sheet]}\n", ["settings.export.formats"]),
-    (
-        "export: {frame_path: 'f/{clip}/{frame}{map}.png'}\n",
-        ["settings.export.frame_path"],
-    ),
-    ("export: {atlas_path: 'a/{clip}{map}.png'}\n", ["settings.export.atlas_path"]),
-    ("export: {sheet_path: 'sheet-x{map}.png'}\n", ["settings.export.sheet_path"]),
-    ("export: {atlas_padding: 2}\n", ["settings.export.atlas_padding"]),
-    ("clips: {walk: {fps: 6}}\n", ["settings.clips[0].fps"]),
+# Each text sets export settings away from their defaults, or to an
+# equivalent that the null override and the global value still differ from.
+RECORDED = [
+    "stored_directions: [0, 1, 2, 3, 4, 5, 6, 7]\n",
+    "stored_directions: [0, 4]\n",
+    "direction_names: {1: right}\n",
+    "stored_directions: [0, 1, 2, 3, 4, 5, 6]\nmirrors: {7: 1}\n",
+    "export: {formats: [frames]}\n",
+    "export: {formats: [atlases, sheet]}\n",
+    "export: {frame_path: 'f/{clip}/{frame}{map}.png'}\n",
+    "export: {atlas_path: 'a/{clip}{map}.png'}\n",
+    "export: {sheet_path: 'sheet-x{map}.png'}\n",
+    "export: {atlas_padding: 2}\n",
+    "clips: {walk: {fps: 6}}\n",
     # Equal to the global FPS, 12: still not the null that inherits it.
-    ("clips: {walk: {fps: 12}}\n", ["settings.clips[0].fps"]),
-    (
-        "clips: {walk: {stored_directions: [0, 4]}}\n",
-        ["settings.clips[0].stored_directions"],
-    ),
-    # "all" in place of the inheriting null.
-    (
-        "clips: {walk: {stored_directions: all}}\n",
-        ["settings.clips[0].stored_directions"],
-    ),
-    ("clips: {walk: {mirrors: {}}}\n", ["settings.clips[0].mirrors"]),
-    (
-        "stored_directions: [0, 1, 2, 3, 4, 5, 6]\nclips: {walk: {mirrors: {7: 1}}}\n",
-        ["settings.stored_directions", "settings.clips[0].mirrors"],
-    ),
-    ("clips: {walk: {output_name: stride}}\n", ["settings.clips[0].output_name"]),
-    # An alias equal to the cleaned name it would otherwise take.
-    ("clips: {walk: {output_name: walk}}\n", ["settings.clips[0].output_name"]),
+    "clips: {walk: {fps: 12}}\n",
+    "clips: {walk: {stored_directions: [0, 4]}}\n",
+    "clips: {walk: {stored_directions: all}}\n",
+    "clips: {walk: {mirrors: {}}}\n",
+    "stored_directions: [0, 1, 2, 3, 4, 5, 6]\nclips: {walk: {mirrors: {7: 1}}}\n",
+    "clips: {walk: {output_name: stride}}\n",
+    "clips: {walk: {output_name: walk}}\n",
+    "{}\n",
+    "stored_directions: all\ndirection_names: {}\nmirrors: {}\n",
+    "clips: {walk: {frames: 2}}\n",
+    "fps: 6\nframes: 3\n",
 ]
 
 
-@pytest.mark.parametrize(("text", "keys"), UNAVAILABLE)
-def test_a_manifest_recording_a_non_default_export_setting_is_refused(
-    setup, capsys, monkeypatch, tmp_path, text, keys
-):
+@pytest.mark.parametrize("text", RECORDED)
+def test_a_manifest_recording_any_export_setting_loads_and_layers_it(tmp_path, text):
     path = manifest_with(text, tmp_path)
-    forbid_blender(monkeypatch)
-    status, out, err = run(
-        capsys, ["--settings-from", str(path), "--no-user-config", *setup.argv()]
-    )
-    assert status == 2
-    assert out == ""
-    problems = [f"{key}: not available yet" for key in keys]
-    assert (
-        f"--settings-from {str(path)!r}: " + "; ".join(problems) in err.splitlines()[-1]
-    )
-    assert setup.calls() == []
-    assert setup.listing() == {}
-
-
-@pytest.mark.parametrize(("text", "keys"), UNAVAILABLE)
-def test_an_explicit_option_cannot_hide_an_unavailable_setting(
-    setup, capsys, monkeypatch, tmp_path, text, keys
-):
-    path = manifest_with(text, tmp_path)
-    forbid_blender(monkeypatch)
-    with pytest.raises(cli.UsageError):
-        cli.resolve_settings(
-            cli.parse_args(
-                [
-                    "--settings-from",
-                    str(path),
-                    "--no-user-config",
-                    "--fps",
-                    "12",
-                    "--frames",
-                    "2",
-                    "--clip",
-                    "other",
-                    "in.glb",
-                    "out.png",
-                ]
-            )
+    loaded = cli.read_manifest(path)
+    assert loaded.reused.clip == ("walk",)
+    options = cli.resolve_settings(
+        cli.parse_args(
+            ["--settings-from", str(path), "--no-user-config", "in.glb", "out.png"]
         )
-    assert f"{keys[0]}: not available yet" in capsys.readouterr().err
+    )
+    alone = exportsettings.resolve([loaded.source()])
+    layered_in = exportsettings.resolve(options.export_sources)
+    assert layered_in.clips == alone.clips
+    for key in ("stored_directions", "direction_names", "mirrors", "formats"):
+        assert getattr(layered_in, key) == getattr(alone, key)
+    assert (layered_in.frame_path, layered_in.atlas_path, layered_in.sheet_path) == (
+        alone.frame_path,
+        alone.atlas_path,
+        alone.sheet_path,
+    )
+    assert layered_in.atlas_padding == alone.atlas_padding
 
 
-@pytest.mark.parametrize(
-    "text",
-    [
-        "{}\n",
-        "stored_directions: all\ndirection_names: {}\nmirrors: {}\n",
-        "export: {formats: [sheet], atlas_padding: 0}\n",
-        "clips: {walk: {frames: 2}}\n",
-        "fps: 6\nframes: 3\n",
-    ],
-)
-def test_a_manifest_at_the_inactive_defaults_loads(tmp_path, text):
-    path = manifest_with(text, tmp_path)
-    reused = cli.read_settings(path)
-    assert reused.clip == ("walk",)
-
-
-def test_the_gate_compares_every_inactive_setting_with_the_schema_default():
-    unchecked = set(exportsettings.GLOBAL_KEYS) - {"fps", "frames"}
-    assert unchecked <= set(layered.ALL_DEFAULTS)
-    assert not unchecked & set(layered.DEFAULTS)
+def test_an_explicit_option_beats_what_a_loaded_manifest_records(tmp_path):
+    path = manifest_with("export: {formats: [frames]}\nfps: 6\n", tmp_path)
+    options = cli.resolve_settings(
+        cli.parse_args(
+            [
+                *["--settings-from", str(path), "--no-user-config"],
+                *["--fps", "9", "--formats", "atlases,sheet", "in.glb"],
+                "--output-dir",
+                "out",
+            ]
+        )
+    )
+    resolved = exportsettings.resolve(options.export_sources)
+    assert (resolved.fps, resolved.formats) == (9.0, ("sheet", "atlases"))
+    assert (resolved.fps_kind, options.fps) == (exportsettings.OPTION, 9.0)
 
 
 # The design's examples

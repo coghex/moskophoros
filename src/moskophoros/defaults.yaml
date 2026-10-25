@@ -76,3 +76,14 @@ ramp:            # how a library's generated ramps are made (setting B)
   lightness_step: 0.12   # OKLab lightness lost per shade, 0 to 1
   hue_shift_deg: -12     # hue turned per shade, degrees, -180 to 180
   chroma_fade: 0.3       # chroma lost by the darkest shade, 0 to 1
+stored_directions: all  # all, or an ordered list of distinct direction indices
+                        # to capture and store, such as [0, 4, 3, 2, 1]
+direction_names: {}     # filename aliases by direction index, such as {1: right}
+mirrors: {}             # directions taken from a stored one's picture reversed,
+                        # target index: stored source index, such as {7: 1}
+export:          # what is written (a clip's own may differ: see `clips`)
+  formats: [sheet]       # a nonempty list of sheet, frames and atlases
+  frame_path: frames/{clip}/{direction}/frame_{frame:03}{map}.png
+  atlas_path: atlases/{clip}{map}.png
+  sheet_path: sheet{map}.png
+  atlas_padding: 0       # edge texels repeated around each atlas cell, 0 to 64

@@ -1416,16 +1416,16 @@ def test_an_explicit_once_replaces_the_marks_and_must_name_loaded_clips():
         cli.apply_settings(parsed("--once", "swim"), reused)
 
 
-def test_the_public_command_refuses_the_full_manifest_for_its_unavailable_settings(
-    tmp_path, capsys
+def test_the_public_command_loads_the_full_manifest_with_its_export_settings(
+    tmp_path,
 ):
     path = tmp_path / "manifest.json"
     path.write_bytes(base().data)
-    with pytest.raises(cli.UsageError):
-        cli.read_settings(path)
-    err = capsys.readouterr().err
-    assert "settings.stored_directions: not available yet" in err
-    assert "settings.clips[0].output_name: not available yet" in err
+    loaded = cli.read_manifest(path)
+    assert cli.read_settings(path) == loaded.reused
+    resolved = exportsettings.resolve([loaded.source()])
+    assert resolved.stored_directions == (2, 0)
+    assert resolved.clips["walk"].output_name == "stride"
 
 
 def test_the_manifest_is_not_a_style_of_its_own():

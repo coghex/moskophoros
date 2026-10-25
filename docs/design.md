@@ -23,9 +23,12 @@ Decisions below were settled on 2026-09-29 unless marked otherwise.
 | **frame** | One image of one clip at one sample time from one direction. |
 | **cell** | The fixed-size rectangle every frame occupies. |
 | **ground point** | The point in subject coordinates that always lands on the same cell pixel. |
-| **sheet** | The output PNG laid out as a grid of every frame. The public command still writes a sheet, with its maps and previews, and a manifest that describes them. |
+| **sheet** | The PNG laid out as a grid of every real frame of every selected clip: a row per clip and stored direction, a column per sample. One of the three things a run can write, and the only one beside a PNG output. |
+| **atlas** | One clip's own image: a row per stored direction, a column per sample, with optional padding around each cell. |
+| **stored direction** | A direction that is captured and written. The others of the view may be **mirrored**: taken at runtime from a stored direction's picture reversed, with no capture, no file and no frame of their own. |
+| **export root** | The directory `--output-dir` names. It holds one subject's export, and its `manifest.json` lists every file the run wrote under it. |
 | **manifest** | The JSON that describes one export, `moskophoros.export/1`: its settings, its artifacts and where every frame is in them. |
-| **artifact** | One file of an export that the manifest lists: a sheet, a per-clip atlas, a frame image or a preview, by kind and channel. The public command writes a sheet and previews; atlases and frame images are planned (see [Export](#export)). |
+| **artifact** | One file of an export that the manifest lists: a sheet, a per-clip atlas, a frame image or a preview, by kind and channel. Which of them a run writes is set by `export.formats` (see [Export](#export)). |
 | **variant** | The subject with a different prop or palette. Slice 1 has one, `default`. |
 
 ## CLI
@@ -34,7 +37,15 @@ Decisions below were settled on 2026-09-29 unless marked otherwise.
 
 ```
 moskophoros [options] <infile.glb> <outfile.png>
+moskophoros [options] <infile.glb> --output-dir <dir>
 ```
+
+Exactly one destination is required (export design D-6): an `<outfile.png>`,
+which writes a sheet and the files beside it, or `--output-dir`, which writes
+an export into a directory. Giving both, or neither, is a usage error. The
+directory form needs no placeholder PNG argument. The destination, the form
+and the PNG's name are invocation data: they are not settings, never reach the
+fingerprint and are never written to a settings file.
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -49,7 +60,9 @@ moskophoros [options] <infile.glb> <outfile.png>
 | `--model-yaw DEG` | `0` | Corrects a model that does not face +Z (see [Input contract](#input-contract)). A [settings file](#settings-files) may set it. |
 | `--clip NAME` | every clip | Repeatable. Selects clips and their order in the sheet. |
 | `--once NAME` | none | Repeatable. Marks a selected clip as one-shot; all others loop. |
-| `--fps N` | `12` | Target sampling rate, greater than 0. A [settings file](#settings-files) may set it. |
+| `--fps N` | `12` | Target sampling rate, greater than 0. A [settings file](#settings-files) may set it. A clip's own `fps`, set in a file, beats it, `--fps` included. |
+| `--output-dir DIR` | none | Write the export into `DIR` in place of an `<outfile.png>`: `manifest.json` and the sheet, atlases and frame images that `--formats` and the export settings select, in the layout [Export](#export) gives. `DIR` holds one subject's export. Cannot accompany an `<outfile.png>`. |
+| `--formats LIST` | `sheet` | What the run writes: a nonempty, duplicate-free, comma-separated subset of `sheet`, `frames` and `atlases`, in any order, normalised to that one. It replaces `export.formats`, as an ordinary last layer. An `<outfile.png>` needs `sheet` alone. See [Export](#export). |
 | `--ppm N` | auto | Pixels per meter, greater than 0, or `auto`, fitted. `auto` drops a reused or configured value, as `--cell auto` drops a cell (projects and camera design D-16). See [Scale and ground point](#scale-and-ground-point). A [settings file](#settings-files) may set it. |
 | `--cell WxH` | reused by `--settings-from`, else fitted to the model with `--ppm`, else 64×64 | Cell size in pixels, each 1 to 4096, or `auto`, the automatic cell: fitted with the pixels per meter in force, given or reused, else 64×64. `auto` drops a reused or configured cell (owner decision 2026-10-11, settings design D-32). Without a given or reused `--ppm`, the model is scaled to fit the cell. See [Scale and ground point](#scale-and-ground-point). A [settings file](#settings-files) may set it. |
 | `--ground X,Y,Z` | `0,0,0` | Ground point in subject coordinates, meters. A [settings file](#settings-files) may set it. |
@@ -80,7 +93,7 @@ moskophoros [options] <infile.glb> <outfile.png>
 | `--ramp-hue-shift DEG` | `-12` | How far each shade of a generated ramp turns the hue, in degrees, finite, −180 to 180. |
 | `--ramp-fade F` | `0.3` | How much chroma a generated ramp loses by its darkest shade, finite, 0 to 1. |
 | `--frames N` | `auto` | How many frames each clip is sampled to, a whole number 1 or more, retimed so every frame lasts `1/fps`; `auto` samples by duration. A clip's own count, set in a [settings file](#settings-files), beats it. See [Clips and sampling](#clips-and-sampling). |
-| `--settings-from FILE` | none | Load every recorded setting of an earlier export's `moskophoros.export/1` manifest, which must be a complete, consistent document; any other schema, `moskophoros.sheet/15` included, is refused. The manifest's new export settings must be at their defaults for now. See [Scale and ground point](#scale-and-ground-point), *Reuse*. |
+| `--settings-from FILE` | none | Load every recorded setting of an earlier export's `moskophoros.export/1` manifest, which must be a complete, consistent document; any other schema, `moskophoros.sheet/15` included, is refused. The export settings it records load too. See [Scale and ground point](#scale-and-ground-point), *Reuse*. |
 | `--config FILE` | the user file | Use FILE as the global settings file, in place of the user file. Given at most once. Its values are defaults, below a loaded sheet. See [Settings files](#settings-files). |
 | `--no-user-config` | off | Use no global settings file: skip the user file. Cannot accompany `--config`. |
 | `--project NAME` | none | Read the project file `projects/NAME.yaml` in the configuration directory. Given at most once. Its values act as the options would, over the global file and a loaded sheet. See [Settings files](#settings-files). |
@@ -124,9 +137,36 @@ relative to the PNG's folder, never as paths; each filename above is unchanged
 by the manifest. The names it also records for each clip and direction
 (`output_name`) are informational here, are not checked and may be equal for
 two clips or two directions: the artifact paths are the authority for what was
-written. The output is a sheet; the output directory, the per-clip atlases and
-the frame images that the manifest can also describe are planned and are not
-written by this command (export design EXP-6b).
+written. In this form the output is the sheet alone: `export.formats` must be
+`[sheet]`, else the run fails before capture with a usage error saying to give
+`--output-dir` instead (export design P-7, part 3). Its export templates are
+syntax-checked and recorded, but they name no file here.
+
+**`--output-dir`** (export design D-6, D-9, D-16). The directory form writes
+`manifest.json` at the root of `DIR` and whichever of the combined sheet, one
+atlas per clip and one PNG per frame `export.formats` selects, each with its
+normal and depth maps when those are written, at the paths the three path
+templates give relative to `DIR`; and each clip's flat preview, with a light its
+lit one, as `previews/<clip>.gif` and `previews/<clip>.lit.gif`, with the clip's
+output name for `<clip>` (see [Export](#export)). Any nonempty combination of the
+formats is allowed, so a run may write no combined sheet. All the paths are
+resolved, with every name and collision checked, before capture. `DIR` holds
+one subject's export: before capture, an existing `manifest.json` there must be
+readable JSON with a string `subject`, and the subject, the input file's stem,
+must be this run's, else the run is a usage error (exit 2) naming the file and
+the reason; another model of the same subject is allowed and replaces it. A
+manifest that cannot be read at all is an output error (exit 6). The
+positional `<stem>.json` is not checked this way. A new `DIR` needs an existing
+parent directory, which is not created, and is created with the directories the
+paths need. Below the resolved `DIR`, no symbolic link may be an output or on
+the way to one, no output may be a directory or another file that is not
+regular, and no output may be a file the run reads (the model, a settings file,
+a palette or a library): each is a usage error before capture. Links above
+`DIR` may be followed. The one file that is read and may be replaced is the
+manifest `--settings-from` loaded, read completely and closed first, in this form
+and in the positional one (`--settings-from DIR/manifest.json --output-dir DIR`).
+The positional form keeps its own two checks and its replacement of a symbolic
+link, and adds none of these.
 
 Existing outputs are overwritten. All outputs are written to temporary files
 and renamed into place only after the whole run succeeds, so a failed run
@@ -135,14 +175,20 @@ fails partway, the outputs already replaced are rolled back and the earlier
 ones restored before the run fails. An output that cannot be written, on a
 full disk, without permission or because a rename fails, is an output error
 (exit 6) naming the output and the reason, with the earlier outputs kept
-(owner decision 2026-10-03). If a step of that rollback fails too, the message
+(owner decision 2026-10-03). In the directory form the files are staged beside
+their targets and replaced one by one with `manifest.json` last, so no valid new
+manifest exists after a failure; the directories the run created are removed
+again if they are left empty, and a directory or file that existed is never
+removed. A directory component that changes after the checks, into a link or the
+wrong kind of file, is an output error too (exit 6). If a step of that rollback fails too, the message
 names each target left unrestored and the backup that holds its earlier file,
 and does not say the earlier outputs are kept; the other steps still run.
 The exit status is the same, and an interruption whose rollback fails the same
 way is still reported as `interrupted`, with the status 130. A run replaces
 only the files it writes and never deletes others, so previews from an earlier
 run that this run does not write, such as a dropped clip's or under
-`--no-preview`, stay as they were, and so does an earlier normal map under `--no-normals`, depth map
+`--no-preview`, and the frames or atlases of an earlier, larger export, stay as
+they were, and so does an earlier normal map under `--no-normals`, depth map
 without `--depth` and lit previews without a light (owner decisions
 2026-10-01; lighting sheet design D-17). Errors go to stderr as
 `moskophoros: error: <message>`.
@@ -173,15 +219,17 @@ files may set: the view, the model yaw, the scale, the cell, the ground point
 and ground pixel, supersampling, the reduction, root motion, `fps`, the
 palette, the material library, the edges rule, whether previews and the
 normal and depth maps are written, the preview light, and the shading controls
-(shading design contract 1, D-5 to D-11, D-24 to D-26, D-28, D-29 and D-32). So are the two app
+(shading design contract 1, D-5 to D-11, D-24 to D-26, D-28, D-29 and D-32), and what is
+written and where: the stored directions, their names and mirrors, the export
+formats and their paths and the atlas padding (export design P-7). So are the two app
 settings, the Blender executable and whether another Blender version is
 allowed (owner decisions 2026-10-11, settings design D-2, D-5, D-8, D-14,
 D-17, D-22, D-28, D-30 and D-32; lighting sheet design D-18; alpha design
 D-9; projects and camera design D-4, D-5, D-12 and D-16). Each is validated exactly as its option is. One schema table
 in `settings.py` gives each setting's type, unit, default and validation
-rule, and the packaged `defaults.yaml` gives every active setting its shipped
-default; a test keeps the two in agreement. A setting can be defined in the
-table but inactive, which the export preparation below uses.
+rule, and the packaged `defaults.yaml` gives every setting its shipped default;
+a test keeps the two in agreement. `defaults.yaml` lists no `clips`: a clip's
+own settings default to nothing, and inherit.
 
 | Setting | Option | Shipped default | Value |
 |---|---|---|---|
@@ -204,6 +252,10 @@ table but inactive, which the export preparation below uses.
 | `fps` | `--fps N` | `12` | a finite number greater than 0 |
 | `frames` | `--frames N` | `auto` | a whole number 1 or more, or `auto` |
 | `clips.NAME.frames` | none: files only | none | a whole number 1 or more, `auto`, or `null` to take `frames` |
+| `clips.NAME.fps` | none: files only | none | a finite number greater than 0, or `null` to take `fps` |
+| `clips.NAME.stored_directions` | none: files only | none | `all` or an ordered list of distinct direction indices, or `null` to take `stored_directions` |
+| `clips.NAME.mirrors` | none: files only | none | a mapping from target to stored source direction index; `{}` for none, or `null` to take `mirrors` |
+| `clips.NAME.output_name` | none: files only | none | a name in directory-mode paths, or `null`: the clip's cleaned name |
 | `palette` | `--palette FILE`, `--no-palette` | `null` | a palette file path, or `null` for none |
 | `materials` | `--materials FILE`, `--no-materials` | `null` | a material library path, or `null` for none |
 | `edges` | `--edges RULE` | `hard` | `hard` or `soft` |
@@ -233,6 +285,14 @@ table but inactive, which the export preparation below uses.
 | `ramp.lightness_step` | `--ramp-step L` | `0.12` | a finite number from 0 to 1 |
 | `ramp.hue_shift_deg` | `--ramp-hue-shift DEG` | `-12` | a finite number from −180 to 180, degrees |
 | `ramp.chroma_fade` | `--ramp-fade F` | `0.3` | a finite number from 0 to 1 |
+| `stored_directions` | none: files only | `all` | `all`, or a nonempty ordered list of distinct direction indices, each 0 to 63: the directions captured and written |
+| `direction_names` | none: files only | `{}` | a mapping from direction index to a filename alias using only `A-Z a-z 0-9 . _ -` |
+| `mirrors` | none: files only | `{}` | a mapping from target direction index to a stored source index: the targets are taken from the sources' pictures, reversed |
+| `export.formats` | `--formats LIST` | `[sheet]` | a nonempty subset of `sheet`, `frames` and `atlases`, normalised to that order |
+| `export.frame_path` | none: files only | `frames/{clip}/{direction}/frame_{frame:03}{map}.png` | the template of each frame file's path in an output directory |
+| `export.atlas_path` | none: files only | `atlases/{clip}{map}.png` | the template of each clip atlas's path |
+| `export.sheet_path` | none: files only | `sheet{map}.png` | the template of the combined sheet's path |
+| `export.atlas_padding` | none: files only | `0` | a whole number from 0 to 64: the edge texels repeated around each atlas cell |
 | `blender` | `--blender PATH` | `null` | an executable's path, or `null` to discover Blender as today; an app setting |
 | `any_blender` | `--any-blender` | `false` | `true` or `false`; an app setting |
 
@@ -266,27 +326,39 @@ line and column. The key direction, the sky and ground frame and the snap
 target are global only: a material cannot override them.
 
 `clips` is a mapping keyed by clip name, each entry a mapping of that clip's
-own settings, so far only `frames` (owner decisions 2026-10-11, settings
-design D-17, D-22, D-31 and D-34). Per-clip values are set in files only.
-Entries merge by clip name and by leaf across the layers, the loaded sheet's
-included, and a higher layer's `null` clears a lower one's count. An entry naming a
-clip the model does not have, or one not selected, is unused, though it is
-still checked. An unknown key in an entry, or a bad count, is an error
-naming the file, the key path (`clips.Jump.frames`) and the line.
+own settings: `frames`, `fps`, `stored_directions`, `mirrors` and `output_name`
+(owner decisions 2026-10-11, settings design D-17, D-22, D-31 and D-34; export
+design P-7). Per-clip values are set in files only. Entries merge by clip name
+and by leaf across the layers, the loaded sheet's included: a leaf a layer
+leaves out inherits the lower layer's, and a higher layer's `null` clears a lower
+layer's own value. A clip's own `stored_directions` replaces the global list
+whole, `all` restoring every direction over a restricted global list; its own
+`mirrors` replaces the global map whole, `{}` disabling inherited mirrors. An
+entry naming a clip the model does not have, or one not selected, is unused,
+though it is still checked, and warns nothing. An unknown key in an entry, or a
+bad value, is an error naming the file, the key path (`clips.Jump.fps`) and
+the line.
 
-**Export preparation (internal, not yet available).** The schema table also
-defines the settings the export arc will add: `stored_directions`,
-`direction_names`, `mirrors` and `export.formats`, `export.frame_path`,
-`export.atlas_path`, `export.sheet_path` and `export.atlas_padding`, and a
-clip's `fps`, `stored_directions`, `mirrors` and `output_name`. They are
-marked inactive. No settings file can set one: a file that does, with any
-value, the `export` group included, is a usage error (exit 2, before
-Blender) that names the file, the key and its line and column and says
-`not available yet`. The shipped `defaults.yaml` and the command's defaults hold
-active settings only, and no option for them exists. Internal code resolves
-them across layers (`exportsettings`), checks them against the view, and plans
-the relative output paths and warnings (`outputs`, `diagnostics`); the command
-does not call it yet, and its output and sheet schema are unchanged.
+**Export settings** (export design P-7, D-4, D-5). The settings
+`stored_directions`, `direction_names`, `mirrors`, `export.formats`,
+`export.frame_path`, `export.atlas_path`, `export.sheet_path` and
+`export.atlas_padding` are global; each of the first four replaces whole across
+the layers (an empty mapping clears the names or mirrors, `all` resets the
+directions), and the other `export` leaves merge one by one. `--formats` is the
+one option among them. The value checks are strict, like every setting's:
+
+- Direction indices, as list items, mapping keys and mapping values, are YAML
+  integers from 0 to 63, never booleans or strings of digits. A stored list is
+  nonempty with no index twice. Names use only `A-Z a-z 0-9 . _ -`. A mirror maps
+  an omitted target to a stored source: no chain, no self-mirror.
+- With the layers merged, every index must exist in the view in force, every
+  direction-name key too, and in each selected clip's effective values every
+  mirror source must be stored and every target omitted. A clash is a usage error
+  naming the clip and every setting that contributes to it with where it came
+  from, so changing `--directions` never drops a stored direction silently.
+- `fps` is finite and greater than 0, like the global one.
+- The path templates are checked for syntax whatever the formats are (see
+  [Export](#export), *Layout*), and `atlas_padding` is 0 to 64.
 
 **Layers.** Lowest first, each a partial set of settings; a setting a layer
 leaves out falls through to the layer below (projects and camera design D-9,
@@ -344,8 +416,9 @@ identical resolved settings give identical bytes.
   a project file's value that a library or material value shadows draws a
   warning; the shipped defaults, the global file, a `--config` file and a loaded
   sheet never do (shading design D-41).
-- Per-clip frame counts merge by clip name: the global file's, then the
-  loaded sheet's, then the project's.
+- Per-clip values merge by clip name and leaf: the global file's, then the
+  loaded sheet's, then the project's. A clip's own `fps` beats the global one
+  from any layer, an option included.
 - The library is one setting, a path, and replaces whole. It is validated
   against the palette in force, wherever each came from.
 - `auto` for `ppm` or `ground_px` is the automatic value: it clears a
@@ -460,8 +533,18 @@ light:                  # a preview light; set any of them, the rest fall throug
   intensity: 1.0
   ambient: 0.3
 frames: 8               # or auto
+stored_directions: all  # or an ordered list, such as [0, 4, 3, 2, 1]
+direction_names: {}     # filename aliases by direction index, such as {1: right}
+mirrors: {}             # target: stored source, shown reversed, such as {7: 1}
+export:
+  formats: [sheet]      # sheet, frames, atlases: what is written
+  frame_path: frames/{clip}/{direction}/frame_{frame:03}{map}.png
+  atlas_path: atlases/{clip}{map}.png
+  sheet_path: sheet{map}.png
+  atlas_padding: 0      # 0 to 64
 clips:
-  Jump: {frames: 6}     # its own count; auto: by duration; null: take frames
+  Jump: {frames: 6, fps: 8}  # its own count and rate; null: take the global
+  Idle: {stored_directions: all, mirrors: {}, output_name: rest}
 shade:                  # set any of them; the rest fall through
   ao_distance_m: 1.2
   occlusion_weight: 0.5
@@ -530,6 +613,24 @@ decision 2026-10-01):
   settings file or a reused sheet the same values are refused, `light.position`
   being `null` or a list of three finite numbers, never booleans (lighting
   sheet design D-18, Review 2's S-3).
+- Not exactly one destination: both an `<outfile.png>` and `--output-dir`, or
+  neither. A `--formats` that is empty, names a format other than `sheet`,
+  `frames` or `atlases`, or lists one twice, or that is repeated. An
+  `<outfile.png>` run whose resolved formats, from `--formats`, a file or a
+  loaded manifest, are not `[sheet]` alone. Each is found before Blender.
+- A name, template or path of the export that cannot be used, found before
+  Blender (export design P-7): a template with an unknown token, an unmatched
+  brace, a brace escape, a bad `:0N` width or a token its kind may not use, in
+  either form; and in the directory form only, an output name that is empty,
+  `.` or `..`, ends in a dot or is a Windows device name, an alias using a
+  character outside `A-Z a-z 0-9 . _ -`, two clips or two directions whose output
+  names are equal ignoring ASCII case, an expanded path that does not end in
+  lowercase `.png`, is absolute or has a drive, has a backslash, a control
+  character, an empty, `.` or `..` component, a component ending in a dot or a
+  space or naming a Windows device, and two outputs that share a path, or one that
+  is a directory of another, ignoring ASCII case, the maps, the previews and
+  `manifest.json` included. The message names the template, the clip, direction and
+  sample, and the paths.
 - `--frames` not a decimal whole number 1 or more, nor `auto`; in a file, a
   count that is not a YAML integer 1 or more (never `8.0`, `"8"` or a
   boolean), nor `auto`, nor (for a clip) `null`. There is no upper bound;
@@ -622,12 +723,18 @@ A usage error prints the usage synopsis to stderr, followed by the
 |---|---|
 | 0 | Success. |
 | 1 | Internal error (a bug); a traceback is printed. |
-| 2 | Usage error: bad option, value or combination. |
+| 2 | Usage error: bad option, value or combination, and any setting, name, template or output path found unusable before capture, including, in the directory form only, a name or an expanded-path collision, an existing `manifest.json` of another subject or one that cannot establish it, a root that is a file or has no parent directory, and a symbolic link, a non-regular target or an overwritten input below the root. |
 | 3 | Input error: see [Input contract](#input-contract) and [Root motion](#root-motion). |
 | 4 | Overflow: the subject does not fit a fixed cell and scale; with the depth map written, its depth does not fit the map's range; or, under the perspective camera, a vertex is too near the camera to project (see [Camera and directions](#camera-and-directions)). |
 | 5 | Backend error: Blender missing, wrong version, or failed, including a frame with a stack of see-through surfaces deeper than the capture renders (see [Capture](#capture)). |
-| 6 | Output error: an output could not be written (a full disk, no permission, a failed rename). The message names the output and the reason; the earlier outputs are kept, or, when a rollback step failed, each target left unrestored is named with the backup that holds its earlier file, and no usage synopsis or traceback is printed (owner decision 2026-10-03). |
-| 130 | Interrupted (Ctrl-C): `moskophoros: error: interrupted`, no traceback, nothing published, or, when a rollback step failed, `interrupted` followed by each target left unrestored and the backup that holds its earlier file (owner decision 2026-10-01). |
+| 6 | Output error: an output could not be written (a full disk, no permission, a failed rename, a directory that could not be created), an existing `manifest.json` that could not be read, or, in the directory form, an output component that became a link or the wrong kind of file after the checks. The message names the output and the reason; the earlier outputs are kept, or, when a rollback step failed, each target left unrestored is named with the backup that holds its earlier file, and no usage synopsis or traceback is printed (owner decision 2026-10-03). |
+| 130 | Interrupted (Ctrl-C), at any stage: `moskophoros: error: interrupted`, no traceback, nothing published (an interruption during publication is handled after the file in hand and rolled back), or, when a rollback step failed, `interrupted` followed by each target left unrestored and the backup that holds its earlier file (owner decision 2026-10-01). |
+
+The classes are the same in both forms except for the directory-only refusals
+named in the table. A rollback failure keeps the original class, 6 or 130, and
+reports the backups; it never claims the earlier files were restored. There is no
+recovery from a crash or a kill, no pruning of files an earlier run wrote and no
+isolation from another process writing the same directory (export design P-9).
 
 ## Input contract
 
@@ -870,6 +977,23 @@ when it has one; else the global `frames` (`--frames`, or a
 decisions 2026-10-11, settings design D-13, D-26, D-31). `auto` samples by
 duration.
 
+**Rate.** A clip's `fps` below is its own `clips.NAME.fps` when it has one, else
+the global `fps` (export design D-2, P-7). The clip's own beats the global from
+every layer, `--fps` included, and sets everything the global rate would: an
+`auto` clip's frame count, a counted frame's duration `1/fps` and a still's
+frame duration. Its frame count stays independent of it, so changing the rate
+leaves a lower layer's count alone.
+
+**Stored directions and mirrors.** A clip captures only its stored directions
+(`clips.NAME.stored_directions`, else `stored_directions`), at their original
+indices and angles and in the configured order, which is never the angle order or
+the compass-name order; `[0, 4, 3, 2, 1]` of eight directions is south, north,
+north-east, east, south-east, and direction 4 stays direction 4. A mirrored
+direction is not captured: it is a requested relationship, recorded in the
+manifest, with no frame address, no file and no capture work. Every frame is
+sampled at its exact source time, at the clip's resolved rate, whatever the
+global rate.
+
 **Sample times.** With `n = max(1, floor(d · fps + 0.5))`, for a clip whose
 count is `auto`:
 
@@ -910,6 +1034,21 @@ change to the output:
 - A selected zero-duration or `static` clip whose own count is above 1 is
   named as keeping one frame.
 - A `clips` entry for a clip not selected warns nothing.
+- When `--fps` or a project file sets the global rate, one warning names every
+  selected clip with its own `fps` and the value, even an equal one and a still
+  or zero-duration clip, whose frame duration uses the rate. A rate from the
+  shipped defaults, the global file or a loaded manifest warns nothing.
+- For each selected clip and each of its mirrors, one warning when a necessary
+  condition for a horizontal flip to be a reflection fails, listing every failed
+  condition, and the run goes on (export design D-17). With `θ = (start + i · 360
+  / N) mod 360`, the conditions are: the camera roll is 0 or ±1 (half turns);
+  `θ` of the target plus `θ` of the source is congruent to 0 modulo 360 degrees;
+  and a perspective camera has no sideways offset from its vertical heading plane
+  through the ground point (an orthographic camera's position is unused). The
+  model's yaw only faces it +Z and takes no part: with eight directions, start 0,
+  roll 0 and no offset, `{7: 1}` never warns, for a yaw of 0, 90 or 30, and a
+  wrong pair always does. The warning refuses nothing and infers nothing about
+  the subject's or its lighting's symmetry.
 
 Each sample is evaluated at its exact time, not rounded to a timeline frame.
 
@@ -936,14 +1075,19 @@ The ground point always lands exactly on the cell pixel-grid corner
 `(gx, gy)`, counted from the cell's top-left corner, in every frame. Nothing
 is snapped per frame.
 
-**Bounds.** Over every sample of every selected clip in every direction, the
-backend measures the subject's evaluated (skinned and morphed) vertices
+**Bounds.** Over every sample of every selected clip in every stored direction
+(a mirrored direction is not captured and takes no part), the backend measures the subject's evaluated (skinned and morphed) vertices
 relative to the projected ground point, in meters on the screen plane:
 
 - `L`: the farthest extent left of the ground point
 - `R`: the farthest extent right
 - `U`: the farthest extent above
 - `D`: the farthest extent below
+
+Every stored sample of every selected clip shares the one resulting scale, cell
+and ground point, so each clip's views line up whatever subset it stores. A fixed
+cell that a stored sample overflows is an overflow (exit 4), never shrunk or
+moved.
 
 Each is 0 or more. The margin is `m = 1` pixel.
 
@@ -1033,9 +1177,7 @@ D-28; export design P-8, P-13 and D-18):
 - the clip selection and its one-shot marks, `settings.clips`
 - the export settings the manifest also records: `settings.stored_directions`,
   `settings.direction_names`, `settings.mirrors`, `settings.export` and each
-  clip's own `fps`, `stored_directions`, `mirrors` and `output_name`. The
-  command cannot execute any of them yet, so for now they load only at their
-  inactive defaults (see below)
+  clip's own `fps`, `stored_directions`, `mirrors` and `output_name`
 
 This makes scale, cell and ground pixel fixed. Options given explicitly, and
 project values, override the reused values; the global file, whether the user
@@ -1073,20 +1215,19 @@ their source files. An error names the file and the member or setting, and is
 a usage error (exit 2) raised before Blender starts, its version probe
 included.
 
-**Temporary restriction.** Until the export settings are available (export
-design EXP-6b), a loaded manifest must record each of them at its inactive
-default: `stored_directions` `"all"`, no `direction_names`, no `mirrors`,
-`export.formats` `["sheet"]`, the default `export.frame_path`,
-`export.atlas_path` and `export.sheet_path` templates, `export.atlas_padding`
-`0`, and `null` for each clip's own `fps`, `stored_directions`, `mirrors` and
-`output_name`. The test is on the recorded value, not on its effect: a clip's
-own `"all"`, an empty `mirrors` array, an `fps` equal to the global one or an
-alias equal to the clip's cleaned name still differs from the `null` that
-inherits, so it is refused. Any other value is refused as `settings.<key>: not
-available yet`, naming the file and the key or clip position, before Blender
-starts and before any explicit option could hide it. A settings file or
-option cannot set these settings either (*Settings files*). The command
-neither accepts nor ignores them: only the defaults run.
+**Replay.** The export settings load like the rest, whatever their values. The
+loaded manifest sits above the global file and below a project and the command
+line, and it records every setting, so for the global ones the file's values never
+apply under it. A clip it lists brings all its leaves, a `null` clearing the
+file's own value, and a clip it does not list keeps the file's (*Settings files*).
+The manifest alone, with the model and the same generator, restores the export;
+the destination is chosen again, and the output root is not part of the
+fingerprint, so the same destination form and PNG name give the same files and
+metadata in any root, in place or fresh. Switching the form is allowed within the
+formats the new one can write: a `frames` or `atlases` manifest replayed to an
+`<outfile.png>` needs `--formats sheet`, which changes the settings and so the
+fingerprint. The whole document is validated first, whatever an explicit option
+would override.
 
 The clip selection (owner decisions 2026-10-11, settings design D-19 and
 D-27):
@@ -1100,10 +1241,12 @@ D-27):
   list; a name that is not is a usage error.
 - Without `--clip` or `--once`, the loaded list and marks stay.
 - Each recorded clip's own frame count, a count, `auto` or `null`, loads
-  with the global `settings.frames`. Per-clip counts merge by clip name, so
-  an explicit `--clip` replaces the selection and its marks but not the
-  counts: a re-selected clip keeps its loaded count. A `--frames` reaches
-  every clip whose value is `null` (settings design D-31, D-39).
+  with the global `settings.frames`, and so does each of its other leaves, `fps`,
+  `stored_directions`, `mirrors` and `output_name`. Per-clip values merge by clip
+  name, so an explicit `--clip` replaces the selection and its marks but not the
+  values: a re-selected clip keeps its loaded count, rate, directions, mirrors and
+  alias. A `--frames` reaches every clip whose value is `null` (settings design
+  D-31, D-39).
 - The final selection is checked against the model: a retained loaded clip
   the model no longer has is an input error (exit 3) naming the clip. A clip
   that `--clip` replaced need not exist.
@@ -1790,14 +1933,22 @@ keys, missing required fields and invalid numeric values are rejected.
 | `settings` | The accepted sheet settings, using resolved option values, with the global frame count `frames` and each clip entry's own `frames` as given, which the script checks (a count, `auto`, or for a clip `null`); the job's `frames` list already holds the times they sample, so Blender never resamples, and `time_scale` is not in the job. In measure mode, `pixels_per_meter`, `cell` and `ground_px` are null: fitting belongs to the caller. In render mode all three are resolved, fixed values. `view` holds exactly `preset`, `directions` and `start_angle_deg`, and `camera`, after it, exactly `projection` (`orthographic` or `perspective`), `direction` (three finite numbers each from −1 to 1, normalised to within `1e-12` of length 1), `roll` (a finite number from −1 to 1) and `position` (three finite numbers, or null; for `perspective` three numbers with the ground point in front of the camera), as the sheet records them (projects and camera design D-14, D-16); both the launcher and the script check them strictly, and the script projects and frames with the rolled screen axes (see [Camera and directions](#camera-and-directions)). `shade` carries the shade's capture values, exactly `ao_distance_m` (finite, greater than 0), `ao_samples` (an integer, 1 to 128), `occlusion_weight` and `convexity_weight` (finite, 0 or greater), and `materials`: for each glTF material whose library entry gives its own `ao_distance_m`, `occlusion_weight` or `convexity_weight`, in ascending material order, exactly `material` (its glTF index) and its three resolved capture values, each its own or the global. Both the launcher and the script check them. Of the style, the job carries only those per-material values (owner decision 2026-10-11, settings design D-36, amending the rule below): the sheet's ramps, generated or listed, palette, reduction, default ramp, `previews` and shade ranges, the library's own `shade` included, are left out, as they act after capture, so the job and its `job_sha256` are the same whatever they are (owner decisions 2026-10-04, 2026-10-12). |
 | `clips` | Selected clips in sheet order. Each carries its original `animation_index`, `name`, `t0_s`, `t1_s` and candidate `roots`. The synthetic `static` clip has a null animation index, zero endpoints and no animated roots. |
 | `clips[].roots` | Each candidate root's original `node_index` and optional original `node_name`, determined using the accepted ancestry rule. Indices identify nodes; names are diagnostics, never assumed unique. |
-| `frames` | The exact requested samples in sheet order: clip, direction, then sample. Each carries an `address`, sample `index` and direction `angle_deg`. The address has `subject`, `variant`, `clip`, `direction` and `time_s`. |
+| `frames` | The exact requested samples in the resolved request plan's order: each selected clip in sheet order, then the clip's stored directions in their configured order, then its samples. Each carries an `address`, sample `index` and direction `angle_deg`. The address has `subject`, `variant`, `clip`, `direction` and `time_s`. A direction a clip does not store has no frame; a mirrored one is never requested. |
 | `clipping` | A perspective render job's clipping planes, exactly `near_m` and `far_m`, and `depth_m`, the nearest and farthest measured vertex depths over every frame, two numbers with `0 < near_m < depth_m[0] ≤ depth_m[1] < far_m` (see [Capture](#capture), *The camera*). Null in a measure job and in an orthographic render job. Both the launcher and the script check it. |
 | `output_dir` | Absolute path to this mode's own initially empty output directory. |
 
 The caller owns selection, sample times, direction enumeration and fitting.
 Blender evaluates the supplied times and angles; it does not select clips,
 resample them, auto-fit a cell or recompute the ground point. The job builder
-checks that its frames agree with the selected clips and resolved settings.
+checks that its frames are exactly the resolved request plan's: each clip timed
+at the rate and count that clip resolved to, over the stored directions it
+resolved to, which are directions of the view in the settings, in plan order.
+A missing, extra, reordered or altered frame is refused. The job's global `fps`
+is the resolved global rate and does not time a clip with its own: the exact
+`time_s` of each frame does. The job keeps its existing `settings` keys and per-clip
+`name`, `loop` and `frames`, and no export policy: no output template, alias,
+format, padding, stored subset or mirror reaches Blender, so the job and its
+`job_sha256` are the same whatever the export asks beyond the samples themselves.
 All numbers must be finite; indices, dimensions, sample ranges and settings
 must satisfy the accepted product constraints.
 
@@ -2773,16 +2924,44 @@ through unchanged, their normal and depth maps included.
 
 ### Export
 
-**Sheet.**
-- One row per clip × direction: clips in selection order, and within each clip,
-  directions in index order.
+Every format is made from the same post-cleanup frames, captured once: the
+cell is the common width and height, unchanged, and nothing is recaptured,
+trimmed, rescaled or recentred per frame. Adding formats adds no render pass.
+
+**Sheet** (`sheet`).
+- One row per clip × stored direction: clips in selection order, and within each
+  clip, the stored directions in the clip's configured order. A clip's first row is
+  the sum of the stored-direction counts of the clips before it, never an original
+  direction index.
 - One column per frame; the column count is the largest frame count of any
-  clip.
-- Cells are packed with no gaps; unused cells are fully transparent.
+  clip, so clips of unequal counts have rows of unequal length.
+- Cells are packed with no gaps and no padding; unused cells are fully
+  transparent.
 - Output is an 8-bit RGBA PNG written by Pillow with no text or time chunks.
 
+**Atlas** (`atlases`, export design P-7, part 4). One image per clip, with a row
+per stored direction in the configured order and a column per sample, no empty
+trailing column. With padding `p`, `export.atlas_padding`, each cell sits in a slot
+of `W + 2p` by `H + 2p`, the atlas is `N · (W + 2p)` by `D · (H + 2p)`, and the
+logical rectangle in column `c`, row `r` starts at `(c · (W + 2p) + p, r · (H + 2p)
++ p)` and is `W` by `H`. Each border texel, corners included, repeats the nearest
+texel of the cell's edge, every channel exactly, with no averaging and no
+renormalising of a normal. The padding applies to atlases only, not to frame
+images or the combined sheet. The maps are packed the same way as the colour.
+
+**Frame image** (`frames`). One PNG per real sample and map, exactly the cell, in
+the cell's own pixel coordinates, so the ground point is the same `(gx, gy)` in
+each.
+
+**Maps in every format.** The normal map and the depth map accompany each format by
+the `normals` and `depth` settings, with the same logical rectangles and
+padding as the colour, and their encodings unchanged. The sheet's, an
+atlas's and a frame image's pixels for one sample are equal, channel by channel,
+inside the logical rectangle.
+
 **Normal map** (lighting sheet design D-2, D-9, D-17), `<stem>.normal.png`
-beside the sheet unless `normals` is false: an 8-bit RGBA PNG written by
+beside the sheet unless `normals` is false (in the directory form, the path
+`{map}` gives `.normal`): an 8-bit RGBA PNG written by
 Pillow with no text or time chunks, exactly the sheet's size and in its
 layout, the same cells, frames and positions. Each pixel the colour sheet
 covers (alpha above 0) holds that pixel's reduced normal ([Normal and depth
@@ -2819,16 +2998,57 @@ ground point's scale, with this encoding and range. It is
 published with the other outputs, rolled back with them, and named in an
 output error (exit 6) when it cannot be written.
 
+**Layout** (directory form; export design D-6, D-7, P-7 parts 2 and 3). The three
+path templates give each file's path under the root, `/`-separated and relative.
+Tokens are `{subject}`, `{variant}`, `{clip}`, `{direction}`, `{frame}` and
+`{map}`; `{frame}` is a zero-based decimal index, `{frame:0N}` pads it to at least
+N digits, N from 1 to 12, and `{map}` is empty for colour, `.normal` for normals
+and `.depth` for depth. A frame template may use every token, an atlas template
+none of `{direction}` and `{frame}`, and a sheet template none of `{clip}`,
+`{direction}` and `{frame}`. There are no escapes, other formats, expressions or
+expansions: a `{{`, `{frame:3}`, `{ clip }`, an unknown token and a literal
+outside `A-Z a-z 0-9 . _ - /` are errors, found for every template whatever the
+formats and the form. The subject and variant are named like a clip: the stem and
+`default`, cleaned. A token a template omits is allowed when the expanded paths
+still do not collide.
+
+A clip's name in a path is its `output_name`, else its source name with each
+character outside `A-Z a-z 0-9 . _ -` replaced by `_`. A direction's is its alias
+in `direction_names`, else its compass label (at multiples of 45 degrees), else
+`direction-NNN` with three digits. Source names and original indices stay the
+identity everywhere else. In this form, an alias must already use only the safe
+characters, no name is empty, `.`, `..`, ends in a dot or is a Windows device name
+(`CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9`, `LPT1` to `LPT9`, with or without an
+extension), and two clips', or two directions', names must differ ignoring ASCII
+case, else the run is a usage error naming the originals. No numeric suffix is added.
+Every expanded path is checked, not the template: it must end in lowercase `.png`
+and be relative, with nonempty components other than `.` and `..`, none ending in a
+dot or a space or naming a Windows device, and no backslash, drive, control or
+Windows-reserved character. A leading dot is allowed. All the files, the
+previews and `manifest.json` together, must be pairwise distinct ignoring ASCII
+case, and none may be a directory of another. The paths are fixed before capture.
+The positional form applies none of these name and path rules: it keeps its own file
+and preview names, `output_name` stays informational there and may collide, and a
+clip named `aux` or two clips differing in case run as before.
+
+A default directory run, for a clip `walk` of eight directions, with the three formats
+and the normal map, writes `sheet.png`, `sheet.normal.png`, `atlases/walk.png`,
+`atlases/walk.normal.png`, `frames/walk/south/frame_000.png`,
+`frames/walk/south/frame_000.normal.png`, and so on, `previews/walk.gif` and
+`manifest.json`. A project can keep maps out of a consumer's colour tree with
+`animations{map}/{clip}/{direction}/frame_{frame:03}.png`, which puts the normals
+under `animations.normal/`.
+
 **JSON (`moskophoros.export/1`).** The command writes one manifest, the
 `.json` file beside the sheet PNG, and it is the one metadata schema of every
-export (export design P-8, D-8, D-18). The public schema changes once, here:
-the manifest describes every file the export writes as an ordered list of
-artifacts, and each frame's place in them, instead of one `image` and two
-`maps`. It records every setting of the export, including those this command
-cannot execute yet, at their inactive defaults (*Reuse* in [Scale and ground
-point](#scale-and-ground-point)); a later release makes them available without
-changing the shape. Recording a field does not make its non-default value
-active.
+export (export design P-8, D-8, D-18). The public schema changed once, to this shape: the manifest describes
+every file the export writes as an ordered list of artifacts, and each frame's
+place in them, instead of one `image` and two `maps`. It is written in both
+forms, as `manifest.json` under the root of a directory export and as `<stem>.json`
+beside a PNG, and it records every setting of the export, the defaults and the
+supplied values alike, so a manifest replays whatever it was made with (*Reuse* in
+[Scale and ground point](#scale-and-ground-point)). The default command's
+manifest is the one it always wrote under this schema.
 
 The document's members, in the order they are written. Each is required;
 none is ever omitted, null-filled or added, except where this table says an
@@ -2954,12 +3174,9 @@ The `generator` and the digests stand for the computed values.
 }
 ```
 
-A complete structural example of a *planned* export (a directory with frame
-files and one requested mirror; export design EXP-6b), to show the members the
-sheet form leaves at their defaults: one stored static view, one requested
-mirror, colour frame files only. This command does not write it, and it loads
-a manifest like it only at the defaults (*Reuse* in [Scale and ground
-point](#scale-and-ground-point)).
+A complete structural example of a directory export with frame files and one
+requested mirror, to show the members the sheet form leaves at their defaults:
+one stored static view, one requested mirror, colour frame files only.
 
 ```json
 {
@@ -3062,15 +3279,16 @@ point](#scale-and-ground-point)).
   the `locations` use. `kind` is `sheet`, `atlas`, `frame` or `preview`;
   `channel` is `color`, `normal` or `depth` for a PNG and `flat` or `lit` for
   a preview; `path` is the file as written, `/`-separated and relative: in
-  this command's positional form the file's base name (`hero.png`,
+  the positional form the file's base name (`hero.png`,
   `hero.normal.png`, `hero.walk.gif`, `hero-lit.walk.gif`), so the manifest is
-  the same wherever the command runs, and in the planned directory form a path
+  the same wherever the command runs, and in the directory form a path
   relative to the output directory. `width` and `height` are pixels. A PNG
   records its `padding`, 0 for a sheet or a frame image and the configured
   value for an atlas, and the logical `cell` size; a preview records neither.
-  The paths are the only record of the actual file names: they keep the
-  [filename rules](#cli) above, including the `-2` suffixes, even for the
-  names `aux` or `Walk` and `walk`.
+  The paths are the only record of the actual file names: in the positional form
+  they keep the [filename rules](#cli) above, including the `-2` suffixes, even
+  for the names `aux` or `Walk` and `walk`, and in the directory form they are the
+  expanded templates.
 - `directions` describes the whole view's ring in the original index order:
   `index`, `angle_deg` (`(start + i · 360 / N) mod 360`), `label` (the
   compass name or `null`) and `output_name`, the name a directory export
@@ -3083,8 +3301,8 @@ point](#scale-and-ground-point)).
   the clip, which is informational for the sheet and may be shared by two
   clips; `stored_directions` is the clip's ordered, nonempty list of the
   original direction indices it captured, and `mirrors` its requested
-  mirrors, sorted by target (empty in this command).
-- A mirror entry (planned; a run of this command has none) says that the
+  mirrors, sorted by target (empty when none).
+- A mirror entry says that the
   picture of direction `target` is the `source` direction's, reversed, and
   is not captured: `transform` is `flip-x`, the image reversed horizontally
   inside the logical cell, with the normal map's X component negated after
@@ -3130,8 +3348,7 @@ point](#scale-and-ground-point)).
   `export.atlas_padding` a whole number from 0 to 64. `settings.clips` lists
   the selected clips in selection order, with each override as supplied;
   the effective values are in the top-level `clips`, not in place of the
-  supplied ones. Of all of these, this command records only the defaults and
-  loads only the defaults (*Reuse* in [Scale and ground
+  supplied ones. All of them load again (*Reuse* in [Scale and ground
   point](#scale-and-ground-point)).
 - The manifest's settings are built on their own and are not the capture
   job's: the job keeps its existing `settings` keys and none of the export
@@ -3265,9 +3482,11 @@ it is
 and a library file's bytes, its ramps, default and entries, and the shade
 range all participate in the fingerprint.
 
-**Previews.** For each clip, an animated GIF showing all directions side by
-side in index order, packed with no gap between cells (owner decision
-2026-10-01):
+**Previews.** For each clip, an animated GIF showing the clip's stored
+directions side by side in their configured order, packed with no gap between
+cells; a mirrored direction is represented in the manifest and not added as a panel
+(owner decision 2026-10-01; export design P-7, part 5). It is written beside the
+sheet as `<stem>.<clip>.gif` or, in the directory form, as `previews/<clip>.gif`:
 
 - scaled 4× with nearest-neighbor
 - each pixel blended over a solid `#808080` background in 8-bit sRGB
@@ -3282,8 +3501,10 @@ side in index order, packed with no gap between cells (owner decision
 - in exact colors when a frame, blends included, has at most 256 of them;
   otherwise reduced to 256 without dithering, with a warning naming the clip
   (owner decision 2026-10-01)
-- each frame lasting the clip's frame duration, rounded to the nearest 10 ms
-  and at least 20 ms
+- each frame lasting the clip's resolved frame duration, which follows the
+  clip's own rate and count, rounded to the nearest 10 ms and at least 20 ms (a
+  clip at 8 frames per second with six frames shows 130 ms, from 125, and at 6
+  frames per second with four, 170 ms, from 166.7)
 - looping forever; one-shot clips hold their last frame for an extra 500 ms
   before repeating
 
@@ -3303,7 +3524,8 @@ unchanged.
 
 **Lit previews** (lighting sheet design D-4, D-5, D-13, D-14, D-22, D-23,
 D-24). With a light placed (`light.position` set) and previews on, each
-clip's lit preview, `<stem>-lit.<clip>.gif`, is written beside its flat one
+clip's lit preview, `<stem>-lit.<clip>.gif` (`previews/<clip>.lit.gif` in the
+directory form), is written beside its flat one
 and handled exactly as it is: the same layout, scale, background, timing and
 limits, and the same 256-colour reduction, whose warning names the clip's
 lit preview. Each covered pixel, alpha above 0, is lit with the normal map
@@ -3384,13 +3606,14 @@ generator and fingerprint make such a difference visible.
 
 A manifest reproduces its export (owner decision 2026-10-11, settings design
 D-16; export design P-8, part 4): rerunning with `--settings-from` that
-`moskophoros.export/1` manifest, the same model, the same output file name,
-in any folder, and no other options gives a byte-identical PNG, manifest and
-previews, flat and lit, and the same normal and depth maps, with the same
-generator. The manifest alone, with the model, restores every setting, the
+`moskophoros.export/1` manifest, the same model, the same destination form and,
+for a PNG, the same output file name, in any folder, and no other options gives
+byte-identical files and manifest: the PNG, previews, flat and lit, and the normal
+and depth maps, or every file of the directory export, at any output root,
+fresh or in place, with the same generator. The manifest alone, with the model, restores every setting, the
 clip selection and its one-shot marks, the frame counts, the output switches
-and the export settings at their defaults; no project, palette or library
-file is needed. A run made with `--no-preview` reloads writing no previews,
+and the export settings, the formats, paths, rates, stored directions, names and
+mirrors included; no project, palette or library file is needed. A run made with `--no-preview` reloads writing no previews,
 one made with `--no-normals` writing no normal map and one made without
 `--depth` writing no depth map; the manifest of each lists no artifact for
 what it did not write, not a `null` entry. A document that is not exactly a
@@ -3411,8 +3634,12 @@ the source digest and every recorded setting, so a different value of any
 setting is a different fingerprint, the export members and the path
 templates included. It does not cover the artifacts, their paths and sizes,
 the directions, the clips or the frames, which follow from the settings and
-the output name; nor the model's path or the output folder, which are not
-recorded.
+the output name; nor the model's path, the output folder or the destination form,
+none of which are settings. The same recorded settings therefore give the same
+fingerprint in the directory form and the positional form, when both can
+write them, and in any root. A manifest of `frames` or `atlases` replayed to an
+`<outfile.png>` needs `--formats sheet`, which changes the recorded settings and
+so the fingerprint.
 
 **Compatibility across the manifest switch** (export design D-3, D-18). The
 switch from `moskophoros.sheet/15` to `moskophoros.export/1` changes the
@@ -3421,8 +3648,11 @@ sheet, maps and previews, to the byte, as the release before it, for the same
 model, generator and settings. The change is checked on a generated rigged
 model, with the same generator before and after: every colour, normal and
 depth PNG and every flat and lit GIF has the same SHA-256. The export settings
-that this command does not execute yet are recorded at their defaults and do
-not change a single image.
+that the command now executes (export design EXP-6b) change no default byte:
+for the same model, generator and settings the default command still writes the
+same images, and the same manifest under this schema, as the release before the
+activation. The directory form and the per-clip rates, directions and mirrors
+add files and metadata and change no image a default run writes.
 
 ## Project layout
 
@@ -3434,10 +3664,14 @@ requirements.lock         exact tested versions
 src/moskophoros/
   cli.py                  options, presets, settings resolution, exit codes
   settings.py             the settings schema table, settings files, layers
-  templates.py            output path template grammar (internal, not yet available)
-  exportsettings.py       export settings resolved across layers and the view (internal)
-  outputs.py              output names and the relative output-path plan (internal)
-  diagnostics.py          shadowed-rate and mirror warnings, as text (internal)
+  templates.py            output path template grammar
+  exportsettings.py       export settings resolved across layers and the view
+  plan.py                 the request plan: each clip's rate, stored directions, mirrors and frames
+  outputs.py              output names and the relative output-path plan
+  exportimages.py         sheet, atlas and frame encoding from the addressed frames
+  manifest.py             the manifest writer and its strict reader
+  publication.py          all-or-nothing publication, flat and into a directory
+  diagnostics.py          shadowed-rate and mirror warnings, as text
   usage.py                the usage error those modules raise
   defaults.yaml           the shipped settings defaults, installed with the package
   gltf.py                 .glb reading: scenes, clips, time ranges, validation
@@ -3478,6 +3712,9 @@ Automated tests (pytest), none needing Blender:
 - settings reuse and its overrides
 - settings files: the schema table and `defaults.yaml` agreeing, each layer's
   precedence, `auto` and `null`, paths and every refused file
+- the export: per-clip layering and reset, names and paths, every format
+  combination and the jobs' exact samples, with a fake Blender; ownership,
+  preflight, publication failures and replay of a directory export
 
 Integration tests run Blender and fail with a clear diagnostic when Blender is
 unavailable. Use `pytest -m "not blender"` to run only tests that do not require
@@ -3487,6 +3724,10 @@ with a looping clip and a one-shot clip, and check:
 - measured bounds against the known geometry
 - that root motion is detected
 - that two runs produce byte-identical output
+- a directory export of unequal clips, stored subsets and mirrors: the samples
+  the jobs carry, the files, maps and previews, the same pixels in every
+  representation, a fit from the stored views only and a replay from the
+  manifest alone
 
 ## Slice 1 acceptance
 
@@ -3509,7 +3750,8 @@ Decided later, each when its trigger arrives:
 | Per-stage caching | Iteration speed becomes a problem. |
 | Root-motion extraction (keeping travel as data rather than rendering it) | A consumer needs it. |
 | Variants (bone-attached props, palette swaps) | The owner requests them. |
-| Other sheet formats and per-frame output | A consumer needs them. |
+| Other image or metadata formats, such as a consumer's own index or a packed binary atlas (frame images and atlases are delivered; export design D-1) | A consumer needs them. |
+| Pruning files an earlier export left, crash recovery of a half-published directory, and isolation from a second writer to one root (export design D-9) | The owner asks for a managed export. |
 | Vertex-color rendering | A model needs it. |
 | `CUBICSPLINE` animation and mesh morph-weight animation pointers, rejected for now (owner decision 2026-10-02) | A model needs them. |
 
