@@ -817,6 +817,7 @@ def test_a_rerun_of_the_same_subject_replaces_its_files_and_keeps_the_rest(
     )
     (out / "notes.txt").write_text("not an output", encoding="utf-8")
     before = tree(out)
+    first_digest = read_manifest(out)["source"]["sha256"]
     # A different model of the same subject, writing less.
     status, _, err = run(capsys, to_dir(setup, out, "--formats", "sheet", model=clocks))
     assert status == 0, err
@@ -827,10 +828,9 @@ def test_a_rerun_of_the_same_subject_replaces_its_files_and_keeps_the_rest(
     assert all(after[p] == before[p] for p in before if p.startswith("frames/"))
     paths = {a["path"] for a in read_manifest(out)["artifacts"]}
     assert not any(p.startswith(("frames/", "atlases/")) for p in paths)
-    assert (
-        read_manifest(out)["source"]["sha256"]
-        != json.loads(json.dumps(read_manifest(out)))["fingerprint"]
-    )
+    # The model changed, and the manifest says so: a changed model digest does
+    # not make the subject another.
+    assert read_manifest(out)["source"]["sha256"] != first_digest
 
 
 def test_a_manifest_of_another_subject_is_refused_before_capture(
