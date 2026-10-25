@@ -5,8 +5,11 @@ byte; and a loaded manifest that records any other value of an export setting
 refused, before Blender, since the command could not honor it yet."""
 
 import json
+import re
 import shutil
+from pathlib import Path
 
+import manifest_golden
 import pytest
 from manifest_fixture import clip as fixture_clip
 from manifest_fixture import export_for
@@ -14,7 +17,7 @@ from test_command import Setup, run
 from test_materials_command import forbid_blender
 from test_settings_command import own
 
-from moskophoros import cli, exportsettings
+from moskophoros import cli, exportsettings, outputs, views
 from moskophoros import settings as layered
 
 CLIPS = ("--clip", "walk", "--clip", "attack")
@@ -331,3 +334,55 @@ def test_the_gate_compares_every_inactive_setting_with_the_schema_default():
     unchecked = set(exportsettings.GLOBAL_KEYS) - {"fps", "frames"}
     assert unchecked <= set(layered.ALL_DEFAULTS)
     assert not unchecked & set(layered.DEFAULTS)
+
+
+# The design's examples
+
+DESIGN = Path(__file__).parent.parent / "docs" / "design.md"
+
+
+def design_examples():
+    """The two complete manifests that design §Export, *JSON* gives, with
+    their placeholders made into strings."""
+    text = DESIGN.read_text(encoding="utf-8")
+    section = text[text.index("**JSON (`moskophoros.export/1`).**") :]
+    blocks = re.findall(r"```json\n(.*?)\n```", section, re.S)[:2]
+    return [json.loads(re.sub(r"<[a-z ]+>", "placeholder", block)) for block in blocks]
+
+
+def key_orders(value, path="", found=None):
+    """Each object's keys in order, by the path to it; a list stands for its
+    first element."""
+    found = {} if found is None else found
+    if isinstance(value, dict):
+        found[path] = tuple(value)
+        for key, member in value.items():
+            key_orders(member, f"{path}.{key}", found)
+    elif isinstance(value, list) and value:
+        key_orders(value[0], f"{path}[]", found)
+    return found
+
+
+def test_the_designs_positional_example_has_the_members_the_command_writes():
+    example, _ = design_examples()
+    written = json.loads(manifest_golden.POSITIONAL)
+    assert key_orders(example) == key_orders(written)
+    assert example["settings"]["export"] == written["settings"]["export"]
+    assert example["artifacts"] == written["artifacts"]
+    assert example["frames"] == written["frames"]
+
+
+def test_the_designs_structural_example_agrees_with_the_writer():
+    _, example = design_examples()
+    rich = export_for(
+        "export: {formats: [frames]}\ndirection_names: {1: right}\n"
+        "clips: {static: {stored_directions: [1], mirrors: {3: 1}}}\n",
+        clips=(fixture_clip(0, "static", t1=0.0),),
+        view=views.View(4, 0.0),
+        destination=outputs.Directory(),
+    ).document
+    written, shown = key_orders(rich), key_orders(example)
+    assert set(shown) <= set(written)
+    for path, keys in shown.items():
+        assert keys == written[path], path
+    assert example["clips"][0]["mirrors"][0]["transform"] == "flip-x"

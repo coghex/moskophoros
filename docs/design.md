@@ -23,7 +23,9 @@ Decisions below were settled on 2026-09-29 unless marked otherwise.
 | **frame** | One image of one clip at one sample time from one direction. |
 | **cell** | The fixed-size rectangle every frame occupies. |
 | **ground point** | The point in subject coordinates that always lands on the same cell pixel. |
-| **sheet** | The output PNG and its JSON description. |
+| **sheet** | The output PNG laid out as a grid of every frame. The public command still writes a sheet, with its maps and previews, and a manifest that describes them. |
+| **manifest** | The JSON that describes one export, `moskophoros.export/1`: its settings, its artifacts and where every frame is in them. |
+| **artifact** | One file of an export that the manifest lists: a sheet, a per-clip atlas, a frame image or a preview, by kind and channel. The public command writes a sheet and previews; atlases and frame images are planned (see [Export](#export)). |
 | **variant** | The subject with a different prop or palette. Slice 1 has one, `default`. |
 
 ## CLI
@@ -78,7 +80,7 @@ moskophoros [options] <infile.glb> <outfile.png>
 | `--ramp-hue-shift DEG` | `-12` | How far each shade of a generated ramp turns the hue, in degrees, finite, −180 to 180. |
 | `--ramp-fade F` | `0.3` | How much chroma a generated ramp loses by its darkest shade, finite, 0 to 1. |
 | `--frames N` | `auto` | How many frames each clip is sampled to, a whole number 1 or more, retimed so every frame lasts `1/fps`; `auto` samples by duration. A clip's own count, set in a [settings file](#settings-files), beats it. See [Clips and sampling](#clips-and-sampling). |
-| `--settings-from FILE` | none | Load every recorded setting of an earlier `moskophoros.sheet/15` sheet's JSON. See [Scale and ground point](#scale-and-ground-point). |
+| `--settings-from FILE` | none | Load every recorded setting of an earlier export's `moskophoros.export/1` manifest, which must be a complete, consistent document; any other schema, `moskophoros.sheet/15` included, is refused. The manifest's new export settings must be at their defaults for now. See [Scale and ground point](#scale-and-ground-point), *Reuse*. |
 | `--config FILE` | the user file | Use FILE as the global settings file, in place of the user file. Given at most once. Its values are defaults, below a loaded sheet. See [Settings files](#settings-files). |
 | `--no-user-config` | off | Use no global settings file: skip the user file. Cannot accompany `--config`. |
 | `--project NAME` | none | Read the project file `projects/NAME.yaml` in the configuration directory. Given at most once. Its values act as the options would, over the global file and a loaded sheet. See [Settings files](#settings-files). |
@@ -99,7 +101,8 @@ moskophoros [options] <infile.glb> <outfile.png>
 Without `--clip`, every clip is selected in the file's animation order:
 ascending animation index (owner decision 2026-10-01).
 
-`<outfile.png>` must end in `.png`. The JSON is written beside it, at the same
+`<outfile.png>` must end in `.png`. The JSON, the `moskophoros.export/1`
+manifest, is written beside it, at the same
 path with `.json` replacing `.png`, the normal map, unless turned off, at
 the same path with `.normal.png` replacing `.png`, and the depth map, when
 asked, with `.depth.png` (lighting sheet design D-9, D-10, D-17). Previews are written as
@@ -115,6 +118,15 @@ ASCII case on every platform, so `Walk` and `walk` collide and the later one
 in sheet order takes the next free suffix: `hero.Walk.gif`, `hero.walk-2.gif`.
 "Another clip's own name" is its cleaned name, so `a b`, `a/b` and `a b-2`
 give `a_b`, `a_b-3` and `a_b-2` (owner decisions 2026-10-02).
+
+The manifest lists these files as its artifacts by their actual file names,
+relative to the PNG's folder, never as paths; each filename above is unchanged
+by the manifest. The names it also records for each clip and direction
+(`output_name`) are informational here, are not checked and may be equal for
+two clips or two directions: the artifact paths are the authority for what was
+written. The output is a sheet; the output directory, the per-clip atlases and
+the frame images that the manifest can also describe are planned and are not
+written by this command (export design EXP-6b).
 
 Existing outputs are overwritten. All outputs are written to temporary files
 and renamed into place only after the whole run succeeds, so a failed run
@@ -998,9 +1010,11 @@ rescaled. A run that writes no depth map and no lit preview is not checked:
 with previews off, a placed light imposes nothing.
 
 **Reuse.** `--settings-from FILE` loads the `settings` object of an earlier
-sheet's JSON as one in-memory layer of [settings](#settings-files), applying
-every recorded setting that affects the output (owner decisions 2026-10-11,
-settings design D-15, D-16, D-19 and D-28):
+export's manifest, a complete `moskophoros.export/1` document
+([Export](#export), *JSON*), as one in-memory layer of
+[settings](#settings-files), applying every recorded setting that affects the
+output (owner decisions 2026-10-11, settings design D-15, D-16, D-19 and
+D-28; export design P-8, P-13 and D-18):
 
 - view and model yaw
 - the camera, `settings.camera`: its projection, direction, roll and position
@@ -1017,6 +1031,11 @@ settings design D-15, D-16, D-19 and D-28):
   `settings.style.palette`, and its inline material library,
   `settings.style.materials`
 - the clip selection and its one-shot marks, `settings.clips`
+- the export settings the manifest also records: `settings.stored_directions`,
+  `settings.direction_names`, `settings.mirrors`, `settings.export` and each
+  clip's own `fps`, `stored_directions`, `mirrors` and `output_name`. The
+  command cannot execute any of them yet, so for now they load only at their
+  inactive defaults (see below)
 
 This makes scale, cell and ground pixel fixed. Options given explicitly, and
 project values, override the reused values; the global file, whether the user
@@ -1035,9 +1054,39 @@ opening the original palette file and keeps its record unchanged. `--preview`
 writes previews over a sheet made without them, and `--no-preview` skips them
 over one made with them; `--normals` and `--no-normals`, and `--depth` and
 `--no-depth`, do the same for the normal and depth maps, and `--no-light`
-drops a reused light. Reuse reads only the sheet's `schema` and `settings`: the normal
-map is made again from the model, never read from an earlier file, and a
-document holding only those two keys is enough.
+drops a reused light. The normal
+map is made again from the model, never read from an earlier file.
+
+The whole manifest is checked, not only its settings: the loaded file must be
+exactly the documented `moskophoros.export/1` document ([Export](#export),
+*JSON*), with no unknown, missing, duplicated or wrongly typed member, a
+fingerprint that matches its generator, source digest and settings, and
+directions, clips, artifacts and frames that agree with each other and with
+those settings, every frame located once in each image artifact of its sample.
+A document holding only `schema` and `settings` is not enough. An explicit
+option, a project value or a replaced clip selection cannot rescue an invalid
+document: every member is checked before any value is used, as every setting
+already is. The finite-number and normalised-vector checks are unchanged, and
+recorded directions and light vectors are never normalised again. The palette
+and library come back from the manifest's inline records without reopening
+their source files. An error names the file and the member or setting, and is
+a usage error (exit 2) raised before Blender starts, its version probe
+included.
+
+**Temporary restriction.** Until the export settings are available (export
+design EXP-6b), a loaded manifest must record each of them at its inactive
+default: `stored_directions` `"all"`, no `direction_names`, no `mirrors`,
+`export.formats` `["sheet"]`, the default `export.frame_path`,
+`export.atlas_path` and `export.sheet_path` templates, `export.atlas_padding`
+`0`, and `null` for each clip's own `fps`, `stored_directions`, `mirrors` and
+`output_name`. The test is on the recorded value, not on its effect: a clip's
+own `"all"`, an empty `mirrors` array, an `fps` equal to the global one or an
+alias equal to the clip's cleaned name still differs from the `null` that
+inherits, so it is refused. Any other value is refused as `settings.<key>: not
+available yet`, naming the file and the key or clip position, before Blender
+starts and before any explicit option could hide it. A settings file or
+option cannot set these settings either (*Settings files*). The command
+neither accepts nor ignores them: only the defaults run.
 
 The clip selection (owner decisions 2026-10-11, settings design D-19 and
 D-27):
@@ -1067,13 +1116,16 @@ loaded sheet, so it never changes a loaded sheet's ramps (material styling
 design D-33). The
 global formula reloads from `settings.ramp`.
 
-Only the current sheet schema, `moskophoros.sheet/15`, loads (owner decision
-2026-10-11, settings design D-24; projects and camera design D-14, D-17;
-shading design D-8). A sheet of any other schema, `/1` to `/14` included, is a
-usage error naming its schema and the supported one: there is no loader for
-an older sheet and no conversion of its JSON, so it is generated again.
-Nothing defaults a missing `settings.style.edges` or a missing shading member.
-A file that is unreadable, or not a sheet document, is a usage error.
+Only the current schema, `moskophoros.export/1`, loads (owner decisions
+2026-10-11 and 2026-10-24, settings design D-24; projects and camera design
+D-14, D-17; shading design D-8; export design P-8, D-18). A sheet of any older
+schema, `moskophoros.sheet/1` to `/15` included, is a usage error (exit 2)
+naming its schema and `moskophoros.export/1` and saying to generate it again
+from the model or project: there is no loader for an older sheet, no
+conversion of its JSON and no fallback that ignores a field. Nothing defaults
+a missing `settings.style.edges`, a missing shading member or a missing export
+member. A file that is unreadable, or not a `moskophoros.export/1` document,
+is a usage error.
 
 The reused library follows the palette's pattern (owner decisions 2026-10-07,
 D-19 and D-24). It is applied without opening the original library file and
@@ -2767,11 +2819,50 @@ ground point's scale, with this encoding and range. It is
 published with the other outputs, rolled back with them, and named in an
 output error (exit 6) when it cannot be written.
 
-**JSON (`moskophoros.sheet/15`).**
+**JSON (`moskophoros.export/1`).** The command writes one manifest, the
+`.json` file beside the sheet PNG, and it is the one metadata schema of every
+export (export design P-8, D-8, D-18). The public schema changes once, here:
+the manifest describes every file the export writes as an ordered list of
+artifacts, and each frame's place in them, instead of one `image` and two
+`maps`. It records every setting of the export, including those this command
+cannot execute yet, at their inactive defaults (*Reuse* in [Scale and ground
+point](#scale-and-ground-point)); a later release makes them available without
+changing the shape. Recording a field does not make its non-default value
+active.
+
+The document's members, in the order they are written. Each is required;
+none is ever omitted, null-filled or added, except where this table says an
+optional member is absent. Types are JSON types; a "whole number" is an
+integer, never a boolean.
+
+| Object | Members, in serialized order |
+|---|---|
+| document | `schema`, `generator`, `source`, `subject`, `variant`, `settings`, `fingerprint`, `artifacts`, `directions`, `clips`, `frames` |
+| `generator` | `tool`, `version`, `python`, `numpy`, `pillow`, `blender`, `renderer`, `color`, `shade`; `color` and `shade` hold the render provenance as the result reports it |
+| `source` | `file`, `sha256` |
+| `settings` | `view`, `camera`, `model_yaw_deg`, `fps`, `frames`, `supersample`, `pixels_per_meter`, `cell`, `ground_m`, `ground_px`, `root_motion`, `previews`, `normals`, `depth`, `light`, `shade`, `ramp`, `style`, `stored_directions`, `direction_names`, `mirrors`, `export`, `clips` |
+| `settings.export` | `formats`, `frame_path`, `atlas_path`, `sheet_path`, `atlas_padding` |
+| `settings.clips[]` | `name`, `loop`, `frames`, `fps`, `stored_directions`, `mirrors`, `output_name` |
+| `settings.direction_names[]` | `index` (whole number), `name` (string) |
+| `settings.mirrors[]` | `target`, `source` (whole numbers) |
+| artifact, always | `kind`, `channel`, `path`, `width`, `height`, then the suffix |
+| artifact suffix | `clip` for an atlas, a frame and a preview; then `direction` and `index` for a frame only; then `padding` and `cell` for a PNG kind (sheet, atlas, frame) only |
+| artifact `cell` | `width`, `height` (positive whole numbers) |
+| `directions[]` | `index`, `angle_deg`, `label`, `output_name` |
+| `clips[]` | `name`, `loop`, `duration_s`, `frame_count`, `frame_duration_s`, `time_scale`, `output_name`, `fps`, `stored_directions`, `mirrors` |
+| `clips[].mirrors[]` | `target`, `source`, `transform`, `ground_px` |
+| mirror `ground_px` | `x`, `y` (whole pixel-edge coordinates) |
+| `frames[]` | `clip`, `direction`, `index`, `time_s`, `locations` |
+| location | `artifact`, `x`, `y`, `w`, `h` (whole numbers; `w` and `h` positive) |
+
+A complete positional manifest, the smallest the command writes: two
+directions of a still clip, with the sheet's colour and normal maps and the
+clip's flat preview, in compact form (the file itself is indented two spaces).
+The `generator` and the digests stand for the computed values.
 
 ```json
 {
-  "schema": "moskophoros.sheet/15",
+  "schema": "moskophoros.export/1",
   "generator": {
     "tool": "moskophoros", "version": "0.1.0",
     "python": "3.x.y", "numpy": "x.y.z", "pillow": "x.y.z",
@@ -2783,22 +2874,21 @@ output error (exit 6) when it cannot be written.
     "shade": { "technique": "cycles-ambient-occlusion", "samples_per_pixel": 1,
                "seed": 0, "pixel_filter": "BOX", "filter_width_px": 0.01 }
   },
-  "source": { "file": "hero.glb", "sha256": "..." },
+  "source": { "file": "hero.glb", "sha256": "<source digest>" },
   "subject": "hero",
   "variant": "default",
   "settings": {
-    "view": { "preset": "iso", "directions": 8, "start_angle_deg": 0.0 },
-    "camera": { "projection": "orthographic",
-                "direction": [0.0, -0.49999999999999994, -0.8660254037844387],
+    "view": { "preset": "custom", "directions": 2, "start_angle_deg": 0.0 },
+    "camera": { "projection": "orthographic", "direction": [0.0, 0.0, -1.0],
                 "roll": 0.0, "position": null },
     "model_yaw_deg": 0.0,
     "fps": 12.0,
     "frames": "auto",
-    "supersample": 8,
-    "pixels_per_meter": 24.5,
-    "cell": { "width": 48, "height": 48 },
+    "supersample": 4,
+    "pixels_per_meter": 4.0,
+    "cell": { "width": 3, "height": 2 },
     "ground_m": { "x": 0.0, "y": 0.0, "z": 0.0 },
-    "ground_px": { "x": 24, "y": 46 },
+    "ground_px": { "x": 1, "y": 2 },
     "root_motion": "error",
     "previews": true,
     "normals": true,
@@ -2820,27 +2910,232 @@ output error (exit 6) when it cannot be written.
               "chroma_fade": 0.3 },
     "style": { "reduce": "plain", "edges": "hard", "palette": null,
                "materials": null },
-    "clips": [ { "name": "walk", "loop": true, "frames": null },
-               { "name": "attack", "loop": false, "frames": null } ]
+    "stored_directions": "all",
+    "direction_names": [],
+    "mirrors": [],
+    "export": { "formats": ["sheet"],
+                "frame_path": "frames/{clip}/{direction}/frame_{frame:03}{map}.png",
+                "atlas_path": "atlases/{clip}{map}.png",
+                "sheet_path": "sheet{map}.png",
+                "atlas_padding": 0 },
+    "clips": [ { "name": "pose", "loop": true, "frames": null, "fps": null,
+                 "stored_directions": null, "mirrors": null,
+                 "output_name": null } ]
   },
-  "fingerprint": "sha256:...",
-  "image": { "file": "hero.png", "width": 576, "height": 768 },
-  "maps": { "normal": { "file": "hero.normal.png" }, "depth": null },
-  "directions": [ { "index": 0, "angle_deg": 0.0, "label": "south" } ],
+  "fingerprint": "sha256:<computed fingerprint>",
+  "artifacts": [
+    { "kind": "sheet", "channel": "color", "path": "hero.png",
+      "width": 3, "height": 4, "padding": 0,
+      "cell": { "width": 3, "height": 2 } },
+    { "kind": "sheet", "channel": "normal", "path": "hero.normal.png",
+      "width": 3, "height": 4, "padding": 0,
+      "cell": { "width": 3, "height": 2 } },
+    { "kind": "preview", "channel": "flat", "path": "hero.pose.gif",
+      "width": 24, "height": 8, "clip": "pose" }
+  ],
+  "directions": [
+    { "index": 0, "angle_deg": 0.0, "label": "south", "output_name": "south" },
+    { "index": 1, "angle_deg": 180.0, "label": "north", "output_name": "north" }
+  ],
   "clips": [
-    { "name": "walk", "loop": true, "duration_s": 1.0,
-      "frame_count": 12, "frame_duration_s": 0.08333333333333333,
-      "time_scale": 1.0 }
+    { "name": "pose", "loop": true, "duration_s": 0.0, "frame_count": 1,
+      "frame_duration_s": 0.08333333333333333, "time_scale": 1.0,
+      "output_name": "pose", "fps": 12.0, "stored_directions": [0, 1],
+      "mirrors": [] }
   ],
   "frames": [
-    { "clip": "walk", "direction": 0, "index": 0, "time_s": 0.0,
-      "x": 0, "y": 0, "w": 48, "h": 48 }
+    { "clip": "pose", "direction": 0, "index": 0, "time_s": 0.0,
+      "locations": [ { "artifact": 0, "x": 0, "y": 0, "w": 3, "h": 2 },
+                     { "artifact": 1, "x": 0, "y": 0, "w": 3, "h": 2 } ] },
+    { "clip": "pose", "direction": 1, "index": 0, "time_s": 0.0,
+      "locations": [ { "artifact": 0, "x": 0, "y": 2, "w": 3, "h": 2 },
+                     { "artifact": 1, "x": 0, "y": 2, "w": 3, "h": 2 } ] }
   ]
 }
 ```
 
-- `frames` lists every frame, in sheet order. A frame's address is `subject`,
-  `variant`, `clip`, `direction` and `time_s` (V-9).
+A complete structural example of a *planned* export (a directory with frame
+files and one requested mirror; export design EXP-6b), to show the members the
+sheet form leaves at their defaults: one stored static view, one requested
+mirror, colour frame files only. This command does not write it, and it loads
+a manifest like it only at the defaults (*Reuse* in [Scale and ground
+point](#scale-and-ground-point)).
+
+```json
+{
+  "schema": "moskophoros.export/1",
+  "generator": {
+    "tool": "moskophoros", "version": "0.1.0",
+    "python": "3.x.y", "numpy": "x.y.z", "pillow": "x.y.z",
+    "blender": "x.y.z", "renderer": "cycles",
+    "color": { "technique": "cycles-flat-emission", "samples_per_pixel": 1,
+               "seed": 0, "pixel_filter": "BOX", "filter_width_px": 0.01,
+               "min_transparent_bounces": 64, "transparent_max_bounces": 64,
+               "pass_alpha_threshold": 9.313225746154785e-10 },
+    "shade": { "technique": "cycles-ambient-occlusion", "samples_per_pixel": 1,
+               "seed": 0, "pixel_filter": "BOX", "filter_width_px": 0.01 }
+  },
+  "source": { "file": "hero.glb", "sha256": "<source digest>" },
+  "subject": "hero",
+  "variant": "default",
+  "settings": {
+    "view": { "preset": "custom", "directions": 4, "start_angle_deg": 0.0 },
+    "camera": { "projection": "orthographic", "direction": [0.0, -0.6, -0.8],
+                "roll": 0.0, "position": null },
+    "model_yaw_deg": 0.0,
+    "fps": 12.0,
+    "frames": "auto",
+    "supersample": 8,
+    "pixels_per_meter": 4.0,
+    "cell": { "width": 4, "height": 4 },
+    "ground_m": { "x": 0.0, "y": 0.0, "z": 0.0 },
+    "ground_px": { "x": 2, "y": 3 },
+    "root_motion": "error",
+    "previews": false,
+    "normals": false,
+    "depth": false,
+    "light": { "position": null, "intensity": 1.0, "ambient": 0.3 },
+    "shade": { "ao_distance_m": 0.3, "ao_samples": 64,
+               "occlusion_weight": 0.25, "convexity_weight": 1.0,
+               "range": [84, 191],
+               "mode": "ramp", "ambient_form": true,
+               "key": { "direction": [-0.5183210553488161, 0.604707897906952,
+                                      0.604707897906952],
+                        "strength": 0.0 },
+               "sky": { "strength": 0.0 }, "ground": { "strength": 0.0 },
+               "sky_ground_frame": "camera",
+               "brightness": { "floor": 0.3, "ceiling": 1.0 },
+               "snap": "off",
+               "dither": { "pattern": "off", "strength": 1.0 } },
+    "ramp": { "lightness_step": 0.12, "hue_shift_deg": -12.0,
+              "chroma_fade": 0.3 },
+    "style": { "reduce": "plain", "edges": "hard", "palette": null,
+               "materials": null },
+    "stored_directions": "all",
+    "direction_names": [ { "index": 1, "name": "right" } ],
+    "mirrors": [],
+    "export": { "formats": ["frames"],
+                "frame_path": "frames/{clip}/{direction}/frame_{frame:03}{map}.png",
+                "atlas_path": "atlases/{clip}{map}.png",
+                "sheet_path": "sheet{map}.png",
+                "atlas_padding": 0 },
+    "clips": [ { "name": "static", "loop": true, "frames": null, "fps": null,
+                 "stored_directions": [1],
+                 "mirrors": [ { "target": 3, "source": 1 } ],
+                 "output_name": null } ]
+  },
+  "fingerprint": "sha256:<computed fingerprint>",
+  "artifacts": [
+    { "kind": "frame", "channel": "color",
+      "path": "frames/static/right/frame_000.png", "width": 4, "height": 4,
+      "clip": "static", "direction": 1, "index": 0, "padding": 0,
+      "cell": { "width": 4, "height": 4 } }
+  ],
+  "directions": [
+    { "index": 0, "angle_deg": 0.0, "label": "south", "output_name": "south" },
+    { "index": 1, "angle_deg": 90.0, "label": "east", "output_name": "right" },
+    { "index": 2, "angle_deg": 180.0, "label": "north", "output_name": "north" },
+    { "index": 3, "angle_deg": 270.0, "label": "west", "output_name": "west" }
+  ],
+  "clips": [
+    { "name": "static", "loop": true, "duration_s": 0.0, "frame_count": 1,
+      "frame_duration_s": 0.08333333333333333, "time_scale": 1.0,
+      "output_name": "static", "fps": 12.0, "stored_directions": [1],
+      "mirrors": [ { "target": 3, "source": 1, "transform": "flip-x",
+                     "ground_px": { "x": 2, "y": 3 } } ] }
+  ],
+  "frames": [
+    { "clip": "static", "direction": 1, "index": 0, "time_s": 0.0,
+      "locations": [ { "artifact": 0, "x": 0, "y": 0, "w": 4, "h": 4 } ] }
+  ]
+}
+```
+
+- `artifacts` lists every file the export writes, except the manifest itself,
+  which never indexes itself, in this fixed order: the sheet's colour,
+  normal and depth images; then each clip's atlases in clip order, each
+  colour, normal and depth; then the frame images in clip, stored-direction
+  and sample order, each colour, normal and depth; then each clip's previews
+  in clip order, flat and then lit. A file not written has no entry, and an
+  entry is not a null placeholder: with the normal map off there is no
+  `normal` artifact. A position in the list is the artifact's index, which
+  the `locations` use. `kind` is `sheet`, `atlas`, `frame` or `preview`;
+  `channel` is `color`, `normal` or `depth` for a PNG and `flat` or `lit` for
+  a preview; `path` is the file as written, `/`-separated and relative: in
+  this command's positional form the file's base name (`hero.png`,
+  `hero.normal.png`, `hero.walk.gif`, `hero-lit.walk.gif`), so the manifest is
+  the same wherever the command runs, and in the planned directory form a path
+  relative to the output directory. `width` and `height` are pixels. A PNG
+  records its `padding`, 0 for a sheet or a frame image and the configured
+  value for an atlas, and the logical `cell` size; a preview records neither.
+  The paths are the only record of the actual file names: they keep the
+  [filename rules](#cli) above, including the `-2` suffixes, even for the
+  names `aux` or `Walk` and `walk`.
+- `directions` describes the whole view's ring in the original index order:
+  `index`, `angle_deg` (`(start + i · 360 / N) mod 360`), `label` (the
+  compass name or `null`) and `output_name`, the name a directory export
+  would give the direction. In this command's positional form the
+  `output_name`s are informational and are not checked: they may be equal.
+- `clips` lists the selected clips in selection order. `duration_s` is the
+  source clip's length; `frame_count`, `frame_duration_s`, `time_scale` and
+  `fps` are the resolved sampling values (`fps` is the global rate unless a
+  clip has its own); `output_name` is the name a directory export would give
+  the clip, which is informational for the sheet and may be shared by two
+  clips; `stored_directions` is the clip's ordered, nonempty list of the
+  original direction indices it captured, and `mirrors` its requested
+  mirrors, sorted by target (empty in this command).
+- A mirror entry (planned; a run of this command has none) says that the
+  picture of direction `target` is the `source` direction's, reversed, and
+  is not captured: `transform` is `flip-x`, the image reversed horizontally
+  inside the logical cell, with the normal map's X component negated after
+  decoding and normalising, its alpha unchanged, and the depth map's pixels
+  reversed with their values unchanged; flipping encoded normals directly
+  uses `R′ = 255 − R` only for covered pixels, and transparent texels stay
+  zero. For a padded atlas, the logical rectangle is flipped, not the whole
+  atlas or its slot. `ground_px` is the derived anchor `(W − gx, gy)` for a
+  cell of width `W` and a stored ground pixel `(gx, gy)`; it differs from the
+  stored view's anchor by `W − 2 · gx` pixels when `W ≠ 2 · gx`, auto-fit odd
+  widths included, so a consumer must place a mirrored view by its own
+  anchor. The mirror's source clip, sample index, time and every location are
+  those of the source direction's real samples; a mirror has no sample record
+  of its own and no file of its own. A horizontal flip is a true reflection
+  only if the roll is 0 or ±1 (the roll unit, half-turns), the target and
+  source angles `θ = (start + i · 360 / N) mod 360` sum to 0 modulo 360
+  degrees, and a perspective camera has no sideways offset from its vertical
+  heading plane through the ground point; the model's yaw faces it +Z before
+  the turn and is not part of the condition. These are necessary camera
+  conditions, not a claim that the subject or its lighting is symmetric.
+- `frames` lists every real sample, in clip, stored-direction and sample
+  order, one record each: `clip`, the original `direction` index, the
+  sample `index`, the exact source time `time_s`, and `locations`, one
+  entry for each image artifact that holds the sample, sorted by artifact
+  index and holding exactly one for each enabled colour, normal and depth
+  image. A location is the artifact's index and the logical rectangle `x`,
+  `y`, `w`, `h` in pixels, atlas padding excluded. Previews are artifacts but
+  never locations. A frame's address is `subject`, `variant`, `clip`,
+  `direction` and `time_s` (V-9). The records are the samples the command
+  rendered: a mirror adds none.
+- The new `settings` members are recorded as the settings that made the
+  export, never as their effects. `stored_directions` is the string `"all"` or
+  an ordered array of whole direction indices, and each clip's own is `null`
+  (inherit), `"all"` or such an array. `direction_names` and `mirrors` are
+  arrays of `{index, name}` and `{target, source}` entries sorted by index or
+  target, `[]` when empty, never string-keyed JSON objects; a duplicate index
+  or target is an error, and reuse turns them back into the integer-keyed
+  maps of the YAML settings. A clip's `mirrors` is `null` (inherit) or such
+  an array, where `[]` disables the inherited mirrors. A clip's `fps` is
+  `null` or a positive finite number, its `output_name` `null` or the alias
+  as supplied, and its `frames` a count, `"auto"` or `null`. `export.formats`
+  is a nonempty list of `sheet`, `frames` and `atlases` in that order, and
+  `export.atlas_padding` a whole number from 0 to 64. `settings.clips` lists
+  the selected clips in selection order, with each override as supplied;
+  the effective values are in the top-level `clips`, not in place of the
+  supplied ones. Of all of these, this command records only the defaults and
+  loads only the defaults (*Reuse* in [Scale and ground
+  point](#scale-and-ground-point)).
+- The manifest's settings are built on their own and are not the capture
+  job's: the job keeps its existing `settings` keys and none of the export
+  settings, and the early fingerprint on the frames is the manifest's own.
 - `settings.style` records the look, in this order: `reduce`, the `--reduce`
   value; `edges`, the edges rule in force, `hard` or `soft`, required and
   inside the fingerprint (alpha design D-9); `palette`, either `null` or an ordered object with `source` (the
@@ -2870,7 +3165,7 @@ output error (exit 6) when it cannot be written.
   `{"ordinary": true}` with its `shade` when it has one; neither form is
   collapsed into the other and no supplied leaf is lost, so reuse writes the
   same bytes (shading design contract 1).
-  It sits between `ramp` and `clips`. Export writes and fingerprints the record the
+  It sits between `ramp` and `stored_directions`. Export writes and fingerprints the record the
   command resolved without interpreting it, so a new look changes neither
   export nor capture (owner decisions 2026-10-04, 2026-10-07).
 - `settings.view` records the view: `preset`, the preset's name or `custom`,
@@ -2884,7 +3179,9 @@ output error (exit 6) when it cannot be written.
 - `settings.frames` records the global frame count as given, `auto` or a
   count, directly after `settings.fps`; each `settings.clips` entry runs
   `name`, `loop` and `frames`, the clip's own value as given: a count,
-  `auto` or `null`. Counts are recorded as given, never resolved; each
+  `auto` or `null`, then the clip's export members (`fps`,
+  `stored_directions`, `mirrors`, `output_name`). Counts are recorded as given,
+  never resolved; each
   top-level `clips` entry's `frame_count` is the resolved number, and its
   `time_scale`, directly after `frame_duration_s`, the retiming factor
   (owner decisions 2026-10-11, settings design D-24, D-31, D-40). Inside the
@@ -2906,12 +3203,6 @@ output error (exit 6) when it cannot be written.
   `lightness_step`, `hue_shift_deg`, `chroma_fade`, between `shade` and
   `style`, inside the fingerprint, whether or not a library is used (material
   styling design D-33).
-- `maps`, directly after `image`, names each map's base file name, or `null`
-  for a map not written: `normal` is `{"file": "<stem>.normal.png"}`, or
-  `null` with `normals` false, and `depth` is `{"file": "<stem>.depth.png"}`
-  with `depth` true, else `null`. The encodings are fixed by this design and named by the
-  schema, not repeated per sheet. `maps` is outside the fingerprint, as
-  `image` is; `settings.normals` covers it.
 - `settings.shade` records the shading values used, in this order:
   `ao_distance_m`, `ao_samples`, `occlusion_weight`, `convexity_weight` and
   `range` (`[lo, hi]`), then the resolved global shading settings: `mode`,
@@ -2927,26 +3218,10 @@ output error (exit 6) when it cannot be written.
   value, and every inline override in `settings.style`, changes it.
   `generator.shade` keeps only
   the fixed technique: `technique`, `samples_per_pixel`, `seed`,
-  `pixel_filter` and `filter_width_px`. `moskophoros.sheet/5` is the same
-  document without per-material shading in the inline library record, and
-  `moskophoros.sheet/4` recorded the
-  capture values in `generator.shade` and the range as
-  `settings.style.shade_range`; `moskophoros.sheet/6` had no frame counts or
-  `time_scale`; `moskophoros.sheet/7` had no normal map, `maps` or
-  `settings.normals`; `moskophoros.sheet/8` had no depth map or
-  `settings.depth`; `moskophoros.sheet/9` had no `settings.light`;
-  `moskophoros.sheet/10` had no `settings.ramp`, generated ramp records or
-  library `shade`; `moskophoros.sheet/11` had Workbench's lit colour,
-  recorded `generator.renderer` `"workbench"` and `generator.studio_light`,
-  and had no `generator.color`; `moskophoros.sheet/12` had no
-  `settings.style.edges`, and its pixels' alpha was only 0 or 255;
-  `moskophoros.sheet/13` recorded the view's `projection` and `pitch_deg`
-  in `settings.view` and had no `settings.camera`;
-  `moskophoros.sheet/14` had none of the shading members of `settings.shade`
-  beyond `range`, no `{"ordinary": true}` entries and no response in a library
-  record;
-  [reuse](#scale-and-ground-point) loads only `/15` (settings design D-24;
-  projects and camera design D-14, D-17; shading design D-8). The normal and depth capture adds no fixed
+  `pixel_filter` and `filter_width_px`. Every earlier schema,
+  `moskophoros.sheet/1` to `/15`, is refused by
+  [reuse](#scale-and-ground-point) (settings design D-24; projects and camera
+  design D-14, D-17; shading design D-8; export design D-18). The normal and depth capture adds no fixed
   parameter to `generator.shade` (lighting sheet design D-26).
 - `generator` records this tool, its Python and libraries, and what the
   render result's `backend` reports: the Blender version, `renderer`
@@ -2955,16 +3230,20 @@ output error (exit 6) when it cannot be written.
   fingerprint (alpha design ALPHA-1). There is no studio light.
 - `fingerprint` is the SHA-256 of the canonical JSON (sorted keys, no
   whitespace, UTF-8) of `generator`, `source.sha256` and `settings`. The
-  hashed object mirrors the sheet's own structure:
+  hashed object mirrors the manifest's own structure:
   `{"generator": …, "settings": …, "source": {"sha256": …}}` (owner decision
-  2026-10-01).
+  2026-10-01). It covers every recorded setting, the export members
+  included, so a different export setting is a different fingerprint. The
+  artifacts, their paths and sizes, the directions, clips and frames are
+  outside it, as the single `image` was: they follow from the settings and
+  the output name.
 - Floats are written with Python's shortest round-trip representation.
-- The file keeps the key order shown above, with 2-space indentation, UTF-8
+- The file keeps the key order of the table above, with 2-space indentation, UTF-8
   with non-ASCII characters kept as is, and a trailing newline (owner decision
   2026-10-01).
-- `source.file`, `image.file` and the `maps` files are base names, never
+- `source.file` and every positional artifact `path` are base names, never
   paths, so the JSON is the same wherever the command runs (owner decision
-  2026-10-01).
+  2026-10-01). No output root or project name is recorded.
 
 For example, the palette record for `two.hex` containing `000000` and
 `ffffff`, each followed by a newline, is:
@@ -3090,7 +3369,8 @@ contract.
 
 Given the same input bytes, settings and generator (tool, Python, numpy,
 Pillow and Blender versions, renderer, colour and shade techniques), the sheet PNG, its
-normal and depth maps and JSON are byte-identical. To make that true:
+normal and depth maps, its previews and its manifest are byte-identical. To
+make that true:
 
 - sample times are exact
 - no timestamps are written anywhere
@@ -3102,13 +3382,20 @@ normal and depth maps and JSON are byte-identical. To make that true:
 Output from a different Blender version or GPU may differ; the recorded
 generator and fingerprint make such a difference visible.
 
-A sheet reproduces itself (owner decision 2026-10-11, settings design D-16):
-rerunning with `--settings-from` that sheet, the same model, the same output
-file name and no other options gives a byte-identical PNG, JSON and
+A manifest reproduces its export (owner decision 2026-10-11, settings design
+D-16; export design P-8, part 4): rerunning with `--settings-from` that
+`moskophoros.export/1` manifest, the same model, the same output file name,
+in any folder, and no other options gives a byte-identical PNG, manifest and
 previews, flat and lit, and the same normal and depth maps, with the same
-generator. A sheet made with `--no-preview` reloads writing no previews, one made with
-`--no-normals` writing no normal map and recording `null` for it, and one
-made without `--depth` writing no depth map. A recorded camera direction is
+generator. The manifest alone, with the model, restores every setting, the
+clip selection and its one-shot marks, the frame counts, the output switches
+and the export settings at their defaults; no project, palette or library
+file is needed. A run made with `--no-preview` reloads writing no previews,
+one made with `--no-normals` writing no normal map and one made without
+`--depth` writing no depth map; the manifest of each lists no artifact for
+what it did not write, not a `null` entry. A document that is not exactly a
+current, consistent manifest does not reload (*Reuse* in [Scale and ground
+point](#scale-and-ground-point)). A recorded camera direction is
 kept exactly as recorded, never normalised again, so a sheet with any
 direction and roll reproduces itself too (projects and camera design D-14).
 The same holds for the shading controls (shading design D-8, contract 1):
@@ -3118,6 +3405,24 @@ supplied come back from the JSON alone, with the palette and library source
 files gone, so a sheet with a world-frame sky, a nontrivial key direction and
 roll, material overrides, dithering and snapping, or disabled map and preview
 settings reproduces byte for byte. The whole-command Blender tests check this.
+
+**What the fingerprint covers.** The fingerprint is the hash of the generator,
+the source digest and every recorded setting, so a different value of any
+setting is a different fingerprint, the export members and the path
+templates included. It does not cover the artifacts, their paths and sizes,
+the directions, the clips or the frames, which follow from the settings and
+the output name; nor the model's path or the output folder, which are not
+recorded.
+
+**Compatibility across the manifest switch** (export design D-3, D-18). The
+switch from `moskophoros.sheet/15` to `moskophoros.export/1` changes the
+JSON and its fingerprint, and only those: the default command writes the same
+sheet, maps and previews, to the byte, as the release before it, for the same
+model, generator and settings. The change is checked on a generated rigged
+model, with the same generator before and after: every colour, normal and
+depth PNG and every flat and lit GIF has the same SHA-256. The export settings
+that this command does not execute yet are recorded at their defaults and do
+not change a single image.
 
 ## Project layout
 
