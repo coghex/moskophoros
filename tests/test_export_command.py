@@ -164,7 +164,7 @@ def test_formats_are_given_once_and_normalised(setup, capsys, tmp_path):
     assert "formats" in options.explicit
 
 
-def test_a_destination_may_follow_the_options_in_any_order(tmp_path):
+def test_a_destination_may_follow_the_options_in_any_order():
     options = cli.parse_args(["hero.glb", "--fps", "4", "out.png"])
     assert (options.infile, options.outfile) == (Path("hero.glb"), Path("out.png"))
     options = cli.parse_args(["--output-dir", "out", "--fps", "4", "hero.glb"])
@@ -204,7 +204,7 @@ def test_a_png_with_the_sheet_format_is_the_ordinary_run(setup, capsys):
 # Every combination
 
 
-def expected_kinds(formats, clips):
+def expected_kinds(formats):
     kinds = set()
     if "sheet" in formats:
         kinds.add("sheet")
@@ -229,11 +229,11 @@ def test_each_format_combination_writes_its_files_from_one_capture(
     assert modes(setup) == ["measure", "render"]
     document = read_manifest(out)
     assert document["settings"]["export"]["formats"] == list(formats)
-    assert {a["kind"] for a in document["artifacts"]} == expected_kinds(formats, 2)
+    assert {a["kind"] for a in document["artifacts"]} == expected_kinds(formats)
     files = tree(out)
     assert set(files) == {a["path"] for a in document["artifacts"]} | {"manifest.json"}
     # Maps accompany every enabled format.
-    for kind in expected_kinds(formats, 2) - {"preview"}:
+    for kind in expected_kinds(formats) - {"preview"}:
         channels = {a["channel"] for a in document["artifacts"] if a["kind"] == kind}
         assert channels == {"color", "normal", "depth"}
 
