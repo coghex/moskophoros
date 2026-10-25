@@ -12,7 +12,7 @@ import pytest
 from test_command import Setup, run
 from test_material_ramps import library
 
-from moskophoros import cleanup, export, imageops, stylize
+from moskophoros import cleanup, exportimages, imageops, stylize
 from moskophoros.imageops import encode_normal, reduce_normal_depth
 from moskophoros.sampling import (
     DEPTH,
@@ -476,15 +476,15 @@ def setup(tmp_path):
 
 
 def exported(setup, capsys, monkeypatch, *options, supersample="1"):
-    """The frames and settings export.encode receives."""
+    """The frames and settings exportimages.encode receives."""
     seen = {}
-    real = export.encode
+    real = exportimages.encode
 
     def recording(frames, **kwargs):
         seen["frames"], seen["settings"] = tuple(frames), kwargs["settings"]
         return real(frames, **kwargs)
 
-    monkeypatch.setattr(export, "encode", recording)
+    monkeypatch.setattr(exportimages, "encode", recording)
     argv = setup.argv(*options)
     at = argv.index("--supersample")
     argv[at + 1] = supersample

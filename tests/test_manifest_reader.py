@@ -1416,12 +1416,16 @@ def test_an_explicit_once_replaces_the_marks_and_must_name_loaded_clips():
         cli.apply_settings(parsed("--once", "swim"), reused)
 
 
-def test_the_public_command_does_not_accept_an_export_manifest_yet(tmp_path, capsys):
+def test_the_public_command_refuses_the_full_manifest_for_its_unavailable_settings(
+    tmp_path, capsys
+):
     path = tmp_path / "manifest.json"
     path.write_bytes(base().data)
     with pytest.raises(cli.UsageError):
         cli.read_settings(path)
-    assert "is not a moskophoros.sheet/15 document" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "settings.stored_directions: not available yet" in err
+    assert "settings.clips[0].output_name: not available yet" in err
 
 
 def test_the_manifest_is_not_a_style_of_its_own():

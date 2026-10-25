@@ -636,18 +636,18 @@ def test_the_command_reduces_captured_normals_and_depth_to_the_sheet(
     # Squares facing the viewer 0.3 m in front of the ground point and 0.5 m
     # behind it, head-on at 40 px/m: 12 and −20 sheet pixels, whatever the
     # supersample factor.
-    from moskophoros import cli, export
+    from moskophoros import cli, exportimages
     from moskophoros.sampling import DEPTH_MAP, NORMAL_MAP
 
     path = surfaces_model(tmp_path, "squares", facing_quads([0.3, -0.5]))
     seen = {}
-    real = export.encode
+    real = exportimages.encode
 
     def recording(frames, **kwargs):
         seen["frames"] = tuple(frames)
         return real(frames, **kwargs)
 
-    monkeypatch.setattr(export, "encode", recording)
+    monkeypatch.setattr(exportimages, "encode", recording)
     status = cli.run(
         [
             "--no-user-config",

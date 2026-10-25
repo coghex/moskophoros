@@ -6,8 +6,8 @@ output name. `plan_outputs` lists every file a run writes, as relative paths
 in the order the export fixes, and refuses the plan when two of its paths
 could meet. A request is the `plan.RequestPlan` that `exportsettings` builds.
 
-This is internal preparation: nothing here reads or writes a file, and the
-command does not call it yet. A path is a string of `/`-separated components,
+Nothing here reads or writes a file; the positional command plans its files
+with it. A path is a string of `/`-separated components,
 relative to an output directory, or in the positional form a bare file name
 beside the PNG. Actual roots, existing files and symbolic links are the
 publisher's business. Everything here is pure.

@@ -16,6 +16,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import yaml
+from manifest_fixture import seal
 from PIL import Image
 from test_command import Setup, run
 from test_materials_command import (
@@ -127,7 +128,7 @@ def test_a_default_run_records_the_default_shading_in_order(setup, capsys):
         "snap": "off",
         "dither": {"pattern": "off", "strength": 1.0},
     }
-    assert sheet_of(setup)["schema"] == "moskophoros.sheet/15"
+    assert sheet_of(setup)["schema"] == "moskophoros.export/1"
     text = setup.json.read_text()
     # Numbers are floats, the integers stay integers, and booleans are JSON.
     assert '"strength": 0.0' in text and '"ao_samples": 64' in text
@@ -582,8 +583,9 @@ def test_a_sheet_from_the_previous_schema_is_refused_without_conversion(
     assert status == 2
     assert err.splitlines()[-1] == (
         f"moskophoros: error: --settings-from {str(old)!r}: is a "
-        "moskophoros.sheet/14 sheet; only moskophoros.sheet/15 sheets load, so "
-        "generate it again"
+        "moskophoros.sheet/14 sheet, which no longer loads; only "
+        "moskophoros.export/1 manifests do, so generate it again from the model "
+        "or project"
     )
 
 
@@ -604,7 +606,7 @@ def test_a_recorded_non_unit_key_direction_is_invalid_not_normalised(
     )
     # A unit vector within tolerance is kept as it is, to the last digit.
     document["settings"]["shade"]["key"]["direction"] = [0.0, 0.6, 0.8000000000001]
-    path.write_text(json.dumps(document))
+    path.write_text(json.dumps(seal(document)))
     reused = cli.read_settings(path)
     assert reused.key_direction == (0.0, 0.6, 0.8000000000001)
 

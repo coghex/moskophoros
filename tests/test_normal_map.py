@@ -8,6 +8,7 @@ import math
 
 import numpy as np
 import pytest
+import sheet_encoding
 from PIL import Image
 from test_command import BACKEND, Setup, earlier_outputs, run
 from test_export import GENERATOR, PLAIN, POSE, RANGE, RUN, SIDE, SOURCE, STRIKE
@@ -65,7 +66,7 @@ def encode(frames, **changes):
         "selected_clips": (RUN, STRIKE, POSE),
         "image_path": "héros.png",
     } | changes
-    return export.encode(frames, **arguments)
+    return sheet_encoding.encode(frames, **arguments)
 
 
 def test_the_map_has_the_sheet_s_size_layout_and_alpha():
@@ -76,13 +77,15 @@ def test_the_map_has_the_sheet_s_size_layout_and_alpha():
     np.testing.assert_array_equal(normal[..., 3], colour[..., 3])
     assert (normal[colour[..., 3] == 0] == 0).all()
     # Each frame's normals sit at its own cell, encoded.
-    described = json.loads(sheet.json)["frames"]
+    document = json.loads(sheet.json)
     by_address = {
         (f.address.clip, f.address.direction, f.address.time_s): f for f in frames
     }
-    for entry in described:
+    for entry in document["frames"]:
         frame = by_address[(entry["clip"], entry["direction"], entry["time_s"])]
-        cell = normal[entry["y"] : entry["y"] + 3, entry["x"] : entry["x"] + 2]
+        place = sheet_encoding.cell(document, entry, "normal")
+        x, y = place["x"], place["y"]
+        cell = normal[y : y + place["h"], x : x + place["w"]]
         covered = frame.pixels[..., 3] == 255
         np.testing.assert_array_equal(
             cell[covered, :3],
@@ -94,16 +97,18 @@ def test_the_encoded_bytes_decode_back_within_the_encoding_s_step():
     frames = side_frames(3)
     normal = decoded(encode(frames).normal)
     colour = decoded(encode(frames).png)
-    described = json.loads(encode(frames).json)["frames"]
+    document = json.loads(encode(frames).json)
     worst = 0.0
-    for entry, frame in zip(described, frames, strict=True):
+    for entry, frame in zip(document["frames"], frames, strict=True):
         assert (entry["clip"], entry["direction"], entry["time_s"]) == (
             frame.address.clip,
             frame.address.direction,
             frame.address.time_s,
         )
-        cell = normal[entry["y"] : entry["y"] + 3, entry["x"] : entry["x"] + 2]
-        covered = colour[entry["y"] : entry["y"] + 3, entry["x"] : entry["x"] + 2, 3]
+        place = sheet_encoding.cell(document, entry, "normal")
+        x, y = place["x"], place["y"]
+        cell = normal[y : y + place["h"], x : x + place["w"]]
+        covered = colour[y : y + place["h"], x : x + place["w"], 3]
         back = 2 * cell[..., :3].astype(np.float64) / 255 - 1
         error = np.abs(back - frame.buffers[NORMAL_MAP])[covered == 255]
         worst = max(worst, float(error.max(initial=0.0)))
@@ -137,18 +142,22 @@ def test_without_normals_no_map_is_encoded_and_none_is_needed():
     sheet = encode(frames, normals=False)
     document = json.loads(sheet.json)
     assert sheet.normal is None
-    assert document["maps"] == {"normal": None, "depth": None}
+    assert sheet_encoding.path_of(document, "sheet", "normal") is None
+    assert [a["channel"] for a in document["artifacts"] if a["kind"] == "sheet"] == [
+        "color"
+    ]
     assert document["settings"]["normals"] is False
     with pytest.raises(ValueError, match="normal map"):
         encode(frames)
 
 
-def test_maps_sits_directly_after_image_and_the_flag_is_fingerprinted():
+def test_the_map_is_an_artifact_and_the_flag_is_fingerprinted():
     on = json.loads(encode(side_frames()).json)
     off = json.loads(encode(side_frames(), normals=False).json)
     keys = list(on)
-    assert keys[keys.index("image") + 1] == "maps"
-    assert on["maps"] == {"normal": {"file": "héros.normal.png"}, "depth": None}
+    assert keys[keys.index("fingerprint") + 1] == "artifacts"
+    assert sheet_encoding.path_of(on, "sheet", "normal") == "héros.normal.png"
+    assert sheet_encoding.path_of(on, "sheet", "depth") is None
     assert on["fingerprint"] != off["fingerprint"]
     for document in (on, off):
         assert document["fingerprint"] == export.fingerprint(
@@ -179,7 +188,7 @@ def test_a_run_writes_the_map_beside_the_sheet(setup, capsys):
     assert normal.shape == colour.shape
     np.testing.assert_array_equal(normal[..., 3], colour[..., 3])
     document = json.loads(setup.json.read_text())
-    assert document["maps"]["normal"] == {"file": "hero.normal.png"}
+    assert sheet_encoding.path_of(document, "sheet", "normal") == "hero.normal.png"
     assert document["settings"]["normals"] is True
     # D-26: the capture reports no fixed parameter for normal and depth.
     assert document["generator"]["shade"] == BACKEND["shade"]
@@ -209,7 +218,7 @@ def test_turned_off_writes_none_records_null_and_keeps_an_earlier_map(
     after = setup.listing()
     assert after["hero.normal.png"] == earlier["hero.normal.png"]
     document = json.loads(setup.json.read_text())
-    assert document["maps"] == {"normal": None, "depth": None}
+    assert sheet_encoding.path_of(document, "sheet", "normal") is None
     assert document["settings"]["normals"] is False
 
 
@@ -281,9 +290,9 @@ def test_reloading_a_sheet_reproduces_the_map_byte_for_byte(setup, capsys, optio
     assert ("hero.normal.png" in first) is (not options)
 
 
-def test_settings_only_reuse_regenerates_the_map_from_the_model(setup, capsys):
-    """An /8 document holding only its schema and settings is enough: no maps
-    record and no earlier normal map are read (the issue review's addition)."""
+def test_a_document_of_only_schema_and_settings_no_longer_loads(setup, capsys):
+    """Reuse validates the whole manifest: settings alone, which the earlier
+    schema accepted, are refused before Blender and nothing is written."""
     sheet = recorded(setup, capsys)
     first = setup.listing()
     document = json.loads(sheet.read_text())
@@ -293,8 +302,10 @@ def test_settings_only_reuse_regenerates_the_map_from_the_model(setup, capsys):
     )
     for name in list(first):
         (setup.out / name).unlink()
-    assert run(capsys, reload(setup, minimal))[0] == 0
-    assert setup.listing() == first
+    status, _, err = run(capsys, reload(setup, minimal))
+    assert status == 2
+    assert "generator: missing" in err and "fingerprint: missing" in err
+    assert setup.listing() == {}
 
 
 def test_reuse_with_another_output_name_names_its_own_map(setup, capsys):
@@ -302,7 +313,7 @@ def test_reuse_with_another_output_name_names_its_own_map(setup, capsys):
     other = setup.out / "other.png"
     assert run(capsys, reload(setup, sheet, outfile=other))[0] == 0
     document = json.loads((setup.out / "other.json").read_text())
-    assert document["maps"]["normal"] == {"file": "other.normal.png"}
+    assert sheet_encoding.path_of(document, "sheet", "normal") == "other.normal.png"
     assert (setup.out / "other.normal.png").read_bytes() == (
         setup.out / "hero.normal.png"
     ).read_bytes()

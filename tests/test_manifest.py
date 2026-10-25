@@ -957,7 +957,6 @@ def test_the_manifest_settings_are_built_without_the_capture_settings_document(
         raise AssertionError("settings_document was called")
 
     monkeypatch.setattr(backend, "settings_document", forbidden)
-    monkeypatch.setattr(export, "settings_document", forbidden)
     x = export_for("{}\n", clips=(POSE,), view=RING4)
     assert x.document["settings"]["fps"] == 12.0
 

@@ -7,14 +7,15 @@ artifacts, `encode` serializes it, and `settings_record` is the manifest's
 so no export setting reaches a capture job. `decode` reads a manifest back
 from its bytes, checking every member and every record the others imply,
 and `read` reads a file first. The reader returns a `Manifest` holding the
-settings as the layer they reload into (`Manifest.source`), the legacy
-`cli.ReusedSettings` of the values that existed before this schema, and the
-validated document.
+settings as the layer they reload into (`Manifest.source`), the
+`cli.ReusedSettings` of the values the command reuses, and the validated
+document.
 
-The command does not call any of this yet: it still writes and loads
-`moskophoros.sheet/15`, and `cli.read_settings` refuses this schema. Only
-`read` touches the file system, and only to read the manifest itself: no
-artifact, palette or library file is opened. Everything else is pure.
+The command writes this schema (`encode`) and loads only it
+(`cli.read_settings`, which also refuses a manifest that records an export
+setting away from its inactive default). Only `read` touches the file system,
+and only to read the manifest itself: no artifact, palette or library file is
+opened. Everything else is pure.
 """
 
 import argparse
@@ -434,11 +435,12 @@ class Manifest:
         return exportsettings.Source(exportsettings.REUSED, self.label, self.layer)
 
 
-def read(path):
-    """The `Manifest` in the file at `path`. Reading that file is the only
-    effect; raises `usage.UsageError` naming it and the problem."""
+def read(path, label=None):
+    """The `Manifest` in the file at `path`, named `label` in errors (by
+    default the manifest and its path). Reading that file is the only effect;
+    raises `usage.UsageError` naming it and the problem."""
     path = Path(path)
-    label = f"manifest {str(path)!r}"
+    label = f"manifest {str(path)!r}" if label is None else label
     try:
         data = path.read_bytes()
     except OSError as error:

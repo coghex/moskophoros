@@ -14,6 +14,7 @@ import pytest
 import shading
 import yaml
 from glb_writer import GlbWriter
+from manifest_fixture import seal
 from PIL import Image
 from test_command import PLAIN_STYLE, Setup, run
 from test_reuse import edited, write_sheet
@@ -311,7 +312,7 @@ def test_a_run_records_the_library_inline_and_the_shade_range(setup, capsys):
     named_hero(setup, HERO_MATERIALS)
     run_with_library(setup, capsys, "--no-preview")
     description = json.loads(setup.json.read_text())
-    assert description["schema"] == "moskophoros.sheet/15"
+    assert description["schema"] == "moskophoros.export/1"
     style = description["settings"]["style"]
     assert list(style) == ["reduce", "edges", "palette", "materials"]
     assert description["settings"]["shade"]["range"] == DEFAULT_RANGE
@@ -322,7 +323,14 @@ def test_a_run_records_the_library_inline_and_the_shade_range(setup, capsys):
     assert record["default"] is None
     assert record["materials"] == LIBRARY["materials"]
     assert list(record["materials"]) == ["ghost", "glass", "steel"]
-    assert list(description["settings"])[-2:] == ["style", "clips"]
+    assert list(description["settings"])[-6:] == [
+        "style",
+        "stored_directions",
+        "direction_names",
+        "mirrors",
+        "export",
+        "clips",
+    ]
 
 
 def test_ordinary_entries_and_the_default_are_recorded(setup, capsys):
@@ -544,7 +552,7 @@ def test_the_fingerprint_changes_with_the_library_and_the_shade_range(
     run_with_library(setup, capsys)
     document = json.loads(setup.json.read_text())
     document["settings"]["shade"]["range"] = [90, 180]
-    sheet.write_text(json.dumps(document))
+    sheet.write_text(json.dumps(seal(document)))
     assert run(capsys, setup.argv("--settings-from", str(sheet)))[0] == 0
     assert fingerprint(setup) not in {without, with_library, changed}
 
@@ -601,7 +609,7 @@ def test_a_reused_shade_range_decides_the_bands(setup, capsys, tmp_path):
     sheet = recorded(setup, capsys)
     document = json.loads(sheet.read_text())
     document["settings"]["shade"]["range"] = [140, 200]
-    sheet.write_text(json.dumps(document))
+    sheet.write_text(json.dumps(seal(document)))
     assert (
         run(capsys, setup.argv("--settings-from", str(sheet), "--no-preview"))[0] == 0
     )
@@ -616,7 +624,7 @@ def test_a_reused_shade_range_is_kept_when_an_explicit_library_replaces_the_libr
     sheet = recorded(setup, capsys)
     document = json.loads(sheet.read_text())
     document["settings"]["shade"]["range"] = [140, 200]
-    sheet.write_text(json.dumps(document))
+    sheet.write_text(json.dumps(seal(document)))
     replacement = library_file(setup.tmp_path, library_with(), name="other.yaml")
     assert (
         run(
@@ -657,8 +665,8 @@ def test_a_sheet_from_before_the_shade_was_recorded_no_longer_loads(
     with pytest.raises(cli.UsageError):
         cli.read_settings(path)
     assert (
-        f"is a {schema} sheet; only moskophoros.sheet/15 sheets load"
-        in capsys.readouterr().err
+        f"is a {schema} sheet, which no longer loads; only moskophoros.export/1 "
+        "manifests do" in capsys.readouterr().err
     )
 
 

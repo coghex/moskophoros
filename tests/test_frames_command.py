@@ -69,6 +69,20 @@ def ok(capsys, argv):
     return err
 
 
+def own(name, loop, frames):
+    """A selected clip as the manifest's settings record it: no export
+    override of its own."""
+    return {
+        "name": name,
+        "loop": loop,
+        "frames": frames,
+        "fps": None,
+        "stored_directions": None,
+        "mirrors": None,
+        "output_name": None,
+    }
+
+
 def frame_warnings(err):
     return [
         line.removeprefix("moskophoros: warning: ")
@@ -84,15 +98,15 @@ def test_counts_are_recorded_as_given_in_their_places(setup, capsys):
     path = config(setup, "clips:\n  attack: {frames: 2}\n  pose: {frames: auto}\n")
     ok(capsys, setup.argv("--frames", "3", "--config", str(path), "--no-preview"))
     document = sheet(setup)
-    assert document["schema"] == "moskophoros.sheet/15"
+    assert document["schema"] == "moskophoros.export/1"
     settings = document["settings"]
     keys = list(settings)
     assert keys[keys.index("fps") + 1] == "frames"
     assert settings["frames"] == 3
     assert settings["clips"] == [
-        {"name": "walk", "loop": True, "frames": None},
-        {"name": "attack", "loop": False, "frames": 2},
-        {"name": "pose", "loop": True, "frames": "auto"},
+        own("walk", True, None),
+        own("attack", False, 2),
+        own("pose", True, "auto"),
     ]
     clips = document["clips"]
     assert list(clips[0]) == [
@@ -102,6 +116,10 @@ def test_counts_are_recorded_as_given_in_their_places(setup, capsys):
         "frame_count",
         "frame_duration_s",
         "time_scale",
+        "output_name",
+        "fps",
+        "stored_directions",
+        "mirrors",
     ]
     # walk: 3 frames of 1 s at 4 fps; attack: a one-shot of 2 over 0.5 s;
     # pose: zero duration, one frame.
@@ -348,9 +366,9 @@ def test_reloading_restores_each_count_auto_and_null_exactly(setup, capsys):
     assert after["settings"] == before["settings"]
     assert after["clips"] == before["clips"]
     assert after["settings"]["clips"] == [
-        {"name": "walk", "loop": True, "frames": 2},
-        {"name": "attack", "loop": False, "frames": "auto"},
-        {"name": "pose", "loop": True, "frames": None},
+        own("walk", True, 2),
+        own("attack", False, "auto"),
+        own("pose", True, None),
     ]
 
 
@@ -358,8 +376,8 @@ def test_clip_over_a_loaded_sheet_keeps_a_reselected_clips_count(setup, capsys):
     recorded = recorded_sheet(setup, capsys)
     ok(capsys, reload(setup, recorded, "--clip", "walk", "--clip", "pose"))
     assert sheet(setup)["settings"]["clips"] == [
-        {"name": "walk", "loop": True, "frames": 2},
-        {"name": "pose", "loop": True, "frames": None},
+        own("walk", True, 2),
+        own("pose", True, None),
     ]
     assert counts(setup)["walk"][0] == 2
 

@@ -8,9 +8,11 @@ import math
 
 import numpy as np
 import pytest
+import sheet_encoding
 from glb_writer import GlbWriter
 from PIL import Image
 from shading import DEFAULT_SHADE
+from sheet_encoding import path_of
 from test_command import Setup, earlier_outputs, run
 from test_materials_command import forbid_blender
 from test_reuse import write_sheet
@@ -281,7 +283,7 @@ def frames(seed=0, depth=(-3.0, 4.0)):
 
 
 def lit_preview(given, light):
-    (preview,) = export.lit_previews(
+    (preview,) = sheet_encoding.lit_previews(
         given, subject="hero", settings=SETTINGS, selected_clips=(WALK,), light=light
     )
     return preview
@@ -303,7 +305,7 @@ def test_in_memory_reconstruction_matches_the_lit_preview():
             frame.pixels, normal_bytes, codes, (3, 4), light.position, 1.3, 0.2
         )
         reconstructed.append(ImageFrame(frame.address, lit))
-    (expected,) = export.previews(
+    (expected,) = sheet_encoding.previews(
         reconstructed, subject="hero", settings=SETTINGS, selected_clips=(WALK,)
     )
     assert lit_preview(given, light).gif == expected.gif
@@ -311,7 +313,7 @@ def test_in_memory_reconstruction_matches_the_lit_preview():
 
 def test_the_lit_preview_differs_from_the_flat_one_and_names_its_warning():
     given = frames()
-    (flat,) = export.previews(
+    (flat,) = sheet_encoding.previews(
         given, subject="hero", settings=SETTINGS, selected_clips=(WALK,)
     )
     assert lit_preview(given, export.Light((7.0, 9.0, 20.0))).gif != flat.gif
@@ -326,7 +328,7 @@ def test_the_lit_preview_differs_from_the_flat_one_and_names_its_warning():
         normals[..., 2] = 1.0
         maps = {NORMAL_MAP: normals, DEPTH_MAP: np.zeros((40, 40))}
         noisy[i] = ImageFrame(frame.address, pixels, buffers=maps)
-    (preview,) = export.lit_previews(
+    (preview,) = sheet_encoding.lit_previews(
         noisy,
         subject="hero",
         settings=big,
@@ -411,7 +413,12 @@ def test_a_light_changes_no_other_output(setup, capsys):
             assert lit[name] == flat[name], name
     before, after = json.loads(flat["hero.json"]), json.loads(lit["hero.json"])
     differing = {k for k in before if before[k] != after[k]}
-    assert differing == {"settings", "fingerprint"}
+    assert differing == {"settings", "fingerprint", "artifacts"}
+    # The lit previews are the only artifacts added, and every image keeps its
+    # place in the list.
+    assert [a for a in after["artifacts"] if a["channel"] != "lit"] == before[
+        "artifacts"
+    ]
     assert {
         k for k in before["settings"] if before["settings"][k] != after["settings"][k]
     } == {"light"}
@@ -732,8 +739,8 @@ def test_production_reconstruction_from_the_exported_files(setup, capsys):
     assert run(capsys, argv)[0] == 0
     document = json.loads(setup.json.read_text())
     colour = decode_png(setup.png)
-    normal = decode_png(setup.out / document["maps"]["normal"]["file"])
-    depth = decode_png(setup.out / document["maps"]["depth"]["file"])
+    normal = decode_png(setup.out / path_of(document, "sheet", "normal"))
+    depth = decode_png(setup.out / path_of(document, "sheet", "depth"))
     covered_depths = (depth[colour[..., 3] == 255].astype(np.int64) - ZERO) / 16
     assert (covered_depths > 0).any() and (covered_depths < 0).any()
     gx, gy = (
@@ -755,7 +762,8 @@ def test_production_reconstruction_from_the_exported_files(setup, capsys):
     )
     frames = []
     for entry in document["frames"]:
-        x, y, w, h = entry["x"], entry["y"], entry["w"], entry["h"]
+        place = sheet_encoding.cell(document, entry, "color")
+        x, y, w, h = place["x"], place["y"], place["w"], place["h"]
         lit, _ = game_light(
             colour[y : y + h, x : x + w],
             normal[y : y + h, x : x + w, :3],
@@ -780,7 +788,7 @@ def test_production_reconstruction_from_the_exported_files(setup, capsys):
         )
         for i, clip in enumerate(document["clips"])
     ]
-    rebuilt = export.previews(
+    rebuilt = sheet_encoding.previews(
         frames, subject=document["subject"], settings=settings, selected_clips=selected
     )
     for preview in rebuilt:
@@ -800,7 +808,7 @@ def test_the_lit_preview_is_the_same_under_perspective():
     )
     given = frames()
     light = export.Light((7.0, 9.0, 20.0), 1.3, 0.2)
-    (lit,) = export.lit_previews(
+    (lit,) = sheet_encoding.lit_previews(
         given,
         subject="hero",
         settings=perspective,

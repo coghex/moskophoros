@@ -232,7 +232,7 @@ def test_the_help_names_every_shading_option(capsys):
     ):
         assert option in text
     assert "moskophoros.materials/4" in text
-    assert "moskophoros.sheet/15" in text
+    assert "moskophoros.export/1" in text
 
 
 # Settings files

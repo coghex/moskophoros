@@ -21,12 +21,14 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import sheet_encoding
 from glb_writer import GlbWriter
 from PIL import Image
 
 from moskophoros import (
     cli,
     export,
+    exportimages,
     gltf,
     imageops,
     publication,
@@ -356,23 +358,23 @@ def test_a_run_writes_the_sheet_its_json_and_a_preview_per_clip(setup, capsys):
         "hero.walk.gif",
     ]
     description = json.loads(setup.json.read_text())
-    assert description["schema"] == "moskophoros.sheet/15"
-    assert description["maps"] == {
-        "normal": {"file": "hero.normal.png"},
-        "depth": None,
-    }
+    assert description["schema"] == "moskophoros.export/1"
+    assert [(a["kind"], a["channel"], a["path"]) for a in description["artifacts"]] == [
+        ("sheet", "color", "hero.png"),
+        ("sheet", "normal", "hero.normal.png"),
+        ("preview", "flat", "hero.walk.gif"),
+        ("preview", "flat", "hero.attack.gif"),
+    ]
+    assert "image" not in description and "maps" not in description
     assert description["settings"]["style"] == PLAIN_STYLE
-    assert description["image"]["file"] == "hero.png"
     assert [(c["name"], c["loop"]) for c in description["clips"]] == [
         ("walk", True),
         ("attack", False),
     ]
     with Image.open(setup.png) as image:
         assert image.mode == "RGBA"
-        assert image.size == (
-            description["image"]["width"],
-            description["image"]["height"],
-        )
+        sheet = description["artifacts"][0]
+        assert image.size == (sheet["width"], sheet["height"])
     for gif in (setup.walk_gif, setup.attack_gif):
         with Image.open(gif) as image:
             assert image.format == "GIF"
@@ -465,9 +467,27 @@ def test_the_fingerprint_reaches_the_frames_before_stylize(setup, capsys, monkey
         },
         "ramp": {"lightness_step": 0.12, "hue_shift_deg": -12.0, "chroma_fade": 0.3},
         "style": PLAIN_STYLE,
+        "stored_directions": "all",
+        "direction_names": [],
+        "mirrors": [],
+        "export": {
+            "formats": ["sheet"],
+            "frame_path": "frames/{clip}/{direction}/frame_{frame:03}{map}.png",
+            "atlas_path": "atlases/{clip}{map}.png",
+            "sheet_path": "sheet{map}.png",
+            "atlas_padding": 0,
+        },
         "clips": [
-            {"name": "walk", "loop": True, "frames": None},
-            {"name": "attack", "loop": False, "frames": None},
+            {
+                "name": name,
+                "loop": loop,
+                "frames": None,
+                "fps": None,
+                "stored_directions": None,
+                "mirrors": None,
+                "output_name": None,
+            }
+            for name, loop in (("walk", True), ("attack", False))
         ],
     }
     expected = export.fingerprint(
@@ -662,8 +682,8 @@ def test_a_reused_mode_sheet_selects_mode_unless_overridden(setup, capsys):
     assert sheet_colours(reused) == {SPECKLE_MOST, UNUSED}
     assert reused.read_bytes() == setup.png.read_bytes()
     assert (setup.out / "reused.json").read_text().replace(
-        "reused.png", "hero.png"
-    ).replace("reused.normal.png", "hero.normal.png") == setup.json.read_text()
+        "reused.", "hero."
+    ) == setup.json.read_text()
 
     assert run(capsys, ["--reduce", "plain", *argv, str(reused)])[0] == 0
     assert sheet_colours(reused) == {SPECKLE_MEAN, UNUSED}
@@ -1218,7 +1238,7 @@ def test_an_internal_error_prints_a_traceback_and_exits_1(setup, capsys, monkeyp
     def broken(*args, **kwargs):
         raise RuntimeError("a bug in export")
 
-    monkeypatch.setattr(export, "encode", broken)
+    monkeypatch.setattr(exportimages, "encode", broken)
     status, _, err = run(capsys, setup.argv())
     assert status == 1
     assert err.startswith("Traceback (most recent call last):\n")
@@ -1261,7 +1281,7 @@ def test_a_bad_settings_file_is_a_usage_error(setup, capsys):
     bad.write_text("{}")
     status, _, err = run(capsys, setup.argv("--settings-from", str(bad)))
     assert status == 2
-    assert "is not a moskophoros.sheet/15 document" in err
+    assert "is not a moskophoros.export/1 document" in err
     assert setup.listing() == earlier
 
 
@@ -1532,7 +1552,8 @@ def test_a_front_layer_composites_over_the_back_in_the_sheet(setup, capsys):
             for f, b in zip((255, 0, 0), back, strict=True)
         )
         # The cell's bottom-right corner shows the back, with the front over it.
-        x, y = frame["x"] + frame["w"] - 1, frame["y"] + frame["h"] - 1
+        place = sheet_encoding.cell(description, frame)
+        x, y = place["x"] + place["w"] - 1, place["y"] + place["h"] - 1
         assert tuple(int(v) for v in sheet[y, x]) == (*expected, 255)
         # Its top-left quarter shows nothing in either layer.
-        assert tuple(int(v) for v in sheet[frame["y"], frame["x"]]) == (0, 0, 0, 0)
+        assert tuple(int(v) for v in sheet[place["y"], place["x"]]) == (0, 0, 0, 0)

@@ -1,13 +1,13 @@
-"""The sheet PNG, its normal and depth maps, its `moskophoros.sheet/15` JSON
-and the animated previews, flat and lit, following design §Export.
+"""The image operations of an export, and the records the manifest shares:
+the generator, the fingerprint, the light and the shading, following design
+§Export.
 
-`encode` lays the reduced frames out on the sheet and its maps, describes
-them and returns the files' bytes; `normal_path` and `depth_path` name the
-maps; `write` writes the sheet and JSON where the caller says. `previews`
-returns each clip's GIF, `preview_paths` names them and `write_previews`
-writes them; `lit_previews` and `lit_preview_paths` do the same for the
-previews lit by a `Light`. Everything except the writers is pure, and the same inputs give
-byte-identical output (design §Reproducibility).
+`normal_path` and `depth_path` name the sheet's maps beside its PNG,
+`preview_paths` and `lit_preview_paths` the clips' flat and lit previews. The
+rest are what `exportimages.encode` lays an export out with: the depth and
+normal encodings, the checks of the frames it is given, `encode_png` and the
+GIF encoder `preview_gif`. The same inputs give byte-identical output (design
+§Reproducibility).
 """
 
 import hashlib
@@ -27,11 +27,9 @@ import PIL
 from PIL import Image
 
 import moskophoros
-from moskophoros import imageops, sampling, views
+from moskophoros import sampling
 from moskophoros import shading as shading_model
-from moskophoros.capture.backend import settings_document
 
-SCHEMA = "moskophoros.sheet/15"
 # The global formula of generated ramps, in its recorded order, at the
 # shipped defaults (material styling design D-30, D-33).
 DEFAULT_RAMP = MappingProxyType(
@@ -102,27 +100,6 @@ class Light:
 
 
 NO_LIGHT = Light()
-
-
-@dataclass(frozen=True)
-class Sheet:
-    """The encoded sheet: `png` and `json` bytes, ready to write, and the
-    normal and depth maps' `normal` and `depth` PNG bytes, each None when it
-    is not written."""
-
-    png: bytes
-    json: bytes
-    normal: bytes | None = None
-    depth: bytes | None = None
-
-
-@dataclass(frozen=True)
-class Preview:
-    """One clip's encoded preview, with any warning for the command to print."""
-
-    clip: str
-    gif: bytes
-    warnings: tuple[str, ...]
 
 
 def generator(backend):
@@ -203,230 +180,6 @@ def shading_record(shading=None):
     }
 
 
-def sheet_settings(
-    settings,
-    selected_clips,
-    style,
-    *,
-    shade_range,
-    previews=True,
-    normals=True,
-    depth=False,
-    light=NO_LIGHT,
-    ramp=DEFAULT_RAMP,
-    shading=None,
-):
-    """The sheet's `settings` object: the capture job's settings, fitted, then
-    `previews`, whether the animated previews are written, `normals` and
-    `depth`, whether the normal and depth maps are written, `light`, the
-    preview light's record whether or not one is placed, `shade`, the
-    capture's shade values with the shade range `[lo, hi]` stylize used and
-    the resolved global shading settings `shading` (a `shading.Settings`;
-    the shipped defaults when None), every one recorded whether or not the
-    mode makes it effective (`shade_record`), `ramp`, the global formula of
-    generated ramps (`lightness_step`, `hue_shift_deg`, `chroma_fade`)
-    whether or not a library is used, and `style` recorded as given, just
-    before `clips`.
-
-    `style` is the record the command resolved, written and fingerprinted as
-    it is: export does not know which reductions or palettes exist.
-    """
-    document = settings_document(settings, selected_clips)
-    clips = document.pop("clips")
-    # The sheet records the global values; each material's own values are
-    # in its library entry, recorded inline in the style.
-    capture = document.pop("shade")
-    shade = {
-        key: capture[key]
-        for key in (
-            "ao_distance_m",
-            "ao_samples",
-            "occlusion_weight",
-            "convexity_weight",
-        )
-    } | {"range": [int(bound) for bound in shade_range]}
-    shade |= shading_record(shading)
-    return document | {
-        "previews": previews,
-        "normals": normals,
-        "depth": depth,
-        "light": light.record(),
-        "shade": shade,
-        "ramp": {
-            name: float(ramp[name])
-            for name in ("lightness_step", "hue_shift_deg", "chroma_fade")
-        },
-        "style": style,
-        "clips": clips,
-    }
-
-
-def encode(
-    frames,
-    *,
-    generator,
-    source,
-    subject,
-    settings,
-    style,
-    selected_clips,
-    image_path,
-    shade_range,
-    previews=True,
-    normals=True,
-    depth=False,
-    light=NO_LIGHT,
-    ramp=DEFAULT_RAMP,
-    shading=None,
-):
-    """Lay out and describe the sheet, returning its PNG, JSON and, with
-    `normals` and `depth`, its normal and depth maps' bytes.
-
-    `frames` are the reduced `sampling.ImageFrame`s, exactly one for each
-    frame the selected clips and resolved `settings` request, each the cell
-    size, in any order; with `normals` or `depth`, each carries its normal or
-    depth map (`sampling.NORMAL_MAP`, `sampling.DEPTH_MAP`). `generator` comes from `generator()`, `source`
-    is the capture `Source`, `style` is the style record `sheet_settings`
-    takes, `selected_clips` are `gltf.SelectedClip`s in selection order,
-    `image_path` is where the PNG will be written; only its base name is
-    recorded, as is the source's and the normal map's; `shade_range` is the
-    shade range stylize used, recorded in `settings.shade` with the resolved
-    global shading settings `shading` (see `sheet_settings`); `previews`
-    records whether the animated previews are written; `normals` and
-    `depth` whether the normal and depth maps are; and `light` is the preview
-    light, recorded in `settings.light`.
-
-    The normal map is laid out as the sheet is: each pixel the colour covers
-    (alpha above 0) holds its normal encoded by `imageops.encode_normal`,
-    unblended, with the colour's alpha, and every other pixel is
-    `(0, 0, 0, 0)` (lighting sheet design D-17; alpha design D-11). The depth
-    map, a 16-bit greyscale PNG laid out the same way, holds
-    `32768 + floor(16 · depth + ½)` for each covered pixel's depth in sheet
-    pixels, and 0, "no surface", everywhere else (D-10).
-
-    Raises `DepthOverflow` when the depth map is written and a covered
-    pixel's depth lies outside `±DEPTH_LIMIT` sheet pixels (D-21), and
-    `ValueError` for frames that are missing, extra, duplicated or the wrong
-    size, or lack a map that is to be written, or for unfitted settings:
-    these are internal errors.
-    """
-    if settings.ppm is None or settings.cell is None or settings.ground_px is None:
-        raise ValueError("the settings are not fitted: scale, cell and ground pixel")
-    selected_clips = tuple(selected_clips)
-    view = views.View(settings.directions, settings.start_angle, settings.model_yaw)
-    directions = views.directions(view)
-    requested = sampling.frames(
-        subject, selected_clips, view, settings.fps, settings.frames
-    )
-    width, height = settings.cell
-    frames = tuple(frames)
-    pixels = pixels_by_address(frames, requested, (height, width, 4))
-    normal_maps = (
-        maps_by_address(frames, sampling.NORMAL_MAP, (height, width, 3))
-        if normals
-        else None
-    )
-    depth_maps = (
-        maps_by_address(frames, sampling.DEPTH_MAP, (height, width)) if depth else None
-    )
-    if depth:
-        check_depths(requested, pixels, depth_maps, settings.ppm)
-
-    row_of_clip = {selected.clip.name: c for c, selected in enumerate(selected_clips)}
-    samplings = [
-        sampling.sample(selected, settings.fps, settings.frames)
-        for selected in selected_clips
-    ]
-    columns = max(s.frame_count for s in samplings)
-    rows = len(selected_clips) * len(directions)
-    image = np.zeros((rows * height, columns * width, 4), dtype=np.uint8)
-    normal_image = np.zeros_like(image) if normals else None
-    depth_image = np.zeros(image.shape[:2], dtype=np.uint16) if depth else None
-    frame_documents = []
-    for frame in requested:
-        address = frame.address
-        row = row_of_clip[address.clip] * len(directions) + address.direction
-        x, y = frame.index * width, row * height
-        image[y : y + height, x : x + width] = pixels[address]
-        if normals:
-            alpha = pixels[address][..., 3]
-            covered = alpha > 0
-            cell = np.zeros((height, width, 4), dtype=np.uint8)
-            cell[covered, :3] = imageops.encode_normal(normal_maps[address][covered])
-            cell[covered, 3] = alpha[covered]
-            normal_image[y : y + height, x : x + width] = cell
-        if depth:
-            covered = pixels[address][..., 3] > 0
-            codes = np.full((height, width), NO_SURFACE, dtype=np.uint16)
-            codes[covered] = encode_depth(depth_maps[address][covered])
-            depth_image[y : y + height, x : x + width] = codes
-        frame_documents.append(
-            {
-                "clip": address.clip,
-                "direction": address.direction,
-                "index": frame.index,
-                "time_s": float(address.time_s),
-                "x": x,
-                "y": y,
-                "w": width,
-                "h": height,
-            }
-        )
-
-    settings_doc = sheet_settings(
-        settings,
-        selected_clips,
-        style,
-        shade_range=shade_range,
-        previews=previews,
-        normals=normals,
-        depth=depth,
-        light=light,
-        ramp=ramp,
-        shading=shading,
-    )
-    description = {
-        "schema": SCHEMA,
-        "generator": generator,
-        "source": {"file": Path(source.path).name, "sha256": source.sha256},
-        "subject": subject,
-        "variant": sampling.VARIANT,
-        "settings": settings_doc,
-        "fingerprint": fingerprint(generator, settings_doc, source.sha256),
-        "image": {
-            "file": Path(image_path).name,
-            "width": int(image.shape[1]),
-            "height": int(image.shape[0]),
-        },
-        "maps": {
-            "normal": {"file": normal_path(image_path).name} if normals else None,
-            "depth": {"file": depth_path(image_path).name} if depth else None,
-        },
-        "directions": [
-            {"index": d.index, "angle_deg": float(d.angle), "label": d.label}
-            for d in directions
-        ],
-        "clips": [
-            {
-                "name": selected.clip.name,
-                "loop": not selected.one_shot,
-                "duration_s": float(selected.clip.t1 - selected.clip.t0),
-                "frame_count": s.frame_count,
-                "frame_duration_s": float(s.frame_duration),
-                "time_scale": float(s.time_scale),
-            }
-            for selected, s in zip(selected_clips, samplings, strict=True)
-        ],
-        "frames": frame_documents,
-    }
-    return Sheet(
-        encode_png(image),
-        _json(description),
-        None if normal_image is None else encode_png(normal_image),
-        None if depth_image is None else encode_png(depth_image),
-    )
-
-
 def normal_path(png_path):
     """The normal map's path, `<stem>.normal.png` beside the sheet PNG."""
     png_path = Path(png_path)
@@ -482,12 +235,6 @@ def check_depths(requested, pixels, depth_maps, ppm):
     raise DepthOverflow("\n".join(lines), tuple(overflowing))
 
 
-def write(sheet, png_path, json_path):
-    """Write an encoded sheet to the paths the caller chose."""
-    Path(png_path).write_bytes(sheet.png)
-    Path(json_path).write_bytes(sheet.json)
-
-
 def pixels_by_address(frames, requested, shape):
     """Map each requested address to its frame's pixels, or raise."""
     wanted = {frame.address for frame in requested}
@@ -540,83 +287,6 @@ def encode_png(image):
     return buffer.getvalue()
 
 
-def _json(description):
-    text = json.dumps(description, indent=2, ensure_ascii=False, allow_nan=False)
-    return (text + "\n").encode("utf-8")
-
-
-def previews(frames, *, subject, settings, selected_clips, lit=False):
-    """Each selected clip's animated GIF preview, in sheet order.
-
-    `frames` are the plain frames `encode` takes. GIF frame `k` shows sample
-    `k` of every direction side by side in index order, enlarged
-    `PREVIEW_SCALE` times, each pixel blended over a solid
-    `PREVIEW_BACKGROUND` by `blend_over_background`, so a transparent pixel
-    is the background and an opaque one keeps its colour. A frame keeps its
-    exact colors when it has at most 256 of them, partly transparent pixels'
-    blends included; otherwise it is reduced to 256 without dithering and
-    the preview warns, even when the sheet is paletted (alpha design D-13). Each frame lasts the clip's frame duration in whole
-    centiseconds, rounded half up and at least 20 ms; a one-shot clip holds
-    its last frame 500 ms longer. The GIF loops forever. With `lit`, the
-    frames are lit ones (`lit_previews`) and the warning says so.
-
-    Raises `UsageError` when a preview would be wider than
-    `MAX_PREVIEW_WIDTH` or a frame delay longer than `MAX_PREVIEW_DELAY_MS`,
-    and `ValueError` for wrong frames, as `encode` does.
-    """
-    if settings.cell is None:
-        raise ValueError("the settings are not fitted: no cell size")
-    selected_clips = tuple(selected_clips)
-    view = views.View(settings.directions, settings.start_angle, settings.model_yaw)
-    count = len(views.directions(view))
-    width, height = settings.cell
-    preview_width = count * width * PREVIEW_SCALE
-    plans = []
-    for selected in selected_clips:
-        name = selected.clip.name
-        if preview_width > MAX_PREVIEW_WIDTH:
-            raise UsageError(
-                f"the preview of clip {name!r} would be {preview_width} pixels "
-                f"wide, over GIF's limit of {MAX_PREVIEW_WIDTH} pixels"
-            )
-        timing = sampling.sample(selected, settings.fps, settings.frames)
-        delays = preview_delays_ms(
-            timing.frame_duration, timing.frame_count, selected.one_shot
-        )
-        longest = max(delays)
-        if longest > MAX_PREVIEW_DELAY_MS:
-            raise UsageError(
-                f"a frame of clip {name!r}'s preview would last {longest} ms, "
-                f"over GIF's limit of {MAX_PREVIEW_DELAY_MS} ms"
-            )
-        plans.append((name, timing.times, delays))
-
-    requested = sampling.frames(
-        subject, selected_clips, view, settings.fps, settings.frames
-    )
-    pixels = pixels_by_address(frames, requested, (height, width, 4))
-
-    result = []
-    for name, times, delays in plans:
-        rows = (
-            np.concatenate(
-                [
-                    pixels[
-                        sampling.FrameAddress(
-                            subject, sampling.VARIANT, name, d, time_s
-                        )
-                    ]
-                    for d in range(count)
-                ],
-                axis=1,
-            )
-            for time_s in times
-        )
-        gif, reduced = preview_gif(rows, delays)
-        result.append(Preview(name, gif, reduction_warnings(name, reduced, lit)))
-    return tuple(result)
-
-
 def preview_gif(rows, delays_ms):
     """An animated preview GIF and whether a frame needed its colors reduced.
 
@@ -662,67 +332,6 @@ def blend_over_background(pixels):
     grey = np.asarray(PREVIEW_BACKGROUND, dtype=np.int64)
     # floor(x / 255 + ½) is floor((2x + 255) / 510).
     return ((2 * (rgb * alpha + grey * (255 - alpha)) + 255) // 510).astype(np.uint8)
-
-
-def lit_previews(frames, *, subject, settings, selected_clips, light):
-    """Each selected clip's preview lit by `light`, a `Light` with a
-    position, in sheet order, as `previews` makes the flat ones (lighting
-    sheet design D-4, D-13, D-14, D-22).
-
-    Each covered pixel, alpha above 0, is lit from the frame's normal and
-    depth **as encoded**, `imageops.encode_normal` and `encode_depth`,
-    whether or not the map files are written, by `imageops.light_pixels` at
-    the cell's ground pixel, keeping its alpha; the lit frames are then
-    blended and become GIFs exactly as the flat previews do, a 256-colour
-    reduction warning naming the clip's lit preview (alpha design D-13). Raises `DepthOverflow` when a covered pixel's depth lies outside
-    `±DEPTH_LIMIT` (D-21, D-24), `UsageError` as `previews` does, and
-    `ValueError` for wrong frames or a light with no position.
-    """
-    if light.position is None:
-        raise ValueError("lit previews need a light with a position")
-    if settings.cell is None or settings.ground_px is None:
-        raise ValueError("the settings are not fitted: no cell or ground pixel")
-    selected_clips = tuple(selected_clips)
-    view = views.View(settings.directions, settings.start_angle, settings.model_yaw)
-    requested = sampling.frames(
-        subject, selected_clips, view, settings.fps, settings.frames
-    )
-    width, height = settings.cell
-    frames = tuple(frames)
-    pixels = pixels_by_address(frames, requested, (height, width, 4))
-    normals = maps_by_address(frames, sampling.NORMAL_MAP, (height, width, 3))
-    depths = maps_by_address(frames, sampling.DEPTH_MAP, (height, width))
-    check_depths(requested, pixels, depths, settings.ppm)
-    lit = []
-    for frame in frames:
-        address = frame.address
-        covered = pixels[address][..., 3] > 0
-        normal_bytes = np.zeros((height, width, 3), dtype=np.uint8)
-        normal_bytes[covered] = imageops.encode_normal(normals[address][covered])
-        codes = np.zeros((height, width), dtype=np.uint16)
-        codes[covered] = encode_depth(depths[address][covered])
-        lit.append(
-            sampling.ImageFrame(
-                address,
-                imageops.light_pixels(
-                    pixels[address],
-                    normal_bytes,
-                    codes,
-                    settings.ground_px,
-                    light.position,
-                    light.intensity,
-                    light.ambient,
-                ),
-                frame.metadata,
-            )
-        )
-    return previews(
-        lit,
-        subject=subject,
-        settings=settings,
-        selected_clips=selected_clips,
-        lit=True,
-    )
 
 
 def lit_preview_paths(png_path, selected_clips):
@@ -781,15 +390,6 @@ def preview_paths(png_path, selected_clips):
         assigned.add(name.lower())
         paths.append(png_path.with_name(f"{png_path.stem}.{name}.gif"))
     return tuple(paths)
-
-
-def write_previews(previews, paths):
-    """Write each preview to the path the caller chose for it."""
-    previews, paths = tuple(previews), tuple(paths)
-    if len(previews) != len(paths):
-        raise ValueError(f"{len(previews)} previews but {len(paths)} paths")
-    for preview, path in zip(previews, paths, strict=True):
-        Path(path).write_bytes(preview.gif)
 
 
 def _palette_frame(rgb, transparent):

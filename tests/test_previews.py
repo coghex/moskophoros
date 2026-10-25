@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import sheet_encoding
 from PIL import Image
 from shading import DEFAULT_SHADE
 
@@ -47,7 +48,7 @@ def _previews(settings, clips, pixels):
         ImageFrame(f.address, pixels(f.address.clip, f.address.direction, f.index))
         for f in requested
     ]
-    return export.previews(
+    return sheet_encoding.previews(
         frames, subject="hero", settings=settings, selected_clips=clips
     )
 
@@ -334,7 +335,9 @@ def test_a_missing_frame_is_rejected():
     requested = sampling.frames("hero", clips, view, 2.0)[1:]
     frames = [ImageFrame(f.address, _solid((0, 0, 0, 255), (1, 1))) for f in requested]
     with pytest.raises(ValueError, match="missing"):
-        export.previews(frames, subject="hero", settings=settings, selected_clips=clips)
+        sheet_encoding.previews(
+            frames, subject="hero", settings=settings, selected_clips=clips
+        )
 
 
 # Blending over the grey (alpha design D-13)
@@ -468,11 +471,11 @@ def _opaque_frames():
 
 def _opaque_previews():
     frames, settings, clips = _opaque_frames()
-    flat = export.previews(
+    flat = sheet_encoding.previews(
         frames, subject="hero", settings=settings, selected_clips=clips
     )
     light = export.Light((-3.0, 4.0, 6.0), 1.2, 0.25)
-    lit = export.lit_previews(
+    lit = sheet_encoding.lit_previews(
         frames, subject="hero", settings=settings, selected_clips=clips, light=light
     )
     digest = lambda preview: hashlib.sha256(preview.gif).hexdigest()  # noqa: E731
@@ -528,17 +531,3 @@ def test_names_differing_only_in_ascii_case_collide():
         "hero.WALK-2.gif",
         "hero.Walk-3.gif",
     ]
-
-
-def test_write_previews_writes_each_to_its_path(tmp_path):
-    result = _previews(
-        _settings(1, (1, 1)),
-        (_clip("a", index=0), _clip("b", index=1)),
-        lambda *_: _solid((0, 0, 0, 255), (1, 1)),
-    )
-    paths = export.preview_paths(tmp_path / "hero.png", (_clip("a"), _clip("b")))
-    export.write_previews(result, paths)
-    assert [path.read_bytes() for path in paths] == [p.gif for p in result]
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["hero.a.gif", "hero.b.gif"]
-    with pytest.raises(ValueError, match="2 previews but 1 paths"):
-        export.write_previews(result, paths[:1])
