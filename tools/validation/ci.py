@@ -37,7 +37,7 @@ STATE_FILE = "plan-state.json"
 BODY_FILE = "body.md"
 STATE_SCHEMA = 1
 JOB_RESULTS = ("success", "failure", "cancelled", "skipped")
-DEFAULT_TIMEOUT = 15 * 60
+DEFAULT_TIMEOUT = 20 * 60
 PLAN_JOB = "plan"
 AGGREGATE_JOB = "build-test"
 # Every group job, and so its check, is named this prefix and the group's ID,
@@ -45,8 +45,10 @@ AGGREGATE_JOB = "build-test"
 # taking the name of a check the ruleset requires, or of this run's own jobs.
 GROUP_JOB_PREFIX = "group/"
 # The waits `build-test` allows, in seconds. The plan job has 10 minutes and
-# each group job 20 in ci.yml, so these cover queueing as well, and together
-# stay well inside build-test's own timeout-minutes.
+# each group job 25 in ci.yml (the 20-minute command limit, DEFAULT_TIMEOUT,
+# plus 5 for checkout, image pull, install and record upload), so these cover
+# queueing as well, and together stay well inside build-test's own
+# timeout-minutes.
 PLAN_WAIT = 15 * 60
 GROUPS_WAIT = 30 * 60
 DISCOVERY_WAIT = 5 * 60
