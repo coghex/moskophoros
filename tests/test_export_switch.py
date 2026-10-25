@@ -17,7 +17,7 @@ from test_command import Setup, run
 from test_materials_command import forbid_blender
 from test_settings_command import own
 
-from moskophoros import cli, exportsettings, outputs, views
+from moskophoros import cli, export, exportsettings, outputs, stylize, views
 from moskophoros import settings as layered
 
 CLIPS = ("--clip", "walk", "--clip", "attack")
@@ -112,17 +112,25 @@ def test_each_sample_is_located_in_every_png_it_was_written_to(setup, capsys):
         assert (colour["w"], colour["h"]) == (16, 16)
 
 
-def test_the_early_fingerprint_is_the_manifest_s(setup, capsys):
-    work = setup.tmp_path / "work"
-    document = written(setup, capsys, "--work-dir", str(work))
-    # The frames carry the fingerprint to stylize, and the manifest ends with
-    # the same one (see the command test that pins its worked-out value).
-    from moskophoros import export
+def test_the_early_fingerprint_is_the_manifest_s(setup, capsys, monkeypatch):
+    seen = []
+    real = stylize.plain
 
+    def recording(frames, factor, **kwargs):
+        frames = tuple(frames)
+        seen.extend(frames)
+        return real(frames, factor, **kwargs)
+
+    monkeypatch.setattr(stylize, "plain", recording)
+    document = written(setup, capsys)
+    # The fingerprint the addressed frames carry into stylize is the one the
+    # manifest ends with, and the one its own settings hash to.
+    assert seen
+    assert {frame.metadata["fingerprint"] for frame in seen} == {
+        document["fingerprint"]
+    }
     assert document["fingerprint"] == export.fingerprint(
-        document["generator"],
-        document["settings"],
-        document["source"]["sha256"],
+        document["generator"], document["settings"], document["source"]["sha256"]
     )
 
 
