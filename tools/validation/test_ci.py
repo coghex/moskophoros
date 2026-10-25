@@ -1270,6 +1270,31 @@ def test_build_test_outlasts_its_waits_so_it_can_report_them():
     assert ci.PLAN_WAIT > plan * 60 and ci.GROUPS_WAIT > group * 60
 
 
+def test_a_group_job_outlasts_its_command_limit_by_the_overhead_margin():
+    jobs = workflow_jobs()
+    group = int(re.search(r"timeout-minutes: (\d+)", jobs["groups"])[1])
+    assert ci.DEFAULT_TIMEOUT == 20 * 60
+    # Checkout, image pull, install and the record upload need room after the
+    # command's limit, or GitHub cancels the job before it records `timed-out`.
+    assert group * 60 >= ci.DEFAULT_TIMEOUT + 5 * 60
+    assert "--timeout" not in jobs["groups"]
+
+
+def test_run_group_uses_the_shared_limit_unless_given_another(monkeypatch, tmp_path):
+    seen = []
+
+    def spy(*args):
+        seen.append(args[5])
+        return {"group": "g", "outcome": "passed", "detail": None}
+
+    monkeypatch.setattr(ci, "run_group", spy)
+    base = [f"--repo={tmp_path}", "run-group", "--group=g", "--revision=r"]
+    base += ["--image=i", f"--output={tmp_path / 'g.json'}"]
+    assert ci.main(base) == 0
+    assert ci.main([*base, "--timeout=7"]) == 0
+    assert seen == [ci.DEFAULT_TIMEOUT, 7]
+
+
 def test_plan_and_group_records_carry_the_run_and_attempt():
     jobs = workflow_jobs()
     assert "name: plan-${{ github.run_attempt }}" in jobs["plan"]
