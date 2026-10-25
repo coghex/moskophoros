@@ -600,3 +600,297 @@ def test_paletted_looks_are_byte_identical_on_repeat_and_reuse(
         str(output / "hero.json"),
     ) == (0, "", "")
     assert listing(output) == before
+
+
+# The configurable directory export (export design P-7, P-8, P-9)
+
+
+def figure(model):
+    """A body on joint `hips` and a head on its child joint `head`, as
+    `rigged_model` has them; returns the head joint."""
+    head_joint = model.node("head", translation=(0.0, 0.5, 0.0))
+    hips = model.node("hips", children=[head_joint])
+    skin = model.skin(
+        [hips, head_joint],
+        [
+            (1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1),
+            (1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -0.5, 0, 1),
+        ],
+    )
+    body = box(-0.15, 0.0, -0.1, 0.15, 0.5, 0.1)
+    head = box(-0.1, 0.5, -0.1, 0.1, 0.7, 0.1)
+    mesh = model.mesh(
+        body + head,
+        joints=[(0, 0, 0, 0)] * len(body) + [(1, 0, 0, 0)] * len(head),
+        skin_weights=[(1, 0, 0, 0)] * (len(body) + len(head)),
+        material=model.material((0.8, 0.1, 0.1, 1.0)),
+    )
+    model.scene([hips, model.node("body", mesh=mesh, skin=skin)], default=True)
+    return head_joint
+
+
+def clock_model(directory):
+    """`hero.glb` with a one-second loop `walk` and a two-second loop
+    `idle`, both in place."""
+    model = GlbWriter()
+    head_joint = figure(model)
+    sway = [(0.0, 0.5, 0.0), (0.05, 0.5, 0.0), (0.0, 0.5, 0.0)]
+    model.animation("walk", [(head_joint, "translation", [0.0, 0.5, 1.0], sway)])
+    model.animation("idle", [(head_joint, "translation", [0.0, 1.0, 2.0], sway)])
+    return model.write(directory, "hero")
+
+
+def slab_model(directory):
+    """`hero.glb`, one static slab 1.5 m wide and 0.1 m deep."""
+    model = GlbWriter()
+    mesh = model.mesh(
+        box(-0.75, 0.0, -0.05, 0.75, 0.4, 0.05),
+        material=model.material((0.2, 0.5, 0.8, 1.0)),
+    )
+    model.scene([model.node("slab", mesh=mesh)], default=True)
+    return model.write(directory, "hero")
+
+
+@pytest.fixture(scope="module")
+def clocks(tmp_path_factory):
+    return clock_model(tmp_path_factory.mktemp("clocks"))
+
+
+DIRECTORY = """\
+stored_directions: [0, 4, 3, 2, 1]
+mirrors: {7: 1, 6: 2, 5: 3}
+export:
+  formats: [sheet, frames, atlases]
+  atlas_padding: 1
+  frame_path: 'animations{map}/{clip}/{direction}/frame_{frame:03}.png'
+clips:
+  walk: {frames: 6, fps: 8}
+  idle: {frames: 4, fps: 6, stored_directions: all, mirrors: {}}
+"""
+CLOCK = ["--clip", "walk", "--clip", "idle"]
+
+
+def tree(root):
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+def directory_run(capsys, found, model, out, *options, base=None):
+    argv = [
+        *(["--supersample", "2", "--cell", "16x16"] if base is None else base),
+        *options,
+        "--blender",
+        str(found.path),
+        str(model),
+        "--output-dir",
+        str(out),
+    ]
+    status = cli.run(argv)
+    _, err = capsys.readouterr()
+    return status, err
+
+
+@pytest.fixture(scope="module")
+def exported(found, clocks, tmp_path_factory):
+    """A directory export of unequal clips: stored subsets and mirrors, all
+    three formats, maps, padding and a lit preview, with its capture jobs
+    retained."""
+    here = tmp_path_factory.mktemp("directory")
+    configuration = here / "look.yaml"
+    configuration.write_text(DIRECTORY, encoding="utf-8")
+    out, work = here / "export", here / "work"
+    status = cli.run(
+        [
+            *[
+                "--supersample",
+                "2",
+                "--cell",
+                "16x16",
+                "--depth",
+                "--light",
+                "30,40,50",
+            ],
+            *["--config", str(configuration), "--work-dir", str(work), *CLOCK],
+            *["--blender", str(found.path), str(clocks), "--output-dir", str(out)],
+        ]
+    )
+    assert status == 0
+    return here, out, work, configuration
+
+
+def test_the_jobs_carry_exactly_the_stored_samples_and_no_mirror(exported):
+    _, out, work, _ = exported
+    stored = [0, 4, 3, 2, 1]
+    for mode in ("measure", "render"):
+        job = json.loads((work / mode / "job.json").read_text(encoding="utf-8"))
+        seen = [
+            (f["address"]["clip"], f["address"]["direction"], f["index"])
+            for f in job["frames"]
+        ]
+        assert seen == [("walk", d, k) for d in stored for k in range(6)] + [
+            ("idle", d, k) for d in range(8) for k in range(4)
+        ]
+        times = {
+            (f["address"]["clip"], f["index"]): f["address"]["time_s"]
+            for f in job["frames"]
+        }
+        assert [times[("walk", k)] for k in range(6)] == pytest.approx(
+            [k / 6 for k in range(6)]
+        )
+        assert [times[("idle", k)] for k in range(4)] == pytest.approx(
+            [k / 2 for k in range(4)]
+        )
+        # The wire carries no export policy.
+        assert all(
+            sorted(clip) == ["frames", "loop", "name"]
+            for clip in job["settings"]["clips"]
+        )
+        assert "mirror" not in json.dumps(job)
+
+
+def test_the_files_maps_and_previews_follow_the_settings(exported):
+    _, out, _, _ = exported
+    document = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    kinds = {}
+    for artifact in document["artifacts"]:
+        kinds.setdefault(artifact["kind"], []).append(artifact)
+    # Colour, normal and depth for the sheet, each clip's atlas and each
+    # sample; flat and lit previews per clip.
+    assert len(kinds["sheet"]) == 3 and len(kinds["atlas"]) == 6
+    assert len(kinds["frame"]) == 3 * (30 + 32)
+    assert [(a["clip"], a["channel"]) for a in kinds["preview"]] == [
+        ("walk", "flat"),
+        ("walk", "lit"),
+        ("idle", "flat"),
+        ("idle", "lit"),
+    ]
+    paths = {a["path"] for a in document["artifacts"]}
+    assert "animations/walk/south/frame_000.png" in paths
+    assert "animations.normal/walk/south/frame_000.png" in paths
+    assert "animations.depth/idle/north-west/frame_003.png" in paths
+    # Mirrors add no file and no sample.
+    assert not any("north-west" in p for p in paths if "walk" in p)
+    walk = document["clips"][0]
+    assert [m["target"] for m in walk["mirrors"]] == [5, 6, 7]
+    width = document["settings"]["cell"]["width"]
+    assert all(
+        m["ground_px"]["x"] == width - document["settings"]["ground_px"]["x"]
+        for m in walk["mirrors"]
+    )
+    sheet = kinds["sheet"][0]
+    # The walk's five rows then the idle's eight, by the longer clip's columns.
+    assert (sheet["width"], sheet["height"]) == (6 * 16, 13 * 16)
+    atlas = next(a for a in kinds["atlas"] if a["clip"] == "walk")
+    assert (atlas["width"], atlas["height"]) == (6 * 18, 5 * 18)
+    for name, delay, count in (("walk", 130, 6), ("idle", 170, 4)):
+        with Image.open(out / "previews" / f"{name}.gif") as gif:
+            assert gif.n_frames == count
+            gif.seek(0)
+            assert gif.info["duration"] == delay
+            assert gif.size == ((5 if name == "walk" else 8) * 16 * 4, 16 * 4)
+
+
+def test_every_representation_of_a_sample_holds_the_same_pixels(exported):
+    _, out, _, _ = exported
+    document = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    images = {}
+
+    def pixels(index):
+        if index not in images:
+            with Image.open(out / document["artifacts"][index]["path"]) as image:
+                images[index] = np.asarray(image)
+        return images[index]
+
+    for sample in document["frames"]:
+        crops = {}
+        for place in sample["locations"]:
+            artifact = document["artifacts"][place["artifact"]]
+            crop = pixels(place["artifact"])[
+                place["y"] : place["y"] + place["h"],
+                place["x"] : place["x"] + place["w"],
+            ]
+            crops.setdefault(artifact["channel"], []).append(crop)
+        assert set(crops) == {"color", "normal", "depth"}
+        for channel, found_crops in crops.items():
+            assert len(found_crops) == 3
+            for crop in found_crops[1:]:
+                np.testing.assert_array_equal(crop, found_crops[0], err_msg=channel)
+
+
+def test_the_manifest_alone_restores_the_export_in_a_fresh_root(
+    capsys, found, clocks, exported, tmp_path
+):
+    here, out, _, configuration = exported
+    configuration.rename(here / "moved.yaml")
+    try:
+        second = tmp_path / "second"
+        status, err = directory_run(
+            capsys,
+            found,
+            clocks,
+            second,
+            "--settings-from",
+            str(out / "manifest.json"),
+            "--no-user-config",
+            base=[],
+        )
+        assert (status, err) == (0, "")
+        assert tree(second) == tree(out)
+        # In place, too.
+        before = tree(out)
+        status, err = directory_run(
+            capsys,
+            found,
+            clocks,
+            out,
+            "--settings-from",
+            str(out / "manifest.json"),
+            "--no-user-config",
+            base=[],
+        )
+        assert (status, err) == (0, "")
+        assert tree(out) == before
+    finally:
+        (here / "moved.yaml").rename(configuration)
+
+
+def test_the_fit_uses_the_stored_views_only(capsys, found, tmp_path):
+    (tmp_path / "model").mkdir()
+    slab = slab_model(tmp_path / "model")
+    scales = {}
+    for name, stored in (("all", "all"), ("side", "[2]")):
+        configuration = tmp_path / f"{name}.yaml"
+        configuration.write_text(
+            f"stored_directions: {stored}\nroot_motion: keep\n", encoding="utf-8"
+        )
+        out = tmp_path / name
+        status, err = directory_run(
+            capsys, found, slab, out, "--config", str(configuration)
+        )
+        assert status == 0, err
+        scales[name] = json.loads((out / "manifest.json").read_text())["settings"][
+            "pixels_per_meter"
+        ]
+    # From the side the slab is thin, so it scales up further than the ring.
+    assert scales["side"] > scales["all"]
+
+
+def test_a_stored_subset_that_overflows_a_fixed_cell_fails_with_4(
+    capsys, found, tmp_path
+):
+    (tmp_path / "model").mkdir()
+    slab = slab_model(tmp_path / "model")
+    out = tmp_path / "out"
+    status, err = directory_run(
+        capsys,
+        found,
+        slab,
+        out,
+        *["--ppm", "100", "--cell", "16x16", "--ground-px", "8,12"],
+        base=["--supersample", "2"],
+    )
+    assert status == 4, err
+    assert not out.exists()

@@ -23,7 +23,7 @@ from capture_buffers import FRONT_BUFFERS, write_depth, write_front, write_norma
 from PIL import Image
 from shading import DEFAULT_SHADE
 
-from moskophoros import sampling, views
+from moskophoros import plan, views
 from moskophoros.capture import blender
 from moskophoros.capture.backend import (
     BackendError,
@@ -248,7 +248,7 @@ def make_job(tmp_path, mode="measure"):
         "error",
         DEFAULT_SHADE,
     )
-    frames = sampling.frames("hero", clips, views.View(1, 0.0), 12.0)
+    frames = plan.plan("hero", clips, views.View(1, 0.0), 12.0)
     workspace = tmp_path / "work"
     workspace.mkdir()
     job = build_job(

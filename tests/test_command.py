@@ -31,8 +31,8 @@ from moskophoros import (
     exportimages,
     gltf,
     imageops,
+    plan,
     publication,
-    sampling,
     stylize,
     views,
 )
@@ -400,7 +400,9 @@ def test_the_console_script_is_declared():
 def test_help_exits_0(capsys):
     status, out, err = run(capsys, ["--help"])
     assert (status, err) == (0, "")
-    assert out.startswith("usage: moskophoros [options] <infile.glb> <outfile.png>")
+    assert out.startswith(
+        "usage: moskophoros [options] <infile.glb> (<outfile.png> | --output-dir <dir>)"
+    )
 
 
 def test_the_fingerprint_reaches_the_frames_before_stylize(setup, capsys, monkeypatch):
@@ -586,7 +588,7 @@ def test_the_capture_jobs_are_byte_identical_to_the_baseline(options):
     settings = cli.capture_settings(cli.resolve_settings(parsed))
     selected = gltf.select_clips(subject, parsed.clip or (), parsed.once)
     view = views.View(settings.directions, settings.start_angle, settings.model_yaw)
-    requested = sampling.frames("hero", selected, view, settings.fps)
+    requested = plan.plan("hero", selected, view, settings.fps)
     fitted = replace(settings, ppm=24.5, cell=(48, 40), ground_px=(24, 37))
     for mode, resolved in (("measure", settings), ("render", fitted)):
         job = backend.build_job(
@@ -797,7 +799,7 @@ def test_a_nonempty_work_dir_is_a_usage_error(setup, capsys):
     status, _, err = run(capsys, setup.argv("--work-dir", str(work)))
     assert status == 2
     assert err.splitlines() == [
-        "usage: moskophoros [options] <infile.glb> <outfile.png>",
+        "usage: moskophoros [options] <infile.glb> (<outfile.png> | --output-dir <dir>)",
         f"moskophoros: error: --work-dir {str(work)!r} is not empty; give a new "
         "or empty directory",
     ]

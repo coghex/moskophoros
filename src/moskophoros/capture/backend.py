@@ -285,13 +285,17 @@ def job_sha256(job):
 
 
 def build_job(
-    mode, source, subject, settings, selected_clips, frames, output_dir, clip=None
+    mode, source, subject, settings, selected_clips, request, output_dir, clip=None
 ):
     """Build a `mode` job, raising `MalformedJob` if the inputs disagree.
 
-    `selected_clips` are `gltf.SelectedClip`s in sheet order, and `frames`
-    the `sampling.Frame`s requested, which must be exactly those the clips
-    and settings give. In a measure job, `pixels_per_meter`, `cell` and
+    `selected_clips` are `gltf.SelectedClip`s in sheet order, and `request`
+    the `plan.RequestPlan` of those clips: the frames to capture are its
+    frames, which must be exactly the ones each clip's own rate, count and
+    stored directions give in the settings' view (`_requested_frames`). The
+    job carries only those addressed frames and the existing settings keys;
+    a clip's rate, stored directions and mirrors stay with the caller. In a
+    measure job, `pixels_per_meter`, `cell` and
     `ground_px` are null; a render job needs all three resolved. `clip`,
     the `Clipping` from the measured depths, is given for a perspective
     render job and for no other.
@@ -307,18 +311,7 @@ def build_job(
     _check_clipping(clip, mode == "render" and settings.projection == PERSPECTIVE)
     selected_clips = tuple(selected_clips)
     _check_clips(selected_clips)
-    frames = tuple(frames)
-    view = views.View(settings.directions, settings.start_angle, settings.model_yaw)
-    try:
-        expected = sampling.frames(
-            subject, selected_clips, view, settings.fps, settings.frames
-        )
-    except ValueError as error:
-        raise MalformedJob(str(error)) from None
-    if frames != expected:
-        raise MalformedJob(
-            "the frames are not the ones the selected clips and settings give"
-        )
+    frames = _requested_frames(request, subject, settings, selected_clips)
     if not Path(output_dir).is_absolute():
         raise MalformedJob(f"output_dir must be absolute, got {str(output_dir)!r}")
 
@@ -563,6 +556,65 @@ def _is_pair(value, low, high=None):
             for item in value
         )
     )
+
+
+def _requested_frames(request, subject, settings, selected_clips):
+    """The frames of `request` (a `plan.RequestPlan`), once they are shown to
+    be what `selected_clips` and `settings` give.
+
+    Each clip of the plan is one of the selected clips, in order. Its timing
+    is the one `sampling.sample` gives at the plan's rate for that clip and
+    the settings' frame count, its stored directions are distinct directions
+    of the settings' view, and its frames run over those directions, then its
+    sample times. The plan's frames are exactly all of them, which is what
+    the Blender job lists; a missing, extra, reordered or altered frame, or a
+    clip timed with a rate it does not carry, is a `MalformedJob`.
+    """
+    view = views.View(settings.directions, settings.start_angle, settings.model_yaw)
+    ring = {direction.index: direction for direction in views.directions(view)}
+    planned = tuple(request.clips)
+    if tuple(clip.selected for clip in planned) != selected_clips:
+        raise MalformedJob("the planned clips are not the selected clips")
+    expected = []
+    for clip in planned:
+        where = f"clip {clip.selected.clip.name!r}"
+        try:
+            timing = sampling.sample(clip.selected, clip.fps, settings.frames)
+        except ValueError as error:
+            raise MalformedJob(f"{where}: {error}") from None
+        if timing != clip.sampling:
+            raise MalformedJob(f"{where} is not timed as its rate and count give")
+        indices = [direction.index for direction in clip.directions]
+        if (
+            not indices
+            or len(set(indices)) != len(indices)
+            or any(ring.get(d.index) != d for d in clip.directions)
+        ):
+            raise MalformedJob(f"{where} stores directions the view does not have")
+        own = tuple(
+            sampling.Frame(
+                sampling.FrameAddress(
+                    subject, sampling.VARIANT, clip.selected.clip.name, d.index, t
+                ),
+                index,
+                d.angle,
+            )
+            for d in clip.directions
+            for index, t in enumerate(timing.times)
+        )
+        if clip.frames != own:
+            raise MalformedJob(f"{where} has frames its plan does not give")
+        expected.extend(own)
+    try:
+        sampling.refuse_shared_addresses(expected)
+    except ValueError as error:
+        raise MalformedJob(str(error)) from None
+    frames = tuple(request.frames)
+    if frames != tuple(expected):
+        raise MalformedJob(
+            "the frames are not the ones the selected clips and settings give"
+        )
+    return frames
 
 
 def _check_clips(selected_clips):

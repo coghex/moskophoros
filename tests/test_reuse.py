@@ -17,10 +17,22 @@ from export_document import document
 from manifest_fixture import GENERATOR
 from shading import DEFAULT_RANGE, DEFAULT_SHADE
 
-from moskophoros import cli, export, fit, gltf, ramps, sampling, stylize, views
+from moskophoros import (
+    cli,
+    export,
+    exportsettings,
+    fit,
+    gltf,
+    ramps,
+    sampling,
+    stylize,
+    views,
+)
 from moskophoros.capture.backend import Settings, Shade, Source
 
-USAGE_LINE = "usage: moskophoros [options] <infile.glb> <outfile.png>"
+USAGE_LINE = (
+    "usage: moskophoros [options] <infile.glb> (<outfile.png> | --output-dir <dir>)"
+)
 pitch = views.pitch_direction
 
 # A hand-written sheet's settings, every value differing from its default.
@@ -154,8 +166,22 @@ def reuse(path, *options):
     return cli.resolve_settings(parse(path, *options))
 
 
+def clip_frames(options):
+    """Each clip's own frame count that some layer gives, as the export
+    settings resolve them from the layers."""
+    resolved = exportsettings.resolve(options.export_sources)
+    return {
+        name: own.frames
+        for name, own in resolved.clips.items()
+        if "frames" in own.origins
+    }
+
+
 def values(options, names=REUSED):
-    return {name: getattr(options, name) for name in names}
+    return {
+        name: clip_frames(options) if name == "clip_frames" else getattr(options, name)
+        for name in names
+    }
 
 
 def rejected(capsys, path, *options):

@@ -23,7 +23,7 @@ from PIL import Image
 from shading import DEFAULT_SHADE
 from test_render import cube
 
-from moskophoros import cli, gltf, imageops, sampling, views
+from moskophoros import cli, gltf, imageops, plan, views
 from moskophoros.capture import backend, blender
 
 pytestmark = pytest.mark.blender
@@ -175,7 +175,7 @@ def capture(found, path, tmp_path, settings, workspace="work"):
     render job)."""
     subject = gltf.read_glb(path)
     clips = gltf.select_clips(subject, (), ())
-    frames = sampling.frames(
+    frames = plan.plan(
         subject.name,
         clips,
         views.View(settings.directions, settings.start_angle, settings.model_yaw),
@@ -476,7 +476,7 @@ def single_frame_job(tmp_path, settings, clip):
     path = cubes_model(tmp_path, CUBE)
     subject = gltf.read_glb(path)
     clips = gltf.select_clips(subject, (), ())
-    frames = sampling.frames(subject.name, clips, views.View(1, 0.0, 0.0), 4.0)
+    frames = plan.plan(subject.name, clips, views.View(1, 0.0, 0.0), 4.0)
     root = tmp_path / "work"
     root.mkdir()
     source = backend.Source(

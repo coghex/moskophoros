@@ -342,10 +342,10 @@ def test_a_pitch_direction_places_today_s_camera_axes_bit_for_bit(script, pitch)
 def valid_job():
     from test_capture_backend import CLIPS, MEASURE_SETTINGS, SOURCE, VIEW
 
-    from moskophoros import sampling
+    from moskophoros import plan
     from moskophoros.capture import backend
 
-    frames = sampling.frames("hero", CLIPS, VIEW, MEASURE_SETTINGS.fps)
+    frames = plan.plan("hero", CLIPS, VIEW, MEASURE_SETTINGS.fps)
     return backend.build_job(
         "measure", SOURCE, "hero", MEASURE_SETTINGS, CLIPS, frames, "/work/measure"
     )
@@ -514,7 +514,7 @@ def test_the_script_s_lens_shift_is_moskophoros_views(script, ground, size, grou
 def perspective_job(mode="measure", clipping=None):
     from test_capture_backend import CLIPS, MEASURE_SETTINGS, SOURCE, VIEW
 
-    from moskophoros import sampling
+    from moskophoros import plan
     from moskophoros.capture import backend
 
     settings = replace(
@@ -522,7 +522,7 @@ def perspective_job(mode="measure", clipping=None):
     )
     if mode == "render":
         settings = replace(settings, ppm=10.0, cell=(4, 3), ground_px=(2, 2))
-    frames = sampling.frames("hero", CLIPS, VIEW, settings.fps)
+    frames = plan.plan("hero", CLIPS, VIEW, settings.fps)
     return backend.build_job(
         mode, SOURCE, "hero", settings, CLIPS, frames, f"/work/{mode}", clipping
     )

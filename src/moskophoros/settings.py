@@ -11,9 +11,8 @@ resolved against the file's directory. `merge` lays layers over each other,
 later layers winning key by key; a key a layer leaves out falls through.
 
 The schema table is the one place a setting's type, unit, default and
-validation rule are kept; the packaged `defaults.yaml` gives every active
-setting its shipped default and agrees with it. A setting may be defined but
-inactive (`Setting.active`): no file can set it yet. Everything here is pure
+validation rule are kept; the packaged `defaults.yaml` gives every
+setting its shipped default and agrees with it. Everything here is pure
 except `read_file` and `read_defaults`, which read the one file they name.
 Which layers apply, and how they meet a loaded sheet and the command line, is
 the command's business (`cli.resolve_settings`). The global file and a project
@@ -82,19 +81,13 @@ class _Bad(Exception):
 class Setting:
     """One setting: what it holds, its unit, its default as a file gives it,
     and `check`, which turns a file's value into the command's or raises
-    `_Bad`. A `path` setting's string is resolved against its file.
-
-    An inactive setting is defined, with its check and internal default, but
-    not yet available: no settings file can set it (`NOT_YET`), and neither
-    the shipped defaults nor `DEFAULTS` hold it. Only internal code reads or
-    resolves one (`_read_document`)."""
+    `_Bad`. A `path` setting's string is resolved against its file."""
 
     kind: str
     unit: str | None
     default: object
     check: object
     path: bool = False
-    active: bool = True
 
 
 def _shown(value):
@@ -841,22 +834,19 @@ SCHEMA = MappingProxyType(
             0.3,
             _within(0, 1),
         ),
-        # The export settings (export design P-7): defined here, the one
-        # schema authority, but inactive until the command can execute them.
+        # The export settings (export design P-7).
         "stored_directions": Setting(
             "the directions captured and stored: all, or an ordered list of "
             "distinct direction indices",
             None,
             ALL_DIRECTIONS,
             _check_stored,
-            active=False,
         ),
         "direction_names": Setting(
             "filename aliases of directions, a mapping from direction index to name",
             None,
             {},
             _check_names,
-            active=False,
         ),
         "mirrors": Setting(
             "directions taken from a stored one's picture reversed, a mapping "
@@ -864,48 +854,38 @@ SCHEMA = MappingProxyType(
             None,
             {},
             _check_mirrors,
-            active=False,
         ),
         "export.formats": Setting(
             "what is written: a nonempty list of sheet, frames and atlases",
             None,
             ["sheet"],
             _check_formats,
-            active=False,
         ),
         "export.frame_path": Setting(
             "the template of each frame file's path in an output directory",
             None,
             FRAME_PATH,
             _template(templates.FRAME_PATH),
-            active=False,
         ),
         "export.atlas_path": Setting(
             "the template of each clip atlas's path in an output directory",
             None,
             ATLAS_PATH,
             _template(templates.ATLAS_PATH),
-            active=False,
         ),
         "export.sheet_path": Setting(
             "the template of the combined sheet's path in an output directory",
             None,
             SHEET_PATH,
             _template(templates.SHEET_PATH),
-            active=False,
         ),
         "export.atlas_padding": Setting(
             "the edge texels repeated around each cell of a clip atlas, 0 to 64",
             "pixels",
             0,
             _check_padding,
-            active=False,
         ),
     }
-)
-# The one table's active settings: the ones a settings file may hold today.
-ACTIVE_SCHEMA = MappingProxyType(
-    {name: setting for name, setting in SCHEMA.items() if setting.active}
 )
 # A clip's own settings, in a file's `clips` mapping keyed by clip name;
 # each beats the global setting of the same name (settings design D-17,
@@ -925,7 +905,6 @@ CLIP_SCHEMA = MappingProxyType(
             "frames per second",
             None,
             _nullable(_check_fps, "a finite number greater than 0"),
-            active=False,
         ),
         "stored_directions": Setting(
             "the clip's own stored directions, all or an ordered list of "
@@ -933,7 +912,6 @@ CLIP_SCHEMA = MappingProxyType(
             None,
             None,
             _or_null(_check_stored),
-            active=False,
         ),
         "mirrors": Setting(
             "the clip's own mirrors, a mapping from target to stored source "
@@ -941,42 +919,27 @@ CLIP_SCHEMA = MappingProxyType(
             None,
             None,
             _or_null(_check_mirrors),
-            active=False,
         ),
         "output_name": Setting(
             "the clip's name in directory-mode paths, or null: its cleaned source name",
             None,
             None,
             _check_alias,
-            active=False,
         ),
     }
 )
-ACTIVE_CLIP_SCHEMA = MappingProxyType(
-    {name: setting for name, setting in CLIP_SCHEMA.items() if setting.active}
-)
 # The groups of settings a file writes as a nested mapping, such as `shade`;
-# each of its keys is a setting of its own, merged key by key. `GROUPS` are
-# the active ones, `ALL_GROUPS` every defined one: a group with no active
-# setting, such as `export`, is refused whole.
-GROUPS = frozenset(name.split(".")[0] for name in ACTIVE_SCHEMA if "." in name)
-ALL_GROUPS = frozenset(name.split(".")[0] for name in SCHEMA if "." in name)
-# Each active setting's default, as the command holds it, and every defined
-# setting's, which only internal code uses.
+# each of its keys is a setting of its own, merged key by key.
+GROUPS = frozenset(name.split(".")[0] for name in SCHEMA if "." in name)
+# Each setting's default, as the command holds it.
 DEFAULTS = MappingProxyType(
-    {name: setting.check(setting.default) for name, setting in ACTIVE_SCHEMA.items()}
-)
-ALL_DEFAULTS = MappingProxyType(
     {name: setting.check(setting.default) for name, setting in SCHEMA.items()}
 )
-# What a file that sets an inactive setting is told.
-NOT_YET = "not available yet"
 
 
 def check_recorded(key, value, *, clip=False):
     """`value` as the setting `key` holds it, or a clip's leaf `key` with
-    `clip`, checked exactly as a settings file's value is, including for an
-    inactive setting. Raises `ValueError` with the problem, naming the place
+    `clip`, checked exactly as a settings file's value is. Raises `ValueError` with the problem, naming the place
     inside `value` when it is a list or mapping."""
     setting = (CLIP_SCHEMA if clip else SCHEMA)[key]
     try:
@@ -990,16 +953,6 @@ def check_recorded(key, value, *, clip=False):
 
 def read_bytes(data, *, source, directory, shipped=False):
     """The layer the settings file `data` gives, read from `directory`.
-    A setting that is not active yet is refused (`NOT_YET`), however it is
-    written. See `_read_document` for the rest.
-    """
-    return _read_document(
-        data, source=source, directory=directory, shipped=shipped, open_gate=False
-    )
-
-
-def _read_document(data, *, source, directory, shipped=False, open_gate=False):
-    """The layer the settings file `data` gives, read from `directory`.
 
     `source` names the file in errors. Paths resolve against `directory`,
     with a leading `~` expanded. Raises `SettingsError` naming the key path
@@ -1011,13 +964,7 @@ def _read_document(data, *, source, directory, shipped=False, open_gate=False):
     second-level groups `key`, `sky`, `ground`, `brightness` and `dither` are
     mappings read leaf by leaf, each leaf named by its dotted path, such as
     `shade.key.strength` (shading design contract 1).
-
-    A setting defined but not active (`Setting.active`) fails with `NOT_YET`
-    at its key, whatever its value, and so does a group none of whose settings
-    is active, such as `export`, and a clip's inactive leaf; only internal
-    code and tests pass `open_gate` to read them. No file can.
     """
-    groups = ALL_GROUPS if open_gate else GROUPS
     try:
         document, marks = yamlfile.load_located(data)
     except yamlfile.YamlError as error:
@@ -1051,11 +998,9 @@ def _read_document(data, *, source, directory, shipped=False, open_gate=False):
         if key == "version":
             continue
         if key == "clips":
-            clips, clip_where = _read_clips(value, refuse, marks, source, open_gate)
+            clips, clip_where = _read_clips(value, refuse, marks, source)
             continue
-        if key not in groups:
-            if key in ALL_GROUPS:
-                refuse((key,), NOT_YET)
+        if key not in GROUPS:
             entries.append(((key,), value))
             continue
         if not isinstance(value, dict):
@@ -1080,8 +1025,6 @@ def _read_document(data, *, source, directory, shipped=False, open_gate=False):
         setting = SCHEMA.get(key)
         if setting is None:
             refuse(path, "unknown key")
-        if not setting.active and not open_gate:
-            refuse(path, NOT_YET)
         try:
             checked = setting.check(value)
         except _Bad as error:
@@ -1125,7 +1068,7 @@ def _read_subgroup(path, value, refuse, marks, source):
     return entries
 
 
-def _read_clips(value, refuse, marks, source, open_gate):
+def _read_clips(value, refuse, marks, source):
     """A file's `clips` mapping: each named clip's own settings, as `{clip
     name: {leaf: value}}` for the clips that give any, null included, with
     the `(line, column)` of each leaf under `("clips", name, leaf)`. Every
@@ -1152,8 +1095,6 @@ def _read_clips(value, refuse, marks, source, open_gate):
             setting = CLIP_SCHEMA.get(member) if isinstance(member, str) else None
             if setting is None:
                 refuse(path, "unknown key")
-            if not setting.active and not open_gate:
-                refuse(path, NOT_YET)
             try:
                 checked = setting.check(member_value)
             except _Bad as error:
