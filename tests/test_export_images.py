@@ -4,13 +4,13 @@ the plans (export design P-7, parts 4 and 5; P-8, part 3; P-8a). Every frame
 is generated in memory, with values that make a transposed row, a wrong
 sample or an interpolated border visible."""
 
-import hashlib
 import io
 import itertools
 import random
 from dataclasses import replace
 from types import SimpleNamespace
 
+import legacy_encoder
 import numpy as np
 import pytest
 from PIL import Image, ImageSequence
@@ -912,10 +912,11 @@ def test_gif_limits_are_usage_errors_naming_the_clip():
 
 # The default bytes, as the sheet encoder wrote them before the schema switch
 #
-# These digests were taken from the encoder that this encoder replaced
-# (`export.encode`, `export.previews` and `export.lit_previews` at commit
-# 4a22102519), on the inputs below. They pin design D-3: the default sheet,
-# maps and previews never change a byte.
+# `legacy_encoder` is a frozen copy of the encoder that this encoder replaced
+# (commit 4a22102519). Both sides compress with the same library, so the
+# comparison holds on every platform, unlike a digest of a PNG, which depends
+# on the zlib build. It pins design D-3: the default sheet, maps and previews
+# never change a byte.
 
 
 LEGACY = Settings(
@@ -933,26 +934,13 @@ LEGACY = Settings(
     root_motion="error",
     shade=DEFAULT_SHADE,
 )
-SHEET_DIGEST = "9cfc98bcdf2e87b5d2379e84a0847ec3834418c630708aa976400619a9ef8d28"
-NORMAL_DIGEST = "544e3af648c7890e322310776b86139788557ab00c26008176efbed2deee7f03"
-DEPTH_DIGEST = "c21461b69b340660774e9f366b5eb3916001a8d4bc0fba8d94e511ae63d68f8f"
-FLAT_DIGESTS = {
-    "läuft": "dafb0b8c78f31897a1b4630cd3cd39c741ac1d0cdf89232e27a87a83e1c3bbf8",
-    "攻撃": "11ae2187b6fcb23e2510972d84849fb6fae900c3d783d8b7de081ebb1bb2b208",
-    "pose": "a136e3ccbd1dba8e0da0248a7596a0c42eaffc6ef14d0f3360d84a9d556bb163",
-}
-LIT_DIGESTS = {
-    "läuft": "4aac0585ea6b2ae1f3a77399816fb54092f77d1d878e2793dc0265f6df421c46",
-    "攻撃": "9173a479a85151db56982020cebc39c13e83297f295d2119dc88ba249b213fa1",
-    "pose": "6271b84e872f425feed266f376a3dd5d1a3e988199ed5fd8ed4a6ece18deb69f",
-}
 
 
 @pytest.mark.parametrize("light", [export.NO_LIGHT, LIGHT])
 @pytest.mark.parametrize(
     ("normals", "depth"), [(False, False), (True, False), (True, True)]
 )
-def test_default_bytes_equal_the_legacy_encoder_s_digests_on_identical_inputs(
+def test_default_bytes_equal_the_legacy_encoder_on_identical_inputs(
     light, normals, depth
 ):
     selected = [
@@ -963,6 +951,14 @@ def test_default_bytes_equal_the_legacy_encoder_s_digests_on_identical_inputs(
     view = views.View(LEGACY.directions, LEGACY.start_angle, LEGACY.model_yaw)
     request = plan.plan("héros", selected, view, LEGACY.fps)
     frames = make_frames(request, seed=11)
+    legacy = legacy_encoder.sheet(
+        frames,
+        subject="héros",
+        settings=LEGACY,
+        selected_clips=selected,
+        normals=normals,
+        depth=depth,
+    )
     lit = light.position is not None
     names = outputs.resolve_names(selected, view, subject="héros", directory=False)
     output_plan = outputs.plan_outputs(
@@ -984,20 +980,35 @@ def test_default_bytes_equal_the_legacy_encoder_s_digests_on_identical_inputs(
         depth=depth,
         light=light,
     )
-    digest = lambda artifact: hashlib.sha256(artifact.data).hexdigest()  # noqa: E731
     sheets = [a for a in result.artifacts if a.kind == "sheet"]
-    assert digest(sheets[0]) == SHEET_DIGEST
+    assert sheets[0].data == legacy.png
     if normals:
-        assert digest(sheets[1]) == NORMAL_DIGEST
+        assert sheets[1].data == legacy.normal
     if depth:
-        assert digest(sheets[-1]) == DEPTH_DIGEST
-    expected = []
-    for name in FLAT_DIGESTS:
-        expected.append((name, "flat", FLAT_DIGESTS[name], ()))
-        if lit:
-            expected.append((name, "lit", LIT_DIGESTS[name], ()))
+        assert sheets[-1].data == legacy.depth
+    flat = legacy_encoder.previews(
+        frames, subject="héros", settings=LEGACY, selected_clips=selected
+    )
+    expected = [(p.clip, "flat", p.gif, p.warnings) for p in flat]
+    if lit:
+        lit_set = legacy_encoder.lit_previews(
+            frames,
+            subject="héros",
+            settings=LEGACY,
+            selected_clips=selected,
+            light=light,
+        )
+        expected = [
+            entry
+            for pair in zip(
+                expected,
+                [(p.clip, "lit", p.gif, p.warnings) for p in lit_set],
+                strict=True,
+            )
+            for entry in pair
+        ]
     assert [
-        (a.clip, a.channel, digest(a), a.warnings)
+        (a.clip, a.channel, a.data, a.warnings)
         for a in result.artifacts
         if a.kind == "preview"
     ] == expected
