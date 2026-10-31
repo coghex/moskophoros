@@ -1,18 +1,20 @@
 # Configurable export acceptance — EXP-7
 
-**Status: pending owner visual acceptance.** Technical checks passed on 2026-10-25.
-No acceptance verdict has been given for this implemented export. The owner is
-reviewing it directly in `mosk-designer-5`'s pane, request
-`moskophoros-20261024-1`, issue [#161](https://github.com/coghex/moskophoros/issues/161).
-This record must not be used to close #161 or epic #153 until the owner's
-explicit verdict on these exact results is recorded below.
+**Status: accepted by the owner on 2026-10-31.** Technical checks passed on
+2026-10-25. The owner accepted round-01's placement and timing (1A), five
+stored views plus mirrors (2A), and the implemented export overall (3A).
+The verdict was typed in the manager's terminal and relayed to
+`mosk-designer-5` on 2026-10-31, under request `moskophoros-20261024-1`,
+issue [#161](https://github.com/coghex/moskophoros/issues/161). The exact quotes
+and source are recorded below. The manager owns closing #161 and epic #153.
 
 ## Review and scope
 
 - New round folder: `/Users/vincentcoghlan/.local/share/moskophoros-acceptance/export-review/round-01`.
 - Review page: `file:///Users/vincentcoghlan/.local/share/moskophoros-acceptance/export-review/round-01/index.html`.
 - Three questions sent directly in the pane on 2026-10-25: placement/motion,
-  the five-view/mirror tradeoff, and overall export acceptance. All remain pending.
+  the five-view/mirror tradeoff, and overall export acceptance. The owner
+  accepted all three on 2026-10-31 through the manager relay below.
 - Base unequipped acolyte only. No model/look changes, equipped acceptance,
   game writes, private frame compilation or integration were performed.
 - Potential consumer handoff: `/Users/vincentcoghlan/.local/share/moskophoros-acceptance/export-review/round-01/production/animations/` only.
@@ -23,8 +25,8 @@ explicit verdict on these exact results is recorded below.
 
 ## Implementation gate
 
-Clean detached checkout: `82ddf5c3e5b793400b9e6ba85901caf1d3d8de76` at `/Users/vincentcoghlan/worktrees/coghex/moskophoros/exp7-review`.
-The tool is installed from that checkout at `/Users/vincentcoghlan/worktrees/coghex/moskophoros/exp7-review/.venv/bin/moskophoros` in
+Clean detached checkout used for the review: `82ddf5c3e5b793400b9e6ba85901caf1d3d8de76` at `/Users/vincentcoghlan/worktrees/coghex/moskophoros/exp7-review`.
+The tool was installed from that checkout at `/Users/vincentcoghlan/worktrees/coghex/moskophoros/exp7-review/.venv/bin/moskophoros` in
 `/Users/vincentcoghlan/worktrees/coghex/moskophoros/exp7-review/.venv`. Each invocation records the full commit and an empty
 `git status --porcelain` before execution in its `*-exit.json`.
 The package version does not identify a git revision.
@@ -465,8 +467,37 @@ execution was used for acceptance evidence.
 
 ## Owner verdict
 
-**Pending.** Questions were presented directly in the `mosk-designer-5` pane
-on 2026-10-25, with exact `file://` links to this new round. Await explicit
-answers on placement/motion, mirroring and this implemented export overall.
-Record the owner's words and direct-pane provenance here before marking
-accepted. Then report the landed record's commit to the manager for closeout.
+**Accepted — 2026-10-31: 1A, 2A, 3A.** Questions were presented directly in
+`mosk-designer-5`'s pane on 2026-10-25, with exact `file://` links to round-01.
+
+Source: manager relay delivered to this pane on 2026-10-31. The manager
+reported that the owner typed the following verdict in the manager's terminal,
+verbatim:
+
+> i accept all the recommendations from the page
+
+This accepts 1A (keep placement and timing) and 2A (accept five stored views
+plus mirrors). The manager separately asked about question 3 because it had
+no recommendation; the owner's answer in the manager's terminal was,
+verbatim:
+
+> 3A Accept
+
+The manager relayed the combined verdict as **1A, 2A, 3A** and instructed
+publication of this accepted record. These are relayed owner statements,
+not statements typed directly into the designer's pane; no chat message ID
+was supplied with the relay. Its local receipt is
+`round-01/owner-verdict-2026-10-31.json` under the evidence root above.
+
+Acceptance applies to the exact round-01 inputs and implemented results
+recorded here, including its stated scope and limitations. The evidence
+inventory and every file in the four output-hash tables were rehashed on
+2026-10-31 and remain unchanged. No new render or technical test run is
+claimed. The original review page is preserved as presented, including its
+then-pending wording; this dated record supplies the final verdict.
+
+The review worktree and its virtual environment are temporary execution
+paths in the historical commands above. Reproduction after cleanup requires
+recreating the recorded clean implementation revision and pinned environment.
+All inputs, outputs, capture evidence and the page remain in the local round
+folder. The manager owns closing #161 and epic #153 after this record lands.
