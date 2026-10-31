@@ -60,10 +60,9 @@ export.
 Work flows through **capture** (3D to high-resolution images), **stylize**
 (images to pixel art), **cleanup** (pixel-level fixes) and **export** (sheets
 and metadata). Each stage depends only on the previous stage's output, keyed
-by frame address, never on its internals. Capture keeps full information and
-decides nothing about the look: reducing resolution, hardening transparency
-and choosing colors all happen after it, so a style experiment never needs a
-re-render (owner decision 2026-09-29). See [design §Pipeline](design.md#pipeline).
+by frame address, never on its internals. Capture keeps full information for downstream style passes: reducing resolution, hardening transparency and choosing colors happen after it, on addressed frame data (owner decision 2026-09-29). See [design §Pipeline](design.md#pipeline).
+
+*Accepted exception (owner decision 2026-10-11, settings D-36; wording reconciled 2026-10-31):* Ambient-form AO distance, occlusion weight and convexity weight, including per-material library overrides, and the global AO sample count are capture parameters; changing them requires recapture. Palette/ramp choices, reduction, shade ranges, baked lighting and dithering stay downstream. Recolouring retained captures without a new render remains deferred under settings D-18.
 
 ### V-5. Blender renders, behind one boundary
 
