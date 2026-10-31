@@ -4,7 +4,7 @@ Where the project stands, for an agent or the owner arriving cold. Read it
 after [AGENTS.md](AGENTS.md), then check `git log` and the tracker for
 anything newer than the date below.
 
-**Last reconciled: 2026-10-25.**
+**Last reconciled: 2026-10-31.**
 
 **Rules for this file:**
 - **Current state only.** When something changes, replace the old line; don't
@@ -126,22 +126,25 @@ anything newer than the date below.
 
 ## Next steps
 
-1. **Game-ready export (epic #153), code complete 2026-10-25:**
+1. **Game-ready export: done.** Epic #153 closed on 2026-10-31.
    - **The command:** besides `moskophoros <in.glb> <out.png>`,
-     `--output-dir OUT` now writes per-frame folders and per-clip atlases,
-     with stored direction subsets, mirror records, per-clip fps, path
-     templates and the `moskophoros.export/1` manifest, all set in a project
-     file and never built in (vision V-1, with the V-2 note). The design is
-     in `docs/designs/export_format_design.md`.
+     `--output-dir OUT` writes per-frame folders and per-clip atlases, with
+     stored direction subsets, mirror records, per-clip fps, path templates
+     and the `moskophoros.export/1` manifest, all set in a project file and
+     never built in (vision V-1, with the V-2 note). The design is in
+     `docs/designs/export_format_design.md`.
    - **Delivery:** EXP-1 to EXP-6b were merged as #154 to #160 (PRs #162 to
-     #168). Default images stayed byte-identical throughout. The old command
-     now writes `/1`, and old `/15` JSON is refused on reuse.
-   - **Left:** EXP-7, #161: the owner's visual review of the real acolyte
-     export (documentation only), with the latest acolyte the owner has
-     approved.
-   - **CI:** #169 raised each check group's command limit to 20 minutes,
-     because `test.package` had outgrown 15. A failed-jobs rerun still
-     reports "plan left no record"; that is still to be filed.
+     #168). Default images stayed byte-identical throughout. Old `/15` JSON
+     is refused on reuse.
+   - **Owner acceptance:** the owner accepted the real acolyte export on
+     2026-10-31: five views plus mirrors, walk 6 frames at 8 fps, idle 4
+     frames at 6 fps, 48x48 cells at 24 px/m. See
+     [docs/acceptance/export-format.md](docs/acceptance/export-format.md).
+   - **CI:** #169 raised each check group's command limit to 20 minutes. The
+     failed-jobs rerun problem ("plan left no record") is being filed as its
+     own issue.
+   - **Next for this record:** once no open issue cites them, archive the
+     export design and acceptance record (AGENTS.md section Files).
    - **Test model:** Synarchy's acolyte, a cultist in a hooded robe with a
      cord belt, linen pants, boots and a bone-white half-mask; realistic,
      1.75 m. It has a Rigify rig, `walk` and `idle`, and a robe of skirt
