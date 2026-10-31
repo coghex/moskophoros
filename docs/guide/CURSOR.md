@@ -1,41 +1,41 @@
 # Guide cursor
 
-Resume after: `fc9de5d63da34359049e0655c27f5f7778a20d21` · [2026-10-14T130147Z-fc9de5d](2026-10-14T130147Z-fc9de5d.md) · 2026-10-14T13:12:59Z
+Resume after: `36e4e3e8f0e4739cf26afef35f2ed0b7b5286d72` · [2026-10-31T180430Z-36e4e3e](2026-10-31T180430Z-36e4e3e.md) · 2026-10-31T18:15:04Z
 Covered beyond the boundary: none
 
 ## Next
 
-No finding awaits disposition. Follow #109 and #110 through implementation in
-a future review; filing does not advance the completed audit boundary.
+Owner D-36 / V-4 wording proposal pending in [2026-10-31T180430Z-36e4e3e](2026-10-31T180430Z-36e4e3e.md#carried-owner-wording-proposal-settings-d-36--v-4); walk it here, then GUIDE-1.
 
 ## Open findings
 
-- none
+- 2026-10-31T180430Z-36e4e3e/GUIDE-1 — obsolete reuse-validation sentence and pre-activation module descriptions — unprocessed
 
 ## Pending handoff
 
-- GUIDE-1 is processed through [#109](https://github.com/coghex/moskophoros/issues/109) and GUIDE-2 through [#110](https://github.com/coghex/moskophoros/issues/110); both are open. Filing is not a merged repair.
-
-- Recheck found no movement after fc9de5d; documentation-only landings excluded.
-- Settings D-36's accepted capture-shading exception is not reflected in V-4's literal no-re-render wording; owner vision reconciliation pending, no new design decision inferred.
-- #43 waits for a model needing its animation features; #75 waits for explicit owner authorization of alpha support.
-- Epics #3, #24, #63, #83 and #95 are closed on recorded owner decisions.
-- Full Blender suite, Linux and stale-merge/base-edit CI behavior not rechecked.
+- All 27 code/config PRs in the delta received focused integration review; 162 standalone docs commits excluded. No new runtime defect established.
+- D-36 / V-4 is an older owner wording reconciliation, not a new product finding. Exact proposed text is saved in the report and not applied.
+- Previous guide repairs #109/#110 are merged; #120 also repaired import-copy interruption cleanup. #75 was superseded by the accepted alpha arc.
+- #43 remains unchanged and deferred until a model needs its animation features. No open PRs at the snapshot.
+- #137 and #153 have recorded owner acceptance; no new feature arc is proposed for parking.
+- #169 fixes limits only; the manager's separate partial-rerun item was not yet filed at the snapshot. Published CI instructions require rerunning all jobs.
+- Recheck 2026-10-31T18:13:25Z: no master, spec, PR or contract movement.
+- 6212 package, 279 Blender and 235 workflow tests passed; no skips; static checks passed; Linux/Windows and fresh remote CI not run. No new visual or performance verdict.
 - History before `0eb2491` (bootstrap and PRs #1–#2) remains unreviewed.
 
 ## Alignment
 
 | Principle | Reading | Since | Note |
 |---|---|---|---|
-| V-1 | aligned | 2026-10-04T175222Z-c93605c | Generic materials, settings and maps; no private game layout. |
-| V-2 | drifting | 2026-10-06T175903Z-bb3c9b4 | GUIDE-1 scratch lifecycle and GUIDE-2 stale interface descriptions; prior palette defect repaired. |
-| V-3 | aligned | 2026-10-04T175222Z-c93605c | Original glTF material identity and scene traversal preserved. |
-| V-4 | aligned | 2026-10-04T175222Z-c93605c | Addressed buffers and downstream maps; accepted settings D-36 capture-shading exception noted in handoff. |
-| V-5 | aligned | 2026-10-04T175222Z-c93605c | One bpy script behind validated jobs/results. |
-| V-6 | aligned | 2026-10-04T175222Z-c93605c | Views remain parameterized through layered settings. |
-| V-7 | aligned | 2026-10-04T175222Z-c93605c | Fixed fit, camera-relative light and ground-relative map depth verified. |
-| V-8 | aligned | 2026-10-04T175222Z-c93605c | Owner-chosen ramps, shading and lighting; accepted per-material capture override. |
-| V-9 | aligned | 2026-10-04T175222Z-c93605c | Source-time addresses, count retiming and complete settings fingerprints. |
-| V-10 | aligned | 2026-10-04T175222Z-c93605c | Shared pure ramp, reduction, map and lighting operations. |
-| V-11 | aligned | 2026-10-14T130147Z-fc9de5d | Prior malformed-PNG error repaired; strict YAML/settings/material/buffer validation exercised. |
-| V-12 | aligned | 2026-09-30T043336Z-fe94bd6 | Independent mechanical assertions and recorded owner acceptance; no new visual judgment. |
+| V-1 | aligned | 2026-10-04T175222Z-c93605c | Generic outputs and project configuration; no consumer integration. |
+| V-2 | drifting | 2026-10-06T175903Z-bb3c9b4 | 2026-10-31T180430Z-36e4e3e/GUIDE-1: stale reuse/activation descriptions; earlier lifecycle repairs landed. |
+| V-3 | aligned | 2026-10-04T175222Z-c93605c | GLB source identity and private importer ownership preserved. |
+| V-4 | aligned | 2026-10-04T175222Z-c93605c | Addressed shading/export boundaries; accepted D-36 wording proposal pending. |
+| V-5 | aligned | 2026-10-04T175222Z-c93605c | One bpy script behind validated jobs/results and owned processes. |
+| V-6 | aligned | 2026-10-04T175222Z-c93605c | Camera parameters and stored subsets retain original direction identities. |
+| V-7 | aligned | 2026-10-04T175222Z-c93605c | Common fit/anchor, map invariance, accepted world sky and mirror anchors. |
+| V-8 | aligned | 2026-10-04T175222Z-c93605c | Explicit downstream responses; accepted default looks preserved. |
+| V-9 | aligned | 2026-10-04T175222Z-c93605c | Shared per-clip plan and source-time addresses; mirrors add no frames. |
+| V-10 | aligned | 2026-10-04T175222Z-c93605c | Shared pure alpha, lighting, quantisers, composition and encoders. |
+| V-11 | aligned | 2026-10-14T130147Z-fc9de5d | Strict settings, libraries, buffers, manifests and publication failures checked. |
+| V-12 | aligned | 2026-09-30T043336Z-fe94bd6 | Mechanical checks and recorded owner verdicts kept separate. |
