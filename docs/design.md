@@ -769,11 +769,30 @@ in- and out-tangents; a rotation is the normalized cubic quaternion.
 - **Cameras and lights.** A pointer channel animating a camera or a light has
   no effect and never fails a clip. It still counts toward the clip's range and
   the sample times derived from it, like every other sampler.
+- **Closely spaced cubic keys are an input error** (exit 3, owner decision
+  2026-11-01). A `CUBICSPLINE` sampler used by a channel the capture
+  evaluates (a node's translation, rotation, scale or weights, directly or
+  through a `/nodes/N/…` pointer, or a `/meshes/N/weights` pointer) is refused
+  when two adjacent keys have times that do not increase, or that are no more
+  than 0.01 frame apart. The message names the file, the clip, the channel and
+  the two keys. Frames are seconds at 24 frames per second, Blender's scene
+  rate in the capture, rounded to 32-bit floats as Blender stores key times, so
+  a key late in a long clip needs more room: a 32-bit float steps 0.00024 frame
+  at frame 2400. The limit is 0.01 frame, 1/2400 s or about 0.42 ms at 24
+  frames per second, because that is Blender's resolution for key times: its
+  importer and `fcurve.update()` merge keys no further apart, and its evaluator
+  returns a key's value for a time within it, so a curve with keys that close
+  is not the file's curve however it is built. Keys further apart are
+  evaluated exactly to float precision; Blender keeps their times as 32-bit
+  floats, so a very steep change between close keys late in a long clip has
+  that precision. The check reads the sampler's input accessor before Blender
+  starts. `STEP` and `LINEAR` samplers are not checked, nor are camera and light
+  pointer channels, which have no effect; a sampler whose data cannot be read
+  is left to the capture.
 - **Refused by the capture** (exit 5, naming the file, the animation and the
   problem): a `CUBICSPLINE` sampler of a node's translation, rotation, scale or
-  weights whose accessors are unreadable, whose output does not hold an
-  in-tangent, a value and an out-tangent for each key, or whose key times do not
-  increase.
+  weights whose accessors are unreadable or whose output does not hold an
+  in-tangent, a value and an out-tangent for each key.
 
 Material identities are read from the glTF JSON on every run, whether or not
 a material library is used (D-3, D-18, owner decisions 2026-10-07). Names
@@ -2158,8 +2177,9 @@ section's settings on 5.2.2:
   therefore imports a private copy in which each such sampler is linear and
   holds the keys' values alone, then rebuilds each of its curves from the file's
   values and tangents with free handles. Blender treats keys closer than 0.01
-  frame as one, in the importer and in `fcurve.update()`, so the rebuild restores
-  any the importer merged and never calls `update()`. A quaternion curve is
+  frame as one, in the importer and in `fcurve.update()`; the tool refuses
+  such keys (see [Input contract](#input-contract)), so none are merged, and the
+  rebuild never calls `update()` and checks that every key survived. A quaternion curve is
   evaluated component by component and normalized, as glTF says, so it needs no
   care about the importer negating a key that makes an obtuse angle with the one
   before it.

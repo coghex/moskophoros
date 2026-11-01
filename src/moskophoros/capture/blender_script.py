@@ -1214,12 +1214,26 @@ def shape_curve(fcurve, keys, image, fps):
         )
 
 
+# The scene frame rate that the tool's refusal of closely spaced cubic spline
+# keys assumes (`moskophoros.keytimes`, design §Input contract).
+FRAME_RATE = 24.0
+
+
+def scene_frame_rate(scene):
+    """The scene's frames per second, which must be `FRAME_RATE`."""
+    fps = scene.render.fps / scene.render.fps_base
+    if fps != FRAME_RATE:
+        raise ScriptError(
+            f"the imported scene runs at {fps!r} frames per second, not {FRAME_RATE!r}"
+        )
+    return fps
+
+
 def restore_tangents(cubics):
     """After the import, rebuild the curves of every cubic spline channel from
     the file's own values and tangents (`expand_cubics`)."""
     maps = calibrate(cubics)
-    scene = bpy.context.scene
-    fps = scene.render.fps / scene.render.fps_base
+    fps = scene_frame_rate(bpy.context.scene)
     for animation, channels in cubics.items():
         action = bpy.data.actions.get(ANIMATION_NAME.format(animation))
         if action is None:

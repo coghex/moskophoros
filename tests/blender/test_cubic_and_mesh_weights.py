@@ -471,9 +471,9 @@ def test_a_cubic_rotation_matches_the_normalized_cubic_quaternion(
 
 
 def test_a_cubic_key_interval_of_a_millisecond(found, tmp_path):
-    # The first interval is 0.024 of a frame at Blender's 24 fps, closer than
-    # keys can be before Blender merges them (a review finding); the second
-    # runs to the end of the clip.
+    # The first interval is 0.024 of a frame at Blender's 24 fps, a little more
+    # than twice the 0.01 frame under which the tool refuses a cubic spline
+    # (design §Input contract); the second runs to the end of the clip.
     times = [0.0, 0.001, 1.0]
     keys = [
         ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (300.0, 0.0, 0.0)),
@@ -498,12 +498,12 @@ def test_a_cubic_key_interval_of_a_millisecond(found, tmp_path):
     assert_close(boxes(result)["snap"], expected)
 
 
-def test_cubic_keys_closer_than_blender_merges_them(found, tmp_path):
-    # The first interval is 0.0024 of a frame at Blender's 24 fps, a quarter
-    # of the 0.01 frame under which Blender treats keys as one (a review
+def test_cubic_keys_just_outside_the_least_spacing_are_kept(found, tmp_path):
+    # The first interval is 0.0103 of a frame at Blender's 24 fps, just over
+    # the 0.01 frame under which the tool refuses a cubic spline (a review
     # finding). The key between holds 0.5 for an instant; the tangents are 0,
     # so the curve then returns to 0, and the clip ends where it began.
-    times = [0.0, 0.0001, 1.0]
+    times = [0.0, 0.00043, 1.0]
     keys = [
         ((0.0,) * 3, (0.0,) * 3, (0.0,) * 3),
         ((0.0,) * 3, (0.5, 0.0, 0.0), (0.0,) * 3),

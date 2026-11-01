@@ -5,11 +5,16 @@ the structure the tool itself relies on. Every other glTF rule is left to
 Blender's importer.
 """
 
+import base64
 import json
 import math
+import re
 import struct
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
+
+from moskophoros import keytimes
 
 INPUT_ERROR = 3
 STATIC_CLIP = "static"
@@ -18,6 +23,9 @@ _MAGIC = b"glTF"
 _HEADER = struct.Struct("<4sII")
 _CHUNK_HEADER = struct.Struct("<II")
 _JSON_CHUNK = 0x4E4F534A
+_BIN_CHUNK = 0x004E4942
+_NODE_POINTER = re.compile(r"/nodes/(\d+)/(translation|rotation|scale|weights)")
+_MESH_WEIGHTS = re.compile(r"/meshes/(\d+)/weights")
 
 
 class InputError(Exception):
@@ -94,7 +102,9 @@ def read_glb(path):
         data = path.read_bytes()
     except OSError as error:
         raise InputError(path, f"cannot be read: {error.strerror or error}") from None
-    return _Reader(path, _document(path, data)).subject()
+    document, binary = _document(path, data)
+    fetch = _buffer_fetcher(document, binary, path.parent)
+    return _Reader(path, document, fetch).subject()
 
 
 def read_material_identities(document, *, path="<glTF>"):
@@ -136,8 +146,37 @@ def select_clips(subject, clip_names, once_names):
     return tuple(SelectedClip(clip, clip.name in once) for clip in clips)
 
 
+def _buffer_fetcher(document, binary, directory):
+    """A function giving the bytes of buffer `index`: the GLB's binary chunk, a
+    data URI or a file beside the model. It raises `OSError`, `ValueError`,
+    `KeyError`, `IndexError` or `AttributeError` for a buffer it cannot read."""
+    cache = {}
+
+    def fetch(index):
+        if index not in cache:
+            uri = document["buffers"][index].get("uri")
+            if uri is None:
+                if index != 0 or binary is None:
+                    raise ValueError(f"buffer {index} has no data")
+                data = binary
+            elif uri.startswith("data:"):
+                header, _, payload = uri.partition(",")
+                if header.endswith(";base64"):
+                    data = base64.b64decode(payload)
+                else:
+                    data = urllib.parse.unquote_to_bytes(payload)
+            else:
+                with open(directory / urllib.parse.unquote(uri), "rb") as handle:
+                    data = handle.read()
+            cache[index] = data
+        return cache[index]
+
+    return fetch
+
+
 def _document(path, data):
-    """Check the binary glTF 2.0 container and decode its JSON chunk."""
+    """Check the binary glTF 2.0 container. Returns its decoded JSON chunk and
+    its binary chunk, or None when it has none."""
     if len(data) < _HEADER.size:
         raise InputError(path, "is not binary glTF: shorter than its header")
     magic, version, length = _HEADER.unpack_from(data)
@@ -178,7 +217,8 @@ def _document(path, data):
         raise InputError(path, f"has an undecodable JSON chunk: {error}") from None
     if not isinstance(document, dict):
         raise InputError(path, "has an undecodable JSON chunk: it is not an object")
-    return document
+    binary = chunks[1][1] if len(chunks) > 1 and chunks[1][0] == _BIN_CHUNK else None
+    return document, binary
 
 
 def _reject_constant(constant):
@@ -190,9 +230,10 @@ def _is_index(value):
 
 
 class _Reader:
-    def __init__(self, path, document):
+    def __init__(self, path, document, fetch=None):
         self.path = path
         self.document = document
+        self.fetch = fetch
 
     def fail(self, problem):
         raise InputError(self.path, problem)
@@ -371,6 +412,7 @@ class _Reader:
                 for s, sampler in enumerate(samplers)
             ]
             targeted, translated = self.targets(i, animation, len(samplers), node_count)
+            self.cubic_spacing(i, name, animation, samplers, accessors)
             roots = tuple(
                 Root(node, node_names[node])
                 for node in sorted(translated)
@@ -406,6 +448,31 @@ class _Reader:
             )
         return low, high
 
+    def cubic_spacing(self, i, name, animation, samplers, accessors):
+        """Refuse a `CUBICSPLINE` sampler, used by a channel the capture
+        evaluates, whose keys are too close for Blender to tell apart (design
+        §Input contract). Samplers that cannot be read are left to the capture,
+        and other interpolations are not checked."""
+        if self.fetch is None:
+            return
+        checked = set()
+        for c, channel in enumerate(animation.get("channels", [])):
+            s = channel["sampler"]
+            sampler = samplers[s]
+            if s in checked or sampler.get("interpolation") != "CUBICSPLINE":
+                continue
+            described = _evaluated_target(channel)
+            if described is None:
+                continue
+            checked.add(s)
+            times = keytimes.sampler_times(self.document, self.fetch, sampler["input"])
+            problem = None if times is None else keytimes.spacing_problem(times)
+            if problem is not None:
+                self.fail(
+                    f"clip {name!r} (animation {i}), channel {c} ({described}) "
+                    f"has a CUBICSPLINE sampler whose {problem[1]}"
+                )
+
     def targets(self, i, animation, sampler_count, node_count):
         """Return the nodes animation `i` targets, and those it translates."""
         targeted = set()
@@ -425,6 +492,26 @@ class _Reader:
             if path == "translation":
                 translated.add(node)
         return targeted, translated
+
+
+def _evaluated_target(channel):
+    """What a channel animates, in words, when the capture evaluates it (a
+    node's translation, rotation, scale or weights, directly or through a
+    pointer, or a mesh's weights); None for any other channel."""
+    target = channel["target"]
+    path = target["path"]
+    if path in ("translation", "rotation", "scale", "weights") and "node" in target:
+        return f"{path} of node {target['node']}"
+    pointer = target.get("extensions")
+    pointer = (
+        pointer.get("KHR_animation_pointer") if isinstance(pointer, dict) else None
+    )
+    pointer = pointer.get("pointer") if isinstance(pointer, dict) else None
+    if isinstance(pointer, str) and (
+        _NODE_POINTER.fullmatch(pointer) or _MESH_WEIGHTS.fullmatch(pointer)
+    ):
+        return f"pointer {pointer}"
+    return None
 
 
 def _finite(value):

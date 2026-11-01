@@ -1086,3 +1086,22 @@ def test_an_animation_the_pointer_emptied_animates_the_placeholder(script, tmp_p
             "target": {"node": placeholder, "path": "translation"},
         }
     ]
+
+
+def test_the_frame_rate_matches_the_tools_cubic_spacing_rule(script):
+    from moskophoros import keytimes
+
+    assert script.FRAME_RATE == keytimes.BLENDER_FRAME_RATE
+
+
+@pytest.mark.parametrize(("fps", "base"), [(24, 1.0), (48, 2.0)])
+def test_a_scene_at_the_assumed_frame_rate_is_accepted(script, fps, base):
+    scene = types.SimpleNamespace(render=types.SimpleNamespace(fps=fps, fps_base=base))
+    assert script.scene_frame_rate(scene) == 24.0
+
+
+@pytest.mark.parametrize(("fps", "base"), [(30, 1.0), (24, 1.001), (25, 1.0)])
+def test_a_scene_at_another_frame_rate_is_refused(script, fps, base):
+    scene = types.SimpleNamespace(render=types.SimpleNamespace(fps=fps, fps_base=base))
+    with pytest.raises(script.ScriptError, match="frames per second, not 24.0"):
+        script.scene_frame_rate(scene)
