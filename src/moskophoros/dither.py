@@ -8,9 +8,11 @@ output cell's own pixel column and row, so a cell's pattern never depends on
 its frame, direction, the sheet's packing or the order of the calls.
 
 Everything here is pure arrays in and arrays out, with no randomness, file or
-dependency beyond NumPy. Nothing is wired to a command yet: which layers are
-dithered, which snap target applies and which layer controls a composite are
-chosen by the caller and arrive as explicit arguments.
+dependency beyond NumPy. The stylize stage reaches it through `shade_layers`,
+which calls `snap` and `snap_target`, and through `lighting`, which calls
+`is_effective`, `thresholds` and `dithered_band`. Which layers are dithered,
+which snap target applies and which layer controls a composite are chosen by
+the caller and arrive as explicit arguments.
 """
 
 from types import MappingProxyType

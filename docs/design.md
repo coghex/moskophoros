@@ -1392,8 +1392,8 @@ override, including `--reduce`, `--edges`, `--palette`, `--no-palette`, `--mater
 options, and project values (owner decisions 2026-10-04,
 2026-10-07, 2026-10-11, 2026-10-12).
 A missing or invalid field, or an unknown field inside `settings`, is a usage
-error naming it. The rest of the sheet is not checked beyond its `schema`
-(owner decisions 2026-10-01).
+error naming it (owner decisions 2026-10-01). The rest of the document is
+checked as well, as the whole-manifest paragraph above states.
 
 ## Pipeline
 

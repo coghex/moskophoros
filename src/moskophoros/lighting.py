@@ -6,9 +6,11 @@ winning material's shade, times the light factor `L` of its normals' facing
 terms. A mode routes that one signal to a ramp band, to a linear brightness
 gain, to both or to neither, over a ramp entry or the ordinary colour.
 
-Everything here is pure arrays in and arrays out. It reads no file, imports
-no Blender and is wired to no command yet: the settings arrive as the
-`shading.Response` and `shading_resolve.Look` that SHD-2 resolves. The
+Everything here is pure arrays in and arrays out. It reads no file and imports
+no Blender. The stylize stage reaches it through `shade_layers`, which calls
+`shade_blocks`: the settings arrive as the `shading.Response` and
+`shading_resolve.Look` that `shading_resolve.resolve` produces, and the
+`Lights` come from `light_vectors`, both passed in by the command. The
 signal is evaluated in `float64`, in the order the design states; the exact
 integer path that today's ramps use stays in `imageops`, and runs whenever
 the response asks for nothing the integer arithmetic does not already do.
@@ -113,8 +115,8 @@ def light_factor(response, key=0.0, sky=0.0, ground=0.0):
     """`L = (1 − K − S − G) + K·key + S·sky + G·ground` for the response's
     strengths `K, S, G`, evaluated in that order in `float64` from facing
     terms `key`, `sky` and `ground` in `[0, 1]`, then bounded to `[0, 1]`
-    against rounding (the strengths' sum is at most 1, and SHD-2 rejects any
-    other). Defaults, with all strengths 0, give 1."""
+    against rounding (the strengths' sum is at most 1, and `shading_resolve.resolve`
+    rejects any other). Defaults, with all strengths 0, give 1."""
     uniform = 1.0 - response.key_strength - response.sky_strength
     uniform = uniform - response.ground_strength
     light = (
