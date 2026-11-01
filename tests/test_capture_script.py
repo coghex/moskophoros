@@ -887,9 +887,10 @@ def test_a_cubic_rotation_records_the_importer_s_signs(script, tmp_path):
     ("change", "message"),
     [
         (lambda s: s.update(input=99), "accessor 99"),
-        (lambda s: s.pop("output"), "KeyError|output"),
+        (lambda s: s.pop("output"), "no readable input and output"),
+        (lambda s: s.update(output=99), "accessor 99"),
     ],
-    ids=["no such accessor", "no output"],
+    ids=["no such input", "no output", "no such output"],
 )
 def test_a_broken_sampler_fails_the_script(script, tmp_path, change, message):
     model = GlbWriter()
@@ -903,7 +904,7 @@ def test_a_broken_sampler_fails_the_script(script, tmp_path, change, message):
     )
     change(model.document["animations"][0]["samplers"][0])
     document, rest, source = load(script, model, tmp_path)
-    with pytest.raises((script.ScriptError, KeyError), match=message):
+    with pytest.raises(script.ScriptError, match=message):
         script.private_copy(document, rest, source, 0)
 
 

@@ -466,9 +466,9 @@ def test_cubic_morph_weights_of_several_targets(found, tmp_path):
     assert_close(boxes(result)["grow"], expected)
 
 
-def test_a_cubic_translation_of_a_joint(found, tmp_path):
-    # The skinned vertex on joint J1 sets R = 0.5 + J1's x, and J1 follows
-    # the cubic curve 4·(t − t²).
+def joint_model():
+    """Joint J1, at (0, 0.5, 0) under J0, moves a skinned body's vertex at
+    (0.5, 0.5, 0); the body's other vertices are on J0."""
     model = GlbWriter()
     j1 = model.node("J1", translation=(0.0, 0.5, 0.0))
     j0 = model.node("J0", children=[j1])
@@ -485,6 +485,13 @@ def test_a_cubic_translation_of_a_joint(found, tmp_path):
         skin_weights=[(1, 0, 0, 0)] * 3,
     )
     model.scene([j0, model.node("body", mesh=mesh, skin=skin)], default=True)
+    return model, j1
+
+
+def test_a_cubic_translation_of_a_joint(found, tmp_path):
+    # The skinned vertex on joint J1 sets R = 0.5 + J1's x, and J1 follows
+    # the cubic curve 4·(t − t²).
+    model, j1 = joint_model()
     keys = [
         ((0.0,) * 3, (0.0, 0.5, 0.0), (4.0, 0.0, 0.0)),
         ((-4.0, 0.0, 0.0), (0.0, 0.5, 0.0), (0.0,) * 3),
@@ -497,6 +504,28 @@ def test_a_cubic_translation_of_a_joint(found, tmp_path):
         boxes(result)["bend"],
         [(0.0, 0.5 + 4 * (t - t * t), 0.5, 0.0) for t in TIMES],
     )
+
+
+def test_a_cubic_rotation_of_a_joint(found, tmp_path):
+    # J1 turns by a cubic quaternion, with tangents the importer would flip,
+    # and carries the vertex 0.5 m to its right around it.
+    model, j1 = joint_model()
+    keys = [
+        ((0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 3.0, -4.0)),
+        ((0.0, 0.0, 3.0, -4.0), TURN, (0.0, 0.0, 0.0, 0.0)),
+    ]
+    model.animation(
+        "bend", [(j1, "rotation", [0, 1], flat(keys))], interpolation="CUBICSPLINE"
+    )
+    result, _ = measure(found, model.write(tmp_path, "twist"), tmp_path)
+    expected = []
+    for t in TIMES:
+        q = cubic_at([0.0, 1.0], keys, t)
+        length = math.sqrt(sum(c * c for c in q))
+        x, y, _ = rotated([c / length for c in q], (0.5, 0.0, 0.0))
+        xs, ys = [0.0, 0.25, x], [0.0, 0.0, 0.5 + y]
+        expected.append((max(0, -min(xs)), max(0, *xs), max(0, *ys), max(0, -min(ys))))
+    assert_close(boxes(result)["bend"], expected)
 
 
 # The weight range

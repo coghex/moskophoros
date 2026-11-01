@@ -899,6 +899,48 @@ def importer_signs(controlled, width):
     return signs
 
 
+def expand_sampler(document, fetch, source, sampler, path, where):
+    """Replace one CUBICSPLINE `sampler` of a node's `path` with the LINEAR
+    sampler of its control points, in place. Returns what `restore_tangents`
+    needs: the key count and the importer's quaternion signs, or None."""
+    try:
+        times = [
+            row[0] for row in read_accessor(document, fetch, sampler["input"], source)
+        ]
+        flat = [
+            value
+            for row in read_accessor(document, fetch, sampler["output"], source)
+            for value in row
+        ]
+        kind = document["accessors"][sampler["output"]]["type"]
+    except (KeyError, TypeError):
+        raise ScriptError(f"{where} has no readable input and output") from None
+    if not all(map(math.isfinite, [*times, *flat])):
+        raise ScriptError(f"{where} holds a number that is not finite")
+    try:
+        new_times, controlled, block = hermite_controls(times, flat)
+    except ValueError as error:
+        raise ScriptError(f"{where}: {error}") from None
+    if path != "weights" and block != _PATH_WIDTHS[path]:
+        raise ScriptError(f"{where} does not hold {path} values")
+    stored = struct.unpack(
+        f"<{len(new_times)}f", struct.pack(f"<{len(new_times)}f", *new_times)
+    )
+    if any(
+        not later > earlier for earlier, later in zip(stored, stored[1:], strict=False)
+    ):
+        raise ScriptError(f"{where} has keys too close together to measure")
+    sampler["input"] = _append_accessor(document, "SCALAR", new_times, 1, True)
+    sampler["output"] = _append_accessor(
+        document, kind, controlled, _ACCESSOR_WIDTHS[kind], False
+    )
+    sampler["interpolation"] = "LINEAR"
+    return {
+        "keys": len(times),
+        "signs": importer_signs(controlled, 4) if path == "rotation" else None,
+    }
+
+
 def expand_cubics(document, fetch, source):
     """Rewrite each CUBICSPLINE sampler that animates a node's translation,
     rotation, scale or weights as the LINEAR sampler of its control points,
@@ -914,50 +956,16 @@ def expand_cubics(document, fetch, source):
             sampler = samplers[channel["sampler"]]
             if target is None or sampler.get("interpolation") != "CUBICSPLINE":
                 continue
-            where = f"{source}: animation {a}'s sampler {channel['sampler']}"
             key = (a, channel["sampler"])
             if key not in expanded:
-                times = [
-                    row[0]
-                    for row in read_accessor(document, fetch, sampler["input"], source)
-                ]
-                kind = document["accessors"][sampler["output"]]["type"]
-                flat = [
-                    value
-                    for row in read_accessor(document, fetch, sampler["output"], source)
-                    for value in row
-                ]
-                if not all(map(math.isfinite, [*times, *flat])):
-                    raise ScriptError(f"{where} holds a number that is not finite")
-                try:
-                    new_times, controlled, block = hermite_controls(times, flat)
-                except ValueError as error:
-                    raise ScriptError(f"{where}: {error}") from None
-                path = target[1]
-                if path != "weights" and block != _PATH_WIDTHS[path]:
-                    raise ScriptError(f"{where} does not hold {path} values")
-                stored = struct.unpack(
-                    f"<{len(new_times)}f",
-                    struct.pack(f"<{len(new_times)}f", *new_times),
+                expanded[key] = expand_sampler(
+                    document,
+                    fetch,
+                    source,
+                    sampler,
+                    target[1],
+                    f"{source}: animation {a}'s sampler {channel['sampler']}",
                 )
-                if any(
-                    not later > earlier
-                    for earlier, later in zip(stored, stored[1:], strict=False)
-                ):
-                    raise ScriptError(f"{where} has keys too close together to measure")
-                sampler["input"] = _append_accessor(
-                    document, "SCALAR", new_times, 1, True
-                )
-                sampler["output"] = _append_accessor(
-                    document, kind, controlled, _ACCESSOR_WIDTHS[kind], False
-                )
-                sampler["interpolation"] = "LINEAR"
-                expanded[key] = {
-                    "keys": len(times),
-                    "signs": importer_signs(controlled, 4)
-                    if path == "rotation"
-                    else None,
-                }
             cubics.setdefault(a, {}).setdefault(target, expanded[key])
     return cubics
 
