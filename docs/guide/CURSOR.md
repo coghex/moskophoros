@@ -1,11 +1,11 @@
 # Guide cursor
 
-Resume after: `36e4e3e8f0e4739cf26afef35f2ed0b7b5286d72` · [2026-10-31T180430Z-36e4e3e](2026-10-31T180430Z-36e4e3e.md) · 2026-10-31T18:15:04Z
+Resume after: `a462962b095b015fbfbbe731b05b3ff7df3f364e` · [2026-11-01T171536Z-a462962](2026-11-01T171536Z-a462962.md) · 2026-11-01T17:18:30Z
 Covered beyond the boundary: none
 
 ## Next
 
-No guide finding awaits disposition. The manager owns [#171](https://github.com/coghex/moskophoros/issues/171) through repair before parking; a future guide follows its implementation.
+No guide finding awaits disposition. Resolve how open, owner-deferred #43 fits the new all-issues-resolved parking rule; the pane question is pending. No new feature arc is proposed.
 
 ## Open findings
 
@@ -13,15 +13,14 @@ No guide finding awaits disposition. The manager owns [#171](https://github.com/
 
 ## Pending handoff
 
-- All 27 code/config PRs in the delta received focused integration review; 162 standalone docs commits excluded. No new runtime defect established.
-- Owner approved both follow-ups on 2026-10-31 via direct manager relay. Exact V-4 wording landed as `76075ffa514215dd1d725be5689b654b968dc2a3`; retained-capture recolouring stays deferred under D-18.
-- GUIDE-1 is processed through [#171](https://github.com/coghex/moskophoros/issues/171), created from the manager-signed exact draft with label `documentation`. Filing is not a merged repair; V-2 drift remains until its correction is verified.
-- Previous guide repairs #109/#110 are merged; #120 also repaired import-copy interruption cleanup. #75 was superseded by the accepted alpha arc.
-- #43 remains unchanged and deferred until a model needs its animation features. No open PRs at the snapshot.
-- #137 and #153 have recorded owner acceptance; no new feature arc is proposed for parking.
-- #169 fixes limits only; the manager's separate partial-rerun item was not yet filed at the snapshot. Published CI instructions require rerunning all jobs.
-- Recheck 2026-10-31T18:13:25Z: no master, spec, PR or contract movement.
-- 6212 package, 279 Blender and 235 workflow tests passed; no skips; static checks passed; Linux/Windows and fresh remote CI not run. No new visual or performance verdict.
+- #173/#171 repairs GUIDE-1; V-2 drift cleared. #174/#172 diagnoses carried results before waiting on rerunning groups; D-12 remains intact.
+- All code since 36e4e3e reviewed; seven standalone docs landings excluded. The requested 2660013 head and the newer a462962 parking clarification are included.
+- #43 remains unchanged and owner-deferred until a model needs its animation features. It is still open; this is not a declaration that every issue is closed or the project is parked. No open PRs at the snapshot.
+- Published V-4 includes the approved D-36 exception; retained-capture recolouring stays deferred under D-18. #137/#153 retain recorded owner acceptance.
+- Recheck: no master, issue-spec, PR or published-vision movement. The vision draft warning was a newline comparison artifact; bytes match the pin.
+- 252 workflow and 562 focused contract tests passed, no skips; static checks passed. Full package/Blender suites not repeated: product AST unchanged excluding docstrings. No new visual or performance verdict.
+- Real older GitHub job data replayed without waiting; no live failed-only/full rerun at the fixed revision. Timestamp carryover shape is observed API behavior, not a documented stability guarantee.
+- The separate kanban drainer rerun policy remains outside this repo's scope. Recovery here is Re-run all jobs.
 - History before `0eb2491` (bootstrap and PRs #1–#2) remains unreviewed.
 
 ## Alignment
@@ -29,7 +28,7 @@ No guide finding awaits disposition. The manager owns [#171](https://github.com/
 | Principle | Reading | Since | Note |
 |---|---|---|---|
 | V-1 | aligned | 2026-10-04T175222Z-c93605c | Generic outputs and project configuration; no consumer integration. |
-| V-2 | drifting | 2026-10-06T175903Z-bb3c9b4 | 2026-10-31T180430Z-36e4e3e/GUIDE-1: stale reuse/activation descriptions; earlier lifecycle repairs landed. |
+| V-2 | aligned | 2026-11-01T171536Z-a462962 | #173 repairs GUIDE-1; #174 makes failed-only rerun diagnostics accurate without accepting earlier results. |
 | V-3 | aligned | 2026-10-04T175222Z-c93605c | GLB source identity and private importer ownership preserved. |
 | V-4 | aligned | 2026-10-04T175222Z-c93605c | Addressed shading/export boundaries; accepted D-36 wording reconciled in 76075ffa51 after the audit. |
 | V-5 | aligned | 2026-10-04T175222Z-c93605c | One bpy script behind validated jobs/results and owned processes. |
