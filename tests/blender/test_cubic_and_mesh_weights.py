@@ -498,6 +498,72 @@ def test_a_cubic_key_interval_of_a_millisecond(found, tmp_path):
     assert_close(boxes(result)["snap"], expected)
 
 
+def test_cubic_keys_closer_than_blender_merges_them(found, tmp_path):
+    # The first interval is 0.0024 of a frame at Blender's 24 fps, a quarter
+    # of the 0.01 frame under which Blender treats keys as one (a review
+    # finding). The key between holds 0.5 for an instant; the tangents are 0,
+    # so the curve then returns to 0, and the clip ends where it began.
+    times = [0.0, 0.0001, 1.0]
+    keys = [
+        ((0.0,) * 3, (0.0,) * 3, (0.0,) * 3),
+        ((0.0,) * 3, (0.5, 0.0, 0.0), (0.0,) * 3),
+        ((0.0,) * 3, (0.0,) * 3, (0.0,) * 3),
+    ]
+    model = GlbWriter()
+    shape = model.node("shape", mesh=True)
+    model.scene([shape], default=True)
+    model.animation(
+        "blip", [(shape, "translation", times, flat(keys))], interpolation="CUBICSPLINE"
+    )
+    result, _ = measure(
+        found,
+        model.write(tmp_path, "blip"),
+        tmp_path,
+        clip_names=["blip"],
+        once=["blip"],
+    )
+    expected = [(0.0, 1.0 + cubic_at(times, keys, t)[0], 1.0, 0.0) for t in ONCE_TIMES]
+    assert expected[0][1] == 1.0 and expected[1][1] < 1.5
+    assert_close(boxes(result)["blip"], expected)
+    assert result.roots[0].travel_m == pytest.approx(0.0, abs=1e-5)
+
+
+@pytest.mark.parametrize("where", ["in no scene", "in another scene"])
+def test_a_cubic_channel_on_a_node_outside_the_selected_scene(found, tmp_path, where):
+    # The clip moves the subject with a cubic curve; the same clip also moves
+    # a node nothing selected draws, and rotates one, with cubic curves.
+    keys = [
+        ((0.0,) * 3, ZERO, (4.0, 0.0, 0.0)),
+        ((-4.0, 0.0, 0.0), ZERO, (0.0,) * 3),
+    ]
+    spin = [
+        ((0.0,) * 4, (0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.5, 0.0)),
+        ((0.0,) * 4, (0.0, 0.0, 0.5, 0.866), (0.0,) * 4),
+    ]
+    model = GlbWriter()
+    shape = model.node("shape", mesh=True)
+    stray = model.node("stray", mesh=True)
+    model.scene([shape], default=True)
+    if where == "in another scene":
+        model.scene([stray])
+    model.animation(
+        "sway",
+        [
+            (shape, "translation", [0, 1], flat(keys)),
+            (stray, "translation", [0, 1], flat(keys)),
+            (stray, "rotation", [0, 1], flat(spin)),
+        ],
+        interpolation="CUBICSPLINE",
+    )
+    result, _ = measure(
+        found, model.write(tmp_path, "stray"), tmp_path, clip_names=["sway"]
+    )
+    assert_close(
+        boxes(result)["sway"],
+        [(0.0, 1.0 + 4 * (t - t * t), 1.0, 0.0) for t in TIMES],
+    )
+
+
 def test_cubic_morph_weights_of_several_targets(found, tmp_path):
     # Two targets, one lifting U and one widening R, with different values
     # and tangents; keys at 0, 0.5 and 2 s.

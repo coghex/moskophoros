@@ -1206,7 +1206,12 @@ def shape_curve(fcurve, keys, image, fps):
         ):
             x, y = points[key].co
             setattr(points[key], side, (2 * x - points[other].co[0], y))
-    fcurve.update()
+    # No `fcurve.update()`: it would merge keys closer than 0.01 frame, which a
+    # curve of free handles and ascending keys has no need of.
+    if len(points) != count:
+        raise ScriptError(
+            f"cubic spline curve {fcurve.data_path!r} has {len(points)} keys, not {count}"
+        )
 
 
 def restore_tangents(cubics):

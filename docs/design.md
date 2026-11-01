@@ -2157,11 +2157,12 @@ section's settings on 5.2.2:
   interval, and Blender evaluates free handles there exactly. The capture script
   therefore imports a private copy in which each such sampler is linear and
   holds the keys' values alone, then rebuilds each of its curves from the file's
-  values and tangents with free handles. Keys are never added, so Blender's
-  merging of keys closer than 0.01 frame cannot change them, and a quaternion
-  curve is evaluated component by component and normalized, as glTF says, so it
-  needs no care about the importer negating a key that makes an obtuse angle with
-  the one before it.
+  values and tangents with free handles. Blender treats keys closer than 0.01
+  frame as one, in the importer and in `fcurve.update()`, so the rebuild restores
+  any the importer merged and never calls `update()`. A quaternion curve is
+  evaluated component by component and normalized, as glTF says, so it needs no
+  care about the importer negating a key that makes an obtuse angle with the one
+  before it.
 - **The importer converts a key's value with an affine map** (glTF's axes
   turned into Blender's, and a bone's rest pose for a joint). The script does not
   repeat that arithmetic: the private copy holds one more animation, of known
