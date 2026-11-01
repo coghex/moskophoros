@@ -413,8 +413,25 @@ TURN = (0.0, 0.0, math.sin(math.pi / 6), math.cos(math.pi / 6))
             ((0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 3.0, -4.0)),
             ((0.0, 0.0, 3.0, -4.0), (0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0, 0.0)),
         ],
+        # The first control point is orthogonal to its neighbour to within
+        # rounding, which the importer's 32-bit arithmetic may decide either
+        # way (a review finding).
+        [
+            ((0.0, 0.0, 0.0, 0.0), (0.5, 0.5, 0.5, 0.5), (4.0, -2.0, -3.0, -5.0)),
+            ((0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0, 0.0)),
+        ],
+        # Keys nearly opposite, so the curve turns the long way round.
+        [
+            ((0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0, 0.0)),
+            ((0.0, 0.0, 0.0, 0.0), (0.0, 0.2, 0.0, -1.0), (0.0, 0.0, 0.0, 0.0)),
+        ],
     ],
-    ids=["moderate tangents", "tangents the importer would flip"],
+    ids=[
+        "moderate tangents",
+        "tangents the importer would flip",
+        "a control point square on to its neighbour",
+        "nearly opposite keys",
+    ],
 )
 def test_a_cubic_rotation_matches_the_normalized_cubic_quaternion(
     found, tmp_path, keys

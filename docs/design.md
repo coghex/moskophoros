@@ -773,7 +773,8 @@ in- and out-tangents; a rotation is the normalized cubic quaternion.
   problem): a `CUBICSPLINE` sampler of a node's translation, rotation, scale or
   weights whose accessors are unreadable, whose output does not hold
   an in-tangent, a value and an out-tangent for each key, or whose key times
-  are not increasing or are too close to tell apart in 32-bit floats.
+  are not increasing or are too close to tell apart in 32-bit floats, or a
+  rotation that passes too near the zero quaternion.
 
 Material identities are read from the glTF JSON on every run, whether or not
 a material library is used (D-3, D-18, owner decisions 2026-10-07). Names
@@ -2159,8 +2160,12 @@ section's settings on 5.2.2:
   holds those control points, so that the importer's own conversions (axes,
   bone rest poses) apply to them, then turns the control keys of each curve into
   handles. The importer also negates a quaternion key that makes an obtuse angle
-  with the one before it; the script restores the sign of each. Evaluated
-  values equal glTF's cubic formula at every time, to float precision.
+  with the one before it, deciding in 32-bit floats, so the script does not
+  predict it: it splits each rotation segment, which leaves the Bézier curve
+  unchanged, until every step of its control polygon is an acute angle, and
+  the importer negates nothing. A rotation that passes too near the zero
+  quaternion for that is refused. Evaluated values equal glTF's cubic formula at
+  every time, to float precision.
 - **Only one mesh-level weight animation is kept per mesh,** and it is attached
   to the original mesh, which the capture replaces with a copy for each node.
   The script gives each node of the selected scene its own `weights` channel in

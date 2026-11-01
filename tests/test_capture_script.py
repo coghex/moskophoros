@@ -645,11 +645,81 @@ def test_malformed_cubic_data_is_refused(script, times, values, message):
         script.hermite_controls(times, values)
 
 
-def test_the_importer_s_quaternion_signs_follow_its_flips(script):
-    controls = [1, 0, 0, 0, 0.5, 0.5, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0]
-    # The third quaternion is obtuse to the second and negated; the fourth is
-    # obtuse to the negated third, and negated too; the fifth is square on.
-    assert script.importer_signs(controls, 4) == [1, 1, -1, -1, 1]
+def piecewise_bezier(times, values, width, t):
+    """Evaluate control points as `hermite_controls` lays them out: segments of
+    four points sharing their ends, `width` values each, linear in time."""
+    starts = range(0, len(times) - 1, 3)
+    segment = max(i for i in starts if times[i] <= t)
+    t0, t1 = times[segment], times[segment + 3]
+    s = (t - t0) / (t1 - t0)
+    return [
+        bezier([values[(segment + k) * width + c] for k in range(4)], s)
+        for c in range(width)
+    ]
+
+
+def acute_steps(values):
+    """Whether every step between consecutive quaternions is an acute angle."""
+    quaternions = [values[i : i + 4] for i in range(0, len(values), 4)]
+    return all(
+        sum(a * b for a, b in zip(before, after, strict=True)) > 0
+        for before, after in zip(quaternions, quaternions[1:], strict=False)
+    )
+
+
+def rotation_keys(p0, out, into, p1):
+    """The output of a two-key cubic rotation: (in, value, out) for each."""
+    zero = (0, 0, 0, 0)
+    return [*zero, *p0, *out, *into, *p1, *zero]
+
+
+# (first value, its out-tangent, second key's in-tangent, its value).
+CUBIC_ROTATIONS = [
+    # A control point is an obtuse angle from its neighbour.
+    ((0, 0, 0, 1), (0, 0, 3, -4), (0, 0, 3, -4), (0, 0, 0, 1)),
+    # One is square on to its neighbour, to rounding (a review finding).
+    ((0.5, 0.5, 0.5, 0.5), (4, -2, -3, -5), (0, 0, 0, 0), (0, 0, 0, 1)),
+    # Nearly opposite keys, so the curve turns the long way.
+    ((0, 0, 0, 1), (0, 0, 0, 0), (0, 0, 0, 0), (0, 0.2, 0, -1)),
+]
+
+
+@pytest.mark.parametrize(
+    "keys",
+    CUBIC_ROTATIONS,
+    ids=["obtuse control", "orthogonal control", "long way round"],
+)
+def test_rotation_segments_are_split_until_the_importer_would_keep_every_key(
+    script, keys
+):
+    times, controlled, block = script.hermite_controls([0.0, 2.0], rotation_keys(*keys))
+    assert block == 4
+    assert not acute_steps(controlled)
+    refined_times, refined = script.refine_quaternions(times, controlled)
+    assert acute_steps(refined)
+    assert (len(refined_times) - 1) % 3 == 0 and len(refined_times) > 4
+    assert refined_times[0] == 0.0 and refined_times[-1] == 2.0
+    assert refined_times == sorted(refined_times)
+    # The same curve: the same quaternion at any time, and the same ends.
+    for t in (0.0, 0.3, 0.7, 1.0, 1.4, 2.0):
+        assert piecewise_bezier(refined_times, refined, 4, t) == pytest.approx(
+            piecewise_bezier(times, controlled, 4, t), abs=1e-12
+        )
+
+
+def test_a_gentle_rotation_is_left_alone(script):
+    keys = rotation_keys(
+        (0, 0, 0, 1), (0, 0, 0.3, 0), (0, 0, 0.3, 0), (0, 0, 0.5, 0.866)
+    )
+    times, controlled, _ = script.hermite_controls([0.0, 1.0], keys)
+    assert script.refine_quaternions(times, controlled) == (times, controlled)
+
+
+def test_a_rotation_through_the_zero_quaternion_cannot_be_split_gentle(script):
+    # Opposite keys with no tangents pass through (0, 0, 0, 0) at the middle.
+    keys = rotation_keys((0, 0, 0, 1), (0, 0, 0, 0), (0, 0, 0, 0), (0, 0, 0, -1))
+    times, controlled, _ = script.hermite_controls([0.0, 1.0], keys)
+    assert script.refine_quaternions(times, controlled) is None
 
 
 def test_accessors_are_read_with_strides_offsets_and_normalization(script, tmp_path):
@@ -888,7 +958,7 @@ def test_the_private_copy_replaces_cubic_samplers_with_control_points(script, tm
     )
     document, rest, source = load(script, model, tmp_path)
     glb, cubics = script.private_copy(document, rest, source, 0)
-    assert cubics == {0: {(shape, "translation"): {"keys": 2, "signs": None}}}
+    assert cubics == {0: {(shape, "translation"): {"keys": 2}}}
     copy, _ = script.split_glb(glb, source)
     # The placeholder animation comes first; the clip's sampler is LINEAR.
     sampler = copy["animations"][1]["samplers"][0]
@@ -942,7 +1012,7 @@ def test_other_cubic_samplers_are_left_as_they_are(script, tmp_path):
     assert cubics == {}
 
 
-def test_a_cubic_rotation_records_the_importer_s_signs(script, tmp_path):
+def test_a_cubic_rotation_is_given_to_the_importer_in_gentle_steps(script, tmp_path):
     model = GlbWriter()
     shape = model.node("shape", mesh=True)
     model.scene([shape], default=True)
@@ -956,11 +1026,19 @@ def test_a_cubic_rotation_records_the_importer_s_signs(script, tmp_path):
         interpolation="CUBICSPLINE",
     )
     document, rest, source = load(script, model, tmp_path)
-    _, cubics = script.private_copy(document, rest, source, 0)
-    # Controls (0,0,0,1), (0,0,1,-1/3), (0,0,-1,7/3), (0,0,0,1): the second
-    # makes an obtuse angle with the first, and is negated; the third and the
-    # fourth are acute to the one before.
-    assert cubics[0][(shape, "rotation")]["signs"] == [1, -1, 1, 1]
+    glb, cubics = script.private_copy(document, rest, source, 0)
+    copy, binary = script.split_glb(glb, source)
+    sampler = copy["animations"][1]["samplers"][0]
+    fetch = script.buffer_reader(copy, script.binary_chunk(binary), source)
+    rows = script.read_accessor(copy, fetch, sampler["input"], source)
+    times = [row[0] for row in rows]
+    rows = script.read_accessor(copy, fetch, sampler["output"], source)
+    values = [value for row in rows for value in row]
+    # The importer would negate a control point of the unsplit segment; the
+    # split one has more keys, and the importer keeps all of them.
+    assert len(times) > 4
+    assert cubics[0][(shape, "rotation")] == {"keys": (len(times) - 1) // 3 + 1}
+    assert acute_steps(values)
 
 
 @pytest.mark.parametrize(

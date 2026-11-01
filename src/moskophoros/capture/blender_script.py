@@ -928,26 +928,79 @@ def hermite_controls(times, values):
     return controlled_times, controlled, block
 
 
-def importer_signs(controlled, width):
-    """The sign the importer gives each quaternion of a rotation channel: it
-    negates a quaternion that makes an obtuse angle with the one before it,
-    after that one's own sign is applied, so that rotations take the short
-    way. `controlled` holds the quaternions flattened."""
-    signs = [1]
-    previous = controlled[:width]
-    for start in range(width, len(controlled), width):
-        current = controlled[start : start + width]
-        dot = sum(a * b for a, b in zip(current, previous, strict=True))
-        sign = -1 if dot < 0 else 1
-        signs.append(sign)
-        previous = [sign * value for value in current]
-    return signs
+# The importer negates a quaternion key that makes an obtuse angle with the key
+# before it, so that rotations take the short way. It decides in 32-bit
+# floats, after its own conversions, so the script does not try to predict it:
+# it splits each rotation segment, which leaves the Bézier curve unchanged,
+# until every step of the control polygon turns by well under a right angle,
+# and the importer then negates nothing.
+_TURN = 1e-3
+_SPLIT_DEPTH = 12
+
+
+def _gentle(points):
+    """Whether every step of the polygon `points` (time, then a quaternion)
+    keeps an acute angle, with a margin far beyond rounding."""
+    for before, after in zip(points, points[1:], strict=False):
+        dot = sum(a * b for a, b in zip(before[1:], after[1:], strict=True))
+        norms = math.sqrt(sum(a * a for a in before[1:])) * math.sqrt(
+            sum(a * a for a in after[1:])
+        )
+        if not dot > _TURN * norms:
+            return False
+    return True
+
+
+def _half(a, b):
+    return tuple((x + y) / 2 for x, y in zip(a, b, strict=True))
+
+
+def _gentle_pieces(points, depth):
+    """The Bézier segment `points`, split at its middle as often as it takes
+    to make every piece gentle; None when that takes more than `_SPLIT_DEPTH`
+    splits."""
+    if _gentle(points):
+        return [points]
+    if depth == _SPLIT_DEPTH:
+        return None
+    p0, p1, p2, p3 = points
+    a, b, c = _half(p0, p1), _half(p1, p2), _half(p2, p3)
+    d, e = _half(a, b), _half(b, c)
+    f = _half(d, e)
+    pieces = []
+    for half in ([p0, a, d, f], [f, e, c, p3]):
+        found = _gentle_pieces(half, depth + 1)
+        if found is None:
+            return None
+        pieces += found
+    return pieces
+
+
+def refine_quaternions(times, controlled):
+    """Split the segments of a rotation channel's control points (the output
+    of `hermite_controls`, four values per quaternion) until the importer
+    would keep every key as it is. Returns the new times and values, or None
+    when a curve passes too near the zero quaternion for that."""
+    new_times = []
+    new_values = []
+    points = [(time, *controlled[4 * i : 4 * i + 4]) for i, time in enumerate(times)]
+    for start in range(0, len(points) - 1, 3):
+        pieces = _gentle_pieces(points[start : start + 4], 0)
+        if pieces is None:
+            return None
+        for piece in pieces:
+            for point in piece[:3]:
+                new_times.append(point[0])
+                new_values += point[1:]
+    new_times.append(points[-1][0])
+    new_values += points[-1][1:]
+    return new_times, new_values
 
 
 def expand_sampler(document, fetch, source, sampler, path, where):
     """Replace one CUBICSPLINE `sampler` of a node's `path` with the LINEAR
     sampler of its control points, in place. Returns what `restore_tangents`
-    needs: the key count and the importer's quaternion signs, or None."""
+    needs: the number of keys the curve is to have."""
     try:
         times = [
             row[0] for row in read_accessor(document, fetch, sampler["input"], source)
@@ -968,6 +1021,14 @@ def expand_sampler(document, fetch, source, sampler, path, where):
         raise ScriptError(f"{where}: {error}") from None
     if path != "weights" and block != _PATH_WIDTHS[path]:
         raise ScriptError(f"{where} does not hold {path} values")
+    if path == "rotation":
+        refined = refine_quaternions(new_times, controlled)
+        if refined is None:
+            raise ScriptError(
+                f"{where} has a rotation that passes too near the zero "
+                "quaternion to measure"
+            )
+        new_times, controlled = refined
     stored = struct.unpack(
         f"<{len(new_times)}f", struct.pack(f"<{len(new_times)}f", *new_times)
     )
@@ -980,17 +1041,14 @@ def expand_sampler(document, fetch, source, sampler, path, where):
         document, kind, controlled, _ACCESSOR_WIDTHS[kind], False
     )
     sampler["interpolation"] = "LINEAR"
-    return {
-        "keys": len(times),
-        "signs": importer_signs(controlled, 4) if path == "rotation" else None,
-    }
+    return {"keys": len(new_times) // 3 + 1}
 
 
 def expand_cubics(document, fetch, source):
     """Rewrite each CUBICSPLINE sampler that animates a node's translation,
     rotation, scale or weights as the LINEAR sampler of its control points,
     editing `document` in place. Returns {animation index: {(node, path):
-    {"keys": key count, "signs": the importer's quaternion signs or None}}}
+    {"keys": the number of keys the curve is to have}}}
     for `restore_tangents`."""
     cubics = {}
     expanded = {}
@@ -1053,11 +1111,7 @@ def shape_curve(fcurve, cubic):
             f"cubic spline curve {fcurve.data_path!r} imported {len(points)} keys, "
             f"not {3 * (keys - 1) + 1}"
         )
-    signs = cubic["signs"] or [1] * len(points)
-    coordinates = [
-        (point.co[0], point.co[1] * sign)
-        for point, sign in zip(points, signs, strict=True)
-    ]
+    coordinates = [tuple(point.co) for point in points]
     for point in points:
         point.interpolation = "BEZIER"
         point.handle_left_type = "FREE"
