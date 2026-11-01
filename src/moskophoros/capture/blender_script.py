@@ -787,25 +787,70 @@ def buffer_reader(document, binary, source):
     return fetch
 
 
+_INDEX_CODES = {5121: "B", 5123: "H", 5125: "I"}
+
+
+def _view_rows(document, fetch, view_index, offset, row, count, stride=None):
+    """`count` rows of struct `row` read from a buffer view, starting `offset`
+    bytes into it and `stride` bytes apart (the row's size by default)."""
+    view = document["bufferViews"][view_index]
+    data = fetch(view["buffer"])
+    start = view.get("byteOffset", 0) + offset
+    stride = stride or row.size
+    return [row.unpack_from(data, start + i * stride) for i in range(count)]
+
+
 def read_accessor(document, fetch, index, source):
-    """An animation accessor's rows, as tuples of floats."""
+    """An animation accessor's rows, as tuples of floats, with a sparse
+    accessor's replacements applied."""
     where = f"{source}: accessor {index}"
     try:
         accessor = document["accessors"][index]
-        if "sparse" in accessor:
-            raise ScriptError(f"{where} is sparse, which is not supported")
         width = _ACCESSOR_WIDTHS[accessor["type"]]
         code, scale = _ACCESSOR_FORMATS[accessor["componentType"]]
         count = accessor["count"]
-        if "bufferView" not in accessor:
-            return [(0.0,) * width] * count
-        view = document["bufferViews"][accessor["bufferView"]]
-        data = fetch(view["buffer"])
-        size = struct.calcsize(code)
-        offset = view.get("byteOffset", 0) + accessor.get("byteOffset", 0)
-        stride = view.get("byteStride") or size * width
         row = struct.Struct(f"<{width}{code}")
-        rows = [row.unpack_from(data, offset + i * stride) for i in range(count)]
+        if "bufferView" in accessor:
+            view = document["bufferViews"][accessor["bufferView"]]
+            rows = _view_rows(
+                document,
+                fetch,
+                accessor["bufferView"],
+                accessor.get("byteOffset", 0),
+                row,
+                count,
+                view.get("byteStride"),
+            )
+        else:
+            rows = [(0,) * width] * count
+        sparse = accessor.get("sparse")
+        if sparse is not None:
+            changed = sparse["count"]
+            indices, values = sparse["indices"], sparse["values"]
+            positions = [
+                position
+                for (position,) in _view_rows(
+                    document,
+                    fetch,
+                    indices["bufferView"],
+                    indices.get("byteOffset", 0),
+                    struct.Struct(f"<{_INDEX_CODES[indices['componentType']]}"),
+                    changed,
+                )
+            ]
+            replacements = _view_rows(
+                document,
+                fetch,
+                values["bufferView"],
+                values.get("byteOffset", 0),
+                row,
+                changed,
+            )
+            if any(not 0 <= position < count for position in positions):
+                raise IndexError("sparse index out of range")
+            rows = list(rows)
+            for position, replacement in zip(positions, replacements, strict=True):
+                rows[position] = replacement
     except (KeyError, IndexError, TypeError, struct.error):
         raise ScriptError(f"{where} is malformed or unreadable") from None
     if scale is not None and accessor.get("normalized"):
@@ -953,10 +998,14 @@ def expand_cubics(document, fetch, source):
         samplers = animation.get("samplers", [])
         for channel in animation.get("channels", []):
             target = channel_target(channel)
-            sampler = samplers[channel["sampler"]]
-            if target is None or sampler.get("interpolation") != "CUBICSPLINE":
-                continue
             key = (a, channel["sampler"])
+            sampler = samplers[channel["sampler"]]
+            # A sampler already expanded is linear now, but every channel
+            # sharing it needs its curves restored.
+            if target is None or (
+                key not in expanded and sampler.get("interpolation") != "CUBICSPLINE"
+            ):
+                continue
             if key not in expanded:
                 expanded[key] = expand_sampler(
                     document,

@@ -6,6 +6,7 @@ is the script's error, which fails the command with exit 5."""
 import base64
 import importlib.util
 import math
+import struct
 import sys
 import types
 from array import array
@@ -693,18 +694,80 @@ def test_accessors_are_read_with_strides_offsets_and_normalization(script, tmp_p
     "change",
     [
         {"sparse": {}},
+        {"sparse": {"count": 1, "indices": {"bufferView": 0, "componentType": 5121}}},
         {"count": 1000},
         {"bufferView": 7},
         {"type": "MAT4"},
         {"componentType": 1},
     ],
-    ids=["sparse", "past the end", "no such view", "a matrix", "no such type"],
+    ids=[
+        "sparse without parts",
+        "sparse without values",
+        "past the end",
+        "no such view",
+        "a matrix",
+        "no such type",
+    ],
 )
 def test_unreadable_accessors_are_refused_by_name(script, tmp_path, change):
     model = GlbWriter()
     model._accessor("VEC3", [(1.0, 2.0, 3.0)], False)
     document, rest, source = load(script, model, tmp_path)
     document["accessors"][0].update(change)
+    fetch = script.buffer_reader(document, script.binary_chunk(rest), source)
+    with pytest.raises(script.ScriptError, match="accessor 0"):
+        script.read_accessor(document, fetch, 0, source)
+
+
+def sparse_model(positions):
+    """Four VEC3 rows of zeros but for sparse replacements at `positions`,
+    which are (1, 2, 3) and (4, 5, 6)."""
+    model = GlbWriter()
+    indices = model._view(struct.pack(f"<{len(positions)}H", *positions))
+    values = model._view(struct.pack("<6f", 1, 2, 3, 4, 5, 6))
+    model.document["accessors"] = [
+        {
+            "componentType": 5126,
+            "count": 4,
+            "type": "VEC3",
+            "sparse": {
+                "count": 2,
+                "indices": {"bufferView": indices, "componentType": 5123},
+                "values": {"bufferView": values},
+            },
+        }
+    ]
+    return model
+
+
+def test_a_sparse_accessor_has_its_replacements_applied(script, tmp_path):
+    document, rest, source = load(script, sparse_model([1, 3]), tmp_path)
+    fetch = script.buffer_reader(document, script.binary_chunk(rest), source)
+    assert script.read_accessor(document, fetch, 0, source) == [
+        (0.0, 0.0, 0.0),
+        (1.0, 2.0, 3.0),
+        (0.0, 0.0, 0.0),
+        (4.0, 5.0, 6.0),
+    ]
+
+
+def test_a_sparse_accessor_replaces_rows_of_its_buffer_view(script, tmp_path):
+    model = sparse_model([0, 2])
+    model.document["accessors"][0]["bufferView"] = model._view(
+        struct.pack("<12f", *range(12))
+    )
+    document, rest, source = load(script, model, tmp_path)
+    fetch = script.buffer_reader(document, script.binary_chunk(rest), source)
+    assert script.read_accessor(document, fetch, 0, source) == [
+        (1.0, 2.0, 3.0),
+        (3.0, 4.0, 5.0),
+        (4.0, 5.0, 6.0),
+        (9.0, 10.0, 11.0),
+    ]
+
+
+def test_a_sparse_index_beyond_the_accessor_is_refused(script, tmp_path):
+    document, rest, source = load(script, sparse_model([1, 4]), tmp_path)
     fetch = script.buffer_reader(document, script.binary_chunk(rest), source)
     with pytest.raises(script.ScriptError, match="accessor 0"):
         script.read_accessor(document, fetch, 0, source)
@@ -840,6 +903,23 @@ def test_the_private_copy_replaces_cubic_samplers_with_control_points(script, tm
     assert points == pytest.approx([(0, 0, 0), (3, 0, 0), (4, 0, 0), (1, 0, 0)])
     # The original document is untouched.
     assert document["animations"][0]["samplers"][0]["interpolation"] == "CUBICSPLINE"
+
+
+def test_every_channel_sharing_a_cubic_sampler_is_recorded(script, tmp_path):
+    model, (a, b, c, d) = shared_mesh_model()
+    clip = model.animation("rise", [])
+    model.pointer_channel(
+        clip,
+        "/meshes/0/weights",
+        [0, 1],
+        [(0.0,), (0.0,), (4.0,), (-4.0,), (0.0,), (0.0,)],
+        interpolation="CUBICSPLINE",
+    )
+    document, rest, source = load(script, model, tmp_path)
+    _, cubics = script.private_copy(document, rest, source, 0)
+    # Nodes a and b both follow the pointer's one sampler.
+    assert sorted(cubics[1]) == [(a, "weights"), (b, "weights")]
+    assert cubics[1][(a, "weights")] is cubics[1][(b, "weights")]
 
 
 def test_other_cubic_samplers_are_left_as_they_are(script, tmp_path):

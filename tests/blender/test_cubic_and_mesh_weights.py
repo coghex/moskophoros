@@ -7,6 +7,7 @@ of the script.
 """
 
 import math
+import struct
 
 import pytest
 from glb_writer import GlbWriter
@@ -526,6 +527,86 @@ def test_a_cubic_rotation_of_a_joint(found, tmp_path):
         xs, ys = [0.0, 0.25, x], [0.0, 0.0, 0.5 + y]
         expected.append((max(0, -min(xs)), max(0, *xs), max(0, *ys), max(0, -min(ys))))
     assert_close(boxes(result)["bend"], expected)
+
+
+def share_sampler(model, clip, sampler, node, path):
+    """Another channel of `clip` on `node`, reading an existing sampler."""
+    model.document["animations"][clip]["channels"].append(
+        {"sampler": sampler, "target": {"node": node, "path": path}}
+    )
+
+
+def test_channels_sharing_a_cubic_sampler_all_follow_its_tangents(found, tmp_path):
+    # The upright node raises U and the mirrored one D, both from one sampler.
+    model = GlbWriter()
+    mesh = model.mesh(TRIANGLE, targets=[RISE], weights=[0.0])
+    up = model.node("up", mesh=mesh)
+    down = mirrored(model, mesh)
+    model.scene([up, down], default=True)
+    keys = [((0.0,), (0.0,), (4.0,)), ((-4.0,), (0.0,), (0.0,))]
+    clip = model.animation(
+        "rise", [(up, "weights", [0, 1], flat(keys))], interpolation="CUBICSPLINE"
+    )
+    share_sampler(model, clip, 0, down, "weights")
+    result, _ = measure(found, model.write(tmp_path, "shared"), tmp_path)
+    assert_close(
+        boxes(result)["rise"],
+        [(0.0, 1.0, 1.0 + 4 * (t - t * t), 1.0 + 4 * (t - t * t)) for t in TIMES],
+    )
+
+
+def test_a_cubic_mesh_weight_pointer_reaches_every_node_using_the_mesh(found, tmp_path):
+    model = GlbWriter()
+    mesh = model.mesh(TRIANGLE, targets=[RISE], weights=[0.0])
+    up = model.node("up", mesh=mesh)
+    down = mirrored(model, mesh)
+    model.scene([up, down], default=True)
+    clip = model.animation("rise", [])
+    model.pointer_channel(
+        clip,
+        "/meshes/0/weights",
+        [0, 1],
+        [(0.0,), (0.0,), (4.0,), (-4.0,), (0.0,), (0.0,)],
+        interpolation="CUBICSPLINE",
+    )
+    result, _ = measure(found, model.write(tmp_path, "cubic-pointer"), tmp_path)
+    assert_close(
+        boxes(result)["rise"],
+        [(0.0, 1.0, 1.0 + 4 * (t - t * t), 1.0 + 4 * (t - t * t)) for t in TIMES],
+    )
+    assert boxes(result)["rise"][2][3] == pytest.approx(2.0, abs=1e-5)
+
+
+def test_a_cubic_translation_with_sparse_tangents(found, tmp_path):
+    # The output holds zeros but for the two tangents, +4 on x and −4 on x,
+    # supplied as sparse replacements of rows 2 and 3.
+    model = GlbWriter()
+    shape = model.node("shape", mesh=True)
+    model.scene([shape], default=True)
+    model.animation(
+        "sway",
+        [(shape, "translation", [0, 1], [ZERO] * 6)],
+        interpolation="CUBICSPLINE",
+    )
+    indices = model._view(struct.pack("<2H", 2, 3))
+    values = model._view(struct.pack("<6f", 4, 0, 0, -4, 0, 0))
+    output = model.document["animations"][0]["samplers"][0]["output"]
+    model.document["accessors"][output]["sparse"] = {
+        "count": 2,
+        "indices": {"bufferView": indices, "componentType": 5123},
+        "values": {"bufferView": values},
+    }
+    result, _ = measure(
+        found,
+        model.write(tmp_path, "sparse"),
+        tmp_path,
+        clip_names=["sway"],
+        once=["sway"],
+    )
+    assert_close(
+        boxes(result)["sway"],
+        [(0.0, 1.0 + 4 * (t - t * t), 1.0, 0.0) for t in ONCE_TIMES],
+    )
 
 
 # The weight range

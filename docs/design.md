@@ -771,7 +771,7 @@ in- and out-tangents; a rotation is the normalized cubic quaternion.
   the sample times derived from it, like every other sampler.
 - **Refused by the capture** (exit 5, naming the file, the animation and the
   problem): a `CUBICSPLINE` sampler of a node's translation, rotation, scale or
-  weights whose accessors are sparse or unreadable, whose output does not hold
+  weights whose accessors are unreadable, whose output does not hold
   an in-tangent, a value and an out-tangent for each key, or whose key times
   are not increasing or are too close to tell apart in 32-bit floats.
 
