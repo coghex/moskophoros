@@ -71,11 +71,11 @@ CUBICSPLINE support; no overlapping export epic was open at this check.
 
 ### Existing moskophoros contracts
 
-- [Vision](../vision.md) V-1 forbids consumer integration and private layouts;
+- [Vision](../../vision.md) V-1 forbids consumer integration and private layouts;
   V-2 requires reproducibility; V-4 keeps addressed-frame stage boundaries;
   V-7 requires stable scale and anchor; V-9 identifies samples by time;
   V-12 reserves visual acceptance to the owner.
-- [Design](../design.md), CLI and Export: the positional output is a PNG;
+- [Design](../../design.md), CLI and Export: the positional output is a PNG;
   one combined sheet has a row per clip and direction, columns per frame,
   transparent unused cells, and no gaps. Normal and optional depth maps use
   the same layout. JSON is `moskophoros.sheet/15`; previews are separate.
@@ -91,7 +91,7 @@ CUBICSPLINE support; no overlapping export epic was open at this check.
   with N >= 2 includes both endpoints. Static and zero-duration clips stay
   one frame. See design, Clips and sampling, and historical settings D-13,
   D-24, D-31 and D-33 in
-  [settings design](../archive/designs/settings_design.md).
+  [settings design](settings_design.md).
 - Fixed `ppm`, `cell` and `ground_px` already exist. The anchor is an integer
   pixel-grid corner from cell top-left. A fixed configuration that overflows
   fails rather than shrinking. No new fitting mechanism is established here.
@@ -104,7 +104,7 @@ CUBICSPLINE support; no overlapping export epic was open at this check.
   Project names and settings-file paths are not recorded in output. Reuse
   accepts only the current sheet schema; a schema bump retires the previous
   one. See design, Settings files, and historical
-  [projects/camera design](../archive/designs/projects_camera_design.md).
+  [projects/camera design](projects_camera_design.md).
 
 ### Consumer evidence, not a tool specification
 
@@ -1396,7 +1396,7 @@ probe did not run Blender and does not measure the future publisher. It
 supports ordinary staged publication in EXP-5, not an extra indexing/storage
 subsystem. Capture still runs once per stored sample across output formats.
 
-Every code slice follows [validation](../validation.md) and the planner at its
+Every code slice follows [validation](../../validation.md) and the planner at its
 actual diff. The current catalog selects `test.blender` for any `src/` change,
 even preparatory pure-code changes; those PRs need current passing local
 evidence as well as required CI checks. No new dependency is proposed.

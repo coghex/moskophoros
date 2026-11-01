@@ -39,13 +39,13 @@ differs: source, tests, dependencies and validation code are unchanged.
 - [PR #167](https://github.com/coghex/moskophoros/pull/167): 273 Blender tests,
   no failures/skips, at `5a1cf91cfae43534670ac57b85f42cdd06e521e1`;
   6,242 package tests passed. Default image-byte evidence is
-  [EXP-6a evidence](../archive/exp-6a-image-evidence.md), landed at `e9f2ce787a`.
+  [EXP-6a evidence](../exp-6a-image-evidence.md), landed at `e9f2ce787a`.
   The JSON/schema change there was intentional.
 - [PR #168](https://github.com/coghex/moskophoros/pull/168): 279 Blender tests,
   no failures/skips, under the shared lock at the validated head above;
   6,445 package tests, 233 workflow tests and static checks passed.
   Its required `build-test` and opposite-brand review checks passed.
-  [EXP-6b evidence](../archive/exp-6b-image-evidence.md), landed at `43f11d9224`,
+  [EXP-6b evidence](../exp-6b-image-evidence.md), landed at `43f11d9224`,
   records default PNG/GIF/JSON byte identity.
 - Rehashed all 13 retained EXP-6b default comparison files independently:
   base/head bytes equal, and each hash agrees with PR #168's table and the
