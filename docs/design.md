@@ -2163,7 +2163,8 @@ section's settings on 5.2.2:
   frame apart are merged, in the importer and in `fcurve.update()`. The capture
   script therefore imports a private copy in which each such sampler is linear
   and holds the keys' values alone, which gives the importer a curve on the
-  right property, and never lets that curve decide a value: after Blender
+  right property, mutes it (a render re-evaluates the frame's animation, which
+  would overwrite the value) and never lets it decide a value: after Blender
   evaluates a frame, the script sets every property of a cubic channel to glTF's
   value at the sample time, computed in double precision from the file's keys,
   values and tangents, and checks the weights it uses the same way. Keys may

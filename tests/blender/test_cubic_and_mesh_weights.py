@@ -910,3 +910,34 @@ def test_a_render_places_a_cubic_translation_at_its_tangent_correct_pose(
     assert centroid(rendered[2][1], lambda r, g, b: True)[0] == pytest.approx(
         28, abs=TOLERANCE_PX
     )
+
+
+def test_a_render_is_exact_just_after_a_key_with_a_steep_tangent(found, tmp_path):
+    # An out-tangent of 2e5 per second moves the cube 0.19 m (3.8 px) in the
+    # 9.5e-7 s between the key and the sample at 0.5 s; Blender's own reading
+    # of that time is the key's value, at the ground pixel.
+    model = GlbWriter()
+    mover = model.node(
+        "mover", mesh=model.mesh(cube((0.0, 0.0, 0.0), 0.08), material=model.material())
+    )
+    model.scene([mover], default=True)
+    keys = [
+        ((0.0,) * 3, ZERO, ZERO),
+        ((0.0,) * 3, ZERO, (2e5, 0.0, 0.0)),
+        (ZERO, (0.5, 0.0, 0.0), ZERO),
+        (ZERO, ZERO, ZERO),
+    ]
+    model.animation(
+        "steep",
+        [(mover, "translation", STEEP_TIMES, flat(keys))],
+        interpolation="CUBICSPLINE",
+    )
+    result, _ = render(found, model.write(tmp_path, "steep"), tmp_path)
+    rendered = list(images(result).items())
+    assert [address.time_s for address, _ in rendered] == TIMES
+    for (_, image), t in zip(rendered, TIMES, strict=True):
+        x = 20 + cubic_at(STEEP_TIMES, keys, t)[0] * 20
+        assert centroid(image, lambda r, g, b: True) == pytest.approx(
+            (x, 20), abs=TOLERANCE_PX
+        )
+    assert cubic_at(STEEP_TIMES, keys, 0.5)[0] == pytest.approx(0.19, abs=0.01)

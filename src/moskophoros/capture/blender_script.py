@@ -1229,6 +1229,10 @@ def cubic_overrides(cubics):
                         target = fcurve_target(fcurve, channelbag.slot)
                         if target not in channels:
                             continue
+                        # Muted, the curve leaves its property alone, as a
+                        # render re-evaluates the frame's animation and would
+                        # overwrite the value `apply_cubics` sets.
+                        fcurve.mute = True
                         owner, _, prop = fcurve.data_path.rpartition(".")
                         morph = None
                         if target[1] == "weights":
