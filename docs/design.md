@@ -771,10 +771,9 @@ in- and out-tangents; a rotation is the normalized cubic quaternion.
   the sample times derived from it, like every other sampler.
 - **Refused by the capture** (exit 5, naming the file, the animation and the
   problem): a `CUBICSPLINE` sampler of a node's translation, rotation, scale or
-  weights whose accessors are unreadable, whose output does not hold
-  an in-tangent, a value and an out-tangent for each key, or whose key times
-  are not increasing or are too close to tell apart in 32-bit floats, or a
-  rotation that passes too near the zero quaternion.
+  weights whose accessors are unreadable, whose output does not hold an
+  in-tangent, a value and an out-tangent for each key, or whose key times do not
+  increase.
 
 Material identities are read from the glTF JSON on every run, whether or not
 a material library is used (D-3, D-18, owner decisions 2026-10-07). Names
@@ -2157,15 +2156,18 @@ section's settings on 5.2.2:
   `p0`, `p0 + Δt·m0/3`, `p1 − Δt·a1/3` and `p1` at one third and two thirds of the
   interval, and Blender evaluates free handles there exactly. The capture script
   therefore imports a private copy in which each such sampler is linear and
-  holds those control points, so that the importer's own conversions (axes,
-  bone rest poses) apply to them, then turns the control keys of each curve into
-  handles. The importer also negates a quaternion key that makes an obtuse angle
-  with the one before it, deciding in 32-bit floats, so the script does not
-  predict it: it splits each rotation segment, which leaves the Bézier curve
-  unchanged, until every step of its control polygon is an acute angle, and
-  the importer negates nothing. A rotation that passes too near the zero
-  quaternion for that is refused. Evaluated values equal glTF's cubic formula at
-  every time, to float precision.
+  holds the keys' values alone, then rebuilds each of its curves from the file's
+  values and tangents with free handles. Keys are never added, so Blender's
+  merging of keys closer than 0.01 frame cannot change them, and a quaternion
+  curve is evaluated component by component and normalized, as glTF says, so it
+  needs no care about the importer negating a key that makes an obtuse angle with
+  the one before it.
+- **The importer converts a key's value with an affine map** (glTF's axes
+  turned into Blender's, and a bone's rest pose for a joint). The script does not
+  repeat that arithmetic: the private copy holds one more animation, of known
+  keys for each node and path that has a cubic channel, and the map is solved
+  from how the importer converts them and checked on further keys to 1e-5.
+  Evaluated values equal glTF's cubic formula at every time, to float precision.
 - **Only one mesh-level weight animation is kept per mesh,** and it is attached
   to the original mesh, which the capture replaces with a copy for each node.
   The script gives each node of the selected scene its own `weights` channel in

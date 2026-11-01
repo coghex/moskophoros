@@ -601,33 +601,25 @@ def hermite(p0, out, p1, into, step, s):
     )
 
 
-def test_cubic_segments_become_bezier_control_points(script):
-    # Keys at 0 and 2 s: (in, value, out) of (0, 1, 3) and (−6, 4, 0).
-    times, values, block = script.hermite_controls([0.0, 2.0], [0, 1, 3, -6, 4, 0])
-    assert block == 1
-    assert times == pytest.approx([0.0, 2 / 3, 4 / 3, 2.0])
-    assert values == pytest.approx([1.0, 3.0, 8.0, 4.0])
-    for s in (0.0, 0.1, 0.5, 0.9, 1.0):
-        assert bezier(values, s) == pytest.approx(hermite(1.0, 3.0, 4.0, -6.0, 2.0, s))
-
-
-def test_each_cubic_segment_has_its_own_control_points(script):
-    # Two segments, two components per key.
-    times, values, block = script.hermite_controls(
-        [1.0, 2.0, 5.0],
-        [
-            *(0, 0), *(1, 2), *(3, -3),
-            *(0, 6), *(2, 4), *(0, 0),
-            *(9, 9), *(0, 0), *(0, 0),
-        ],
-    )  # fmt: skip
+def test_cubic_output_is_split_into_keys(script):
+    # Two keys of two components: (in, value, out) each.
+    values, ins, outs, block = script.cubic_keys(
+        [0.0, 2.0], [*(0, 0), *(1, 2), *(3, -3), *(0, 6), *(2, 4), *(5, 5)]
+    )
     assert block == 2
-    assert times == pytest.approx([1.0, 4 / 3, 5 / 3, 2.0, 3.0, 4.0, 5.0])
-    assert values == pytest.approx(
-        [
-            *(1, 2), *(2, 1), *(2, 2), *(2, 4), *(2, 4), *(-9, -9), *(0, 0),
-        ]
-    )  # fmt: skip
+    assert values == [(1, 2), (2, 4)]
+    assert ins == [(0, 0), (0, 6)]
+    assert outs == [(3, -3), (5, 5)]
+
+
+def test_cubic_segments_have_bezier_control_points_at_the_thirds(script):
+    # Keys at 0 and 2 s: (in, value, out) of (0, 1, 3) and (−6, 4, 0).
+    first, last = script.segment_controls(2.0, (1.0,), (3.0,), (4.0,), (-6.0,))
+    assert (first, last) == ((1 + 2 * 3 / 3,), (4 + 2 * 6 / 3,))
+    for s in (0.0, 0.1, 0.5, 0.9, 1.0):
+        assert bezier([1.0, *first, *last, 4.0], s) == pytest.approx(
+            hermite(1.0, 3.0, 4.0, -6.0, 2.0, s)
+        )
 
 
 @pytest.mark.parametrize(
@@ -642,84 +634,38 @@ def test_each_cubic_segment_has_its_own_control_points(script):
 )
 def test_malformed_cubic_data_is_refused(script, times, values, message):
     with pytest.raises(ValueError, match=message):
-        script.hermite_controls(times, values)
+        script.cubic_keys(times, values)
 
 
-def piecewise_bezier(times, values, width, t):
-    """Evaluate control points as `hermite_controls` lays them out: segments of
-    four points sharing their ends, `width` values each, linear in time."""
-    starts = range(0, len(times) - 1, 3)
-    segment = max(i for i in starts if times[i] <= t)
-    t0, t1 = times[segment], times[segment + 3]
-    s = (t - t0) / (t1 - t0)
-    return [
-        bezier([values[(segment + k) * width + c] for k in range(4)], s)
-        for c in range(width)
-    ]
-
-
-def acute_steps(values):
-    """Whether every step between consecutive quaternions is an acute angle."""
-    quaternions = [values[i : i + 4] for i in range(0, len(values), 4)]
-    return all(
-        sum(a * b for a, b in zip(before, after, strict=True)) > 0
-        for before, after in zip(quaternions, quaternions[1:], strict=False)
+def affine(matrix, offset, point):
+    return tuple(
+        sum(m * p for m, p in zip(row, point, strict=True)) + o
+        for row, o in zip(matrix, offset, strict=True)
     )
 
 
-def rotation_keys(p0, out, into, p1):
-    """The output of a two-key cubic rotation: (in, value, out) for each."""
-    zero = (0, 0, 0, 0)
-    return [*zero, *p0, *out, *into, *p1, *zero]
-
-
-# (first value, its out-tangent, second key's in-tangent, its value).
-CUBIC_ROTATIONS = [
-    # A control point is an obtuse angle from its neighbour.
-    ((0, 0, 0, 1), (0, 0, 3, -4), (0, 0, 3, -4), (0, 0, 0, 1)),
-    # One is square on to its neighbour, to rounding (a review finding).
-    ((0.5, 0.5, 0.5, 0.5), (4, -2, -3, -5), (0, 0, 0, 0), (0, 0, 0, 1)),
-    # Nearly opposite keys, so the curve turns the long way.
-    ((0, 0, 0, 1), (0, 0, 0, 0), (0, 0, 0, 0), (0, 0.2, 0, -1)),
-]
-
-
-@pytest.mark.parametrize(
-    "keys",
-    CUBIC_ROTATIONS,
-    ids=["obtuse control", "orthogonal control", "long way round"],
-)
-def test_rotation_segments_are_split_until_the_importer_would_keep_every_key(
-    script, keys
-):
-    times, controlled, block = script.hermite_controls([0.0, 2.0], rotation_keys(*keys))
-    assert block == 4
-    assert not acute_steps(controlled)
-    refined_times, refined = script.refine_quaternions(times, controlled)
-    assert acute_steps(refined)
-    assert (len(refined_times) - 1) % 3 == 0 and len(refined_times) > 4
-    assert refined_times[0] == 0.0 and refined_times[-1] == 2.0
-    assert refined_times == sorted(refined_times)
-    # The same curve: the same quaternion at any time, and the same ends.
-    for t in (0.0, 0.3, 0.7, 1.0, 1.4, 2.0):
-        assert piecewise_bezier(refined_times, refined, 4, t) == pytest.approx(
-            piecewise_bezier(times, controlled, 4, t), abs=1e-12
-        )
-
-
-def test_a_gentle_rotation_is_left_alone(script):
-    keys = rotation_keys(
-        (0, 0, 0, 1), (0, 0, 0.3, 0), (0, 0, 0.3, 0), (0, 0, 0.5, 0.866)
+@pytest.mark.parametrize("path", ["translation", "scale", "rotation"])
+def test_an_affine_conversion_is_measured_from_the_calibration_keys(script, path):
+    points = script._CALIBRATION[path]
+    d = len(points[0])
+    # A permutation with a sign, a scaling and an offset, as the importer applies.
+    matrix = [[0.0] * d for _ in range(d)]
+    for i in range(d):
+        matrix[i][(i + 1) % d] = -1.0 if i == 0 else 2.0
+    offset = [0.25 * (i + 1) for i in range(d)]
+    images = [affine(matrix, offset, point) for point in points]
+    solved = script.solve_affine(points, images)
+    assert solved is not None
+    assert [v for row in solved[0] for v in row] == pytest.approx(
+        [v for row in matrix for v in row], abs=1e-9
     )
-    times, controlled, _ = script.hermite_controls([0.0, 1.0], keys)
-    assert script.refine_quaternions(times, controlled) == (times, controlled)
+    assert solved[1] == pytest.approx(offset, abs=1e-9)
 
 
-def test_a_rotation_through_the_zero_quaternion_cannot_be_split_gentle(script):
-    # Opposite keys with no tangents pass through (0, 0, 0, 0) at the middle.
-    keys = rotation_keys((0, 0, 0, 1), (0, 0, 0, 0), (0, 0, 0, 0), (0, 0, 0, -1))
-    times, controlled, _ = script.hermite_controls([0.0, 1.0], keys)
-    assert script.refine_quaternions(times, controlled) is None
+def test_a_conversion_that_is_not_affine_is_not_measured(script):
+    points = script._CALIBRATION["translation"]
+    images = [tuple(x * x for x in point) for point in points]
+    assert script.solve_affine(points, images) is None
 
 
 def test_accessors_are_read_with_strides_offsets_and_normalization(script, tmp_path):
@@ -943,7 +889,7 @@ def test_a_document_without_animations_or_scene_nodes_is_left_alone(script):
     assert "animations" not in model.document
 
 
-def test_the_private_copy_replaces_cubic_samplers_with_control_points(script, tmp_path):
+def test_the_private_copy_reduces_cubic_samplers_to_their_keys(script, tmp_path):
     model = GlbWriter()
     shape = model.node("shape", mesh=True)
     model.scene([shape], default=True)
@@ -958,21 +904,72 @@ def test_the_private_copy_replaces_cubic_samplers_with_control_points(script, tm
     )
     document, rest, source = load(script, model, tmp_path)
     glb, cubics = script.private_copy(document, rest, source, 0)
-    assert cubics == {0: {(shape, "translation"): {"keys": 2}}}
-    copy, _ = script.split_glb(glb, source)
-    # The placeholder animation comes first; the clip's sampler is LINEAR.
+    assert cubics == {
+        0: {
+            (shape, "translation"): {
+                "times": [0.0, 3.0],
+                "values": [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0)],
+                "ins": [(0.0, 0.0, 0.0), (-3.0, 0.0, 0.0)],
+                "outs": [(3.0, 0.0, 0.0), (0.0, 0.0, 0.0)],
+            }
+        }
+    }
+    copy, binary = script.split_glb(glb, source)
+    fetch = script.buffer_reader(copy, script.binary_chunk(binary), source)
+    # The placeholder animation comes first; the clip's sampler is LINEAR and
+    # holds the values alone.
     sampler = copy["animations"][1]["samplers"][0]
     assert sampler["interpolation"] == "LINEAR"
-    fetch = script.buffer_reader(copy, script.binary_chunk(_), source)
-    times = [
-        row[0] for row in script.read_accessor(copy, fetch, sampler["input"], source)
+    assert script.read_accessor(copy, fetch, sampler["input"], source) == [
+        (0.0,),
+        (3.0,),
     ]
-    assert times == pytest.approx([0.0, 1.0, 2.0, 3.0])
-    points = script.read_accessor(copy, fetch, sampler["output"], source)
-    # x(s) = hermite on 0 → 1 with tangents 3 and −3 over 3 s: controls 0, 3, 4, 1.
-    assert points == pytest.approx([(0, 0, 0), (3, 0, 0), (4, 0, 0), (1, 0, 0)])
+    assert script.read_accessor(copy, fetch, sampler["output"], source) == [
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+    ]
+    # The last animation measures the importer's conversion of the node's
+    # translation with the calibration keys.
+    calibration = copy["animations"][-1]
+    assert calibration["name"] == script.CALIBRATION_NAME
+    assert [c["target"] for c in calibration["channels"]] == [
+        {"node": shape, "path": "translation"}
+    ]
+    sampler = calibration["samplers"][calibration["channels"][0]["sampler"]]
+    assert script.read_accessor(copy, fetch, sampler["output"], source) == [
+        tuple(map(float, point)) for point in script._CALIBRATION["translation"]
+    ]
     # The original document is untouched.
     assert document["animations"][0]["samplers"][0]["interpolation"] == "CUBICSPLINE"
+
+
+def test_files_without_cubic_translation_rotation_or_scale_get_no_calibration(
+    script, tmp_path
+):
+    model = GlbWriter()
+    face = model.node(
+        "face",
+        mesh=model.mesh(
+            [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+            targets=[[(0.0, 0.0, 0.0)] * 3],
+            weights=[0.0],
+        ),
+    )
+    model.scene([face], default=True)
+    keys = [((0.0,), (0.0,), (4.0,)), ((-4.0,), (0.0,), (0.0,))]
+    model.animation(
+        "rise",
+        [(face, "weights", [0, 1], [row for key in keys for row in key])],
+        interpolation="CUBICSPLINE",
+    )
+    document, rest, source = load(script, model, tmp_path)
+    glb, cubics = script.private_copy(document, rest, source, 0)
+    copy, _ = script.split_glb(glb, source)
+    assert [a["name"] for a in copy["animations"]] == [
+        script.PLACEHOLDER,
+        "moskophoros.animation.0",
+    ]
+    assert list(cubics[0]) == [(face, "weights")]
 
 
 def test_every_channel_sharing_a_cubic_sampler_is_recorded(script, tmp_path):
@@ -1012,33 +1009,12 @@ def test_other_cubic_samplers_are_left_as_they_are(script, tmp_path):
     assert cubics == {}
 
 
-def test_a_cubic_rotation_is_given_to_the_importer_in_gentle_steps(script, tmp_path):
-    model = GlbWriter()
-    shape = model.node("shape", mesh=True)
-    model.scene([shape], default=True)
-    keys = [
-        ((0, 0, 0, 0), (0, 0, 0, 1), (0, 0, 3, -4)),
-        ((0, 0, 3, -4), (0, 0, 0, 1), (0, 0, 0, 0)),
-    ]
-    model.animation(
-        "turn",
-        [(shape, "rotation", [0, 1], [row for key in keys for row in key])],
-        interpolation="CUBICSPLINE",
-    )
-    document, rest, source = load(script, model, tmp_path)
-    glb, cubics = script.private_copy(document, rest, source, 0)
-    copy, binary = script.split_glb(glb, source)
-    sampler = copy["animations"][1]["samplers"][0]
-    fetch = script.buffer_reader(copy, script.binary_chunk(binary), source)
-    rows = script.read_accessor(copy, fetch, sampler["input"], source)
-    times = [row[0] for row in rows]
-    rows = script.read_accessor(copy, fetch, sampler["output"], source)
-    values = [value for row in rows for value in row]
-    # The importer would negate a control point of the unsplit segment; the
-    # split one has more keys, and the importer keeps all of them.
-    assert len(times) > 4
-    assert cubics[0][(shape, "rotation")] == {"keys": (len(times) - 1) // 3 + 1}
-    assert acute_steps(values)
+def test_a_cubic_rotation_is_calibrated_with_quaternions_that_turn_gently(
+    script, tmp_path
+):
+    points = script._CALIBRATION["rotation"]
+    for before, after in zip(points, points[1:], strict=False):
+        assert sum(a * b for a, b in zip(before, after, strict=True)) > 0.5
 
 
 @pytest.mark.parametrize(

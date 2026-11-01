@@ -29,8 +29,9 @@ object of their own.
 Animation: the private copy also rewrites what Blender's importer would
 mishandle (design §Supported Blender version). A `/meshes/N/weights` pointer
 becomes ordinary `weights` channels on the nodes that use the mesh, and each
-CUBICSPLINE sampler becomes a linear one holding its Bézier control points,
-which `restore_tangents` turns into curve handles after the import.
+CUBICSPLINE sampler becomes a linear one of its keys' values, whose curves
+`restore_tangents` rebuilds from the file's values and tangents after the
+import.
 
 Static state: the importer makes the first animation active, and Blender
 evaluates it, so its channels would no longer hold the file's static values.
@@ -536,9 +537,10 @@ def private_copy(document, rest, source, scene):
     """The GLB bytes Blender imports, and the cubic spline channels to restore
     after the import (`restore_tangents`): nodes, meshes and animations
     renamed by index, mesh morph-weight pointers handed to the nodes that use
-    the mesh, cubic spline samplers given as Bézier control points, a
-    placeholder animation first, the job's scene made the default, and
-    external files given absolute paths."""
+    the mesh, cubic spline samplers reduced to their keys' values, an
+    animation that measures the importer's conversions, a placeholder
+    animation first, the job's scene made the default, and external files
+    given absolute paths."""
     document = json.loads(json.dumps(document))
     emptied = distribute_mesh_weights(document, scene)
     nodes = document.setdefault("nodes", [])
@@ -575,6 +577,7 @@ def private_copy(document, rest, source, scene):
     cubics = expand_cubics(
         document, buffer_reader(document, binary_chunk(rest), source), source
     )
+    add_calibration(document, cubics)
     if animations:
         # One key at time 0 holding (0, 0, 0). Accessors without a buffer
         # view are zeros.
@@ -722,14 +725,17 @@ def distribute_mesh_weights(document, scene_index):
 # Cubic spline animation
 #
 # Blender's importer keeps only the value of each CUBICSPLINE key and gives
-# its curve automatic Bézier handles. glTF's cubic Hermite segment from key
-# (t0, p0) with out-tangent m0 to key (t1, p1) with in-tangent a1 is the
-# Bézier curve with control points p0, p0 + Δt·m0/3, p1 − Δt·a1/3 and p1 at
-# the times t0, t0 + Δt/3, t1 − Δt/3 and t1, and Blender evaluates a Bézier
-# curve with handles at those thirds exactly. The script therefore gives the
-# importer a LINEAR sampler whose keys are those control points, so that its
-# own conversions (axes, bone rest poses) apply to them, and afterwards
-# (`restore_tangents`) turns each curve's control keys into handles.
+# its curve automatic Bézier handles, so the file's tangents are lost. glTF's
+# cubic Hermite segment from key (t0, p0) with out-tangent m0 to key (t1, p1)
+# with in-tangent a1 is the Bézier curve with control points p0, p0 + Δt·m0/3,
+# p1 − Δt·a1/3 and p1 at the times t0, t0 + Δt/3, t1 − Δt/3 and t1, and
+# Blender evaluates free handles at those thirds exactly. The private copy
+# therefore gives the importer a LINEAR sampler of the keys' values alone,
+# which makes the curves; after the import `restore_tangents` rebuilds each
+# of them from the file's values and tangents. The importer converts values
+# from glTF's axes and from a bone's rest pose with an affine map, which the
+# script measures (`calibrate`) from an animation of its own, imported beside
+# the file's, whose keys have known values.
 
 _ACCESSOR_FORMATS = {
     5120: ("b", 127.0),
@@ -885,14 +891,13 @@ def _append_accessor(document, kind, values, width, bounds):
     return len(document["accessors"]) - 1
 
 
-def hermite_controls(times, values):
-    """The Bézier control points of glTF's cubic spline segments.
+def cubic_keys(times, values):
+    """Split the flattened output of a CUBICSPLINE sampler into its keys.
 
-    `times` are the keys' times and `values` the flattened output: for each
-    key, an in-tangent, a value and an out-tangent of the same length. Returns
-    the times and flattened values of a LINEAR sampler holding, for each
-    segment, its first value and its two inner control points, and then the
-    last key's value, and the number of values in each of a key's three parts."""
+    `times` are the keys' times and `values` the output: for each key, an
+    in-tangent, a value and an out-tangent of the same length. Returns the
+    keys' values, in-tangents and out-tangents, each a list of tuples, and
+    that length."""
     keys = len(times)
     block, remainder = divmod(len(values), 3 * keys) if keys else (0, 0)
     if block == 0 or remainder:
@@ -904,103 +909,33 @@ def hermite_controls(times, values):
     ):
         raise ValueError("the key times do not increase")
 
-    def part(key, which):
-        start = (3 * key + which) * block
-        return values[start : start + block]
-
-    controlled_times = []
-    controlled = []
-    for key in range(keys - 1):
-        first, last = times[key], times[key + 1]
-        step = last - first
-        controlled_times += [first, first + step / 3, last - step / 3]
-        controlled += part(key, 1)
-        controlled += [
-            value + step * out / 3
-            for value, out in zip(part(key, 1), part(key, 2), strict=True)
+    def part(which):
+        return [
+            tuple(values[(3 * key + which) * block : (3 * key + which + 1) * block])
+            for key in range(keys)
         ]
-        controlled += [
-            value - step * into / 3
-            for value, into in zip(part(key + 1, 1), part(key + 1, 0), strict=True)
-        ]
-    controlled_times.append(times[-1])
-    controlled += part(keys - 1, 1)
-    return controlled_times, controlled, block
+
+    return part(1), part(0), part(2), block
 
 
-# The importer negates a quaternion key that makes an obtuse angle with the key
-# before it, so that rotations take the short way. It decides in 32-bit
-# floats, after its own conversions, so the script does not try to predict it:
-# it splits each rotation segment, which leaves the Bézier curve unchanged,
-# until every step of the control polygon turns by well under a right angle,
-# and the importer then negates nothing.
-_TURN = 1e-3
-_SPLIT_DEPTH = 12
-
-
-def _gentle(points):
-    """Whether every step of the polygon `points` (time, then a quaternion)
-    keeps an acute angle, with a margin far beyond rounding."""
-    for before, after in zip(points, points[1:], strict=False):
-        dot = sum(a * b for a, b in zip(before[1:], after[1:], strict=True))
-        norms = math.sqrt(sum(a * a for a in before[1:])) * math.sqrt(
-            sum(a * a for a in after[1:])
-        )
-        if not dot > _TURN * norms:
-            return False
-    return True
-
-
-def _half(a, b):
-    return tuple((x + y) / 2 for x, y in zip(a, b, strict=True))
-
-
-def _gentle_pieces(points, depth):
-    """The Bézier segment `points`, split at its middle as often as it takes
-    to make every piece gentle; None when that takes more than `_SPLIT_DEPTH`
-    splits."""
-    if _gentle(points):
-        return [points]
-    if depth == _SPLIT_DEPTH:
-        return None
-    p0, p1, p2, p3 = points
-    a, b, c = _half(p0, p1), _half(p1, p2), _half(p2, p3)
-    d, e = _half(a, b), _half(b, c)
-    f = _half(d, e)
-    pieces = []
-    for half in ([p0, a, d, f], [f, e, c, p3]):
-        found = _gentle_pieces(half, depth + 1)
-        if found is None:
-            return None
-        pieces += found
-    return pieces
-
-
-def refine_quaternions(times, controlled):
-    """Split the segments of a rotation channel's control points (the output
-    of `hermite_controls`, four values per quaternion) until the importer
-    would keep every key as it is. Returns the new times and values, or None
-    when a curve passes too near the zero quaternion for that."""
-    new_times = []
-    new_values = []
-    points = [(time, *controlled[4 * i : 4 * i + 4]) for i, time in enumerate(times)]
-    for start in range(0, len(points) - 1, 3):
-        pieces = _gentle_pieces(points[start : start + 4], 0)
-        if pieces is None:
-            return None
-        for piece in pieces:
-            for point in piece[:3]:
-                new_times.append(point[0])
-                new_values += point[1:]
-    new_times.append(points[-1][0])
-    new_values += points[-1][1:]
-    return new_times, new_values
+def segment_controls(step, p0, out, p1, into):
+    """The two inner Bézier control points of a cubic spline segment of `step`
+    seconds, from its first key's value and out-tangent and its last key's
+    value and in-tangent."""
+    return (
+        tuple(
+            value + step * tangent / 3 for value, tangent in zip(p0, out, strict=True)
+        ),
+        tuple(
+            value - step * tangent / 3 for value, tangent in zip(p1, into, strict=True)
+        ),
+    )
 
 
 def expand_sampler(document, fetch, source, sampler, path, where):
     """Replace one CUBICSPLINE `sampler` of a node's `path` with the LINEAR
-    sampler of its control points, in place. Returns what `restore_tangents`
-    needs: the number of keys the curve is to have."""
+    sampler of its keys' values, in place. Returns the keys' times, values,
+    in-tangents and out-tangents for `restore_tangents`."""
     try:
         times = [
             row[0] for row in read_accessor(document, fetch, sampler["input"], source)
@@ -1016,40 +951,27 @@ def expand_sampler(document, fetch, source, sampler, path, where):
     if not all(map(math.isfinite, [*times, *flat])):
         raise ScriptError(f"{where} holds a number that is not finite")
     try:
-        new_times, controlled, block = hermite_controls(times, flat)
+        values, ins, outs, block = cubic_keys(times, flat)
     except ValueError as error:
         raise ScriptError(f"{where}: {error}") from None
     if path != "weights" and block != _PATH_WIDTHS[path]:
         raise ScriptError(f"{where} does not hold {path} values")
-    if path == "rotation":
-        refined = refine_quaternions(new_times, controlled)
-        if refined is None:
-            raise ScriptError(
-                f"{where} has a rotation that passes too near the zero "
-                "quaternion to measure"
-            )
-        new_times, controlled = refined
-    stored = struct.unpack(
-        f"<{len(new_times)}f", struct.pack(f"<{len(new_times)}f", *new_times)
-    )
-    if any(
-        not later > earlier for earlier, later in zip(stored, stored[1:], strict=False)
-    ):
-        raise ScriptError(f"{where} has keys too close together to measure")
-    sampler["input"] = _append_accessor(document, "SCALAR", new_times, 1, True)
     sampler["output"] = _append_accessor(
-        document, kind, controlled, _ACCESSOR_WIDTHS[kind], False
+        document,
+        kind,
+        [value for row in values for value in row],
+        _ACCESSOR_WIDTHS[kind],
+        False,
     )
     sampler["interpolation"] = "LINEAR"
-    return {"keys": len(new_times) // 3 + 1}
+    return {"times": times, "values": values, "ins": ins, "outs": outs}
 
 
 def expand_cubics(document, fetch, source):
     """Rewrite each CUBICSPLINE sampler that animates a node's translation,
-    rotation, scale or weights as the LINEAR sampler of its control points,
+    rotation, scale or weights as the LINEAR sampler of its keys' values,
     editing `document` in place. Returns {animation index: {(node, path):
-    {"keys": the number of keys the curve is to have}}}
-    for `restore_tangents`."""
+    keys}} for `restore_tangents`, `keys` being what `expand_sampler` gives."""
     cubics = {}
     expanded = {}
     for a, animation in enumerate(document.get("animations") or []):
@@ -1077,6 +999,111 @@ def expand_cubics(document, fetch, source):
     return cubics
 
 
+# Points whose images under the importer's conversion are read back to
+# measure it: the first is the base and the rest, up to the last but the
+# check points, differ from it in independent directions. A quaternion's
+# consecutive points make acute angles, so the importer negates none.
+_CALIBRATION = {
+    "translation": [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 2, 3)],
+    "scale": [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 2, 3)],
+    "rotation": [
+        (0, 0, 0, 1),
+        (0.5, 0, 0, 0.866),
+        (0, 0.5, 0, 0.866),
+        (0, 0, 0.5, 0.866),
+        (0, 0, 0, 2),
+        (0.3, 0.4, 0.5, 0.9),
+    ],
+}
+CALIBRATION_NAME = "moskophoros.calibration"
+# How far a check point may be from the measured map's image of it.
+CALIBRATION_ERROR = 1e-5
+
+
+def add_calibration(document, cubics):
+    """Add an animation of the keys `_CALIBRATION` gives, a channel for every
+    node and path that has a cubic spline channel but weights, one second
+    apart."""
+    wanted = sorted(
+        {
+            target
+            for channels in cubics.values()
+            for target in channels
+            if target[1] != "weights"
+        }
+    )
+    if not wanted:
+        return
+    samplers = []
+    channels = []
+    inputs = {}
+    outputs = {}
+    for node, path in wanted:
+        points = _CALIBRATION[path]
+        if path not in inputs:
+            inputs[path] = _append_accessor(
+                document, "SCALAR", [float(i) for i in range(len(points))], 1, True
+            )
+            kind = "VEC4" if path == "rotation" else "VEC3"
+            outputs[path] = _append_accessor(
+                document,
+                kind,
+                [float(value) for point in points for value in point],
+                _ACCESSOR_WIDTHS[kind],
+                False,
+            )
+            samplers.append(
+                {
+                    "input": inputs[path],
+                    "output": outputs[path],
+                    "interpolation": "LINEAR",
+                }
+            )
+            inputs[path] = len(samplers) - 1
+        channels.append(
+            {"sampler": inputs[path], "target": {"node": node, "path": path}}
+        )
+    document.setdefault("animations", []).append(
+        {"name": CALIBRATION_NAME, "channels": channels, "samplers": samplers}
+    )
+
+
+def solve_affine(points, images):
+    """The affine map `v = A·g + b` taking each of `points` (g) to its image
+    (v), found from the first `d + 1` points and checked on the rest. Returns
+    A as rows and b; None when a check point is off by more than
+    `CALIBRATION_ERROR`."""
+    d = len(points[0])
+    base, image = points[0], images[0]
+    # Columns of the differences: solve A·G = V by Gauss-Jordan on Gᵀ.
+    g = [[points[i + 1][j] - base[j] for j in range(d)] for i in range(d)]
+    v = [[images[i + 1][j] - image[j] for j in range(d)] for i in range(d)]
+    # Row i of `g` is gᵢ; A·gᵢ = vᵢ means Aᵀ solves G·Aᵀ = V with G's rows gᵢ.
+    rows = [g[i] + v[i] for i in range(d)]
+    for column in range(d):
+        pivot = max(range(column, d), key=lambda r: abs(rows[r][column]))
+        rows[column], rows[pivot] = rows[pivot], rows[column]
+        scale = rows[column][column]
+        rows[column] = [value / scale for value in rows[column]]
+        for r in range(d):
+            if r != column:
+                factor = rows[r][column]
+                rows[r] = [
+                    a - factor * b for a, b in zip(rows[r], rows[column], strict=True)
+                ]
+    transposed = [row[d:] for row in rows]
+    matrix = [[transposed[j][i] for j in range(d)] for i in range(d)]
+    offset = [
+        image[i] - sum(matrix[i][j] * base[j] for j in range(d)) for i in range(d)
+    ]
+    for point, expected in zip(points, images, strict=True):
+        for i in range(d):
+            got = sum(matrix[i][j] * point[j] for j in range(d)) + offset[i]
+            if abs(got - expected[i]) > CALIBRATION_ERROR:
+                return None
+    return matrix, offset
+
+
 def fcurve_target(fcurve, slot):
     """The (node, path) a curve imported from a glTF channel animates, or
     None for a curve of anything else. A weights curve belongs to the node of
@@ -1101,40 +1128,93 @@ def fcurve_target(fcurve, slot):
     return None if node is None else (int(node[1]), _OBJECT_CURVES[prop])
 
 
-def shape_curve(fcurve, cubic):
-    """Turn a curve of control keys (`expand_cubics`) into Bézier keys whose
-    handles are those control points."""
-    keys = cubic["keys"]
+def calibrate(cubics):
+    """The importer's affine map for every node and path of `cubics` but
+    weights: {(node, path): (A, b)}, measured from the calibration animation
+    that `add_calibration` put in the private copy."""
+    action = bpy.data.actions.get(CALIBRATION_NAME)
+    curves = {}
+    if action is not None:
+        for layer in action.layers:
+            for strip in layer.strips:
+                for channelbag in strip.channelbags:
+                    for fcurve in channelbag.fcurves:
+                        target = fcurve_target(fcurve, channelbag.slot)
+                        if target is not None:
+                            curves.setdefault(target, {})[fcurve.array_index] = [
+                                point.co[1] for point in fcurve.keyframe_points
+                            ]
+    maps = {}
+    for channels in cubics.values():
+        for node, path in channels:
+            if path == "weights" or (node, path) in maps:
+                continue
+            points = _CALIBRATION[path]
+            found = curves.get((node, path), {})
+            if sorted(found) != list(range(len(points[0]))) or any(
+                len(column) != len(points) for column in found.values()
+            ):
+                raise ScriptError(
+                    f"cannot measure how Blender imports node {node}'s {path}: "
+                    "the calibration animation has no such curves"
+                )
+            images = [
+                tuple(found[i][k] for i in range(len(points[0])))
+                for k in range(len(points))
+            ]
+            solved = solve_affine(points, images)
+            if solved is None:
+                raise ScriptError(
+                    f"cannot measure how Blender imports node {node}'s {path}: "
+                    "its conversion is not affine"
+                )
+            maps[(node, path)] = solved
+    return maps
+
+
+def shape_curve(fcurve, keys, image, fps):
+    """Rebuild `fcurve` as Bézier keys that follow the cubic spline `keys`
+    (the times, values and tangents `expand_sampler` returns), `image` being
+    the function taking a glTF value to this curve's value."""
+    times, values, ins, outs = (
+        keys[name] for name in ("times", "values", "ins", "outs")
+    )
+    count = len(times)
     points = fcurve.keyframe_points
-    if len(points) != 3 * (keys - 1) + 1:
-        raise ScriptError(
-            f"cubic spline curve {fcurve.data_path!r} imported {len(points)} keys, "
-            f"not {3 * (keys - 1) + 1}"
-        )
-    coordinates = [tuple(point.co) for point in points]
+    if len(points) < count:
+        points.add(count - len(points))
+    while len(points) > count:
+        points.remove(points[len(points) - 1], fast=True)
     for point in points:
         point.interpolation = "BEZIER"
         point.handle_left_type = "FREE"
         point.handle_right_type = "FREE"
-    for key in range(keys):
-        points[key].co = coordinates[3 * key]
-    for segment in range(keys - 1):
-        points[segment].handle_right = coordinates[3 * segment + 1]
-        points[segment + 1].handle_left = coordinates[3 * segment + 2]
-    if keys > 1:
+    for key in range(count):
+        points[key].co = (times[key] * fps, image(values[key]))
+    for key in range(count - 1):
+        step = times[key + 1] - times[key]
+        right, left = segment_controls(
+            step, values[key], outs[key], values[key + 1], ins[key + 1]
+        )
+        points[key].handle_right = ((times[key] + step / 3) * fps, image(right))
+        points[key + 1].handle_left = ((times[key + 1] - step / 3) * fps, image(left))
+    if count > 1:
         # The outer handles shape nothing: a curve holds its end values.
-        (x0, y0), (x1, _) = coordinates[0], coordinates[1]
-        points[0].handle_left = (2 * x0 - x1, y0)
-        (xn, yn), (xm, _) = coordinates[-1], coordinates[-2]
-        points[keys - 1].handle_right = (2 * xn - xm, yn)
-    while len(points) > keys:
-        points.remove(points[len(points) - 1], fast=True)
+        for key, other, side in (
+            (0, 1, "handle_left"),
+            (count - 1, count - 2, "handle_right"),
+        ):
+            x, y = points[key].co
+            setattr(points[key], side, (2 * x - points[other].co[0], y))
     fcurve.update()
 
 
 def restore_tangents(cubics):
-    """After the import, give each cubic spline channel's curves the handles
-    that carry its tangents (`expand_cubics`)."""
+    """After the import, rebuild the curves of every cubic spline channel from
+    the file's own values and tangents (`expand_cubics`)."""
+    maps = calibrate(cubics)
+    scene = bpy.context.scene
+    fps = scene.render.fps / scene.render.fps_base
     for animation, channels in cubics.items():
         action = bpy.data.actions.get(ANIMATION_NAME.format(animation))
         if action is None:
@@ -1144,8 +1224,21 @@ def restore_tangents(cubics):
                 for channelbag in strip.channelbags:
                     for fcurve in channelbag.fcurves:
                         target = fcurve_target(fcurve, channelbag.slot)
-                        if target in channels:
-                            shape_curve(fcurve, channels[target])
+                        if target not in channels:
+                            continue
+                        if target[1] == "weights":
+                            index = int(_TARGET_PATH.fullmatch(fcurve.data_path)[1])
+                            image = lambda g, index=index: g[index]  # noqa: E731
+                        else:
+                            matrix, offset = maps[target]
+                            row, shift = (
+                                matrix[fcurve.array_index],
+                                offset[fcurve.array_index],
+                            )
+                            image = lambda g, row=row, shift=shift: (  # noqa: E731
+                                sum(a * b for a, b in zip(row, g, strict=True)) + shift
+                            )
+                        shape_curve(fcurve, channels[target], image, fps)
 
 
 # The directory, inside the phase directory, that the private copy is imported

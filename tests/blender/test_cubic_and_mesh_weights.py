@@ -420,6 +420,16 @@ TURN = (0.0, 0.0, math.sin(math.pi / 6), math.cos(math.pi / 6))
             ((0.0, 0.0, 0.0, 0.0), (0.5, 0.5, 0.5, 0.5), (4.0, -2.0, -3.0, -5.0)),
             ((0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0, 0.0)),
         ],
+        # The curve passes within 3e-5 of the zero quaternion (a review
+        # finding), and its keys' tangents are 1e-3 and 1e-4 from square on.
+        [
+            ((0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), (0.001, 0.0, 0.0, -6.0)),
+            ((-0.001, 0.0, 0.0, 6.0), (0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0, 0.0)),
+        ],
+        [
+            ((0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), (0.0001, 0.0, 0.0, -6.0)),
+            ((-0.0001, 0.0, 0.0, 6.0), (0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0, 0.0)),
+        ],
         # Keys nearly opposite, so the curve turns the long way round.
         [
             ((0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0, 0.0)),
@@ -430,6 +440,8 @@ TURN = (0.0, 0.0, math.sin(math.pi / 6), math.cos(math.pi / 6))
         "moderate tangents",
         "tangents the importer would flip",
         "a control point square on to its neighbour",
+        "a curve near the zero quaternion",
+        "a curve nearer the zero quaternion",
         "nearly opposite keys",
     ],
 )
@@ -456,6 +468,34 @@ def test_a_cubic_rotation_matches_the_normalized_cubic_quaternion(
         want = rotation_bounds(times, keys, t)
         assert got == pytest.approx(want, abs=math.sin(math.radians(0.1)))
         assert got == pytest.approx(want, abs=1e-4)
+
+
+def test_a_cubic_key_interval_of_a_millisecond(found, tmp_path):
+    # The first interval is 0.024 of a frame at Blender's 24 fps, closer than
+    # keys can be before Blender merges them (a review finding); the second
+    # runs to the end of the clip.
+    times = [0.0, 0.001, 1.0]
+    keys = [
+        ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (300.0, 0.0, 0.0)),
+        ((100.0, 0.0, 0.0), (0.5, 0.0, 0.0), (2.0, 0.0, 0.0)),
+        ((-2.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+    ]
+    model = GlbWriter()
+    shape = model.node("shape", mesh=True)
+    model.scene([shape], default=True)
+    model.animation(
+        "snap", [(shape, "translation", times, flat(keys))], interpolation="CUBICSPLINE"
+    )
+    result, _ = measure(
+        found,
+        model.write(tmp_path, "snap"),
+        tmp_path,
+        clip_names=["snap"],
+        once=["snap"],
+    )
+    expected = [(0.0, 1.0 + cubic_at(times, keys, t)[0], 1.0, 0.0) for t in ONCE_TIMES]
+    assert expected[1][1] != pytest.approx(1.0, abs=0.01)
+    assert_close(boxes(result)["snap"], expected)
 
 
 def test_cubic_morph_weights_of_several_targets(found, tmp_path):
