@@ -751,6 +751,30 @@ The subject is the scene named by the file's `scene` property, or scene 0 when
 it is absent. Every mesh in it is rendered. Cameras and lights in the file are
 ignored.
 
+**Animation.** The animated properties are a node's translation, rotation,
+scale and morph weights, each with `STEP`, `LINEAR` or `CUBICSPLINE`
+interpolation (owner decisions 2026-10-02 and 2026-11-01). A `CUBICSPLINE`
+channel is evaluated with glTF's cubic spline formula and the file's own
+in- and out-tangents; a rotation is the normalized cubic quaternion.
+
+- **Mesh-weight pointers.** A `KHR_animation_pointer` channel on
+  `/meshes/N/weights` is Moskophoros's own reading, not the extension's, whose
+  mutable properties address weights per node only. It animates the morph
+  weights of every node of the selected scene that uses mesh `N`. A node's own
+  weights win over the mesh's, as glTF's instantiation rules have it, so the
+  channel leaves a node out when the node defines `weights`, or when the same
+  animation animates the node's weights directly, with a `weights` channel or a
+  `/nodes/M/weights` pointer, whatever order the channels are in. Several
+  animations may target one mesh: each clip measures its own.
+- **Cameras and lights.** A pointer channel animating a camera or a light has
+  no effect and never fails a clip. It still counts toward the clip's range and
+  the sample times derived from it, like every other sampler.
+- **Refused by the capture** (exit 5, naming the file, the animation and the
+  problem): a `CUBICSPLINE` sampler of a node's translation, rotation, scale or
+  weights whose accessors are sparse or unreadable, whose output does not hold
+  an in-tangent, a value and an out-tangent for each key, or whose key times
+  are not increasing or are too close to tell apart in 32-bit floats.
+
 Material identities are read from the glTF JSON on every run, whether or not
 a material library is used (D-3, D-18, owner decisions 2026-10-07). Names
 compare exactly, including case; equal names are one identity. An absent or
@@ -790,12 +814,6 @@ Checks, each an input error (exit 3) naming the file and the problem:
   defines the digest checks (owner decision 2026-09-30)
 - an animation has no name or an empty name (owner decision 2026-10-01), or
   two animations share a name (the message gives the animation's index)
-- an animation uses `CUBICSPLINE` interpolation, whose tangents Blender's
-  importer replaces with its own, or a `KHR_animation_pointer` channel that
-  animates a mesh's morph weights (`/meshes/N/weights`), of which the
-  importer keeps only one animation per mesh. Neither could be measured
-  faithfully; the message names the file, the clip and the problem (owner
-  decision 2026-10-02)
 - a `--clip` or `--once` names a clip that does not exist
 - a clip travels across the ground (see [Root motion](#root-motion))
 
@@ -964,8 +982,8 @@ glTF stores keyframes but defines no playback, so the tool defines it.
 
 **Isolation.** When a clip is sampled, only that animation's channels apply.
 Every other node takes its static transform from the file, and every morph
-target weight not animated by the clip takes its default (the mesh's
-`weights`, else 0).
+target weight not animated by the clip takes its default: the node's `weights`
+when it has them, else its mesh's `weights`, else 0.
 
 **Range.** A clip runs from `t0` to `t1`: the minimum and maximum of its
 samplers' input accessor `min`/`max` values, which glTF requires. Its duration
@@ -2130,6 +2148,23 @@ section's settings on 5.2.2:
   (`frame_set` with a `subframe`) samples exact times. Clips exported from
   Blender start at *t* = 1/fps, because Blender's frame 1 is exported at that
   time; clip ranges come from the file, so this needs no handling.
+- **Cubic spline tangents are dropped (observed 2026-11-01, owner decisions
+  2026-10-02 and 2026-11-01).** For a `CUBICSPLINE` sampler the importer keeps
+  only each key's value and gives its curve automatic Bézier handles, so the
+  file's tangents are lost. glTF's segment from `p0` with out-tangent `m0` to `p1`
+  with in-tangent `a1` over `Δt` seconds is the Bézier curve with control points
+  `p0`, `p0 + Δt·m0/3`, `p1 − Δt·a1/3` and `p1` at one third and two thirds of the
+  interval, and Blender evaluates free handles there exactly. The capture script
+  therefore imports a private copy in which each such sampler is linear and
+  holds those control points, so that the importer's own conversions (axes,
+  bone rest poses) apply to them, then turns the control keys of each curve into
+  handles. The importer also negates a quaternion key that makes an obtuse angle
+  with the one before it; the script restores the sign of each. Evaluated
+  values equal glTF's cubic formula at every time, to float precision.
+- **Only one mesh-level weight animation is kept per mesh,** and it is attached
+  to the original mesh, which the capture replaces with a copy for each node.
+  The script gives each node of the selected scene its own `weights` channel in
+  place of a `/meshes/N/weights` pointer (see [Input contract](#input-contract)).
 - **Rotation between keyframes differs slightly from glTF's.** Blender
   interpolates quaternion channels separately rather than by glTF's spherical
   interpolation: a 30° linear keyframe span read 5.967° where glTF gives 6°.
@@ -3753,7 +3788,6 @@ Decided later, each when its trigger arrives:
 | Other image or metadata formats, such as a consumer's own index or a packed binary atlas (frame images and atlases are delivered; export design D-1) | A consumer needs them. |
 | Pruning files an earlier export left, crash recovery of a half-published directory, and isolation from a second writer to one root (export design D-9) | The owner asks for a managed export. |
 | Vertex-color rendering | A model needs it. |
-| `CUBICSPLINE` animation and mesh morph-weight animation pointers, rejected for now (owner decision 2026-10-02) | A model needs them. |
 
 Style passes and their configuration started with style pass 1: `--reduce` and
 `--palette` (see [Stylize](#stylize)), accepted by the owner on 2026-10-05. The

@@ -3,6 +3,7 @@ byte the `Standard` transform gives, and the material-ID AOV's codes and
 coverage (alpha design, Capture transport and provenance). A refusal here
 is the script's error, which fails the command with exit 5."""
 
+import base64
 import importlib.util
 import math
 import sys
@@ -11,6 +12,7 @@ from array import array
 from dataclasses import replace
 
 import pytest
+from glb_writer import GlbWriter
 
 from moskophoros.capture import blender
 
@@ -568,3 +570,384 @@ def test_the_script_refuses_clipping_for_any_other_job(script):
         job["clipping"] = clipping
         with pytest.raises(script.ScriptError, match="only a perspective render"):
             script.check_job(job)
+
+
+# Cubic spline animation and mesh weight pointers, which the script rewrites
+# in its private copy before Blender imports it
+
+
+def load(script, model, tmp_path, name="subject"):
+    """The decoded document, binary rest and source path of a written model."""
+    path = model.write(tmp_path, name)
+    document, rest = script.split_glb(path.read_bytes(), str(path))
+    return document, rest, str(path)
+
+
+def bezier(points, s):
+    """De Casteljau's algorithm for a cubic Bézier curve."""
+    while len(points) > 1:
+        points = [(1 - s) * a + s * b for a, b in zip(points, points[1:], strict=False)]
+    return points[0]
+
+
+def hermite(p0, out, p1, into, step, s):
+    """glTF's cubic spline segment, for a key interval of `step` seconds."""
+    return (
+        (2 * s**3 - 3 * s**2 + 1) * p0
+        + (s**3 - 2 * s**2 + s) * step * out
+        + (-2 * s**3 + 3 * s**2) * p1
+        + (s**3 - s**2) * step * into
+    )
+
+
+def test_cubic_segments_become_bezier_control_points(script):
+    # Keys at 0 and 2 s: (in, value, out) of (0, 1, 3) and (−6, 4, 0).
+    times, values, block = script.hermite_controls([0.0, 2.0], [0, 1, 3, -6, 4, 0])
+    assert block == 1
+    assert times == pytest.approx([0.0, 2 / 3, 4 / 3, 2.0])
+    assert values == pytest.approx([1.0, 3.0, 8.0, 4.0])
+    for s in (0.0, 0.1, 0.5, 0.9, 1.0):
+        assert bezier(values, s) == pytest.approx(hermite(1.0, 3.0, 4.0, -6.0, 2.0, s))
+
+
+def test_each_cubic_segment_has_its_own_control_points(script):
+    # Two segments, two components per key.
+    times, values, block = script.hermite_controls(
+        [1.0, 2.0, 5.0],
+        [
+            *(0, 0), *(1, 2), *(3, -3),
+            *(0, 6), *(2, 4), *(0, 0),
+            *(9, 9), *(0, 0), *(0, 0),
+        ],
+    )  # fmt: skip
+    assert block == 2
+    assert times == pytest.approx([1.0, 4 / 3, 5 / 3, 2.0, 3.0, 4.0, 5.0])
+    assert values == pytest.approx(
+        [
+            *(1, 2), *(2, 1), *(2, 2), *(2, 4), *(2, 4), *(-9, -9), *(0, 0),
+        ]
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("times", "values", "message"),
+    [
+        ([0.0, 1.0], [0.0] * 5, "an in-tangent, a value and an out-tangent"),
+        ([0.0, 1.0], [0.0] * 7, "an in-tangent, a value and an out-tangent"),
+        ([], [], "an in-tangent, a value and an out-tangent"),
+        ([0.0, 0.0], [0.0] * 6, "do not increase"),
+        ([1.0, 0.0], [0.0] * 6, "do not increase"),
+    ],
+)
+def test_malformed_cubic_data_is_refused(script, times, values, message):
+    with pytest.raises(ValueError, match=message):
+        script.hermite_controls(times, values)
+
+
+def test_the_importer_s_quaternion_signs_follow_its_flips(script):
+    controls = [1, 0, 0, 0, 0.5, 0.5, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0]
+    # The third quaternion is obtuse to the second and negated; the fourth is
+    # obtuse to the negated third, and negated too; the fifth is square on.
+    assert script.importer_signs(controls, 4) == [1, 1, -1, -1, 1]
+
+
+def test_accessors_are_read_with_strides_offsets_and_normalization(script, tmp_path):
+    model = GlbWriter()
+    model._accessor("VEC3", [(1.0, 2.0, 3.0), (4.0, 5.0, 6.0)], False)
+    document, rest, source = load(script, model, tmp_path)
+    fetch = script.buffer_reader(document, script.binary_chunk(rest), source)
+    assert script.read_accessor(document, fetch, 0, source) == [
+        (1.0, 2.0, 3.0),
+        (4.0, 5.0, 6.0),
+    ]
+    # The same data, every other float of a strided view, from an offset.
+    document["bufferViews"][0]["byteStride"] = 24
+    document["accessors"][0].update(count=1, byteOffset=4)
+    assert script.read_accessor(document, fetch, 0, source) == [(2.0, 3.0, 4.0)]
+    # Bytes read as normalized unsigned and signed integers.
+    payload = base64.b64encode(bytes([0, 255, 128, 128])).decode("ascii")
+    document["buffers"][0]["uri"] = f"data:;base64,{payload}"
+    document["bufferViews"][0] = {"buffer": 0, "byteLength": 4}
+    document["accessors"][0] = {
+        "bufferView": 0,
+        "componentType": 5121,
+        "normalized": True,
+        "count": 1,
+        "type": "VEC4",
+    }
+    fetch = script.buffer_reader(document, None, source)
+    assert script.read_accessor(document, fetch, 0, source) == [
+        (0.0, 1.0, 128 / 255, 128 / 255)
+    ]
+    # As signed bytes, 255 is −1 and 128 is −128, which clamps to −1.
+    document["accessors"][0]["componentType"] = 5120
+    assert script.read_accessor(document, fetch, 0, source) == [
+        (0.0, -1 / 127, -1.0, -1.0)
+    ]
+    # No buffer view means zeros.
+    document["accessors"][0] = {"componentType": 5126, "count": 2, "type": "VEC2"}
+    assert script.read_accessor(document, fetch, 0, source) == [(0.0, 0.0)] * 2
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"sparse": {}},
+        {"count": 1000},
+        {"bufferView": 7},
+        {"type": "MAT4"},
+        {"componentType": 1},
+    ],
+    ids=["sparse", "past the end", "no such view", "a matrix", "no such type"],
+)
+def test_unreadable_accessors_are_refused_by_name(script, tmp_path, change):
+    model = GlbWriter()
+    model._accessor("VEC3", [(1.0, 2.0, 3.0)], False)
+    document, rest, source = load(script, model, tmp_path)
+    document["accessors"][0].update(change)
+    fetch = script.buffer_reader(document, script.binary_chunk(rest), source)
+    with pytest.raises(script.ScriptError, match="accessor 0"):
+        script.read_accessor(document, fetch, 0, source)
+
+
+def test_a_buffer_in_a_file_beside_the_source_is_read(script, tmp_path):
+    (tmp_path / "data.bin").write_bytes(b"abcd")
+    document = {"buffers": [{"uri": "data.bin", "byteLength": 4}]}
+    fetch = script.buffer_reader(document, None, str(tmp_path / "model.glb"))
+    assert fetch(0) == b"abcd"
+    document["buffers"].append({"uri": "missing.bin", "byteLength": 4})
+    fetch = script.buffer_reader(document, None, str(tmp_path / "model.glb"))
+    with pytest.raises(script.ScriptError, match="cannot read buffer 1"):
+        fetch(1)
+
+
+def shared_mesh_model():
+    """Nodes 0 and 1 share mesh 0; node 2 has its own weights; node 3 is in
+    another scene. Animation 0 holds a mesh pointer and a translation."""
+    model = GlbWriter()
+    mesh = model.mesh(
+        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+        targets=[[(0.0, 0.0, 0.0)] * 3],
+        weights=[0.0],
+    )
+    a = model.node("a", mesh=mesh)
+    b = model.node("b", mesh=mesh)
+    c = model.node("c", mesh=mesh, weights=[0.5])
+    d = model.node("d", mesh=mesh)
+    model.scene([a, b, c], default=True)
+    model.scene([d])
+    clip = model.animation("swell", [(a, "translation", [0, 1], [(0, 0, 0)] * 2)])
+    model.pointer_channel(clip, "/meshes/0/weights", [0, 1], [(0.0,), (0.5,)])
+    return model, (a, b, c, d)
+
+
+def channel_targets(animation):
+    return [
+        (channel["target"].get("node"), channel["target"]["path"], channel["sampler"])
+        for channel in animation["channels"]
+    ]
+
+
+def test_a_mesh_pointer_goes_to_the_nodes_of_the_scene_using_the_mesh(script):
+    model, (a, b, c, d) = shared_mesh_model()
+    emptied = script.distribute_mesh_weights(model.document, 0)
+    assert emptied == []
+    # The translation stays; nodes a and b follow the pointer's sampler 1;
+    # node c has weights of its own and node d is not in the scene.
+    assert channel_targets(model.document["animations"][0]) == [
+        (a, "translation", 0),
+        (a, "weights", 1),
+        (b, "weights", 1),
+    ]
+
+
+def test_a_node_animated_by_the_clip_keeps_its_own_weights(script):
+    model, (a, b, c, d) = shared_mesh_model()
+    clip = model.document["animations"][0]
+    clip["channels"].insert(0, {"sampler": 0, "target": {"node": b, "path": "weights"}})
+    script.distribute_mesh_weights(model.document, 0)
+    assert channel_targets(clip) == [
+        (b, "weights", 0),
+        (a, "translation", 0),
+        (a, "weights", 1),
+    ]
+
+
+def test_a_node_weight_pointer_also_keeps_its_own_weights(script):
+    model, (a, b, c, d) = shared_mesh_model()
+    model.pointer_channel(0, f"/nodes/{a}/weights", [0, 1], [(0.0,), (0.25,)])
+    script.distribute_mesh_weights(model.document, 0)
+    assert channel_targets(model.document["animations"][0])[1:] == [
+        (b, "weights", 1),
+        (None, "pointer", 2),
+    ]
+
+
+def test_the_selected_scene_decides_which_nodes_follow_a_mesh_pointer(script):
+    model, (a, b, c, d) = shared_mesh_model()
+    script.distribute_mesh_weights(model.document, 1)
+    assert channel_targets(model.document["animations"][0]) == [
+        (a, "translation", 0),
+        (d, "weights", 1),
+    ]
+
+
+def test_an_animation_left_without_a_channel_is_reported(script):
+    model, (a, b, c, d) = shared_mesh_model()
+    quiet = model.animation("quiet", [])
+    model.pointer_channel(quiet, "/meshes/0/weights", [0, 1], [(0.0,), (0.5,)])
+    model.document["nodes"][a]["weights"] = [0.0]
+    model.document["nodes"][b]["weights"] = [0.0]
+    emptied = script.distribute_mesh_weights(model.document, 0)
+    assert emptied == [model.document["animations"][1]]
+    assert model.document["animations"][1]["channels"] == []
+
+
+def test_a_document_without_animations_or_scene_nodes_is_left_alone(script):
+    model = GlbWriter()
+    model.scene([model.node("box", mesh=True)], default=True)
+    assert script.distribute_mesh_weights(model.document, 0) == []
+    assert "animations" not in model.document
+
+
+def test_the_private_copy_replaces_cubic_samplers_with_control_points(script, tmp_path):
+    model = GlbWriter()
+    shape = model.node("shape", mesh=True)
+    model.scene([shape], default=True)
+    keys = [
+        ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (3.0, 0.0, 0.0)),
+        ((-3.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+    ]
+    model.animation(
+        "sway",
+        [(shape, "translation", [0.0, 3.0], [row for key in keys for row in key])],
+        interpolation="CUBICSPLINE",
+    )
+    document, rest, source = load(script, model, tmp_path)
+    glb, cubics = script.private_copy(document, rest, source, 0)
+    assert cubics == {0: {(shape, "translation"): {"keys": 2, "signs": None}}}
+    copy, _ = script.split_glb(glb, source)
+    # The placeholder animation comes first; the clip's sampler is LINEAR.
+    sampler = copy["animations"][1]["samplers"][0]
+    assert sampler["interpolation"] == "LINEAR"
+    fetch = script.buffer_reader(copy, script.binary_chunk(_), source)
+    times = [
+        row[0] for row in script.read_accessor(copy, fetch, sampler["input"], source)
+    ]
+    assert times == pytest.approx([0.0, 1.0, 2.0, 3.0])
+    points = script.read_accessor(copy, fetch, sampler["output"], source)
+    # x(s) = hermite on 0 → 1 with tangents 3 and −3 over 3 s: controls 0, 3, 4, 1.
+    assert points == pytest.approx([(0, 0, 0), (3, 0, 0), (4, 0, 0), (1, 0, 0)])
+    # The original document is untouched.
+    assert document["animations"][0]["samplers"][0]["interpolation"] == "CUBICSPLINE"
+
+
+def test_other_cubic_samplers_are_left_as_they_are(script, tmp_path):
+    model = GlbWriter()
+    shape = model.node("shape", mesh=True)
+    model.scene([shape], default=True)
+    model.document["cameras"] = [
+        {"type": "perspective", "perspective": {"yfov": 0.8, "znear": 0.1}}
+    ]
+    clip = model.animation("pan", [(shape, "translation", [0, 1], [(0, 0, 0)] * 2)])
+    model.pointer_channel(
+        clip,
+        "/cameras/0/perspective/yfov",
+        [0, 1],
+        [(0.0,), (0.8,), (0.0,), (0.0,), (1.0,), (0.0,)],
+        interpolation="CUBICSPLINE",
+    )
+    document, rest, source = load(script, model, tmp_path)
+    _, cubics = script.private_copy(document, rest, source, 0)
+    assert cubics == {}
+
+
+def test_a_cubic_rotation_records_the_importer_s_signs(script, tmp_path):
+    model = GlbWriter()
+    shape = model.node("shape", mesh=True)
+    model.scene([shape], default=True)
+    keys = [
+        ((0, 0, 0, 0), (0, 0, 0, 1), (0, 0, 3, -4)),
+        ((0, 0, 3, -4), (0, 0, 0, 1), (0, 0, 0, 0)),
+    ]
+    model.animation(
+        "turn",
+        [(shape, "rotation", [0, 1], [row for key in keys for row in key])],
+        interpolation="CUBICSPLINE",
+    )
+    document, rest, source = load(script, model, tmp_path)
+    _, cubics = script.private_copy(document, rest, source, 0)
+    # Controls (0,0,0,1), (0,0,1,-1/3), (0,0,-1,7/3), (0,0,0,1): the second
+    # makes an obtuse angle with the first, and is negated; the third and the
+    # fourth are acute to the one before.
+    assert cubics[0][(shape, "rotation")]["signs"] == [1, -1, 1, 1]
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        (lambda s: s.update(input=99), "accessor 99"),
+        (lambda s: s.pop("output"), "KeyError|output"),
+    ],
+    ids=["no such accessor", "no output"],
+)
+def test_a_broken_sampler_fails_the_script(script, tmp_path, change, message):
+    model = GlbWriter()
+    shape = model.node("shape", mesh=True)
+    model.scene([shape], default=True)
+    flat = (0.0, 0.0, 0.0)
+    model.animation(
+        "sway",
+        [(shape, "translation", [0, 1], [flat] * 6)],
+        interpolation="CUBICSPLINE",
+    )
+    change(model.document["animations"][0]["samplers"][0])
+    document, rest, source = load(script, model, tmp_path)
+    with pytest.raises((script.ScriptError, KeyError), match=message):
+        script.private_copy(document, rest, source, 0)
+
+
+@pytest.mark.parametrize(
+    ("kind", "rows", "message"),
+    [
+        ("VEC3", 5, "an in-tangent, a value and an out-tangent"),
+        ("VEC4", 6, "does not hold translation values"),
+    ],
+)
+def test_cubic_data_of_the_wrong_shape_fails_the_script(
+    script, tmp_path, kind, rows, message
+):
+    model = GlbWriter()
+    shape = model.node("shape", mesh=True)
+    model.scene([shape], default=True)
+    model.animation(
+        "bad",
+        [(shape, "translation", [0, 1], [(0.0,) * 3] * 6)],
+        interpolation="CUBICSPLINE",
+    )
+    sampler = model.document["animations"][0]["samplers"][0]
+    width = {"VEC3": 3, "VEC4": 4}[kind]
+    sampler["output"] = model._accessor(kind, [(0.0,) * width] * rows, False)
+    document, rest, source = load(script, model, tmp_path)
+    with pytest.raises(script.ScriptError, match=message):
+        script.private_copy(document, rest, source, 0)
+
+
+def test_an_animation_the_pointer_emptied_animates_the_placeholder(script, tmp_path):
+    model, (a, b, c, d) = shared_mesh_model()
+    quiet = model.animation("quiet", [])
+    model.pointer_channel(quiet, "/meshes/0/weights", [0, 1], [(0.0,), (0.5,)])
+    model.document["nodes"][a]["weights"] = [0.0]
+    model.document["nodes"][b]["weights"] = [0.0]
+    document, rest, source = load(script, model, tmp_path)
+    glb, _ = script.private_copy(document, rest, source, 0)
+    copy, _ = script.split_glb(glb, source)
+    placeholder = len(copy["nodes"]) - 1
+    assert copy["nodes"][placeholder]["name"] == script.PLACEHOLDER
+    emptied = next(a for a in copy["animations"] if a["name"].endswith(".1"))
+    assert emptied["channels"] == [
+        {
+            "sampler": len(emptied["samplers"]) - 1,
+            "target": {"node": placeholder, "path": "translation"},
+        }
+    ]

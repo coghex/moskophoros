@@ -26,6 +26,12 @@ subject is found by mesh data, which names its node, because Blender moves
 some meshes, such as a skinned mesh with animated morph weights, into an
 object of their own.
 
+Animation: the private copy also rewrites what Blender's importer would
+mishandle (design §Supported Blender version). A `/meshes/N/weights` pointer
+becomes ordinary `weights` channels on the nodes that use the mesh, and each
+CUBICSPLINE sampler becomes a linear one holding its Bézier control points,
+which `restore_tangents` turns into curve handles after the import.
+
 Static state: the importer makes the first animation active, and Blender
 evaluates it, so its channels would no longer hold the file's static values.
 The copy therefore starts with a synthetic animation of one synthetic empty
@@ -36,6 +42,7 @@ A failure prints `moskophoros: error: <message>` to stderr and exits 1,
 writing no result.
 """
 
+import base64
 import hashlib
 import json
 import math
@@ -62,10 +69,18 @@ TARGET_NAME = "moskophoros.target.{}"
 MATERIAL_NAME = "moskophoros.material.{}.data"
 PLACEHOLDER = "moskophoros.placeholder"
 _MESH_DATA = re.compile(r"moskophoros\.mesh\.\d+\.node\.(\d+)\.data(?:\.\d+)?")
-_MESH_WEIGHTS = re.compile(r"/meshes/\d+/weights")
+_MESH_WEIGHTS = re.compile(r"/meshes/(\d+)/weights")
+_NODE_POINTER = re.compile(r"/nodes/(\d+)/(translation|rotation|scale|weights)")
+_NODE_OBJECT = re.compile(r"moskophoros\.node\.(\d+)")
+_BONE_CURVE = re.compile(r'pose\.bones\["(.+)"\]\.(location|rotation_quaternion|scale)')
 # The importer copies a material, adding Blender's ".001" suffix, when one
 # glTF material serves primitives with and without vertex colours.
 _MATERIAL = re.compile(r"moskophoros\.material\.(\d+)\.data(?:\.\d+)?")
+_OBJECT_CURVES = {
+    "location": "translation",
+    "rotation_quaternion": "rotation",
+    "scale": "scale",
+}
 _TARGET_PATH = re.compile(r'key_blocks\["moskophoros\.target\.(\d+)"\]\.value')
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -81,6 +96,7 @@ CALIBRATION_TOLERANCE = 1e-6
 _GLB_HEADER = struct.Struct("<4sII")
 _CHUNK_HEADER = struct.Struct("<II")
 _JSON_CHUNK = 0x4E4F534A
+_BIN_CHUNK = 0x004E4942
 
 
 class ScriptError(Exception):
@@ -517,10 +533,14 @@ def split_glb(data, path):
 
 
 def private_copy(document, rest, source, scene):
-    """The GLB bytes Blender imports: nodes, meshes and animations renamed by
-    index, a placeholder animation first, the job's scene made the default,
-    and external files given absolute paths."""
+    """The GLB bytes Blender imports, and the cubic spline channels to restore
+    after the import (`restore_tangents`): nodes, meshes and animations
+    renamed by index, mesh morph-weight pointers handed to the nodes that use
+    the mesh, cubic spline samplers given as Bézier control points, a
+    placeholder animation first, the job's scene made the default, and
+    external files given absolute paths."""
     document = json.loads(json.dumps(document))
+    emptied = distribute_mesh_weights(document, scene)
     nodes = document.setdefault("nodes", [])
     for index, node in enumerate(nodes):
         node["name"] = NODE_NAME.format(index)
@@ -552,6 +572,9 @@ def private_copy(document, rest, source, scene):
     animations = document.get("animations") or []
     for index, animation in enumerate(animations):
         animation["name"] = ANIMATION_NAME.format(index)
+    cubics = expand_cubics(
+        document, buffer_reader(document, binary_chunk(rest), source), source
+    )
     if animations:
         # One key at time 0 holding (0, 0, 0). Accessors without a buffer
         # view are zeros.
@@ -568,6 +591,21 @@ def private_copy(document, rest, source, scene):
         accessors.append({"componentType": 5126, "count": 1, "type": "VEC3"})
         nodes.append({"name": PLACEHOLDER})
         document["scenes"][scene].setdefault("nodes", []).append(len(nodes) - 1)
+        placeholder = {
+            "input": len(accessors) - 2,
+            "output": len(accessors) - 1,
+            "interpolation": "LINEAR",
+        }
+        # An animation left with no channel would import as no action at all;
+        # it animates the placeholder instead, which moves nothing.
+        for animation in emptied:
+            animation["samplers"].append(dict(placeholder))
+            animation["channels"] = [
+                {
+                    "sampler": len(animation["samplers"]) - 1,
+                    "target": {"node": len(nodes) - 1, "path": "translation"},
+                }
+            ]
         animations.insert(
             0,
             {
@@ -578,13 +616,7 @@ def private_copy(document, rest, source, scene):
                         "target": {"node": len(nodes) - 1, "path": "translation"},
                     }
                 ],
-                "samplers": [
-                    {
-                        "input": len(accessors) - 2,
-                        "output": len(accessors) - 1,
-                        "interpolation": "LINEAR",
-                    }
-                ],
+                "samplers": [placeholder],
             },
         )
     document["scene"] = scene
@@ -598,7 +630,8 @@ def private_copy(document, rest, source, scene):
     text = json.dumps(document, separators=(",", ":")).encode("utf-8")
     text += b" " * (-len(text) % 4)
     body = _CHUNK_HEADER.pack(len(text), _JSON_CHUNK) + text + rest
-    return _GLB_HEADER.pack(b"glTF", 2, _GLB_HEADER.size + len(body)) + body
+    glb = _GLB_HEADER.pack(b"glTF", 2, _GLB_HEADER.size + len(body)) + body
+    return glb, cubics
 
 
 def _pointer(channel):
@@ -612,25 +645,396 @@ def _pointer(channel):
     return pointer if isinstance(pointer, str) else None
 
 
-def refuse_unsupported(document, source):
-    """Refuse what the input contract rejects and Blender's importer cannot
-    reproduce: CUBICSPLINE samplers and mesh morph-weight pointers. The
-    caller rejects these as input errors first; this keeps a job that skips
-    that check from being measured wrongly."""
-    for index, animation in enumerate(document.get("animations") or []):
-        for sampler in animation.get("samplers", []):
-            if sampler.get("interpolation") == "CUBICSPLINE":
-                raise ScriptError(
-                    f"{source}: animation {index} uses CUBICSPLINE interpolation, "
-                    "which is not supported"
-                )
-        for channel in animation.get("channels", []):
+def channel_target(channel):
+    """The (node, path) a channel animates, directly or through a
+    `/nodes/<n>/<path>` pointer, with `path` translation, rotation, scale or
+    weights; None for any other channel."""
+    target = channel.get("target", {})
+    path = target.get("path")
+    if path in ("translation", "rotation", "scale", "weights") and "node" in target:
+        return target["node"], path
+    pointer = _pointer(channel)
+    match = None if pointer is None else _NODE_POINTER.fullmatch(pointer)
+    return None if match is None else (int(match[1]), match[2])
+
+
+def scene_nodes(document, scene_index):
+    """The nodes of the selected scene: its roots and all their descendants."""
+    nodes = document.get("nodes", [])
+    reached = set()
+    pending = list(document["scenes"][scene_index].get("nodes", []))
+    while pending:
+        index = pending.pop()
+        if index not in reached:
+            reached.add(index)
+            pending.extend(nodes[index].get("children", []))
+    return reached
+
+
+def distribute_mesh_weights(document, scene_index):
+    """Replace every `/meshes/<m>/weights` pointer channel with ordinary
+    `weights` channels on the same sampler, one for each node of the selected
+    scene that uses mesh `m`. This is Moskophoros's own reading of the
+    pointer (design §Input contract), which the extension does not define.
+    Blender's importer would keep one such animation per mesh and attach it
+    to the original mesh, which this script replaces with a copy for each
+    node.
+
+    A node's own weights come first, as glTF's instantiation rules say, so
+    the node is left out when it defines `weights` or when the same animation
+    animates its weights directly. Returns the animations left without a
+    channel."""
+    nodes = document.get("nodes", [])
+    reached = sorted(scene_nodes(document, scene_index))
+    emptied = []
+    for animation in document.get("animations") or []:
+        channels = animation.get("channels", [])
+        direct = set()
+        for channel in channels:
+            target = channel_target(channel)
+            if target is not None and target[1] == "weights":
+                direct.add(target[0])
+        rewritten = []
+        for channel in channels:
             pointer = _pointer(channel)
-            if pointer is not None and _MESH_WEIGHTS.fullmatch(pointer):
-                raise ScriptError(
-                    f"{source}: animation {index} animates {pointer}, which is not "
-                    "supported"
+            match = None if pointer is None else _MESH_WEIGHTS.fullmatch(pointer)
+            if match is None:
+                rewritten.append(channel)
+                continue
+            for node in reached:
+                if (
+                    nodes[node].get("mesh") == int(match[1])
+                    and "weights" not in nodes[node]
+                    and node not in direct
+                ):
+                    rewritten.append(
+                        {
+                            "sampler": channel["sampler"],
+                            "target": {"node": node, "path": "weights"},
+                        }
+                    )
+        if channels and not rewritten:
+            emptied.append(animation)
+        animation["channels"] = rewritten
+    return emptied
+
+
+# Cubic spline animation
+#
+# Blender's importer keeps only the value of each CUBICSPLINE key and gives
+# its curve automatic Bézier handles. glTF's cubic Hermite segment from key
+# (t0, p0) with out-tangent m0 to key (t1, p1) with in-tangent a1 is the
+# Bézier curve with control points p0, p0 + Δt·m0/3, p1 − Δt·a1/3 and p1 at
+# the times t0, t0 + Δt/3, t1 − Δt/3 and t1, and Blender evaluates a Bézier
+# curve with handles at those thirds exactly. The script therefore gives the
+# importer a LINEAR sampler whose keys are those control points, so that its
+# own conversions (axes, bone rest poses) apply to them, and afterwards
+# (`restore_tangents`) turns each curve's control keys into handles.
+
+_ACCESSOR_FORMATS = {
+    5120: ("b", 127.0),
+    5121: ("B", 255.0),
+    5122: ("h", 32767.0),
+    5123: ("H", 65535.0),
+    5125: ("I", None),
+    5126: ("f", None),
+}
+_ACCESSOR_WIDTHS = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4}
+_PATH_WIDTHS = {"translation": 3, "rotation": 4, "scale": 3}
+
+
+def binary_chunk(rest):
+    """The GLB's binary chunk, or None when the file has none."""
+    if len(rest) < _CHUNK_HEADER.size:
+        return None
+    length, kind = _CHUNK_HEADER.unpack_from(rest)
+    if kind != _BIN_CHUNK:
+        return None
+    return rest[_CHUNK_HEADER.size : _CHUNK_HEADER.size + length]
+
+
+def buffer_reader(document, binary, source):
+    """A function giving the bytes of buffer `index`: the GLB's binary chunk,
+    a data URI or a file beside the source."""
+    cache = {}
+
+    def fetch(index):
+        if index in cache:
+            return cache[index]
+        try:
+            uri = document["buffers"][index].get("uri")
+            if uri is None:
+                if index != 0 or binary is None:
+                    raise ScriptError(f"{source}: buffer {index} has no data")
+                data = binary
+            elif uri.startswith("data:"):
+                header, _, payload = uri.partition(",")
+                if header.endswith(";base64"):
+                    data = base64.b64decode(payload)
+                else:
+                    data = urllib.parse.unquote_to_bytes(payload)
+            else:
+                path = os.path.join(os.path.dirname(source), urllib.parse.unquote(uri))
+                with open(path, "rb") as handle:
+                    data = handle.read()
+        except (OSError, ValueError, KeyError, IndexError, AttributeError) as error:
+            raise ScriptError(
+                f"{source}: cannot read buffer {index}: {error}"
+            ) from None
+        cache[index] = data
+        return data
+
+    return fetch
+
+
+def read_accessor(document, fetch, index, source):
+    """An animation accessor's rows, as tuples of floats."""
+    where = f"{source}: accessor {index}"
+    try:
+        accessor = document["accessors"][index]
+        if "sparse" in accessor:
+            raise ScriptError(f"{where} is sparse, which is not supported")
+        width = _ACCESSOR_WIDTHS[accessor["type"]]
+        code, scale = _ACCESSOR_FORMATS[accessor["componentType"]]
+        count = accessor["count"]
+        if "bufferView" not in accessor:
+            return [(0.0,) * width] * count
+        view = document["bufferViews"][accessor["bufferView"]]
+        data = fetch(view["buffer"])
+        size = struct.calcsize(code)
+        offset = view.get("byteOffset", 0) + accessor.get("byteOffset", 0)
+        stride = view.get("byteStride") or size * width
+        row = struct.Struct(f"<{width}{code}")
+        rows = [row.unpack_from(data, offset + i * stride) for i in range(count)]
+    except (KeyError, IndexError, TypeError, struct.error):
+        raise ScriptError(f"{where} is malformed or unreadable") from None
+    if scale is not None and accessor.get("normalized"):
+        rows = [tuple(max(value / scale, -1.0) for value in values) for values in rows]
+    return [tuple(float(value) for value in values) for values in rows]
+
+
+def _append_accessor(document, kind, values, width, bounds):
+    """Add `values`, floats in rows of `width`, as a new accessor and return
+    its index. The data lives in a new buffer, a data URI."""
+    data = struct.pack(f"<{len(values)}f", *values)
+    document.setdefault("buffers", []).append(
+        {
+            "byteLength": len(data),
+            "uri": "data:application/octet-stream;base64,"
+            + base64.b64encode(data).decode("ascii"),
+        }
+    )
+    document.setdefault("bufferViews", []).append(
+        {"buffer": len(document["buffers"]) - 1, "byteLength": len(data)}
+    )
+    accessor = {
+        "bufferView": len(document["bufferViews"]) - 1,
+        "componentType": 5126,
+        "count": len(values) // width,
+        "type": kind,
+    }
+    if bounds:
+        accessor["min"] = [min(values)]
+        accessor["max"] = [max(values)]
+    document.setdefault("accessors", []).append(accessor)
+    return len(document["accessors"]) - 1
+
+
+def hermite_controls(times, values):
+    """The Bézier control points of glTF's cubic spline segments.
+
+    `times` are the keys' times and `values` the flattened output: for each
+    key, an in-tangent, a value and an out-tangent of the same length. Returns
+    the times and flattened values of a LINEAR sampler holding, for each
+    segment, its first value and its two inner control points, and then the
+    last key's value, and the number of values in each of a key's three parts."""
+    keys = len(times)
+    block, remainder = divmod(len(values), 3 * keys) if keys else (0, 0)
+    if block == 0 or remainder:
+        raise ValueError(
+            "the output does not hold an in-tangent, a value and an out-tangent per key"
+        )
+    if any(
+        not later > earlier for earlier, later in zip(times, times[1:], strict=False)
+    ):
+        raise ValueError("the key times do not increase")
+
+    def part(key, which):
+        start = (3 * key + which) * block
+        return values[start : start + block]
+
+    controlled_times = []
+    controlled = []
+    for key in range(keys - 1):
+        first, last = times[key], times[key + 1]
+        step = last - first
+        controlled_times += [first, first + step / 3, last - step / 3]
+        controlled += part(key, 1)
+        controlled += [
+            value + step * out / 3
+            for value, out in zip(part(key, 1), part(key, 2), strict=True)
+        ]
+        controlled += [
+            value - step * into / 3
+            for value, into in zip(part(key + 1, 1), part(key + 1, 0), strict=True)
+        ]
+    controlled_times.append(times[-1])
+    controlled += part(keys - 1, 1)
+    return controlled_times, controlled, block
+
+
+def importer_signs(controlled, width):
+    """The sign the importer gives each quaternion of a rotation channel: it
+    negates a quaternion that makes an obtuse angle with the one before it,
+    after that one's own sign is applied, so that rotations take the short
+    way. `controlled` holds the quaternions flattened."""
+    signs = [1]
+    previous = controlled[:width]
+    for start in range(width, len(controlled), width):
+        current = controlled[start : start + width]
+        dot = sum(a * b for a, b in zip(current, previous, strict=True))
+        sign = -1 if dot < 0 else 1
+        signs.append(sign)
+        previous = [sign * value for value in current]
+    return signs
+
+
+def expand_cubics(document, fetch, source):
+    """Rewrite each CUBICSPLINE sampler that animates a node's translation,
+    rotation, scale or weights as the LINEAR sampler of its control points,
+    editing `document` in place. Returns {animation index: {(node, path):
+    {"keys": key count, "signs": the importer's quaternion signs or None}}}
+    for `restore_tangents`."""
+    cubics = {}
+    expanded = {}
+    for a, animation in enumerate(document.get("animations") or []):
+        samplers = animation.get("samplers", [])
+        for channel in animation.get("channels", []):
+            target = channel_target(channel)
+            sampler = samplers[channel["sampler"]]
+            if target is None or sampler.get("interpolation") != "CUBICSPLINE":
+                continue
+            where = f"{source}: animation {a}'s sampler {channel['sampler']}"
+            key = (a, channel["sampler"])
+            if key not in expanded:
+                times = [
+                    row[0]
+                    for row in read_accessor(document, fetch, sampler["input"], source)
+                ]
+                kind = document["accessors"][sampler["output"]]["type"]
+                flat = [
+                    value
+                    for row in read_accessor(document, fetch, sampler["output"], source)
+                    for value in row
+                ]
+                if not all(map(math.isfinite, [*times, *flat])):
+                    raise ScriptError(f"{where} holds a number that is not finite")
+                try:
+                    new_times, controlled, block = hermite_controls(times, flat)
+                except ValueError as error:
+                    raise ScriptError(f"{where}: {error}") from None
+                path = target[1]
+                if path != "weights" and block != _PATH_WIDTHS[path]:
+                    raise ScriptError(f"{where} does not hold {path} values")
+                stored = struct.unpack(
+                    f"<{len(new_times)}f",
+                    struct.pack(f"<{len(new_times)}f", *new_times),
                 )
+                if any(
+                    not later > earlier
+                    for earlier, later in zip(stored, stored[1:], strict=False)
+                ):
+                    raise ScriptError(f"{where} has keys too close together to measure")
+                sampler["input"] = _append_accessor(
+                    document, "SCALAR", new_times, 1, True
+                )
+                sampler["output"] = _append_accessor(
+                    document, kind, controlled, _ACCESSOR_WIDTHS[kind], False
+                )
+                sampler["interpolation"] = "LINEAR"
+                expanded[key] = {
+                    "keys": len(times),
+                    "signs": importer_signs(controlled, 4)
+                    if path == "rotation"
+                    else None,
+                }
+            cubics.setdefault(a, {}).setdefault(target, expanded[key])
+    return cubics
+
+
+def fcurve_target(fcurve, slot):
+    """The (node, path) a curve imported from a glTF channel animates, or
+    None for a curve of anything else. A weights curve belongs to the node of
+    the mesh that owns its shape keys."""
+    path = fcurve.data_path
+    bone = _BONE_CURVE.fullmatch(path)
+    if bone is not None:
+        name, prop = bpy.utils.unescape_identifier(bone[1]), bone[2]
+    elif slot.target_id_type == "OBJECT" and path in _OBJECT_CURVES:
+        name, prop = slot.identifier[2:], path
+    elif slot.target_id_type == "KEY" and _TARGET_PATH.fullmatch(path):
+        # The importer names a weights slot after the object that holds the
+        # mesh, whose data names its node.
+        obj = bpy.data.objects.get(slot.identifier[2:])
+        owner = None
+        if obj is not None and obj.type == "MESH":
+            owner = _MESH_DATA.fullmatch(obj.data.name)
+        return None if owner is None else (int(owner[1]), "weights")
+    else:
+        return None
+    node = _NODE_OBJECT.fullmatch(name)
+    return None if node is None else (int(node[1]), _OBJECT_CURVES[prop])
+
+
+def shape_curve(fcurve, cubic):
+    """Turn a curve of control keys (`expand_cubics`) into Bézier keys whose
+    handles are those control points."""
+    keys = cubic["keys"]
+    points = fcurve.keyframe_points
+    if len(points) != 3 * (keys - 1) + 1:
+        raise ScriptError(
+            f"cubic spline curve {fcurve.data_path!r} imported {len(points)} keys, "
+            f"not {3 * (keys - 1) + 1}"
+        )
+    signs = cubic["signs"] or [1] * len(points)
+    coordinates = [
+        (point.co[0], point.co[1] * sign)
+        for point, sign in zip(points, signs, strict=True)
+    ]
+    for point in points:
+        point.interpolation = "BEZIER"
+        point.handle_left_type = "FREE"
+        point.handle_right_type = "FREE"
+    for key in range(keys):
+        points[key].co = coordinates[3 * key]
+    for segment in range(keys - 1):
+        points[segment].handle_right = coordinates[3 * segment + 1]
+        points[segment + 1].handle_left = coordinates[3 * segment + 2]
+    if keys > 1:
+        # The outer handles shape nothing: a curve holds its end values.
+        (x0, y0), (x1, _) = coordinates[0], coordinates[1]
+        points[0].handle_left = (2 * x0 - x1, y0)
+        (xn, yn), (xm, _) = coordinates[-1], coordinates[-2]
+        points[keys - 1].handle_right = (2 * xn - xm, yn)
+    while len(points) > keys:
+        points.remove(points[len(points) - 1], fast=True)
+    fcurve.update()
+
+
+def restore_tangents(cubics):
+    """After the import, give each cubic spline channel's curves the handles
+    that carry its tangents (`expand_cubics`)."""
+    for animation, channels in cubics.items():
+        action = bpy.data.actions.get(ANIMATION_NAME.format(animation))
+        if action is None:
+            raise ScriptError(f"animation {animation} has no imported action")
+        for layer in action.layers:
+            for strip in layer.strips:
+                for channelbag in strip.channelbags:
+                    for fcurve in channelbag.fcurves:
+                        target = fcurve_target(fcurve, channelbag.slot)
+                        if target in channels:
+                            shape_curve(fcurve, channels[target])
 
 
 # The directory, inside the phase directory, that the private copy is imported
@@ -2711,7 +3115,6 @@ def main(argv):
     if hashlib.sha256(data).hexdigest() != job["source"]["sha256"]:
         raise ScriptError(f"{source} does not match the job's sha256")
     document, rest = split_glb(data, source)
-    refuse_unsupported(document, source)
     scene_index = job["source"]["scene"]
     if scene_index >= len(document.get("scenes", [])):
         raise ScriptError(f"{source} has no scene {scene_index}")
@@ -2719,7 +3122,9 @@ def main(argv):
     directory = os.path.join(job["output_dir"], IMPORT)
     os.mkdir(directory)
     try:
-        import_glb(private_copy(document, rest, source, scene_index), directory)
+        copy, cubics = private_copy(document, rest, source, scene_index)
+        import_glb(copy, directory)
+        restore_tangents(cubics)
         widen_weight_ranges()
         if job["mode"] == "measure":
             frames, roots = measure(job, document, record_statics())
