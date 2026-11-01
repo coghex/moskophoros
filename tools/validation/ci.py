@@ -10,7 +10,9 @@ One subcommand for each job of .github/workflows/ci.yml:
   them, and records the outcome;
 - ``await-plan`` and ``await-groups`` run in `build-test`, which starts with
   the run: they poll the run's own jobs until the plan job, then every group
-  job it selected, has finished, within a bounded wait;
+  job it selected, has finished, within a bounded wait. A job whose result
+  GitHub carried over from an earlier attempt (a rerun of only the failed
+  jobs) is reported at once, without waiting, and fails `build-test`;
 - ``conclude`` reads the pull request body again, collects every record, and
   decides `build-test`, writing the job summary.
 
@@ -19,6 +21,7 @@ only; runs on Python 3.13.
 """
 
 import argparse
+import datetime
 import hashlib
 import importlib.util
 import json
@@ -70,6 +73,29 @@ REGISTRY = str(ROOT / "tools" / "ci-image" / "registry.py")
 
 class CIError(Exception):
     """A problem this tool reports as a diagnostic instead of a result."""
+
+
+class CarriedJobs(CIError):
+    """Jobs whose result GitHub kept from an earlier attempt of this run.
+
+    A rerun of only the failed jobs does not run a job that succeeded: it
+    carries that job's result into the new attempt. D-12 reads no result from
+    an earlier attempt, so such a run cannot pass, and the one fix is a rerun
+    of all jobs.
+    """
+
+    def __init__(self, names: list[str], run: dict | None = None):
+        self.names = list(names)
+        here = f"this attempt ({describe_run(run)})" if run else "this attempt"
+        noun = "job" if len(self.names) == 1 else "jobs"
+        super().__init__(
+            f"the {noun} {', '.join(self.names)} {'has' if len(self.names) == 1 else 'have'} "
+            f"a result from an earlier attempt of this run, not one that {here} "
+            "produced: GitHub keeps the result of a job that already succeeded when "
+            "only the failed jobs are rerun. A rerun of only the failed jobs is not "
+            "supported, because no result from an earlier attempt is ever read. "
+            "Re-run all jobs, not only the failed ones."
+        )
 
 
 def git(repo: Path, *args: str) -> str:
@@ -388,6 +414,50 @@ def fetch_jobs(repository: str, run: dict, timeout: float) -> list[dict]:
     return jobs
 
 
+def job_time(job: dict, field: str) -> datetime.datetime:
+    """A job's timestamp field as a time, or a ValueError saying what is wrong."""
+    value = job.get(field)
+    if not isinstance(value, str):
+        raise ValueError(f"its {field} is {'missing' if value is None else 'not text'}")
+    try:
+        moment = datetime.datetime.fromisoformat(value)
+    except ValueError:
+        raise ValueError(f"its {field} {value!r} is not a time") from None
+    if moment.tzinfo is None:
+        raise ValueError(f"its {field} {value!r} names no time zone")
+    return moment
+
+
+def job_carried(job: dict, *, verified: bool = True) -> bool:
+    """Whether a finished job is a result carried over from an earlier attempt.
+
+    GitHub lists a carried job under the current attempt, with the current
+    attempt number, so neither the listing nor `run_attempt` tells it from a
+    job this attempt ran. Its own times do: the listing re-creates the job
+    when the attempt starts, so `created_at` is this attempt's, but `started_at`
+    keeps the time the job really started, in the earlier attempt. A job this
+    attempt ran starts after it was created. A job that has not finished is
+    never a carried result.
+
+    `verified` demands the evidence: a finished job whose times are missing or
+    malformed raises CIError naming what cannot be verified, since nothing
+    else proves it ran in this attempt. Without it such a job counts as not
+    carried, for jobs that are only reported on and never relied upon.
+    """
+    if job.get("status") != "completed":
+        return False
+    try:
+        created, started = job_time(job, "created_at"), job_time(job, "started_at")
+    except ValueError as error:
+        if not verified:
+            return False
+        raise CIError(
+            f"could not verify whether the job {job['name']} ran in this attempt "
+            f"or was carried over from an earlier one: {error}"
+        ) from None
+    return started < created
+
+
 def job_result(conclusions: list[str | None]) -> str:
     """Combine finished jobs' conclusions the way `needs.<job>.result` does."""
     if not conclusions or all(value == "skipped" for value in conclusions):
@@ -408,6 +478,8 @@ def await_jobs(
     interval: float = POLL_INTERVAL,
     clock=time.monotonic,
     sleep=time.sleep,
+    run: dict | None = None,
+    also_carried: str | None = None,
 ) -> dict[str, str | None]:
     """Wait until every job in `names` has finished; return each conclusion.
 
@@ -416,6 +488,12 @@ def await_jobs(
     `budget`, raises CIError naming it; so does a name two jobs share. A read
     that fails is retried until the budget runs out, and no call is given more
     time than remains.
+
+    A finished job in `names` that carries a result from an earlier attempt
+    (`job_carried`) raises CarriedJobs at once, whatever else is still
+    running: no result from an earlier attempt is read, so nothing is gained by
+    waiting. `also_carried` is a job-name prefix whose carried jobs are named
+    in that diagnostic as well, though they are not waited for.
     """
     start = clock()
     deadline = start + budget
@@ -439,6 +517,19 @@ def await_jobs(
                     + ", ".join(shared)
                     + ", so which one decides is unclear"
                 )
+            carried = [
+                name for name in names if name in found and job_carried(found[name][0])
+            ]
+            if carried:
+                carried += sorted(
+                    name
+                    for name in found
+                    if also_carried is not None
+                    and name.startswith(also_carried)
+                    and name not in names
+                    and job_carried(found[name][0], verified=False)
+                )
+                raise CarriedJobs(carried, run)
             missing = [name for name in names if name not in found]
             pending = [
                 name
@@ -492,7 +583,12 @@ def read_state(plan_dir: Path | None) -> tuple[dict | None, list[str]]:
 
 
 def await_plan(read_jobs, budget: float = PLAN_WAIT, **options) -> str:
-    """Wait for this run's plan job; return its result."""
+    """Wait for this run's plan job; return its result.
+
+    A plan job carried over from an earlier attempt raises CarriedJobs, naming
+    the carried group jobs with it.
+    """
+    options.setdefault("also_carried", GROUP_JOB_PREFIX)
     conclusions = await_jobs([PLAN_JOB], read_jobs, budget=budget, **options)
     return job_result([conclusions[PLAN_JOB]])
 
@@ -554,10 +650,15 @@ def decide(
     failures = list(record_problems or [])
     statuses = {}
     if state is None:
+        # `build-test` reaches this only after `await-plan` found the plan job
+        # finished in this attempt, never carried over from an earlier one.
+        where = f" ({describe_run(run)})" if run else ""
+        artifact = f"plan-{run['attempt']}" if run else "the plan artifact"
         failures.insert(
             0,
-            f"the plan was not produced: the plan job concluded {plan_job} "
-            "and left no record",
+            f"the plan job ran in this attempt{where} and concluded {plan_job}, but "
+            f"the artifact {artifact} holds no usable plan record (it was never "
+            "uploaded, the upload failed, or it expired). Re-run all jobs.",
         )
         return {"passed": False, "failures": failures, "statuses": statuses}
 
@@ -610,12 +711,26 @@ def decide(
     for group_id in selected:
         found = by_group.get(group_id, [])
         if not found:
-            status = groups_job if groups_job in ("skipped", "cancelled") else "missing"
-            statuses[group_id] = status
-            failures.append(
-                f"{group_id} {status}: no result was recorded "
-                f"(the group jobs concluded {groups_job})"
-            )
+            if groups_job in ("skipped", "cancelled"):
+                statuses[group_id] = groups_job
+                failures.append(
+                    f"{group_id} {groups_job}: no result was recorded "
+                    f"(the group jobs concluded {groups_job})"
+                )
+            else:
+                statuses[group_id] = "missing"
+                where = f" ({describe_run(run)})" if run else ""
+                artifact = (
+                    f"group-{run['attempt']}-{group_id}"
+                    if run
+                    else "the group's artifact"
+                )
+                failures.append(
+                    f"{group_id} missing: the group job {group_job(group_id)} ran in "
+                    f"this attempt{where}, but the artifact {artifact} holds no "
+                    "result for it (it was never uploaded, the upload failed, or it "
+                    f"expired; the group jobs concluded {groups_job}). Re-run all jobs."
+                )
             group_failed = True
             continue
         if len(found) > 1:
@@ -922,12 +1037,16 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 if arguments.command == "await-plan":
                     name = "plan_job"
-                    result = await_plan(read_jobs, arguments.budget)
+                    result = await_plan(read_jobs, arguments.budget, run=run)
                 else:
                     name = "groups_job"
                     state, _ = read_state(arguments.plan_dir)
                     result = await_groups(
-                        state, arguments.plan_job, read_jobs, arguments.budget
+                        state,
+                        arguments.plan_job,
+                        read_jobs,
+                        arguments.budget,
+                        run=run,
                     )
             except CIError as error:
                 return fail_waiting(arguments.summary, str(error))
