@@ -4,7 +4,7 @@ Where the project stands, for an agent or the owner arriving cold. Read it
 after [AGENTS.md](AGENTS.md), then check `git log` and the tracker for
 anything newer than the date below.
 
-**Last reconciled: 2026-10-31.**
+**Last reconciled: 2026-11-01.**
 
 **Rules for this file:**
 - **Current state only.** When something changes, replace the old line; don't
@@ -126,6 +126,14 @@ anything newer than the date below.
 
 ## Next steps
 
+0. **Parked by the owner (2026-10-31)** until Hetoimasia, the Synarchy
+   rewrite in `~/work/hetoimasia`, is ready for assets. The owner will then
+   build all of its assets from scratch with this tool; Synarchy keeps its
+   current acolyte. The pre-park work is done: guide review `d608af0` (no
+   runtime defects), V-4 reconciled, #171 and #172 merged, export docs
+   archived. Nothing is in flight. The kanban drainer's single-PR mode still
+   reruns only failed jobs, which #172 now fails fast; that fix belongs to
+   the kanban repository.
 1. **Game-ready export: done.** Epic #153 closed on 2026-10-31.
    - **The command:** besides `moskophoros <in.glb> <out.png>`,
      `--output-dir OUT` writes per-frame folders and per-clip atlases, with
@@ -141,8 +149,8 @@ anything newer than the date below.
      frames at 6 fps, 48x48 cells at 24 px/m. See
      [docs/archive/acceptance/export-format.md](docs/archive/acceptance/export-format.md).
    - **CI:** #169 raised each check group's command limit to 20 minutes.
-     #172 makes a failed-jobs rerun fail fast and say "Re-run all jobs"
-     (D-12 kept, owner 2026-10-31).
+     #172 (PR #174) makes a failed-jobs rerun fail fast and say "Re-run all
+     jobs" (D-12 kept, owner 2026-10-31).
    - **Archived:** the export design and acceptance record moved to
      `docs/archive/` on 2026-11-01.
    - **Test model:** Synarchy's acolyte, a cultist in a hooded robe with a
