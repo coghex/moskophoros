@@ -126,12 +126,14 @@ anything newer than the date below.
 
 ## Next steps
 
-0. **Parked by the owner (2026-10-31)** until Hetoimasia, the Synarchy
+0. **Parking (owner, 2026-10-31), pending a final guide review** of
+   everything after its cursor; it parks once all findings are resolved. Then
+   it waits until Hetoimasia, the Synarchy
    rewrite in `~/work/hetoimasia`, is ready for assets. The owner will then
    build all of its assets from scratch with this tool; Synarchy keeps its
    current acolyte. The pre-park work is done: guide review `d608af0` (no
    runtime defects), V-4 reconciled, #171 and #172 merged, export docs
-   archived. Nothing is in flight. The kanban drainer's single-PR mode still
+   archived. The kanban drainer's single-PR mode still
    reruns only failed jobs, which #172 now fails fast; that fix belongs to
    the kanban repository.
 1. **Game-ready export: done.** Epic #153 closed on 2026-10-31.
