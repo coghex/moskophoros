@@ -29,9 +29,10 @@ object of their own.
 Animation: the private copy also rewrites what Blender's importer would
 mishandle (design §Supported Blender version). A `/meshes/N/weights` pointer
 becomes ordinary `weights` channels on the nodes that use the mesh, and each
-CUBICSPLINE sampler becomes a linear one of its keys' values, whose curves
-`restore_tangents` rebuilds from the file's values and tangents after the
-import.
+CUBICSPLINE sampler becomes a linear one of its keys' values, so the importer
+makes curves to carry. Those curves never evaluate a cubic spline: `evaluate`
+sets each such property itself, from the file's values and tangents
+(`cubic_value`), after Blender has evaluated the frame.
 
 Static state: the importer makes the first animation active, and Blender
 evaluates it, so its channels would no longer hold the file's static values.
@@ -44,6 +45,7 @@ writing no result.
 """
 
 import base64
+import bisect
 import hashlib
 import json
 import math
@@ -534,8 +536,8 @@ def split_glb(data, path):
 
 
 def private_copy(document, rest, source, scene):
-    """The GLB bytes Blender imports, and the cubic spline channels to restore
-    after the import (`restore_tangents`): nodes, meshes and animations
+    """The GLB bytes Blender imports, and the cubic spline channels to evaluate
+    after the import (`cubic_overrides`): nodes, meshes and animations
     renamed by index, mesh morph-weight pointers handed to the nodes that use
     the mesh, cubic spline samplers reduced to their keys' values, an
     animation that measures the importer's conversions, a placeholder
@@ -725,17 +727,18 @@ def distribute_mesh_weights(document, scene_index):
 # Cubic spline animation
 #
 # Blender's importer keeps only the value of each CUBICSPLINE key and gives
-# its curve automatic Bézier handles, so the file's tangents are lost. glTF's
-# cubic Hermite segment from key (t0, p0) with out-tangent m0 to key (t1, p1)
-# with in-tangent a1 is the Bézier curve with control points p0, p0 + Δt·m0/3,
-# p1 − Δt·a1/3 and p1 at the times t0, t0 + Δt/3, t1 − Δt/3 and t1, and
-# Blender evaluates free handles at those thirds exactly. The private copy
-# therefore gives the importer a LINEAR sampler of the keys' values alone,
-# which makes the curves; after the import `restore_tangents` rebuilds each
-# of them from the file's values and tangents. The importer converts values
-# from glTF's axes and from a bone's rest pose with an affine map, which the
-# script measures (`calibrate`) from an animation of its own, imported beside
-# the file's, whose keys have known values.
+# its curve automatic Bézier handles, so the file's tangents are lost, and its
+# evaluator is not exact for a rebuilt curve: it returns a key's value for a
+# time within about 1e-4 frame of it, and merges keys under 0.01 frame apart,
+# so a steep curve is read wrongly near a key (design §Supported Blender
+# version). The private copy therefore gives the importer a LINEAR sampler of
+# the keys' values alone, which makes a curve on the right property, and the
+# script never lets that curve decide a value: after Blender evaluates a
+# frame, `evaluate` sets every property of a cubic channel to glTF's value at
+# that time (`cubic_value`), computed from the file's keys and tangents. The
+# importer converts values from glTF's axes and from a bone's rest pose with
+# an affine map, which the script measures (`calibrate`) from an animation of
+# its own, imported beside the file's, whose keys have known values.
 
 _ACCESSOR_FORMATS = {
     5120: ("b", 127.0),
@@ -918,24 +921,43 @@ def cubic_keys(times, values):
     return part(1), part(0), part(2), block
 
 
-def segment_controls(step, p0, out, p1, into):
-    """The two inner Bézier control points of a cubic spline segment of `step`
-    seconds, from its first key's value and out-tangent and its last key's
-    value and in-tangent."""
-    return (
-        tuple(
-            value + step * tangent / 3 for value, tangent in zip(p0, out, strict=True)
-        ),
-        tuple(
-            value - step * tangent / 3 for value, tangent in zip(p1, into, strict=True)
-        ),
+def cubic_value(keys, time_s):
+    """glTF's cubic spline of `keys` (what `expand_sampler` returns) at
+    `time_s`, as a tuple: the first key's value before it and the last key's
+    after it. Between keys `k` and `k + 1`, `step` seconds apart and with `u`
+    the fraction of the way, it is
+    (2u³ − 3u² + 1)·p0 + step·(u³ − 2u² + u)·m0 + (−2u³ + 3u²)·p1 +
+    step·(u³ − u²)·a1, with `p0`, `m0` the first key's value and out-tangent
+    and `p1`, `a1` the second's value and in-tangent."""
+    times, values, ins, outs = (
+        keys[name] for name in ("times", "values", "ins", "outs")
+    )
+    if time_s <= times[0]:
+        return tuple(values[0])
+    if time_s >= times[-1]:
+        return tuple(values[-1])
+    k = bisect.bisect_right(times, time_s) - 1
+    step = times[k + 1] - times[k]
+    u = (time_s - times[k]) / step
+    u2, u3 = u * u, u * u * u
+    h00, h10, h01, h11 = (
+        2 * u3 - 3 * u2 + 1,
+        u3 - 2 * u2 + u,
+        -2 * u3 + 3 * u2,
+        u3 - u2,
+    )
+    return tuple(
+        h00 * p0 + step * h10 * m0 + h01 * p1 + step * h11 * a1
+        for p0, m0, p1, a1 in zip(
+            values[k], outs[k], values[k + 1], ins[k + 1], strict=True
+        )
     )
 
 
 def expand_sampler(document, fetch, source, sampler, path, where):
     """Replace one CUBICSPLINE `sampler` of a node's `path` with the LINEAR
     sampler of its keys' values, in place. Returns the keys' times, values,
-    in-tangents and out-tangents for `restore_tangents`."""
+    in-tangents and out-tangents for `cubic_overrides`."""
     try:
         times = [
             row[0] for row in read_accessor(document, fetch, sampler["input"], source)
@@ -971,7 +993,7 @@ def expand_cubics(document, fetch, source):
     """Rewrite each CUBICSPLINE sampler that animates a node's translation,
     rotation, scale or weights as the LINEAR sampler of its keys' values,
     editing `document` in place. Returns {animation index: {(node, path):
-    keys}} for `restore_tangents`, `keys` being what `expand_sampler` gives."""
+    keys}} for `cubic_overrides`, `keys` being what `expand_sampler` gives."""
     cubics = {}
     expanded = {}
     for a, animation in enumerate(document.get("animations") or []):
@@ -981,7 +1003,7 @@ def expand_cubics(document, fetch, source):
             key = (a, channel["sampler"])
             sampler = samplers[channel["sampler"]]
             # A sampler already expanded is linear now, but every channel
-            # sharing it needs its curves restored.
+            # sharing it needs its values set from the keys.
             if target is None or (
                 key not in expanded and sampler.get("interpolation") != "CUBICSPLINE"
             ):
@@ -1172,72 +1194,34 @@ def calibrate(cubics):
     return maps
 
 
-def shape_curve(fcurve, keys, image, fps):
-    """Rebuild `fcurve` as Bézier keys that follow the cubic spline `keys`
-    (the times, values and tangents `expand_sampler` returns), `image` being
-    the function taking a glTF value to this curve's value."""
-    times, values, ins, outs = (
-        keys[name] for name in ("times", "values", "ins", "outs")
-    )
-    count = len(times)
-    points = fcurve.keyframe_points
-    if len(points) < count:
-        points.add(count - len(points))
-    while len(points) > count:
-        points.remove(points[len(points) - 1], fast=True)
-    for point in points:
-        point.interpolation = "BEZIER"
-        point.handle_left_type = "FREE"
-        point.handle_right_type = "FREE"
-    for key in range(count):
-        points[key].co = (times[key] * fps, image(values[key]))
-    for key in range(count - 1):
-        step = times[key + 1] - times[key]
-        right, left = segment_controls(
-            step, values[key], outs[key], values[key + 1], ins[key + 1]
-        )
-        points[key].handle_right = ((times[key] + step / 3) * fps, image(right))
-        points[key + 1].handle_left = ((times[key + 1] - step / 3) * fps, image(left))
-    if count > 1:
-        # The outer handles shape nothing: a curve holds its end values.
-        for key, other, side in (
-            (0, 1, "handle_left"),
-            (count - 1, count - 2, "handle_right"),
-        ):
-            x, y = points[key].co
-            setattr(points[key], side, (2 * x - points[other].co[0], y))
-    # No `fcurve.update()`: it would merge keys closer than 0.01 frame, which a
-    # curve of free handles and ascending keys has no need of.
-    if len(points) != count:
-        raise ScriptError(
-            f"cubic spline curve {fcurve.data_path!r} has {len(points)} keys, not {count}"
-        )
+# The properties of cubic spline channels that `evaluate` sets: {animation
+# index: [(data, owner path, property, index, image, keys, target)]} for every
+# animation, and the list of the one active. `index` is None for a scalar
+# property, `image` takes a glTF value to the property's value, and `target`
+# is a weights channel's morph target, else None.
+_CUBIC = {"all": {}, "active": ()}
 
 
-# The scene frame rate that the tool's refusal of closely spaced cubic spline
-# keys assumes (`moskophoros.keytimes`, design §Input contract).
-FRAME_RATE = 24.0
-
-
-def scene_frame_rate(scene):
-    """The scene's frames per second, which must be `FRAME_RATE`."""
-    fps = scene.render.fps / scene.render.fps_base
-    if fps != FRAME_RATE:
-        raise ScriptError(
-            f"the imported scene runs at {fps!r} frames per second, not {FRAME_RATE!r}"
-        )
-    return fps
-
-
-def restore_tangents(cubics):
-    """After the import, rebuild the curves of every cubic spline channel from
-    the file's own values and tangents (`expand_cubics`)."""
+def cubic_overrides(cubics):
+    """Find the property of every curve imported from a cubic spline channel
+    (`expand_cubics`), with what `cubic_value` needs to evaluate it."""
     maps = calibrate(cubics)
-    fps = scene_frame_rate(bpy.context.scene)
+    overrides = {}
     for animation, channels in cubics.items():
         action = bpy.data.actions.get(ANIMATION_NAME.format(animation))
         if action is None:
             raise ScriptError(f"animation {animation} has no imported action")
+        holders = {}
+        for data in (*bpy.data.objects, *bpy.data.shape_keys):
+            if data.animation_data is None:
+                continue
+            for track in data.animation_data.nla_tracks:
+                for strip in track.strips:
+                    if strip.action == action:
+                        holders.setdefault(strip.action_slot.identifier, []).append(
+                            data
+                        )
+        found = overrides.setdefault(animation, [])
         for layer in action.layers:
             for strip in layer.strips:
                 for channelbag in strip.channelbags:
@@ -1245,19 +1229,37 @@ def restore_tangents(cubics):
                         target = fcurve_target(fcurve, channelbag.slot)
                         if target not in channels:
                             continue
+                        owner, _, prop = fcurve.data_path.rpartition(".")
+                        morph = None
                         if target[1] == "weights":
-                            index = int(_TARGET_PATH.fullmatch(fcurve.data_path)[1])
-                            image = lambda g, index=index: g[index]  # noqa: E731
+                            morph = int(_TARGET_PATH.fullmatch(fcurve.data_path)[1])
+                            image = lambda g, morph=morph: g[morph]  # noqa: E731
+                            index = None
                         else:
                             matrix, offset = maps[target]
-                            row, shift = (
-                                matrix[fcurve.array_index],
-                                offset[fcurve.array_index],
-                            )
+                            row = matrix[fcurve.array_index]
+                            shift = offset[fcurve.array_index]
                             image = lambda g, row=row, shift=shift: (  # noqa: E731
                                 sum(a * b for a, b in zip(row, g, strict=True)) + shift
                             )
-                        shape_curve(fcurve, channels[target], image, fps)
+                            index = fcurve.array_index
+                        found.extend(
+                            (data, owner, prop, index, image, channels[target], morph)
+                            for data in holders.get(channelbag.slot.identifier, ())
+                        )
+    _CUBIC["all"] = overrides
+
+
+def apply_cubics(time_s):
+    """Set every property of the active animation's cubic spline channels to
+    glTF's value at `time_s`."""
+    for data, owner, prop, index, image, keys, _ in _CUBIC["active"]:
+        target = data.path_resolve(owner) if owner else data
+        value = image(cubic_value(keys, time_s))
+        if index is None:
+            setattr(target, prop, value)
+        else:
+            getattr(target, prop)[index] = value
 
 
 # The directory, inside the phase directory, that the private copy is imported
@@ -1336,6 +1338,11 @@ def check_weights(objects, document, clip, times, fps):
         node = nodes[int(_MESH_DATA.fullmatch(obj.data.name)[1])]
         mesh = document["meshes"][node["mesh"]]
         defaults = node.get("weights") or mesh.get("weights") or []
+        cubics = {
+            morph: (image, keys)
+            for data, _, _, _, image, keys, morph in _CUBIC["active"]
+            if data == key and morph is not None
+        }
         curves = {}
         animation = key.animation_data
         if animation is not None and animation.action is not None:
@@ -1350,9 +1357,13 @@ def check_weights(objects, document, clip, times, fps):
                                 curves[int(match[1])] = curve
         for block in key.key_blocks[1:]:
             target = int(block.name.rsplit(".", 1)[1])
-            if target in curves:
+            if target in curves or target in cubics:
                 for time_s in times:
-                    weight = curves[target].evaluate(time_s * fps)
+                    if target in cubics:
+                        image, keys = cubics[target]
+                        weight = image(cubic_value(keys, time_s))
+                    else:
+                        weight = curves[target].evaluate(time_s * fps)
                     if abs(weight) > WEIGHT_LIMIT:
                         raise ScriptError(
                             f"clip {clip['name']!r} drives morph target {target} to "
@@ -1385,6 +1396,7 @@ def record_statics():
 
 def reset(statics):
     """Stop every animation and return everything to its static state."""
+    _CUBIC["active"] = ()
     for data in (*bpy.data.objects, *bpy.data.shape_keys):
         if data.animation_data is not None:
             data.animation_data.action = None
@@ -1433,6 +1445,7 @@ def activate(animation_index):
             f"animation {animation_index}'s targets {sorted(unassigned)} have no "
             "imported counterpart"
         )
+    _CUBIC["active"] = _CUBIC["all"].get(animation_index, ())
 
 
 # Evaluation
@@ -1451,6 +1464,8 @@ def evaluate(scene, fps, time_s):
         )
     whole = math.floor(frame)
     scene.frame_set(int(whole), subframe=frame - whole)
+    if _CUBIC["active"]:
+        apply_cubics(time_s)
     return bpy.context.evaluated_depsgraph_get()
 
 
@@ -3347,7 +3362,7 @@ def main(argv):
     try:
         copy, cubics = private_copy(document, rest, source, scene_index)
         import_glb(copy, directory)
-        restore_tangents(cubics)
+        cubic_overrides(cubics)
         widen_weight_ranges()
         if job["mode"] == "measure":
             frames, roots = measure(job, document, record_statics())

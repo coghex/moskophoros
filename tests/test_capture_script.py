@@ -612,14 +612,70 @@ def test_cubic_output_is_split_into_keys(script):
     assert outs == [(3, -3), (5, 5)]
 
 
-def test_cubic_segments_have_bezier_control_points_at_the_thirds(script):
-    # Keys at 0 and 2 s: (in, value, out) of (0, 1, 3) and (−6, 4, 0).
-    first, last = script.segment_controls(2.0, (1.0,), (3.0,), (4.0,), (-6.0,))
-    assert (first, last) == ((1 + 2 * 3 / 3,), (4 + 2 * 6 / 3,))
-    for s in (0.0, 0.1, 0.5, 0.9, 1.0):
-        assert bezier([1.0, *first, *last, 4.0], s) == pytest.approx(
-            hermite(1.0, 3.0, 4.0, -6.0, 2.0, s)
+KEYS = {
+    # Keys at 0, 2 and 3 s of two components, as (in, value, out) triples:
+    # (0, 1, 3) and (−6, 4, 0), then (1, 2, 5) for the second component.
+    "times": [0.0, 2.0, 3.0],
+    "values": [(1.0, 2.0), (4.0, -1.0), (0.5, 0.5)],
+    "ins": [(0.0, 0.0), (-6.0, 2.0), (7.0, -4.0)],
+    "outs": [(3.0, 1.0), (0.0, -3.0), (0.0, 0.0)],
+}
+
+
+def test_a_cubic_spline_is_evaluated_by_glTFs_formula(script):
+    for time_s in (0.0, 0.25, 1.0, 1.999, 2.0, 2.0001, 2.5, 2.999999, 3.0):
+        k = 0 if time_s < 2.0 else 1
+        step = KEYS["times"][k + 1] - KEYS["times"][k]
+        s = (time_s - KEYS["times"][k]) / step
+        want = tuple(
+            hermite(
+                KEYS["values"][k][c],
+                KEYS["outs"][k][c],
+                KEYS["values"][k + 1][c],
+                KEYS["ins"][k + 1][c],
+                step,
+                s,
+            )
+            for c in range(2)
         )
+        assert script.cubic_value(KEYS, time_s) == pytest.approx(want, abs=1e-12)
+
+
+def test_a_cubic_spline_has_the_bezier_curve_of_its_thirds(script):
+    # Keys at 0 and 2 s: the segment's controls sit at p0 + Δt·m0/3 and
+    # p1 − Δt·a1/3, and the curve is Bézier in the fraction of the interval.
+    first = KEYS["values"][0][0] + 2 * KEYS["outs"][0][0] / 3
+    last = KEYS["values"][1][0] - 2 * KEYS["ins"][1][0] / 3
+    for s in (0.0, 0.1, 0.5, 0.9, 1.0):
+        got = script.cubic_value(KEYS, 2 * s)[0]
+        assert got == pytest.approx(
+            bezier([KEYS["values"][0][0], first, last, KEYS["values"][1][0]], s)
+        )
+
+
+def test_a_cubic_spline_holds_its_end_values_and_a_single_key(script):
+    assert script.cubic_value(KEYS, -5.0) == (1.0, 2.0)
+    assert script.cubic_value(KEYS, 3.0) == (0.5, 0.5)
+    assert script.cubic_value(KEYS, 99.0) == (0.5, 0.5)
+    single = {"times": [1.0], "values": [(7.0,)], "ins": [(0.0,)], "outs": [(0.0,)]}
+    assert [script.cubic_value(single, t) for t in (0.0, 1.0, 2.0)] == [(7.0,)] * 3
+
+
+def test_a_cubic_spline_is_exact_a_microsecond_from_a_steep_key(script):
+    # The reviewer's curve: a key at a 32-bit time 9.5e-7 s before 0.5 s, with
+    # an out-tangent of 1024 per second. Blender's evaluator reads the key's
+    # value there; the exact value is 0.00098.
+    keys = {
+        "times": [0.0, 0.4999990463256836, 0.50048828125, 1.0],
+        "values": [(0.0,), (0.0,), (0.5,), (0.0,)],
+        "ins": [(0.0,)] * 4,
+        "outs": [(0.0,), (1024.0,), (0.0,), (0.0,)],
+    }
+    (got,) = script.cubic_value(keys, 0.5)
+    step = 0.50048828125 - 0.4999990463256836
+    s = (0.5 - 0.4999990463256836) / step
+    assert got == pytest.approx(hermite(0.0, 1024.0, 0.5, 0.0, step, s), abs=1e-12)
+    assert got == pytest.approx(0.00097845, abs=1e-8)
 
 
 @pytest.mark.parametrize(
@@ -1086,22 +1142,3 @@ def test_an_animation_the_pointer_emptied_animates_the_placeholder(script, tmp_p
             "target": {"node": placeholder, "path": "translation"},
         }
     ]
-
-
-def test_the_frame_rate_matches_the_tools_cubic_spacing_rule(script):
-    from moskophoros import keytimes
-
-    assert script.FRAME_RATE == keytimes.BLENDER_FRAME_RATE
-
-
-@pytest.mark.parametrize(("fps", "base"), [(24, 1.0), (48, 2.0)])
-def test_a_scene_at_the_assumed_frame_rate_is_accepted(script, fps, base):
-    scene = types.SimpleNamespace(render=types.SimpleNamespace(fps=fps, fps_base=base))
-    assert script.scene_frame_rate(scene) == 24.0
-
-
-@pytest.mark.parametrize(("fps", "base"), [(30, 1.0), (24, 1.001), (25, 1.0)])
-def test_a_scene_at_another_frame_rate_is_refused(script, fps, base):
-    scene = types.SimpleNamespace(render=types.SimpleNamespace(fps=fps, fps_base=base))
-    with pytest.raises(script.ScriptError, match="frames per second, not 24.0"):
-        script.scene_frame_rate(scene)

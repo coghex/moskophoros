@@ -471,9 +471,9 @@ def test_a_cubic_rotation_matches_the_normalized_cubic_quaternion(
 
 
 def test_a_cubic_key_interval_of_a_millisecond(found, tmp_path):
-    # The first interval is 0.024 of a frame at Blender's 24 fps, a little more
-    # than twice the 0.01 frame under which the tool refuses a cubic spline
-    # (design §Input contract); the second runs to the end of the clip.
+    # The first interval is 0.024 of a frame at Blender's 24 fps, closer than
+    # keys can be before Blender merges them (a review finding); the second
+    # runs to the end of the clip.
     times = [0.0, 0.001, 1.0]
     keys = [
         ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (300.0, 0.0, 0.0)),
@@ -498,12 +498,12 @@ def test_a_cubic_key_interval_of_a_millisecond(found, tmp_path):
     assert_close(boxes(result)["snap"], expected)
 
 
-def test_cubic_keys_just_outside_the_least_spacing_are_kept(found, tmp_path):
-    # The first interval is 0.0103 of a frame at Blender's 24 fps, just over
-    # the 0.01 frame under which the tool refuses a cubic spline (a review
+def test_cubic_keys_closer_than_blender_merges_them(found, tmp_path):
+    # The first interval is 0.0024 of a frame at Blender's 24 fps, a quarter
+    # of the 0.01 frame under which Blender treats keys as one (a review
     # finding). The key between holds 0.5 for an instant; the tangents are 0,
     # so the curve then returns to 0, and the clip ends where it began.
-    times = [0.0, 0.00043, 1.0]
+    times = [0.0, 0.0001, 1.0]
     keys = [
         ((0.0,) * 3, (0.0,) * 3, (0.0,) * 3),
         ((0.0,) * 3, (0.5, 0.0, 0.0), (0.0,) * 3),
@@ -526,6 +526,108 @@ def test_cubic_keys_just_outside_the_least_spacing_are_kept(found, tmp_path):
     assert expected[0][1] == 1.0 and expected[1][1] < 1.5
     assert_close(boxes(result)["blip"], expected)
     assert result.roots[0].travel_m == pytest.approx(0.0, abs=1e-5)
+
+
+# Blender's evaluator returns a key's value for a time within about 1e-4 frame
+# of that key. The tool computes cubic channels itself, so a sample a
+# microsecond after a key with a steep tangent is still exact (a review
+# finding). The key and the next are 32-bit exact; the sample, 0.5 s, is
+# 9.5e-7 s after the first and 0.00049 s before the second.
+STEEP_TIMES = [0.0, 0.4999990463256836, 0.50048828125, 1.0]
+
+
+def test_a_cubic_translation_is_exact_just_after_a_key_with_a_steep_tangent(
+    found, tmp_path
+):
+    keys = [
+        ((0.0,) * 3, (0.0,) * 3, (0.0,) * 3),
+        ((0.0,) * 3, (0.0,) * 3, (1024.0, 0.0, 0.0)),
+        ((0.0,) * 3, (0.5, 0.0, 0.0), (0.0,) * 3),
+        ((0.0,) * 3, (0.0,) * 3, (0.0,) * 3),
+    ]
+    model = GlbWriter()
+    shape = model.node("shape", mesh=True)
+    model.scene([shape], default=True)
+    model.animation(
+        "steep",
+        [(shape, "translation", STEEP_TIMES, flat(keys))],
+        interpolation="CUBICSPLINE",
+    )
+    result, _ = measure(
+        found,
+        model.write(tmp_path, "steep"),
+        tmp_path,
+        clip_names=["steep"],
+        once=["steep"],
+    )
+    expected = [
+        (0.0, 1.0 + cubic_at(STEEP_TIMES, keys, t)[0], 1.0, 0.0) for t in ONCE_TIMES
+    ]
+    # Blender's own reading of t = 0.5 would be the key's value, R = 1.
+    assert expected[2][1] == pytest.approx(1.00097845, abs=1e-7)
+    assert_close(boxes(result)["steep"], expected)
+
+
+def test_a_cubic_weight_is_exact_just_after_a_key_with_a_steep_tangent(found, tmp_path):
+    model = GlbWriter()
+    mesh = model.mesh(TRIANGLE, targets=[RISE], weights=[0.0])
+    face = model.node("face", mesh=mesh)
+    model.scene([face], default=True)
+    keys = [
+        ((0.0,), (0.0,), (0.0,)),
+        ((0.0,), (0.0,), (1024.0,)),
+        ((0.0,), (0.5,), (0.0,)),
+        ((0.0,), (0.0,), (0.0,)),
+    ]
+    model.animation(
+        "steep",
+        [(face, "weights", STEEP_TIMES, flat(keys))],
+        interpolation="CUBICSPLINE",
+    )
+    result, _ = measure(
+        found,
+        model.write(tmp_path, "steep"),
+        tmp_path,
+        clip_names=["steep"],
+        once=["steep"],
+    )
+    rows = by_clip(result)["steep"]
+    weights = [cubic_at(STEEP_TIMES, keys, t)[0] for t in ONCE_TIMES]
+    assert weights[2] == pytest.approx(0.00097845, abs=1e-7)
+    assert_close([box[2] for _, _, box, _ in rows], [1.0 + w for w in weights])
+
+
+def test_a_cubic_rotation_is_exact_just_after_a_key_with_a_steep_tangent(
+    found, tmp_path
+):
+    # The out-tangent turns the key about z by 2·2048·9.5e-7 ≈ 0.23° by 0.5 s.
+    keys = [
+        ((0.0,) * 4, (0.0, 0.0, 0.0, 1.0), (0.0,) * 4),
+        ((0.0,) * 4, (0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 2048.0, 0.0)),
+        ((0.0,) * 4, (0.0, 0.0, 0.3, 0.95), (0.0,) * 4),
+        ((0.0,) * 4, (0.0, 0.0, 0.0, 1.0), (0.0,) * 4),
+    ]
+    model = GlbWriter()
+    shape = model.node("shape", mesh=True)
+    model.scene([shape], default=True)
+    model.animation(
+        "steep",
+        [(shape, "rotation", STEEP_TIMES, flat(keys))],
+        interpolation="CUBICSPLINE",
+    )
+    result, _ = measure(
+        found,
+        model.write(tmp_path, "steep"),
+        tmp_path,
+        clip_names=["steep"],
+        once=["steep"],
+    )
+    measured = boxes(result)["steep"]
+    for got, t in zip(measured, ONCE_TIMES, strict=True):
+        assert got == pytest.approx(rotation_bounds(STEEP_TIMES, keys, t), abs=1e-4)
+    # At 0.5 s the key's own value (no turn) would be off by far more.
+    key_only = rotation_bounds(STEEP_TIMES, keys, STEEP_TIMES[1])
+    assert abs(measured[2][0] - key_only[0]) > 1e-3
 
 
 @pytest.mark.parametrize("where", ["in no scene", "in another scene"])
