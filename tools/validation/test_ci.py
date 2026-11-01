@@ -427,10 +427,17 @@ def test_a_planner_error_fails(repo, run):
     assert "unknown group 'test.unknown'" in run.text
 
 
-def test_a_missing_plan_fails(run):
+def test_a_plan_that_ran_in_this_attempt_without_a_record_fails(run):
+    run.run_arguments = RUN
     process = run.conclude("skipped", plan_job="failure")
     assert process.returncode == 1
-    assert "the plan was not produced: the plan job concluded failure" in run.text
+    assert "the plan job ran in this attempt (run 11 attempt 2) and concluded" in (
+        run.text
+    )
+    assert "the artifact plan-2 holds no usable plan record" in run.text
+    assert "Re-run all jobs" in run.text
+    assert "left no record" not in run.text and "was not produced" not in run.text
+    assert "earlier attempt" not in run.text
 
 
 @pytest.mark.parametrize(
@@ -497,14 +504,20 @@ def test_skipped_or_cancelled_group_jobs_fail(repo, run, result):
     assert f"check.static {result}: no result was recorded" in run.text
 
 
-def test_a_selected_group_with_no_result_is_missing_and_fails(repo, run):
+def test_a_group_that_ran_in_this_attempt_without_a_result_fails(repo, run):
     _, merge = pull_request(repo, {"src/app.py": "new\n"})
     run.body.write_text(report(repo.git("rev-parse", "pr")))
+    run.run_arguments = RUN
     run.plan(repo, merge)
     run.groups = ["check.static"]
     process = run.conclude(run.run_groups(repo, merge))
     assert process.returncode == 1
-    assert "test.app missing: no result was recorded" in run.text
+    assert (
+        "test.app missing: the group job group/test.app ran in this attempt "
+        "(run 11 attempt 2), but the artifact group-2-test.app holds no result"
+    ) in run.text
+    assert "Re-run all jobs" in run.text
+    assert "left no record" not in run.text and "earlier attempt" not in run.text
 
 
 def test_a_stale_descriptor_fails_the_plan_and_runs_no_group(repo, run):
@@ -940,8 +953,34 @@ class Clock:
         self.now += seconds
 
 
-def job(name, status="completed", conclusion="success"):
-    return {"name": name, "status": status, "conclusion": conclusion}
+# The times GitHub lists for jobs of run 40142829728, attempt 4, a rerun of only
+# the failed jobs. Every job there is listed with run_attempt 4 and created when
+# the attempt started. `plan` really ran at 23:28:35 in attempt 1 and was
+# carried over; `build-test` ran in attempt 4. The listing's run_attempt does
+# not tell them apart; a job starting before its own creation does.
+CREATED = "2026-10-24T23:42:28Z"
+RAN = {"started_at": "2026-10-24T23:42:30Z", "completed_at": "2026-10-24T23:42:37Z"}
+KEPT = {"started_at": "2026-10-24T23:28:35Z", "completed_at": "2026-10-24T23:28:48Z"}
+
+
+def job(name, status="completed", conclusion="success", **fields):
+    """A job of the current attempt, as the attempt's job listing reports it."""
+    times = {"created_at": CREATED, "run_attempt": 2, **RAN}
+    if status != "completed":
+        times.pop("completed_at")
+    return {
+        "name": name,
+        "status": status,
+        "conclusion": conclusion,
+        **times,
+        **fields,
+    }
+
+
+def carried(name, conclusion="success"):
+    """A job GitHub carried into this attempt: listed as the attempt's own, but
+    started, and finished, in an earlier one."""
+    return job(name, conclusion=conclusion, **KEPT)
 
 
 class Jobs:
@@ -1124,6 +1163,278 @@ def test_a_group_named_like_another_check_waits_only_for_its_own_job(group):
     state = {**PLANNED, "github_groups": [group]}
     assert ci.await_groups(state, "success", jobs, 600, **waits(clock)) == "failure"
     assert clock.now == 10
+
+
+# --------------------------------------------------------------------------
+# A rerun of only the failed jobs: results GitHub carried over are not this
+# attempt's, and nothing here accepts them (D-12)
+
+
+def failed_jobs_rerun(*rerun):
+    """The listing of a rerun of only the failed jobs: the plan and the groups
+    carried over, `build-test` running, and `rerun` as their reruns."""
+    return [
+        carried("plan"),
+        carried("group/check.static"),
+        carried("group/test.app"),
+        job("build-test", "in_progress", None),
+        *rerun,
+    ]
+
+
+def only_the_required_words(message: str) -> None:
+    assert "earlier attempt" in message
+    assert "rerun of only the failed jobs is not supported" in message
+    assert "Re-run all jobs" in message
+    assert "left no record" not in message and "was not produced" not in message
+
+
+def test_a_carried_job_is_told_from_a_job_this_attempt_ran():
+    # Both are listed with the current attempt number, as GitHub lists them.
+    ran, kept = job("plan", run_attempt=4), carried("plan")
+    kept["run_attempt"] = 4
+    assert ran["run_attempt"] == kept["run_attempt"] == 4
+    assert ci.job_carried(kept) and not ci.job_carried(ran)
+    # The run 40142829728 attempt 4 times: plan carried, build-test ran.
+    assert ci.job_carried({**kept, "created_at": CREATED, **KEPT})
+    assert not ci.job_carried({**ran, **RAN})
+    # A job that has not finished is never a carried result.
+    for status in ("queued", "in_progress", "waiting"):
+        assert not ci.job_carried(job("plan", status, None))
+        assert not ci.job_carried(
+            job("plan", status, None, started_at="2000-01-01T00:00:00Z")
+        )
+
+
+@pytest.mark.parametrize(
+    ("fields", "problem"),
+    [
+        ({"started_at": None}, "its started_at is missing"),
+        ({"created_at": None}, "its created_at is missing"),
+        ({"started_at": "yesterday"}, "its started_at 'yesterday' is not a time"),
+        ({"created_at": 12}, "its created_at is not text"),
+        ({"started_at": "2026-10-24T23:42:30"}, "names no time zone"),
+    ],
+)
+def test_a_finished_job_whose_origin_cannot_be_verified_fails_closed(fields, problem):
+    # No current run_attempt and no artifact is evidence either way: the job's
+    # own times are, and without them nothing proves it ran in this attempt.
+    clock = Clock()
+    jobs = Jobs(clock, [job("plan", **fields)])
+    with pytest.raises(ci.CIError, match="could not verify whether the job plan") as c:
+        ci.await_plan(jobs, 600, **waits(clock))
+    assert not isinstance(c.value, ci.CarriedJobs)
+    assert problem in str(c.value)
+    assert "ran in this attempt or was carried over from an earlier one" in str(c.value)
+    assert clock.now == 0 and len(jobs.timeouts) == 1
+
+
+def test_a_listing_without_a_run_attempt_still_tells_the_jobs_apart():
+    clock = Clock()
+    fresh = job("plan")
+    del fresh["run_attempt"]
+    assert ci.await_plan(Jobs(clock, [fresh]), 600, **waits(clock)) == "success"
+    kept = carried("plan")
+    del kept["run_attempt"]
+    with pytest.raises(ci.CarriedJobs):
+        ci.await_plan(Jobs(clock, [kept]), 600, **waits(clock))
+
+
+def test_a_failed_jobs_rerun_fails_at_once_naming_the_carried_jobs():
+    clock = Clock()
+    jobs = Jobs(clock, failed_jobs_rerun())
+    with pytest.raises(ci.CarriedJobs) as caught:
+        ci.await_plan(jobs, 600, **waits(clock), run={"id": 11, "attempt": 2})
+    assert caught.value.names == ["plan", "group/check.static", "group/test.app"]
+    message = str(caught.value)
+    only_the_required_words(message)
+    assert "jobs plan, group/check.static, group/test.app have a result" in message
+    assert "not one that this attempt (run 11 attempt 2) produced" in message
+    assert clock.now == 0 and clock.slept == []
+
+
+def test_a_carried_plan_is_not_waited_for_while_a_group_reruns():
+    clock = Clock()
+    listing = failed_jobs_rerun()
+    listing[2] = job("group/test.app", "in_progress", None)
+    jobs = Jobs(clock, listing)
+    with pytest.raises(ci.CarriedJobs) as caught:
+        ci.await_plan(jobs, 600, **waits(clock))
+    assert caught.value.names == ["plan", "group/check.static"]
+    assert clock.now == 0 and clock.slept == []
+
+
+def test_a_carried_group_fails_without_waiting_for_a_group_still_running():
+    clock = Clock()
+    jobs = Jobs(
+        clock,
+        [
+            job("plan"),
+            carried("group/check.static"),
+            job("group/test.app", "in_progress", None),
+        ],
+    )
+    with pytest.raises(ci.CarriedJobs) as caught:
+        ci.await_groups(PLANNED, "success", jobs, 600, **waits(clock))
+    assert caught.value.names == ["group/check.static"]
+    only_the_required_words(str(caught.value))
+    assert "the job group/check.static has a result" in str(caught.value)
+    assert "test.app" not in str(caught.value)
+    assert clock.now == 0 and clock.slept == []
+
+
+def test_a_carried_group_found_after_a_poll_fails_without_further_polling():
+    clock = Clock()
+    jobs = Jobs(
+        clock,
+        [job("plan"), job("group/check.static", "queued", None)],
+        [
+            job("plan"),
+            carried("group/check.static"),
+            job("group/test.app", "in_progress", None),
+        ],
+        AssertionError("no further read once carryover is established"),
+    )
+    with pytest.raises(ci.CarriedJobs) as caught:
+        ci.await_groups(PLANNED, "success", jobs, 600, **waits(clock))
+    assert caught.value.names == ["group/check.static"]
+    assert clock.now == 10 and len(jobs.timeouts) == 2
+
+
+def test_jobs_running_in_this_attempt_are_still_waited_for():
+    # Queued, in progress, and finished-this-attempt jobs are normal.
+    clock = Clock()
+    jobs = Jobs(
+        clock,
+        [job("plan", "queued", None, started_at=None)],
+        [job("plan")],
+        [job("plan"), job("group/check.static"), job("group/test.app", "queued", None)],
+        [job("plan"), job("group/check.static"), job("group/test.app")],
+    )
+    assert ci.await_plan(jobs, 600, **waits(clock)) == "success"
+    assert ci.await_groups(PLANNED, "success", jobs, 600, **waits(clock)) == "success"
+
+
+def test_a_rerun_of_all_jobs_passes_after_an_earlier_failed_plan(repo, run):
+    # Attempt 1's plan failed, so its groups never ran; attempt 2 runs the plan
+    # and every group again. Nothing is carried, and every check holds.
+    head, merge = pull_request(repo, {"src/app.py": "new\n"})
+    run.body.write_text(report(head))
+    run.run_arguments = RUN
+    run.plan(repo, merge)
+    assert run.plan_job == "success" and run.groups
+    run.jobs.write_text(
+        lines(
+            job("plan"),
+            *[job(f"group/{group}") for group in run.groups],
+            job("build-test", "in_progress", None),
+        )
+    )
+    waiting = run.ci(None, "await-plan", "--repository", "owner/name", *RUN)
+    assert waiting.returncode == 0, waiting.stdout
+    groups = run.ci(
+        None,
+        "await-groups",
+        "--repository",
+        "owner/name",
+        *RUN,
+        "--plan-dir",
+        str(run.plan_dir),
+        "--plan-job",
+        "success",
+    )
+    assert groups.returncode == 0, groups.stdout
+    process = run.conclude(run.run_groups(repo, merge))
+    assert process.returncode == 0, run.text
+    assert run.text.startswith("## build-test: passed")
+
+
+def test_await_plan_reports_a_carried_plan_in_the_output_and_the_summary(run):
+    run.jobs.write_text(lines(*failed_jobs_rerun()))
+    summary = run.tmp / "summary.md"
+    output = run.tmp / "output"
+    process = run.ci(
+        None,
+        "await-plan",
+        "--repository",
+        "owner/name",
+        *RUN,
+        "--github-output",
+        str(output),
+        "--summary",
+        str(summary),
+    )
+    assert process.returncode == 1
+    for text in (process.stdout, summary.read_text()):
+        assert text.startswith("## build-test: failed\n\n### Failures\n\n- the jobs ")
+        only_the_required_words(text)
+        assert "plan, group/check.static, group/test.app have a result" in text
+        assert "not one that this attempt (run 11 attempt 2) produced" in text
+    assert not output.exists()
+
+
+def test_await_groups_reports_a_carried_group_in_the_output_and_the_summary(repo, run):
+    _, merge = pull_request(repo, {"docs/guide.md": "better\n"})
+    run.body.write_text("Docs.\n")
+    run.plan(repo, merge)
+    run.jobs.write_text(
+        lines(
+            job("plan"),
+            carried("group/check.static"),
+            job("group/test.app", "in_progress", None),
+            job("group/test.tools", "queued", None),
+        )
+    )
+    summary = run.tmp / "summary.md"
+    process = run.ci(
+        None,
+        "await-groups",
+        "--repository",
+        "owner/name",
+        *RUN,
+        "--plan-dir",
+        str(run.plan_dir),
+        "--plan-job",
+        "success",
+        "--summary",
+        str(summary),
+    )
+    assert process.returncode == 1
+    for text in (process.stdout, summary.read_text()):
+        only_the_required_words(text)
+        assert "the job group/check.static has a result" in text
+        assert "test.app" not in text and "test.tools" not in text
+
+
+def test_await_plan_fails_closed_when_a_jobs_origin_cannot_be_verified(run):
+    broken = job("plan")
+    del broken["started_at"]
+    run.jobs.write_text(lines(broken))
+    summary = run.tmp / "summary.md"
+    process = run.ci(
+        None,
+        "await-plan",
+        "--repository",
+        "owner/name",
+        *RUN,
+        "--summary",
+        str(summary),
+    )
+    assert process.returncode == 1
+    for text in (process.stdout, summary.read_text()):
+        assert "could not verify whether the job plan ran in this attempt" in text
+        assert "its started_at is missing" in text
+
+
+def test_the_docs_and_the_workflow_agree_with_the_message():
+    docs = (ROOT / "docs" / "validation.md").read_text(encoding="utf-8")
+    fix = [line for line in docs.splitlines() if line.startswith("| A job result ")]
+    assert len(fix) == 1 and "Re-run all jobs" in fix[0]
+    assert "rerun of only the failed jobs is not supported" in str(
+        ci.CarriedJobs(["plan"])
+    )
+    header = WORKFLOW.read_text(encoding="utf-8").split("\nname: CI\n")[0]
+    assert "Re-run all jobs" in header
 
 
 def lines(*jobs) -> str:

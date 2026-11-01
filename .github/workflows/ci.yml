@@ -6,6 +6,10 @@
 # check and the pull request body all hold.
 # `build-test` starts with the run and waits for the other jobs itself, so its
 # check appears at once and an earlier run's result never speaks for this one.
+# Every group reruns on every run and no result from an earlier attempt is
+# read (D-12). A rerun of only the failed jobs is not supported: GitHub carries
+# the plan's and the passing groups' results into it, `build-test` sees that
+# and fails at once, and the fix is to Re-run all jobs.
 # Local-only groups never run here. The logic lives in tools/validation/ci.py,
 # which tools/validation/test_ci.py tests. See docs/validation.md, On GitHub.
 name: CI
@@ -39,7 +43,8 @@ defaults:
 # Every job reads one revision, `github.sha`: GitHub's merge commit for a pull
 # request, or the pushed revision. Every record carries the run's ID and
 # attempt, and artifact names carry the attempt, so no other run's or earlier
-# attempt's result is ever read.
+# attempt's result is ever read. A job carried over from an earlier attempt has
+# no artifact under this attempt's name; `build-test` says so before it looks.
 jobs:
   plan:
     runs-on: ubuntu-24.04
@@ -149,7 +154,8 @@ jobs:
   # in progress, and from then on it is the newest `build-test` on the tested
   # revision. It waits for this run's plan job, then for every group job the
   # plan started, each wait bounded, and treats anything it cannot confirm as
-  # a failure. Cancelling the run cancels it too; it is never skipped.
+  # a failure. A job whose result was carried over from an earlier attempt ends
+  # the wait at once. Cancelling the run cancels it too; it is never skipped.
   build-test:
     runs-on: ubuntu-24.04
     timeout-minutes: 55

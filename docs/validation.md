@@ -457,8 +457,19 @@ Its logic is in [`tools/validation/ci.py`](../tools/validation/ci.py), which
 `tools/validation/test_ci.py` tests. Every group reruns on every run; no result
 is reused (D-12). Each record the run writes carries the run's ID and attempt,
 and its artifacts are named by attempt, so `build-test` reads only what its own
-run and attempt produced. Rerun all jobs, not only the failed ones: a partial
-rerun's `build-test` cannot pass on results kept from an earlier attempt.
+run and attempt produced.
+
+A rerun of only the failed jobs ("Re-run failed jobs", or `gh run rerun --failed`)
+is not supported. GitHub does not run a job that succeeded again: it carries
+that job's result into the new attempt, so the plan job and every passing group
+job keep an earlier attempt's result, and only `build-test` and the failed jobs
+run. `build-test` detects this and **fails within seconds**, without waiting for
+any group job still rerunning. The failure says that the named jobs' results are
+from an earlier attempt, that a rerun of only the failed jobs is not supported,
+and that the fix is **Re-run all jobs**, not only the failed ones. No result
+from an earlier attempt is ever read, so nothing about this lets a carried job
+pass. A rerun of all jobs, including one after a failed plan, runs the plan and
+every group again and behaves as a first attempt does.
 
 ### Triggers
 
@@ -551,6 +562,17 @@ is why the workflow grants `actions: read`, and waits in two bounded steps:
    allowance, so the job can still record a timeout after checkout, image pull,
    install and the record upload.
 
+Both waits end at once, without waiting out their budgets, when a job they
+wait for shows a result carried over from an earlier attempt (see
+[On GitHub](#on-github)). GitHub lists a carried job under the current attempt,
+with the current attempt's number, so the number cannot tell it from a job this
+attempt ran. The job's own times do: GitHub creates the job again when the
+attempt starts, but keeps the time it started, which is before its creation. A
+job this attempt ran starts after it was created. A finished job whose times
+are missing or malformed fails `build-test`, naming what could not be verified:
+neither an absent artifact nor a missing attempt number proves a job ran in
+this attempt.
+
 It then reads the plan and group records and decides as below. A job is
 finished only when all its steps are, including uploading its record. If a
 wait runs out, a job never appears, two jobs share a group's name, or the run's
@@ -578,9 +600,10 @@ It passes only when all of these hold, and fails otherwise:
 
 | Check | Fails when |
 |---|---|
-| The plan was produced | the plan job left no record; the body could not be read from the API before planning; or the planner stopped with an error, such as a malformed request or an unknown group. |
+| The plan was produced | the plan job ran in this attempt but its artifact `plan-<attempt>` holds no usable record (never uploaded, the upload failed, or it expired); the body could not be read from the API before planning; or the planner stopped with an error, such as a malformed request or an unknown group. |
+| Every result is this attempt's | the plan job or a group job it started shows a result carried over from an earlier attempt, which a rerun of only the failed jobs does; or a finished job's times cannot be verified. `build-test` fails at once, naming the carried jobs. |
 | Local-only obligations (pull requests only) | a selected local-only group has no report, or a report that is malformed, stale, `failed` or `not-run` ([Local-only reports](#local-only-reports)). |
-| Every selected group ran and passed | a group failed, timed out (20 minutes per group), was skipped, was cancelled, or recorded no result; ran at another revision, in another image, or in another run or attempt; or ran without being selected. |
+| Every selected group ran and passed | a group failed, timed out (20 minutes per group), was skipped, was cancelled, or ran in this attempt but its artifact `group-<attempt>-<group>` holds no result; ran at another revision, in another image, or in another run or attempt; or ran without being selected. |
 | This run finished in time | the plan job or a group job did not finish, or never appeared, within [`build-test`'s waits](#when-build-test-appears), or the run's jobs could not be read. |
 | The image is confirmed | the descriptor is missing or malformed; its recipe fingerprint is not the tested revision's; or the image it names cannot be pulled or inspected, or records a fingerprint or version that differs from the descriptor, or a pytest or ruff version that differs from the lock ([Confirming the image](#confirming-the-image)). No group runs, and the diagnostic names the field that differs or says why the image could not be checked. |
 | The body did not change (pull requests only) | the body read just before concluding differs from the one planned from, or cannot be read. A body that cannot be read is a failure, never an empty body. |
@@ -613,11 +636,13 @@ line for each failure. Then:
 | The planner stopped with an error | Correct the body's `validation-request` or `local-validation` block, as the diagnostic says. Editing the body reruns CI. |
 | A local-only obligation is not met | Run the group locally at the pull request's current head, then add or update its entry in the body's `local-validation` block: `<group> <full commit> passed`. A report is stale once the group's paths change after its commit, so a push to those paths needs a fresh run and a fresh entry. |
 | A group failed or timed out | Open its job's log, reproduce it locally with the command the plan shows, fix it, and push. |
-| A group was skipped, cancelled or recorded no result | Read the plan job's log, or the group job's, for the cause. Rerun the workflow if a runner failed. |
+| A group was skipped or cancelled, or ran in this attempt but its artifact holds no result | Read the plan job's log, or the group job's, for the cause. Re-run all jobs if a runner failed or the artifact expired. |
+| The plan job ran in this attempt but its artifact holds no usable record | Read the plan job's log, in particular its upload step, then Re-run all jobs. |
 | The descriptor is stale | Follow [Updating the image](#updating-the-image): commit the descriptor the `ci-image` workflow reports for this revision as `tools/ci-image/descriptor.json`. |
 | The image does not match the descriptor or the lock | The descriptor names an image other than this recipe's. Commit, unedited, the descriptor the `ci-image` workflow reports for this revision, as in [Updating the image](#updating-the-image). Never edit a digest or version by hand. |
 | The image could not be checked | Read the plan job's log for the registry's or Docker's error. A digest the registry does not hold means the descriptor is wrong: commit the one the `ci-image` workflow reports. If the package is not public, the owner makes it public. Otherwise rerun the workflow, since the registry was unavailable. |
 | The body changed since planning | Nothing: the run the edit started replaces this one. |
 | The body could not be read | Rerun the workflow; the GitHub API was unavailable. |
-| A wait ran out, or the run's jobs could not be read | Open the job named in the summary to see why it stalled, then rerun all jobs. |
-| A record came from another run or attempt | Rerun all jobs, not only the failed ones. |
+| A wait ran out, or the run's jobs could not be read | Open the job named in the summary to see why it stalled, then Re-run all jobs. |
+| A job result is from an earlier attempt (a rerun of only the failed jobs) | Re-run all jobs, not only the failed ones. The summary names the jobs whose results were carried over. |
+| A record came from another run or attempt | Re-run all jobs, not only the failed ones. The same cause as the row above, seen in a record instead of a job's times. |
