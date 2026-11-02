@@ -1,26 +1,27 @@
 # Guide cursor
 
-Resume after: `a462962b095b015fbfbbe731b05b3ff7df3f364e` · [2026-11-01T171536Z-a462962](2026-11-01T171536Z-a462962.md) · 2026-11-01T17:18:30Z
+Resume after: `69ac3ea181025a591ee21d7a0e3735b65e5a51e6` · [2026-11-02T140048Z-69ac3ea](2026-11-02T140048Z-69ac3ea.md) · 2026-11-02T14:14:18Z
 Covered beyond the boundary: none
 
 ## Next
 
-No guide finding awaits disposition. Resolve how open, owner-deferred #43 fits the new all-issues-resolved parking rule; the pane question is pending. No new feature arc is proposed.
+Process GUIDE-1's exact issue draft with the owner, then GUIDE-2. Both need disposition before a clean pre-park handoff; review coverage is complete, not resolution.
 
 ## Open findings
 
-- none
+- 2026-11-02T140048Z-69ac3ea/GUIDE-1 — Pointer translation bypasses the default root-motion refusal — proposal pending (exact issue draft in the report).
+- 2026-11-02T140048Z-69ac3ea/GUIDE-2 — Cubic decoder reads past a declared buffer view — unprocessed.
 
 ## Pending handoff
 
-- #173/#171 repairs GUIDE-1; V-2 drift cleared. #174/#172 diagnoses carried results before waiting on rerunning groups; D-12 remains intact.
-- All code since 36e4e3e reviewed; seven standalone docs landings excluded. The requested 2660013 head and the newer a462962 parking clarification are included.
-- #43 remains unchanged and owner-deferred until a model needs its animation features. It is still open; this is not a declaration that every issue is closed or the project is parked. No open PRs at the snapshot.
-- Published V-4 includes the approved D-36 exception; retained-capture recolouring stays deferred under D-18. #137/#153 retain recorded owner acceptance.
-- Recheck: no master, issue-spec, PR or published-vision movement. The vision draft warning was a newline comparison artifact; bytes match the pin.
-- 252 workflow and 562 focused contract tests passed, no skips; static checks passed. Full package/Blender suites not repeated: product AST unchanged excluding docstrings. No new visual or performance verdict.
-- Real older GitHub job data replayed without waiting; no live failed-only/full rerun at the fixed revision. Timestamp carryover shape is observed API behavior, not a documented stability guarantee.
-- The separate kanban drainer rerun policy remains outside this repo's scope. Recovery here is Re-run all jobs.
+- All code after a462962 through #175 / 69ac3ea reviewed. The preceding guide landing a3c791c is documentation-only and excluded.
+- #43 is closed by #175; the owner instruction to solve it superseded the prior deferral. Its approved 2026-11-01/02 range and exact rotation arithmetic were checked against the implementation. No open tracker issues or PRs at the snapshot; the two guide findings are not filed yet.
+- GUIDE-1's exact proposed payload is issue-v1:sha256:ed6a5fe8254d77f49246eb96d52162e5d1434b15a4faf6ef82fa93571dc4a9da, label bug. Only this finding is proposed for disposition now.
+- 6621 non-Blender and 358 Blender tests passed, no skips; static checks passed. Independent observational Blender probes reproduced both findings despite those suites passing.
+- The merge tree equals reviewed PR head ec87635. Its separately reported default-byte comparison was not independently repeated. No new owner visual, performance, Linux/Windows or exhaustive range verdict.
+- End recheck found no head, issue, PR or published-vision movement. The vision draft warning was a newline comparison artifact; published and primary bytes match.
+- Repair/review/merge approved follow-ups, then make a short guide pass over that delta before parking. No new feature arc is proposed.
+- Published V-4 retains the approved D-36 exception; D-18 retained-capture recolouring stays deferred. The separate kanban drainer rerun policy remains outside this repository's scope.
 - History before `0eb2491` (bootstrap and PRs #1–#2) remains unreviewed.
 
 ## Alignment
@@ -33,9 +34,9 @@ No guide finding awaits disposition. Resolve how open, owner-deferred #43 fits t
 | V-4 | aligned | 2026-10-04T175222Z-c93605c | Addressed shading/export boundaries; accepted D-36 wording reconciled in 76075ffa51 after the audit. |
 | V-5 | aligned | 2026-10-04T175222Z-c93605c | One bpy script behind validated jobs/results and owned processes. |
 | V-6 | aligned | 2026-10-04T175222Z-c93605c | Camera parameters and stored subsets retain original direction identities. |
-| V-7 | aligned | 2026-10-04T175222Z-c93605c | Common fit/anchor, map invariance, accepted world sky and mirror anchors. |
+| V-7 | drifting | 2026-11-02T140048Z-69ac3ea | GUIDE-1: newly accepted cubic translation pointers bypass default root-motion validation. |
 | V-8 | aligned | 2026-10-04T175222Z-c93605c | Explicit downstream responses; accepted default looks preserved. |
 | V-9 | aligned | 2026-10-04T175222Z-c93605c | Shared per-clip plan and source-time addresses; mirrors add no frames. |
 | V-10 | aligned | 2026-10-04T175222Z-c93605c | Shared pure alpha, lighting, quantisers, composition and encoders. |
-| V-11 | aligned | 2026-10-14T130147Z-fc9de5d | Strict settings, libraries, buffers, manifests and publication failures checked. |
+| V-11 | drifting | 2026-11-02T140048Z-69ac3ea | GUIDE-2: cubic accessor reads cross declared buffer-view boundaries and sanitize malformed input. |
 | V-12 | aligned | 2026-09-30T043336Z-fe94bd6 | Mechanical checks and recorded owner verdicts kept separate. |
