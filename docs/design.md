@@ -2182,7 +2182,10 @@ section's settings on 5.2.2:
   turned into Blender's, and a bone's rest pose for a joint). The script does not
   repeat that arithmetic: the private copy holds one more animation, of known
   keys for each node and path that has a cubic channel, and the map is solved
-  from how the importer converts them and checked on further keys to 1e-5.
+  from how the importer converts them and checked on further keys to 1e-5 plus a few
+  steps of 32-bit rounding of the largest image. A translation's keys are a
+  thousand meters apart, so that the importer's 32-bit arithmetic around a joint
+  with a large bind offset moves the map by less than 1e-5.
   Evaluated values equal glTF's cubic formula at every time, to float precision.
 - **Only one mesh-level weight animation is kept per mesh,** and it is attached
   to the original mesh, which the capture replaces with a copy for each node.

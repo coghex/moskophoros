@@ -1274,3 +1274,35 @@ def test_a_cubic_rotation_keeps_its_components_exact_until_it_is_rounded(script)
     assert (y, z) == (0.0, 0.0)
     assert x / w == pytest.approx(25 / 18, rel=1e-15)
     assert math.hypot(x, w) == pytest.approx(1.0, abs=1e-15)
+
+
+def float32_of(value):
+    return struct.unpack("<f", struct.pack("<f", value))[0]
+
+
+def test_a_joint_with_a_large_bind_offset_is_measured_accurately(script):
+    # A review finding. The importer maps a joint's translation g to
+    # R⁻¹·(g − e), R⁻¹ turning about z by the rest rotation (0, 0, 0.6, 0.8)
+    # and e the rest pose; it works in 32 bits. With e = (110, −20, 150), the
+    # map has to stay accurate at (50, 100, 150) to 3e-5.
+    c, s_ = 0.28, 0.96
+    matrix = [[c, s_, 0.0], [-s_, c, 0.0], [0.0, 0.0, 1.0]]
+    offset = [-(c * 110 - s_ * 20), -(-s_ * 110 - c * 20), -150.0]
+
+    def imported(point):
+        return tuple(
+            float32_of(
+                float32_of(sum(matrix[i][j] * point[j] for j in range(3)) + offset[i])
+            )
+            for i in range(3)
+        )
+
+    points = script._CALIBRATION["translation"]
+    solved = script.solve_affine(points, [imported(point) for point in points])
+    assert solved is not None
+    got, shift = solved
+    target = (50.0, 100.0, 150.0)
+    for i in range(3):
+        mapped = sum(got[i][j] * target[j] for j in range(3)) + shift[i]
+        want = sum(matrix[i][j] * target[j] for j in range(3)) + offset[i]
+        assert mapped == pytest.approx(want, abs=3e-5)

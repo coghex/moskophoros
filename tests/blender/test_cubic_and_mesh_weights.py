@@ -734,6 +734,56 @@ def test_cubic_tangent_products_that_cancel_are_exact_before_rounding(found, tmp
     assert rows[0.0] == pytest.approx((0.0, 1.0, 1.0, 0.0), abs=1e-4)
 
 
+@pytest.mark.parametrize("interpolation", ["LINEAR", "CUBICSPLINE"])
+def test_a_joint_translated_far_from_its_bind_pose_is_measured_accurately(
+    found, tmp_path, interpolation
+):
+    # A review finding. The joint rests at (50, 100, 150), turned about z by
+    # (0, 0, 0.6, 0.8), which is 73.74° with cosine 0.28 and sine 0.96; its
+    # inverse bind matrix is the exact inverse of that world matrix, so the
+    # triangle weighted to it stays at its own coordinates, L, R, U, D = 0, 1,
+    # 1, 0. The importer works in 32 bits around values in the hundreds, and
+    # the cubic channel's map has to survive that.
+    model = GlbWriter()
+    joint = model.node(
+        "joint", translation=(50.0, 100.0, 150.0), rotation=(0.0, 0.0, 0.6, 0.8)
+    )
+    skin = model.skin(
+        [joint],
+        [(0.28, -0.96, 0, 0, 0.96, 0.28, 0, 0, 0, 0, 1, 0, -110, 20, -150, 1)],
+    )
+    skinned = model.node(
+        "skinned",
+        mesh=model.mesh(
+            TRIANGLE,
+            joints=[(0, 0, 0, 0)] * 3,
+            skin_weights=[(1, 0, 0, 0)] * 3,
+        ),
+        skin=skin,
+    )
+    model.scene([joint, skinned], default=True)
+    here = (50.0, 100.0, 150.0)
+    if interpolation == "LINEAR":
+        values = [here, here]
+    else:
+        values = [ZERO, here, ZERO, ZERO, here, ZERO]
+    model.animation(
+        "hold",
+        [(joint, "translation", [0.0, 1.0], values)],
+        interpolation=interpolation,
+    )
+    result, _ = measure(
+        found,
+        model.write(tmp_path, "hold"),
+        tmp_path,
+        clip_names=["hold"],
+        once=["hold"],
+    )
+    # 32-bit values near 150 are 1e-5 apart; the requirement is 1e-4 m.
+    for box in boxes(result)["hold"]:
+        assert box == pytest.approx((0.0, 1.0, 1.0, 0.0), abs=1e-4)
+
+
 @pytest.mark.parametrize("where", ["in no scene", "in another scene"])
 def test_a_cubic_channel_on_a_node_outside_the_selected_scene(found, tmp_path, where):
     # The clip moves the subject with a cubic curve; the same clip also moves

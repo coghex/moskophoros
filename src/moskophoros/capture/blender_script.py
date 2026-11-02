@@ -1050,9 +1050,19 @@ def expand_cubics(document, fetch, source):
 # Points whose images under the importer's conversion are read back to
 # measure it: the first is the base and the rest, up to the last but the
 # check points, differ from it in independent directions. A quaternion's
-# consecutive points make acute angles, so the importer negates none.
+# consecutive points make acute angles, so the importer negates none. A
+# translation's points are a thousand meters apart: the importer works in 32
+# bits, and a joint with a large bind offset has images in the hundreds, whose
+# differences over a unit step would carry 1e-5 of rounding into the map (a
+# review finding).
 _CALIBRATION = {
-    "translation": [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 2, 3)],
+    "translation": [
+        (0, 0, 0),
+        (1000, 0, 0),
+        (0, 1000, 0),
+        (0, 0, 1000),
+        (1000, 2000, 3000),
+    ],
     "scale": [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 2, 3)],
     "rotation": [
         (0, 0, 0, 1),
@@ -1064,8 +1074,10 @@ _CALIBRATION = {
     ],
 }
 CALIBRATION_NAME = "moskophoros.calibration"
-# How far a check point may be from the measured map's image of it.
+# How far a check point may be from the measured map's image of it: this much
+# and a few steps of 32-bit rounding of the largest image.
 CALIBRATION_ERROR = 1e-5
+CALIBRATION_STEPS = 8 * 2.0**-24
 
 
 def add_calibration(document, cubics):
@@ -1120,7 +1132,7 @@ def solve_affine(points, images):
     """The affine map `v = A·g + b` taking each of `points` (g) to its image
     (v), found from the first `d + 1` points and checked on the rest. Returns
     A as rows and b; None when a check point is off by more than
-    `CALIBRATION_ERROR`."""
+    `CALIBRATION_ERROR` and `CALIBRATION_STEPS` of the largest image."""
     d = len(points[0])
     base, image = points[0], images[0]
     # Columns of the differences: solve A·G = V by Gauss-Jordan on Gᵀ.
@@ -1144,10 +1156,13 @@ def solve_affine(points, images):
     offset = [
         image[i] - sum(matrix[i][j] * base[j] for j in range(d)) for i in range(d)
     ]
+    allowed = CALIBRATION_ERROR + CALIBRATION_STEPS * max(
+        abs(value) for row in images for value in row
+    )
     for point, expected in zip(points, images, strict=True):
         for i in range(d):
             got = sum(matrix[i][j] * point[j] for j in range(d)) + offset[i]
-            if abs(got - expected[i]) > CALIBRATION_ERROR:
+            if abs(got - expected[i]) > allowed:
                 return None
     return matrix, offset
 
