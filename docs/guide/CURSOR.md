@@ -5,7 +5,7 @@ Covered beyond the boundary: none
 
 ## Next
 
-GUIDE-1 is filed as #176; the manager owns its review, repair and merge. GUIDE-2's exact bug-issue draft awaits signoff in this pane. Review coverage remains at 69ac3ea; filing is not resolution.
+GUIDE-1 is filed as #176; the manager owns its review, repair and merge. GUIDE-2's exact bug-issue draft awaits the manager's signoff in project chat. Review coverage remains at 69ac3ea; filing is not resolution.
 
 ## Open findings
 
@@ -17,6 +17,7 @@ GUIDE-1 is filed as #176; the manager owns its review, repair and merge. GUIDE-2
 - #43 is closed by #175; the owner instruction to solve it superseded the prior deferral. Its approved 2026-11-01/02 range and exact rotation arithmetic were checked against the implementation. No open tracker issues or PRs at the snapshot; the two guide findings are not filed yet.
 - GUIDE-1 filed as [#176](https://github.com/coghex/moskophoros/issues/176) from the manager-signed exact draft, label bug. Owner relay: “File, solve both, park”. The manager owns reviews, solves and merges; GUIDE-2 draft still needs signoff.
 - GUIDE-2 draft SHA-256 9db93867f7605a5e220aa2c733394625699f0c91fa258713d64ff032dff4595e; payload issue-v1:sha256:4534b9aabe6cae500bc3b3ce62e31cb1a15e60b1e15c97099e33f2ea21c42daf, label bug.
+- Signoff belongs to verified mosk-manager under the owner's standing issue-draft authority (direct owner routing correction 2026-11-02). Exact GUIDE-2 request posted in #moskophoros as question 2w2r3bjzxbft29hygse85xyhsw, --re moskophoros-20261031-1; accept an in-scope manager answer to that request, then file/report without asking the owner again.
 - #176 reported as mosk-guide in #moskophoros with --re moskophoros-20261031-1. After GUIDE-2 signoff and creation, report its number there with the same request ID; the manager owns readiness review, solve and merge.
 - 6621 non-Blender and 358 Blender tests passed, no skips; static checks passed. Independent observational Blender probes reproduced both findings despite those suites passing.
 - The merge tree equals reviewed PR head ec87635. Its separately reported default-byte comparison was not independently repeated. No new owner visual, performance, Linux/Windows or exhaustive range verdict.
