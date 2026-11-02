@@ -5,18 +5,17 @@ Covered beyond the boundary: none
 
 ## Next
 
-Process GUIDE-1's exact issue draft with the owner, then GUIDE-2. Both need disposition before a clean pre-park handoff; review coverage is complete, not resolution.
+GUIDE-1 is filed as #176; the manager owns its review, repair and merge. Draft GUIDE-2 for signoff under the owner relay of 2026-11-02. Review coverage remains at 69ac3ea; filing is not resolution.
 
 ## Open findings
 
-- 2026-11-02T140048Z-69ac3ea/GUIDE-1 — Pointer translation bypasses the default root-motion refusal — proposal pending (exact issue draft in the report).
 - 2026-11-02T140048Z-69ac3ea/GUIDE-2 — Cubic decoder reads past a declared buffer view — unprocessed.
 
 ## Pending handoff
 
 - All code after a462962 through #175 / 69ac3ea reviewed. The preceding guide landing a3c791c is documentation-only and excluded.
 - #43 is closed by #175; the owner instruction to solve it superseded the prior deferral. Its approved 2026-11-01/02 range and exact rotation arithmetic were checked against the implementation. No open tracker issues or PRs at the snapshot; the two guide findings are not filed yet.
-- GUIDE-1's exact proposed payload is issue-v1:sha256:ed6a5fe8254d77f49246eb96d52162e5d1434b15a4faf6ef82fa93571dc4a9da, label bug. Only this finding is proposed for disposition now.
+- GUIDE-1 filed as [#176](https://github.com/coghex/moskophoros/issues/176) from the manager-signed exact draft, label bug. Owner relay: “File, solve both, park”. The manager owns reviews, solves and merges; GUIDE-2 draft still needs signoff.
 - 6621 non-Blender and 358 Blender tests passed, no skips; static checks passed. Independent observational Blender probes reproduced both findings despite those suites passing.
 - The merge tree equals reviewed PR head ec87635. Its separately reported default-byte comparison was not independently repeated. No new owner visual, performance, Linux/Windows or exhaustive range verdict.
 - End recheck found no head, issue, PR or published-vision movement. The vision draft warning was a newline comparison artifact; published and primary bytes match.
