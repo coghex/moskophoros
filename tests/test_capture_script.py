@@ -16,6 +16,7 @@ import pytest
 from glb_writer import GlbWriter
 
 from moskophoros.capture import blender
+from moskophoros.gltf import effective_target
 
 
 @pytest.fixture(scope="module")
@@ -1802,3 +1803,49 @@ def test_a_degenerate_sample_is_measured_by_the_exact_length(script):
     }
     time_s, length = script.rotation_problem(keys, [0.0, 1.0])
     assert time_s == 1.0 and 1e-21 < length < 1e-20
+
+
+def _pointed(pointer, path="pointer", **target):
+    extension = {"KHR_animation_pointer": {"pointer": pointer}}
+    return {"sampler": 0, "target": {"path": path, "extensions": extension, **target}}
+
+
+CHANNELS = {
+    "direct translation": {"target": {"node": 3, "path": "translation"}},
+    "direct rotation": {"target": {"node": 3, "path": "rotation"}},
+    "direct scale": {"target": {"node": 3, "path": "scale"}},
+    "direct weights": {"target": {"node": 3, "path": "weights"}},
+    "direct node 0": {"target": {"node": 0, "path": "translation"}},
+    "pointer translation": _pointed("/nodes/2/translation"),
+    "pointer rotation": _pointed("/nodes/2/rotation"),
+    "pointer scale": _pointed("/nodes/2/scale"),
+    "pointer weights": _pointed("/nodes/2/weights"),
+    "leading zero": _pointed("/nodes/01/translation"),
+    "pointer on a translation without a node": _pointed(
+        "/nodes/2/scale", "translation"
+    ),
+    "direct beats a pointer": _pointed("/nodes/2/scale", "rotation", node=3),
+    "node beside a pointer path": _pointed("/nodes/2/scale", node=3),
+    "node path without a node": {"target": {"path": "translation"}},
+    "trailing index": _pointed("/nodes/0/translation/0"),
+    "negative node": _pointed("/nodes/-1/translation"),
+    "extras": _pointed("/nodes/0/extras"),
+    "mesh weights": _pointed("/meshes/0/weights"),
+    "camera": _pointed("/cameras/0/perspective/yfov"),
+    "empty pointer": _pointed(""),
+    "pointer that is not a string": _pointed(7),
+    "null pointer": _pointed(None),
+    "no extensions": {"target": {"path": "pointer"}},
+    "no pointer": {"target": {"path": "pointer", "extensions": {}}},
+    "other extension": {
+        "target": {"path": "pointer", "extensions": {"EXT_other": {"pointer": "x"}}}
+    },
+    "other path": {"target": {"node": 3, "path": "pointer"}},
+}
+
+
+@pytest.mark.parametrize("channel", CHANNELS.values(), ids=CHANNELS.keys())
+def test_the_caller_reads_a_channel_s_target_as_the_script_does(script, channel):
+    # The caller may not import the script, so it keeps its own copy of the
+    # pointer grammar: the two must agree on every channel's (node, path).
+    assert effective_target(channel) == script.channel_target(channel)
