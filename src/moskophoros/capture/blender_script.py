@@ -1071,30 +1071,69 @@ def float32(value):
     return struct.unpack("<f", struct.pack("<f", value))[0]
 
 
-def calibration_points(path, keysets):
-    """The points to calibrate a node's `path` with, given the keys
-    (`expand_sampler`'s result) of each of its cubic channels.
+# A translation is calibrated around anchors no further apart than this, and
+# its probes are this far from each anchor, and by at most this many anchors.
+ANCHOR_SPACING = 256.0
+MAX_ANCHORS = 64
+
+
+def translation_anchors(keysets):
+    """The places along a node's translation channels that the importer's
+    conversion is measured at: the keys' values, in order, and points between
+    two successive values that are further apart than `ANCHOR_SPACING`, at
+    most `MAX_ANCHORS` of them (evenly thinned when there are more), all
+    rounded to 32 bits as the importer reads them."""
+    anchors = []
+    seen = set()
+
+    def add(value):
+        if value not in seen:
+            seen.add(value)
+            anchors.append(value)
+
+    for keys in keysets:
+        previous = None
+        for raw in keys["values"]:
+            value = tuple(float32(component) for component in raw)
+            if previous is not None:
+                count = math.ceil(math.dist(previous, value) / ANCHOR_SPACING)
+                for i in range(1, count):
+                    add(
+                        tuple(
+                            float32(p + (v - p) * i / count)
+                            for p, v in zip(previous, value, strict=True)
+                        )
+                    )
+            add(value)
+            previous = value
+    if len(anchors) > MAX_ANCHORS:
+        anchors = anchors[:: -(-len(anchors) // MAX_ANCHORS)]
+    return anchors
+
+
+def calibration_groups(path, keysets):
+    """The groups of points to calibrate a node's `path` with, given the keys
+    (`expand_sampler`'s result) of each of its cubic channels in one clip;
+    each group gives one affine map.
 
     The importer works in 32 bits. A joint with a large bind offset has
     images in the hundreds or thousands wherever the joint is not near its
-    rest pose, whose rounding (an ulp of 2e-4 at 3000) would be carried into a
-    map fitted far from the keys (review findings). A translation is
-    therefore calibrated around its own keys: the base is the middle of their
-    values and the steps reach as far as the keys do (at least a meter), where
-    the images are small and the map is accurate across all the keys. The
-    points are rounded to 32 bits so that they are what the importer reads.
+    rest pose, and an ulp there (2e-4 at 3000) carried into a map fitted
+    away from where it is used would spoil it (review findings). A
+    translation is therefore calibrated around anchors along its own keys
+    (`translation_anchors`), a group of probes `ANCHOR_SPACING` apart around
+    each, and a value is converted with the map of the nearest anchor, where
+    the images are as small as they get. Rotation and scale have one group.
     """
     if path != "translation":
-        return _CALIBRATION[path]
-    values = [value for keys in keysets for value in keys["values"]]
-    low = [min(value[i] for value in values) for i in range(3)]
-    high = [max(value[i] for value in values) for i in range(3)]
-    base = [(low[i] + high[i]) / 2 for i in range(3)]
-    step = max([1.0, *((high[i] - low[i]) / 2 for i in range(3))])
+        return [_CALIBRATION[path]]
     offsets = [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 2, 3)]
     return [
-        tuple(float32(base[i] + step * offset[i]) for i in range(3))
-        for offset in offsets
+        [
+            tuple(float32(anchor[i] + ANCHOR_SPACING * offset[i]) for i in range(3))
+            for offset in offsets
+        ]
+        for anchor in translation_anchors(keysets)
     ]
 
 
@@ -1107,7 +1146,7 @@ CALIBRATION_STEPS = 8 * 2.0**-24
 
 def add_calibration(document, cubics):
     """Add an animation for each of `cubics`' animations, of the keys
-    `calibration_points` gives, with a channel for every node and path that
+    `calibration_groups` gives, with a channel for every node and path that
     animation has a cubic spline channel for but weights, one second apart.
     Each is calibrated around its own animation's keys: another clip's keys,
     far from this one's, would bring back the rounding that the points near
@@ -1121,7 +1160,11 @@ def add_calibration(document, cubics):
             # A translation has points of its own; the others share theirs.
             which = (node, path) if path == "translation" else path
             if which not in made:
-                points = calibration_points(path, [targets[(node, path)]])
+                points = [
+                    point
+                    for group in calibration_groups(path, [targets[(node, path)]])
+                    for point in group
+                ]
                 time_input = _append_accessor(
                     document, "SCALAR", [float(i) for i in range(len(points))], 1, True
                 )
@@ -1214,9 +1257,11 @@ def fcurve_target(fcurve, slot):
 
 
 def calibrate(cubics):
-    """The importer's affine map for every node and path of `cubics` but
-    weights: {(animation, node, path): (A, b)}, measured from the calibration
-    animations that `add_calibration` put in the private copy."""
+    """The importer's affine maps for every node and path of `cubics` but
+    weights: {(animation, node, path): [(base, A, b)]}, a map for each group
+    of `calibration_groups` (the first point of the group is its base),
+    measured from the calibration animations that `add_calibration` put in the
+    private copy."""
     maps = {}
     for animation, targets in cubics.items():
         action = bpy.data.actions.get(CALIBRATION_NAME.format(animation))
@@ -1234,26 +1279,33 @@ def calibrate(cubics):
         for node, path in targets:
             if path == "weights":
                 continue
-            points = calibration_points(path, [targets[(node, path)]])
+            groups = calibration_groups(path, [targets[(node, path)]])
+            width = len(groups[0][0])
+            count = sum(len(group) for group in groups)
             found = curves.get((node, path), {})
-            if sorted(found) != list(range(len(points[0]))) or any(
-                len(column) != len(points) for column in found.values()
+            if sorted(found) != list(range(width)) or any(
+                len(column) != count for column in found.values()
             ):
                 raise ScriptError(
                     f"cannot measure how Blender imports node {node}'s {path}: "
                     "the calibration animation has no such curves"
                 )
-            images = [
-                tuple(found[i][k] for i in range(len(points[0])))
-                for k in range(len(points))
-            ]
-            solved = solve_affine(points, images)
-            if solved is None:
-                raise ScriptError(
-                    f"cannot measure how Blender imports node {node}'s {path}: "
-                    "its conversion is not affine"
-                )
-            maps[(animation, node, path)] = solved
+            entries = []
+            start = 0
+            for group in groups:
+                images = [
+                    tuple(found[i][start + k] for i in range(width))
+                    for k in range(len(group))
+                ]
+                start += len(group)
+                solved = solve_affine(group, images)
+                if solved is None:
+                    raise ScriptError(
+                        f"cannot measure how Blender imports node {node}'s {path}: "
+                        "its conversion is not affine"
+                    )
+                entries.append((group[0], *solved))
+            maps[(animation, node, path)] = entries
     return maps
 
 
@@ -1263,6 +1315,26 @@ def calibrate(cubics):
 # property, `image` takes `cubic_exact`'s value to the property's, and `target`
 # is a weights channel's morph target, else None.
 _CUBIC = {"all": {}, "active": ()}
+
+
+def convert(entries, row, g):
+    """Component `row` of the importer's conversion of the exact glTF value
+    `g` (a tuple of `Fraction`s), with the map measured nearest to it."""
+    if len(entries) > 1:
+        point = [float(component) for component in g]
+        entry = min(
+            entries,
+            key=lambda e: sum((p - a) ** 2 for p, a in zip(point, e[0], strict=True)),
+        )
+    else:
+        entry = entries[0]
+    _, matrix, offset = entry
+    return float(
+        sum(
+            (Fraction(a) * b for a, b in zip(matrix[row], g, strict=True)),
+            Fraction(offset[row]),
+        )
+    )
 
 
 def cubic_overrides(cubics):
@@ -1303,17 +1375,9 @@ def cubic_overrides(cubics):
                             image = lambda g, morph=morph: float(g[morph])  # noqa: E731
                             index = None
                         else:
-                            matrix, offset = maps[(animation, *target)]
-                            row = matrix[fcurve.array_index]
-                            shift = offset[fcurve.array_index]
-                            image = lambda g, row=row, shift=shift: float(  # noqa: E731
-                                sum(
-                                    (
-                                        Fraction(a) * b
-                                        for a, b in zip(row, g, strict=True)
-                                    ),
-                                    Fraction(shift),
-                                )
+                            entries = maps[(animation, *target)]
+                            image = lambda g, entries=entries, row=fcurve.array_index: (  # noqa: E731
+                                convert(entries, row, g)
                             )
                             index = fcurve.array_index
                         found.extend(

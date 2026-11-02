@@ -790,6 +790,54 @@ def test_a_joint_translated_far_from_its_bind_pose_is_measured_accurately(
         assert box == pytest.approx((0.0, 1.0, 1.0, 0.0), abs=1e-4)
 
 
+@pytest.mark.parametrize("interpolation", ["LINEAR", "CUBICSPLINE"])
+def test_a_clip_spanning_distant_translations_is_accurate_in_every_segment(
+    found, tmp_path, interpolation
+):
+    # A review finding. The joint of the previous test, at (1000, 2000, 3000),
+    # holds there for a second, goes to twice that and comes back. Calibrated
+    # around keys a thousand meters apart, the map is 3e-4 out where the joint
+    # rests; calibrated around the keys' own values it is not. Where the joint
+    # is at its rest pose (t <= 1 and t = 3) the triangle is at its own
+    # coordinates, L, R, U, D = 0, 1, 1, 0.
+    rest = (1000.0, 2000.0, 3000.0)
+    c, s = 0.28, 0.96
+    x, y, z = rest
+    bind = (-(c * x + s * y), -(-s * x + c * y), -z)
+    model = GlbWriter()
+    joint = model.node("joint", translation=rest, rotation=(0.0, 0.0, 0.6, 0.8))
+    skin = model.skin([joint], [(c, -s, 0, 0, s, c, 0, 0, 0, 0, 1, 0, *bind, 1)])
+    skinned = model.node(
+        "skinned",
+        mesh=model.mesh(
+            TRIANGLE, joints=[(0, 0, 0, 0)] * 3, skin_weights=[(1, 0, 0, 0)] * 3
+        ),
+        skin=skin,
+    )
+    model.scene([joint, skinned], default=True)
+    far = tuple(2 * v for v in rest)
+    keys = [rest, rest, far, rest]
+    if interpolation == "CUBICSPLINE":
+        keys = [row for key in keys for row in (ZERO, key, ZERO)]
+    model.animation(
+        "hold",
+        [(joint, "translation", [0.0, 1.0, 2.0, 3.0], keys)],
+        interpolation=interpolation,
+    )
+    result, _ = measure(
+        found,
+        model.write(tmp_path, "hold"),
+        tmp_path,
+        clip_names=["hold"],
+        once=["hold"],
+    )
+    rows = {time: box for _, time, box, _ in by_clip(result)["hold"]}
+    assert 1.0 in rows and 3.0 in rows
+    for time, box in rows.items():
+        if time <= 1.0 or time == 3.0:
+            assert box == pytest.approx((0.0, 1.0, 1.0, 0.0), abs=1e-4), time
+
+
 @pytest.mark.parametrize("where", ["in no scene", "in another scene"])
 def test_a_cubic_channel_on_a_node_outside_the_selected_scene(found, tmp_path, where):
     # The clip moves the subject with a cubic curve; the same clip also moves

@@ -2182,15 +2182,20 @@ section's settings on 5.2.2:
   into Blender's, and a bone's rest pose for a joint). The script does not
   repeat that arithmetic: for each clip with cubic channels the private copy
   holds one more animation, of known keys for each node and path the clip
-  animates, and the map is solved from how the importer converts them and
+  animates, and the maps are solved from how the importer converts them and
   checked on further keys to 1e-5 plus a few steps of 32-bit rounding of the
-  largest image. Each clip is calibrated on its own. A translation is calibrated
-  around that clip's own keys (a base at the middle of their values, steps as
-  far as they reach and at least a meter, rounded to 32 bits), where the images
-  of a joint with a large bind offset are small, so that the importer's 32-bit
-  rounding of values in the thousands cannot move the map, and another clip's
-  keys, far away, cannot either. Evaluated values equal glTF's cubic formula at
-  every time, to float precision.
+  largest image. Each clip is calibrated on its own, and a translation locally.
+  The importer works in 32 bits, and a joint with a large bind offset has images
+  in the hundreds or thousands wherever it is not near its rest pose, whose
+  rounding (2e-4 at 3000) a single map fitted over the whole range would
+  inherit. The script therefore measures a translation around anchors: the
+  channel's key values, in order, with points between two successive values more
+  than 256 m apart (at most 64 anchors, evenly thinned beyond that), each with a
+  group of probes 256 m around it, and converts a value with the map of the
+  nearest anchor, where the images are as small as they get. Evaluated values
+  equal glTF's cubic formula at every time to the importer's own 32-bit
+  resolution at the values involved (an ulp of its image, about 1e-4 m at images
+  of a thousand meters).
 - **Only one mesh-level weight animation is kept per mesh,** and it is attached
   to the original mesh, which the capture replaces with a copy for each node.
   The script gives each node of the selected scene its own `weights` channel in

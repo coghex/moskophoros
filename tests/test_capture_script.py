@@ -708,7 +708,7 @@ def translation_keys(*values):
 def points_for(script, path):
     if path == "translation":
         keys = translation_keys((0.0, 0.0, 0.0), (2.0, 0.0, 0.0))
-        return script.calibration_points("translation", [keys])
+        return script.calibration_groups("translation", [keys])[0]
     return script._CALIBRATION[path]
 
 
@@ -1007,9 +1007,10 @@ def test_the_private_copy_reduces_cubic_samplers_to_their_keys(script, tmp_path)
     sampler = calibration["samplers"][calibration["channels"][0]["sampler"]]
     assert script.read_accessor(copy, fetch, sampler["output"], source) == [
         tuple(map(float, point))
-        for point in script.calibration_points(
+        for group in script.calibration_groups(
             "translation", [cubics[0][(shape, "translation")]]
         )
+        for point in group
     ]
     # The original document is untouched.
     assert document["animations"][0]["samplers"][0]["interpolation"] == "CUBICSPLINE"
@@ -1050,9 +1051,10 @@ def test_each_clip_is_calibrated_around_its_own_keys(script, tmp_path):
         assert points[0] == here
         assert points == [
             tuple(map(float, point))
-            for point in script.calibration_points(
+            for group in script.calibration_groups(
                 "translation", [cubics[animation][(shape, "translation")]]
             )
+            for point in group
         ]
 
 
@@ -1336,39 +1338,81 @@ def float32_of(value):
     return struct.unpack("<f", struct.pack("<f", value))[0]
 
 
-def test_translation_points_surround_the_keys_and_are_32_bit_values(script):
+def test_translation_anchors_follow_the_keys_and_fill_long_gaps(script):
+    # Values 1000 m apart get anchors every 250 m between them, in order; a
+    # repeated value is one anchor.
+    keys = translation_keys((0.0, 0.0, 0.0), (1000.0, 0.0, 0.0), (1000.0, 0.0, 0.0))
+    assert script.translation_anchors([keys]) == [
+        (0.0, 0.0, 0.0),
+        (250.0, 0.0, 0.0),
+        (500.0, 0.0, 0.0),
+        (750.0, 0.0, 0.0),
+        (1000.0, 0.0, 0.0),
+    ]
+    # Short gaps add none, and several channels' keys all count.
+    near = translation_keys((1.0, 2.0, 3.0), (4.0, 2.0, 3.0))
+    far = translation_keys((9.0, 9.0, 9.0))
+    assert script.translation_anchors([near, far]) == [
+        (1.0, 2.0, 3.0),
+        (4.0, 2.0, 3.0),
+        (9.0, 9.0, 9.0),
+    ]
+
+
+def test_translation_anchors_are_rounded_to_32_bits_and_thinned(script):
+    assert script.translation_anchors([translation_keys((0.1, 0.1, 0.1))]) == [
+        (float32_of(0.1),) * 3
+    ]
+    many = translation_keys(*[(float(i), 0.0, 0.0) for i in range(200)])
+    anchors = script.translation_anchors([many])
+    assert len(anchors) <= script.MAX_ANCHORS
+    assert anchors[0] == (0.0, 0.0, 0.0)
+    assert anchors == sorted(anchors)
+
+
+def test_each_translation_anchor_gets_a_group_of_probes_around_it(script):
     keys = translation_keys((1000.0, 2000.0, 3000.0), (1004.0, 2000.0, 2990.0))
-    points = script.calibration_points("translation", [keys])
-    # The middle is (1002, 2000, 2995) and the step is the largest half extent.
-    assert points[0] == (1002.0, 2000.0, 2995.0)
-    assert points[1] == (1007.0, 2000.0, 2995.0)
-    assert points[4] == (1002.0 + 5, 2000.0 + 10, 2995.0 + 15)
-    # With no extent the step is a meter, and rounding to 32 bits is the
-    # importer's reading of the file.
-    still = script.calibration_points(
-        "translation", [translation_keys((0.1, 0.1, 0.1))]
-    )
-    assert still[0] == (float32_of(0.1),) * 3
-    assert still[1][0] == float32_of(float32_of(0.1) + 1.0)
-    # Other paths have points of their own, and keys from several channels count.
-    assert script.calibration_points("scale", []) is script._CALIBRATION["scale"]
-    both = script.calibration_points(
-        "translation", [translation_keys((0.0,) * 3), translation_keys((8.0,) * 3)]
-    )
-    assert both[0] == (4.0,) * 3 and both[1] == (8.0, 4.0, 4.0)
+    groups = script.calibration_groups("translation", [keys])
+    assert len(groups) == 2
+    step = script.ANCHOR_SPACING
+    for group, anchor in zip(
+        groups, [(1000.0, 2000.0, 3000.0), (1004.0, 2000.0, 2990.0)], strict=True
+    ):
+        assert group[0] == anchor
+        assert group[1] == (anchor[0] + step, anchor[1], anchor[2])
+        assert group[4] == (
+            anchor[0] + step,
+            anchor[1] + 2 * step,
+            anchor[2] + 3 * step,
+        )
+    # Other paths have the one group of their own.
+    assert script.calibration_groups("scale", []) == [script._CALIBRATION["scale"]]
+
+
+def test_a_value_is_converted_with_the_map_of_the_nearest_anchor(script):
+    left = ((0.0, 0.0, 0.0), [[1.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0]], [0.0, 0.0, 0.0])
+    right = ((1000.0, 0.0, 0.0), [[2.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0]], [1.0, 0, 0])
+    from fractions import Fraction as F
+
+    near_left = (F(10), F(0), F(0))
+    near_right = (F(900), F(0), F(0))
+    assert script.convert([left, right], 0, near_left) == 10.0
+    assert script.convert([left, right], 0, near_right) == 1801.0
+    assert script.convert([left], 0, near_right) == 900.0
 
 
 @pytest.mark.parametrize("bind", [(110.0, -20.0, 150.0), (2200.0, -400.0, 3000.0)])
 def test_a_joint_with_a_large_bind_offset_is_measured_accurately(script, bind):
     # Review findings. The importer maps a joint's translation g to
     # R⁻¹·(g − e), R⁻¹ turning about z by the rest rotation (0, 0, 0.6, 0.8)
-    # and e the rest pose, here a little off the keys; it works in 32 bits.
-    # Calibrated around the keys, where the images are small, the map is
-    # accurate there even when the bind offset is in the thousands.
+    # and e the rest pose, here a little off the first key; it works in 32
+    # bits. A second key twice as far puts the joint's other rest 1000s of
+    # meters away. Each anchor is measured where its images are small, so the
+    # map is accurate at the first key whatever else the clip holds.
     c, s_ = 0.28, 0.96
     matrix = [[c, s_, 0.0], [-s_, c, 0.0], [0.0, 0.0, 1.0]]
-    rest = tuple(v / 2.2 + 0.05 for v in bind)  # the joint, near the keys
-    keys = (tuple(v / 2.2 for v in bind),) * 2
+    first = tuple(v / 2.2 for v in bind)
+    rest = tuple(v + 0.05 for v in first)
     offset = [-sum(matrix[i][j] * rest[j] for j in range(3)) for i in range(3)]
 
     def imported(point):
@@ -1377,12 +1421,15 @@ def test_a_joint_with_a_large_bind_offset_is_measured_accurately(script, bind):
             for i in range(3)
         )
 
-    points = script.calibration_points("translation", [translation_keys(*keys)])
-    solved = script.solve_affine(points, [imported(point) for point in points])
-    assert solved is not None
-    got, shift = solved
-    target = keys[0]
+    keys = translation_keys(first, first, tuple(2 * v for v in first), first)
+    entries = []
+    for group in script.calibration_groups("translation", [keys]):
+        solved = script.solve_affine(group, [imported(point) for point in group])
+        assert solved is not None
+        entries.append((group[0], *solved))
+    from fractions import Fraction as F
+
+    exact = tuple(F(v) for v in first)
     for i in range(3):
-        mapped = sum(got[i][j] * target[j] for j in range(3)) + shift[i]
-        want = sum(matrix[i][j] * target[j] for j in range(3)) + offset[i]
-        assert mapped == pytest.approx(want, abs=3e-6)
+        want = sum(matrix[i][j] * first[j] for j in range(3)) + offset[i]
+        assert script.convert(entries, i, exact) == pytest.approx(want, abs=3e-6)
