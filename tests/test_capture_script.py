@@ -1223,30 +1223,6 @@ def test_an_animation_the_pointer_emptied_animates_the_placeholder(script, tmp_p
     ]
 
 
-ROTATION_KEYS = {
-    "times": [0.0, 1.0],
-    "values": [(0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0, 1.0)],
-    "ins": [(0.0,) * 4, (-1e-21, 0.0, 0.0, 4.0)],
-    "outs": [(1e-21, 0.0, 0.0, -4.0), (0.0,) * 4],
-    "rotation": True,
-}
-
-
-@pytest.mark.parametrize(
-    ("tangent", "want"),
-    [
-        # w cancels at the middle and x is 2.5e-22, whose square underflows
-        # in 32 bits; the quaternion is (1, 0, 0, 0).
-        (1e-21, (1.0, 0.0, 0.0, 0.0)),
-    ],
-)
-def test_a_cubic_rotation_is_normalized_in_double_precision(script, tangent, want):
-    keys = dict(ROTATION_KEYS)
-    got = script.cubic_value(keys, 0.5)
-    assert math.hypot(*got) == pytest.approx(1.0, abs=1e-15)
-    assert got == pytest.approx(want, abs=1e-12)
-
-
 def test_only_a_rotation_is_normalized_and_not_the_zero_quaternion(script):
     unit = {
         "times": [0.0],
@@ -1407,7 +1383,7 @@ def above(value):
     ("path", "limit", "unit"),
     [
         ("translation", 256.0, " m"),
-        ("scale", 1e4, ""),
+        ("scale", 256.0, ""),
         ("weights", 1e4, ""),
         ("rotation", 1e4, ""),
     ],
@@ -1539,7 +1515,7 @@ def test_a_channel_without_names_is_named_by_index(script, tmp_path):
     with pytest.raises(script.RangeError) as raised:
         script.private_copy(document, rest, source, 0)
     assert str(raised.value) == (
-        "animation 0, node 0's scale has a key value of 20000, beyond ±10000"
+        "animation 0, node 0's scale has a key value of 20000, beyond ±256"
     )
 
 
@@ -1587,3 +1563,167 @@ def test_a_channel_in_a_clip_nothing_selects_is_still_held_to_the_range(
 def test_the_script_and_the_launcher_agree_on_the_input_error(script):
     assert script.INPUT_STATUS == blender.INPUT_STATUS == 3
     assert script.INPUT_PREFIX == blender.INPUT_PREFIX
+
+
+def test_a_rotation_that_nearly_cancels_is_a_degenerate_sample(script):
+    # A review finding. Both keys are the identity over 3 s, with out-tangent
+    # (1e-20, 0, 0, 0) and in-tangent (0, 0, 0, 4.5). At 1 s the exact w is 0
+    # and x is 1e-20: a quaternion whose direction double arithmetic cannot
+    # give. Samples where the interpolated quaternion is shorter than 0.001
+    # are an input error (owner decision 2026-11-01).
+    keys = {
+        "times": [0.0, 3.0],
+        "values": [(0.0, 0.0, 0.0, 1.0)] * 2,
+        "ins": [(0.0,) * 4, (0.0, 0.0, 0.0, 4.5)],
+        "outs": [(1e-20, 0.0, 0.0, 0.0), (0.0,) * 4],
+        "rotation": True,
+    }
+    assert script.cubic_problem("rotation", keys) is None
+    assert script.rotation_problem(keys, [0.0, 0.25, 0.5]) is None
+    time_s, length = script.rotation_problem(keys, [0.0, 0.5, 1.0, 1.5])
+    assert time_s == 1.0 and length < 1e-15
+
+
+def test_a_rotation_sample_is_supported_down_to_a_length_of_a_thousandth(script):
+    # Both keys are the identity over a second; with out-tangent
+    # (8x, 0, 0, 8x − 8) and in-tangent 0, the middle is the identity plus
+    # an eighth of the out-tangent: (x, 0, 0, x), of length x·√2.
+    def keys(x):
+        return {
+            "times": [0.0, 1.0],
+            "values": [(0.0, 0.0, 0.0, 1.0)] * 2,
+            "ins": [(0.0,) * 4] * 2,
+            "outs": [(8 * x, 0.0, 0.0, 8 * x - 8), (0.0,) * 4],
+            "rotation": True,
+        }
+
+    assert script.cubic_raw(keys(0.25), 0.5) == pytest.approx((0.25, 0.0, 0.0, 0.25))
+    enough = 1e-3 / math.sqrt(2) * 1.0001
+    assert script.rotation_problem(keys(enough), [0.5]) is None
+    short = 1e-3 / math.sqrt(2) * 0.9999
+    time_s, length = script.rotation_problem(keys(short), [0.0, 0.5])
+    assert time_s == 0.5 and length == pytest.approx(1e-3 * 0.9999, rel=1e-6)
+
+
+def test_a_rotation_in_the_active_clip_is_checked_at_its_samples(script, monkeypatch):
+    degenerate = {
+        "times": [0.0, 3.0],
+        "values": [(0.0, 0.0, 0.0, 1.0)] * 2,
+        "ins": [(0.0,) * 4, (0.0, 0.0, 0.0, 4.5)],
+        "outs": [(1e-20, 0.0, 0.0, 0.0), (0.0,) * 4],
+        "rotation": True,
+        "label": "animation 1 ('flip'), node 2 ('hip')'s rotation",
+    }
+    entry = (None, "", "rotation_quaternion", 0, None, degenerate, None)
+    # Four properties of one channel are one channel.
+    monkeypatch.setitem(script._CUBIC, "active", [entry] * 4)
+    script.check_rotations({"name": "flip"}, [0.0, 0.5])
+    with pytest.raises(script.RangeError) as raised:
+        script.check_rotations({"name": "flip"}, [0.0, 0.5, 1.0])
+    message = str(raised.value)
+    assert message.startswith(
+        "clip 'flip': animation 1 ('flip'), node 2 ('hip')'s rotation has an "
+        "interpolated quaternion of length "
+    )
+    assert message.endswith(" at 1.0 s, below 0.001")
+    # Channels that are not rotations are left alone.
+    monkeypatch.setitem(
+        script._CUBIC, "active", [(None, "", "location", 0, None, {"times": []}, None)]
+    )
+    script.check_rotations({"name": "flip"}, [1.0])
+
+
+def test_a_rotation_is_close_to_glTFs_at_every_sample_of_a_supported_curve(script):
+    import random
+
+    rng = random.Random(7)
+    for _ in range(200):
+        keys = {
+            "times": [0.0, rng.choice([0.5, 3.0, 40.0])],
+            "values": [tuple(rng.uniform(-3, 3) for _ in range(4)) for _ in range(2)],
+            "ins": [(0.0,) * 4, tuple(rng.uniform(-1e4, 1e4) for _ in range(4))],
+            "outs": [tuple(rng.uniform(-1e4, 1e4) for _ in range(4)), (0.0,) * 4],
+            "rotation": True,
+        }
+        time_s = rng.uniform(0.0, keys["times"][1])
+        want = exact_cubic({**keys}, time_s)
+        length = math.hypot(*want)
+        got = script.cubic_value(keys, time_s)
+        assert got == pytest.approx(tuple(w / length for w in want), abs=1e-9)
+
+
+@pytest.mark.parametrize("limit", [256.0])
+def test_a_scale_is_supported_between_its_keys_up_to_the_limit(script, limit):
+    # Both keys are 128, with out-tangent a and in-tangent −a over a second:
+    # the curve is 128 + a·s·(1 − s) and peaks at 128 + a/4 halfway.
+    def keys(a):
+        return {
+            "times": [0.0, 1.0],
+            "values": [(128.0, 1.0, 1.0)] * 2,
+            "ins": [(0.0,) * 3, (-a, 0.0, 0.0)],
+            "outs": [(a, 0.0, 0.0), (0.0,) * 3],
+        }
+
+    assert script.cubic_value(keys(512.0), 0.5)[0] == limit
+    assert script.cubic_problem("scale", keys(512.0)) is None
+    assert script.cubic_problem("scale", keys(513.0)) == (
+        "reaches 256.25 between its keys 0 and 1, beyond ±256"
+    )
+    # The same curve as a translation is beyond its limit in metres.
+    assert script.cubic_problem("translation", keys(513.0)).endswith("256 m")
+
+
+def shared_sampler_model(first, second, values):
+    """A node, with three morph targets, whose `first` and `second` channels
+    read one cubic sampler of three-component `values` (constant, with zero
+    tangents)."""
+    model = GlbWriter()
+    mesh = model.mesh(
+        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+        targets=[[(0.0, 0.0, 0.0)] * 3] * 3,
+        weights=[0.0, 0.0, 0.0],
+    )
+    node = model.node("shape", mesh=mesh)
+    model.scene([node], default=True)
+    zero = (0.0, 0.0, 0.0)
+    model.animation(
+        "walk",
+        [(node, first, [0.0, 1.0], [zero, values, zero] * 2)],
+        interpolation="CUBICSPLINE",
+    )
+    model.document["animations"][0]["channels"].append(
+        {"sampler": 0, "target": {"node": node, "path": second}}
+    )
+    return model
+
+
+@pytest.mark.parametrize(
+    "order", [("weights", "translation"), ("translation", "weights")]
+)
+def test_every_channel_sharing_a_sampler_is_held_to_its_own_range(
+    script, tmp_path, order
+):
+    # A review finding. One sampler of (257, 1, 1) is a fine set of weights
+    # (limit 10 000) and a translation beyond 256 m, whichever comes first.
+    model = shared_sampler_model(*order, (257.0, 1.0, 1.0))
+    document, rest, source = load(script, model, tmp_path)
+    with pytest.raises(script.RangeError) as raised:
+        script.private_copy(document, rest, source, 0)
+    assert str(raised.value) == (
+        "animation 0 ('walk'), node 0 ('shape')'s translation has a key value "
+        "of 257 m, beyond ±256 m"
+    )
+
+
+def test_a_sampler_shared_inside_every_range_is_accepted_by_both(script, tmp_path):
+    model = shared_sampler_model("weights", "translation", (255.0, 1.0, 1.0))
+    document, rest, source = load(script, model, tmp_path)
+    _, cubics = script.private_copy(document, rest, source, 0)
+    assert sorted(cubics[0]) == [(0, "translation"), (0, "weights")]
+
+
+def test_a_three_component_sampler_is_not_a_rotation(script, tmp_path):
+    model = shared_sampler_model("translation", "rotation", (1.0, 1.0, 1.0))
+    document, rest, source = load(script, model, tmp_path)
+    with pytest.raises(script.ScriptError, match="does not hold rotation values"):
+        script.private_copy(document, rest, source, 0)

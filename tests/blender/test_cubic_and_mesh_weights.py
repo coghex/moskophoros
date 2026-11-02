@@ -631,37 +631,6 @@ def test_a_cubic_rotation_is_exact_just_after_a_key_with_a_steep_tangent(
     assert abs(measured[2][0] - key_only[0]) > 1e-3
 
 
-def test_a_cubic_rotation_is_normalized_in_double_precision(found, tmp_path):
-    # Both keys are the identity. At 0.5 s the middle of the curve is a
-    # quaternion that is nearly pure x, 2.5e-22 with w cancelled to zero,
-    # whose square underflows in Blender's 32 bits: a half turn about x, so
-    # the triangle's top vertex lands at its bottom (a review finding).
-    times = [0.0, 1.0]
-    identity = (0.0, 0.0, 0.0, 1.0)
-    zero = (0.0,) * 4
-    tangent = 1e-21
-    out, into = (tangent, 0.0, 0.0, -4.0), (-tangent, 0.0, 0.0, 4.0)
-    keys = [(zero, identity, out), (into, identity, zero)]
-    model = GlbWriter()
-    shape = model.node("shape", mesh=True)
-    model.scene([shape], default=True)
-    model.animation(
-        "flip", [(shape, "rotation", times, flat(keys))], interpolation="CUBICSPLINE"
-    )
-    result, _ = measure(
-        found,
-        model.write(tmp_path, "flip"),
-        tmp_path,
-        clip_names=["flip"],
-        once=["flip"],
-    )
-    measured = boxes(result)["flip"]
-    for got, t in zip(measured, ONCE_TIMES, strict=True):
-        assert got == pytest.approx(rotation_bounds(times, keys, t), abs=1e-4)
-    # The middle sample is the half turn: L, R, U, D = 0, 1, 0, 1.
-    assert measured[2] == pytest.approx((0.0, 1.0, 0.0, 1.0), abs=1e-4)
-
-
 @pytest.mark.parametrize("interpolation", ["LINEAR", "CUBICSPLINE"])
 @pytest.mark.parametrize("rest", [(50.0, 100.0, 150.0), (256.0, 0.0, 256.0)])
 @pytest.mark.parametrize("other_clip", [False, True], ids=["alone", "with a far clip"])
@@ -1084,12 +1053,12 @@ def refused(found, tmp_path, model, message):
     return raised.value
 
 
-def shape_model(path, keys, name="walk"):
+def shape_model(path, keys, name="walk", times=(0.0, 1.0)):
     model = GlbWriter()
     shape = model.node("shape", mesh=True)
     model.scene([shape], default=True)
     model.animation(
-        name, [(shape, path, [0.0, 1.0], keys)], interpolation="CUBICSPLINE"
+        name, [(shape, path, list(times), keys)], interpolation="CUBICSPLINE"
     )
     return model
 
@@ -1114,8 +1083,8 @@ def shape_model(path, keys, name="walk"):
         ),
         (
             "scale",
-            [ZERO, (1.0, 1.0, 1.0), ZERO, ZERO, (10001.0, 1.0, 1.0), ZERO],
-            "has a key value of 10001, beyond ±10000",
+            [ZERO, (1.0, 1.0, 1.0), ZERO, ZERO, (257.0, 1.0, 1.0), ZERO],
+            "has a key value of 257, beyond ±256",
         ),
         (
             "rotation",
@@ -1196,10 +1165,16 @@ def test_a_rotation_key_at_the_limit_of_a_thousandth_is_measured_exactly(
     assert boxes(result)["turn"][0] != pytest.approx((0.0, 1.0, 1.0, 0.0), abs=1e-2)
 
 
-def test_a_cubic_scale_at_the_limit_is_measured(found, tmp_path):
-    zero = (0.0, 0.0, 0.0)
-    wide = (10000.0, 1.0, 1.0)
-    model = shape_model("scale", [zero, wide, zero, zero, wide, zero], "grow")
+def test_a_cubic_scale_up_to_the_limit_is_measured_to_an_absolute_tolerance(
+    found, tmp_path
+):
+    # A review finding. Keys of 255 and 256 on x with zero tangents: the
+    # triangle's right bound is the scale itself, 255 + 3t² − 2t³, at
+    # absolute tolerance 1e-4 m (Blender holds the scale in 32 bits, 1.5e-5
+    # at these values).
+    one = (1.0, 1.0)
+    keys = [(ZERO, (255.0, *one), ZERO), (ZERO, (256.0, *one), ZERO)]
+    model = shape_model("scale", flat(keys), "grow")
     result, _ = measure(
         found,
         model.write(tmp_path, "grow"),
@@ -1207,8 +1182,47 @@ def test_a_cubic_scale_at_the_limit_is_measured(found, tmp_path):
         clip_names=["grow"],
         once=["grow"],
     )
-    for box in boxes(result)["grow"]:
-        assert box == pytest.approx((0.0, 10000.0, 1.0, 0.0), rel=1e-6)
+    rows = boxes(result)["grow"]
+    expected = [255.0 + 3 * t * t - 2 * t**3 for t in ONCE_TIMES]
+    assert expected[2] == 255.5
+    assert [row[1] for row in rows] == pytest.approx(expected, abs=1e-4)
+    assert [row[2] for row in rows] == pytest.approx([1.0] * 5, abs=1e-4)
+
+
+def test_a_cubic_scale_beyond_the_limit_is_an_input_error_whatever_its_precision(
+    found, tmp_path
+):
+    # The review's own case: 8192.0009765625 is exact in 32 bits and below the
+    # old limit of 10 000, where Blender cannot hold the sample to 1e-4 m.
+    big = (8192.0009765625, 1.0, 1.0)
+    model = shape_model("scale", [ZERO, big, ZERO, ZERO, big, ZERO], "grow")
+    refused(
+        found,
+        tmp_path,
+        model,
+        r"has a key value of 8192, beyond ±256",
+    )
+
+
+def test_a_rotation_whose_samples_stay_long_enough_is_measured_exactly(found, tmp_path):
+    # Both keys are the identity over a second; with out-tangent
+    # (0.012, 0, 0, 0.012 − 8) the middle is (0.0015, 0, 0, 0.0015), of length
+    # 0.0021, a quarter turn about x. The other samples are longer.
+    x = 0.0015
+    identity = (0.0, 0.0, 0.0, 1.0)
+    zero = (0.0,) * 4
+    keys = [(zero, identity, (8 * x, 0.0, 0.0, 8 * x - 8)), (zero, identity, zero)]
+    model = shape_model("rotation", flat(keys), "quarter")
+    result, _ = measure(
+        found,
+        model.write(tmp_path, "quarter"),
+        tmp_path,
+        clip_names=["quarter"],
+        once=["quarter"],
+    )
+    for got, t in zip(boxes(result)["quarter"], ONCE_TIMES, strict=True):
+        assert got == pytest.approx(rotation_bounds([0.0, 1.0], keys, t), abs=1e-4)
+    assert boxes(result)["quarter"][2] == pytest.approx((0.0, 1.0, 0.0, 0.0), abs=1e-4)
 
 
 def test_a_cubic_translation_at_the_limit_travels_exactly(found, tmp_path):
@@ -1229,6 +1243,57 @@ def test_a_cubic_translation_at_the_limit_travels_exactly(found, tmp_path):
     assert expected[2][1] == 257.0
     for got, want in zip(rows, expected, strict=True):
         assert got == pytest.approx(want, abs=1e-4)
+
+
+def test_a_rotation_that_cancels_to_nothing_at_a_sample_is_an_input_error(
+    found, tmp_path
+):
+    # A review finding. Both keys are the identity over 3 s, with out-tangent
+    # (1e-20, 0, 0, 0) and in-tangent (0, 0, 0, 4.5), all within the range. At
+    # 1 s the interpolated quaternion is 1e-20 long, whose direction no
+    # arithmetic in 32 bits or 64 gives; the sample is an input error naming
+    # the clip, the node and the time (owner decision 2026-11-01).
+    identity = (0.0, 0.0, 0.0, 1.0)
+    zero = (0.0,) * 4
+    keys = [
+        (zero, identity, (1e-20, 0.0, 0.0, 0.0)),
+        ((0.0, 0.0, 0.0, 4.5), identity, zero),
+    ]
+    model = shape_model("rotation", flat(keys), "flip", times=(0.0, 3.0))
+    error = refused(
+        found,
+        tmp_path,
+        model,
+        r"clip 'flip': animation 0 \('flip'\), node 0 \('shape'\)'s rotation has an "
+        r"interpolated quaternion of length [0-9.e-]+ at 1\.0 s, below 0\.001",
+    )
+    assert error.problem.startswith("clip 'flip': ")
+
+
+@pytest.mark.parametrize(
+    "order", [("weights", "translation"), ("translation", "weights")]
+)
+def test_every_channel_sharing_a_sampler_is_held_to_its_own_range(
+    found, tmp_path, order
+):
+    # A review finding. One sampler of (257, 1, 1) is a fine set of weights
+    # (limit 10 000) and a translation beyond 256 m, whichever comes first.
+    model = GlbWriter()
+    mesh = model.mesh(TRIANGLE, targets=[RISE, WIDEN, RISE], weights=[0.0] * 3)
+    face = model.node("face", mesh=mesh)
+    model.scene([face], default=True)
+    model.animation(
+        "walk",
+        [(face, order[0], [0.0, 1.0], [ZERO, (257.0, 1.0, 1.0), ZERO] * 2)],
+        interpolation="CUBICSPLINE",
+    )
+    share_sampler(model, 0, 0, face, order[1])
+    refused(
+        found,
+        tmp_path,
+        model,
+        r"node 0 \('face'\)'s translation has a key value of 257 m, beyond ±256 m",
+    )
 
 
 # Rendering

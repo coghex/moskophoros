@@ -778,10 +778,13 @@ in- and out-tangents; a rotation is the normalized cubic quaternion.
   node and the channel): a `CUBICSPLINE` channel of a node's translation,
   rotation, scale or weights with a value or tangent that is not finite; a
   tangent component beyond ±10 000; a translation's key value, or its value
-  anywhere between keys, beyond ±256 m; a rotation, scale or weight key value
-  beyond ±10 000; a rotation key whose quaternion is shorter than 0.001; or a
-  translation whose bind offset, the importer's image of a zero translation, is
-  beyond ±256 m. Every such channel in the file counts, whether or not the clip
+  anywhere between keys, beyond ±256 m; a scale's key value, or its value
+  anywhere between keys, beyond ±256; a rotation or weight key value beyond ±10
+  000; a rotation key whose quaternion is shorter than 0.001; a translation
+  whose bind offset, the importer's image of a zero translation, is beyond ±256
+  m; or a rotation whose interpolated quaternion is shorter than 0.001 at a
+  sample of a selected clip (the error names that clip and the time). Every
+  other limit applies to every such channel in the file, whether or not the clip
   is selected. Other interpolations have no such limits, and neither has the
   spacing of keys. The reasons are under [Supported Blender
   version](#supported-blender-version).
@@ -2187,9 +2190,12 @@ section's settings on 5.2.2:
   that key's value. A quaternion is evaluated component by component and the
   script normalizes it, as glTF says, before the value reaches Blender's 32-bit
   properties, which would underflow or overflow on a very small or large one
-  (the zero quaternion is left as it is). The importer negating a key that makes
-  an obtuse angle with the one before it does not matter. Channels that are not
-  cubic, and files with none, are evaluated by Blender as before.
+  (the zero quaternion is left as it is). Normalizing divides the rounding by
+  the quaternion's length, so a sample shorter than 0.001 is an input error (see
+  the range below); above it the rotation is within 0.06° of glTF's in the worst
+  case and 0.003° in a sweep of random keys. The importer negating a key that
+  makes an obtuse angle with the one before it does not matter. Channels that
+  are not cubic, and files with none, are evaluated by Blender as before.
 
 - **The importer converts a key's value with an affine map** (glTF's axes turned
   into Blender's, and a bone's rest pose for a joint). The script does not
@@ -2205,21 +2211,27 @@ section's settings on 5.2.2:
   within it, and the importer's own rounding of the value it is given (3e-5 m at
   256 m) is the rest of the 1e-4 m.
 
-- **The supported range of cubic spline channels (owner decision 2026-11-01,
-  "Approve as proposed").** The tool's values equal glTF's to 1e-4 m, and a
-  rotation to 0.1°, inside this range; a file outside it is an input error (exit
-  3, see [Input contract](#input-contract)), because the importer works in 32
-  bits and the figures below are what keeps its rounding inside that tolerance.
-  Translation values, key and between keys, and the bind offset (each component,
-  in Blender's axes): at most 256 m, where a 32-bit number resolves 3e-5 m; real
-  characters are under 10 m and scenes under 100 m. Tangent components of every
-  path: at most 10 000, a hundred times what exporters write (a tangent is a
-  slope times the key interval). Rotation, scale and weight key values: at most
-  10 000, and a rotation key at least 0.001 long, so that normalizing it loses
-  nothing; exporters write unit quaternions. Key spacing has no limit. A
-  translation's values between keys are checked at the roots of its derivative,
-  so a curve whose handles reach beyond 256 m but which stays within it is
-  supported.
+- **The supported range of cubic spline channels (owner decisions 2026-11-01,
+  "Approve as proposed", "Scale up to 256" and "Refuse degenerate samples").**
+  The tool's values equal glTF's to 1e-4 m, and a rotation to 0.1°, inside this
+  range; a file outside it is an input error (exit 3, see [Input
+  contract](#input-contract)), because the importer works in 32 bits and the
+  figures below are what keeps its rounding inside that tolerance. Translation
+  values, key and between keys, and the bind offset (each component, in
+  Blender's axes): at most 256 m, where a 32-bit number resolves 3e-5 m; real
+  characters are under 10 m and scenes under 100 m. Scale values, key and
+  between keys: at most 256, because Blender holds a scale in 32 bits and its
+  rounding grows with the object (1.5e-5 of its extent at 256, so 1e-4 m holds
+  for objects up to 6 m across); real scale animation is 0 to 10. Tangent
+  components of every path: at most 10 000, a hundred times what exporters write
+  (a tangent is a slope times the key interval). Rotation and weight key values:
+  at most 10 000, and a rotation key at least 0.001 long, as is each of its
+  interpolated samples in a selected clip; exporters write unit quaternions, and
+  a sample that nearly cancels has no direction to keep. Key spacing has no
+  limit. A translation's or scale's values between keys are checked at the roots
+  of its derivative, so a curve whose handles reach beyond 256 but which stays
+  within it is supported.
+
 - **Only one mesh-level weight animation is kept per mesh,** and it is attached
   to the original mesh, which the capture replaces with a copy for each node.
   The script gives each node of the selected scene its own `weights` channel in

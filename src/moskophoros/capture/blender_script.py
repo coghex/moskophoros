@@ -936,8 +936,8 @@ def cubic_keys(times, values):
     return part(1), part(0), part(2), block
 
 
-def cubic_value(keys, time_s):
-    """glTF's cubic spline of `keys` (what `expand_sampler` returns) at
+def cubic_raw(keys, time_s):
+    """glTF's cubic spline of `keys` (what `expand_cubics` returns) at
     `time_s`, as a tuple of floats: the first key's value before it and the
     last key's after it. Between keys `k` and `k + 1`, `step` seconds apart,
     with `u` the fraction of the way and `w` the fraction left, it is
@@ -948,40 +948,43 @@ def cubic_value(keys, time_s):
     its digits near its own key. Inside the supported range (`cubic_problem`)
     the terms are at most 1e4 times `step`, so double precision leaves an
     error below 1e-6 (4.5e-8 in a sweep of random keys against exact
-    arithmetic), far below the 1e-4 the result is good to. A
-    rotation is normalized, as glTF says: Blender's 32-bit properties would
-    underflow or overflow on a very small or large one. The zero quaternion is
-    left as it is."""
+    arithmetic), far below the 1e-4 the result is good to."""
     times, values, ins, outs = (
         keys[name] for name in ("times", "values", "ins", "outs")
     )
     if time_s <= times[0]:
-        value = values[0]
-    elif time_s >= times[-1]:
-        value = values[-1]
-    else:
-        k = bisect.bisect_right(times, time_s) - 1
-        start, end = times[k], times[k + 1]
-        step = end - start
-        u = (time_s - start) / step
-        w = (end - time_s) / step
-        h00, h10, h01, h11 = (
-            (1 + 2 * u) * w * w,
-            u * w * w,
-            (1 + 2 * w) * u * u,
-            -u * u * w,
+        return tuple(float(v) for v in values[0])
+    if time_s >= times[-1]:
+        return tuple(float(v) for v in values[-1])
+    k = bisect.bisect_right(times, time_s) - 1
+    start, end = times[k], times[k + 1]
+    step = end - start
+    u = (time_s - start) / step
+    w = (end - time_s) / step
+    h00, h10, h01, h11 = (1 + 2 * u) * w * w, u * w * w, (1 + 2 * w) * u * u, -u * u * w
+    return tuple(
+        h00 * p0 + step * h10 * m0 + h01 * p1 + step * h11 * a1
+        for p0, m0, p1, a1 in zip(
+            values[k], outs[k], values[k + 1], ins[k + 1], strict=True
         )
-        value = tuple(
-            h00 * p0 + step * h10 * m0 + h01 * p1 + step * h11 * a1
-            for p0, m0, p1, a1 in zip(
-                values[k], outs[k], values[k + 1], ins[k + 1], strict=True
-            )
-        )
+    )
+
+
+def cubic_value(keys, time_s):
+    """`cubic_raw`, normalized if `keys` are a rotation's, as glTF says:
+    Blender's 32-bit properties would underflow or overflow on a very small
+    or large quaternion. The zero quaternion is left as it is. A rotation is
+    only evaluated where its length is at least `MIN_QUATERNION`
+    (`check_rotations`), so dividing by it multiplies the rounding above by at
+    most a thousand: the angle is within 0.06° of glTF's in the worst case
+    (1e-6 over a length of 1e-3, at the longest key interval), 0.003° in a
+    sweep of random keys."""
+    value = cubic_raw(keys, time_s)
     if keys.get("rotation"):
         length = math.hypot(*value)
         if length > 0.0:
             value = tuple(component / length for component in value)
-    return tuple(float(component) for component in value)
+    return value
 
 
 def segment_point(keys, k, u):
@@ -1034,9 +1037,12 @@ def extremum_fractions(keys, k):
 # 0.1°) of glTF's; a file outside it is an input error, exit 3.
 TRANSLATION_LIMIT = 256.0  # m: a translation's key values, its values anywhere
 # between keys, and the importer's image of a zero translation (the bind offset)
-VALUE_LIMIT = 1e4  # rotation, scale and weight key values
+SCALE_LIMIT = 256.0  # a scale's key values and its values anywhere between keys:
+# Blender holds a scale in 32 bits, which resolves 3e-5 of an object's extent
+# at 256 (half that of rounding), so 1e-4 m holds for objects up to 6 m across
+VALUE_LIMIT = 1e4  # rotation and weight key values
 TANGENT_LIMIT = 1e4  # every tangent component, of any path
-MIN_QUATERNION = 1e-3  # the length of a rotation key
+MIN_QUATERNION = 1e-3  # the length of a rotation key, and of a rotation sample
 # Slack on what is computed rather than read: a curve's extremum is a root in
 # double precision, and the bind offset is read back through the importer's
 # 32-bit conversion (an ulp of 3e-5 m at 256 m).
@@ -1055,7 +1061,9 @@ def cubic_problem(path, keys):
         for x in row:
             if abs(x) > TANGENT_LIMIT:
                 return f"has a tangent of {x:g}, beyond ±{TANGENT_LIMIT:g}"
-    limit = TRANSLATION_LIMIT if path == "translation" else VALUE_LIMIT
+    limit = {"translation": TRANSLATION_LIMIT, "scale": SCALE_LIMIT}.get(
+        path, VALUE_LIMIT
+    )
     unit = " m" if path == "translation" else ""
     for row in keys["values"]:
         for x in row:
@@ -1069,24 +1077,54 @@ def cubic_problem(path, keys):
                     f"has a key quaternion of length {length:g}, "
                     f"below {MIN_QUATERNION:g}"
                 )
-    if path == "translation":
+    if path in ("translation", "scale"):
         for k in range(len(keys["values"]) - 1):
             for u in extremum_fractions(keys, k):
                 for x in segment_point(keys, k, u):
                     if abs(x) > limit + EXTREMUM_SLACK:
                         return (
-                            f"reaches {x:g} m between its keys {k} and {k + 1}, "
-                            f"beyond ±{limit:g} m"
+                            f"reaches {x:g}{unit} between its keys {k} and {k + 1}, "
+                            f"beyond ±{limit:g}{unit}"
                         )
     return None
 
 
-def expand_sampler(document, fetch, source, sampler, path, where, label):
-    """Replace one CUBICSPLINE `sampler` of a node's `path` with the LINEAR
-    sampler of its keys' values, in place. Returns the keys' times, values,
-    in-tangents and out-tangents for `cubic_overrides`, after checking them
-    against the supported range (`cubic_problem`): a channel outside it is a
-    `RangeError` naming `label`."""
+def rotation_problem(keys, times):
+    """The first of `times` (seconds, in order) at which the cubic rotation
+    `keys` has an interpolated quaternion shorter than `MIN_QUATERNION`, as
+    (time, length), or None. glTF normalizes it, which at such a length
+    divides by little more than rounding."""
+    for time_s in times:
+        length = math.hypot(*cubic_raw(keys, time_s))
+        if length < MIN_QUATERNION:
+            return time_s, length
+    return None
+
+
+def check_rotations(clip, times):
+    """Fail, as an input error, if a cubic rotation the clip animates is
+    shorter than `MIN_QUATERNION` at one of its sample `times`."""
+    seen = set()
+    for _, _, _, _, _, keys, _ in _CUBIC["active"]:
+        if not keys.get("rotation") or id(keys) in seen:
+            continue
+        seen.add(id(keys))
+        found = rotation_problem(keys, times)
+        if found is not None:
+            time_s, length = found
+            raise RangeError(
+                f"clip {clip['name']!r}: {keys['label']} has an interpolated "
+                f"quaternion of length {length:g} at {time_s!r} s, "
+                f"below {MIN_QUATERNION:g}"
+            )
+
+
+def expand_sampler(document, fetch, source, sampler, where):
+    """Replace one CUBICSPLINE `sampler` with the LINEAR sampler of its keys'
+    values, in place. Returns the keys' times, values, in-tangents and
+    out-tangents for `cubic_overrides` (a dict), and the number of components
+    of a key. Whether the sampler suits a channel's path and range is for
+    each channel that reads it to check (`expand_cubics`)."""
     try:
         times = [
             row[0] for row in read_accessor(document, fetch, sampler["input"], source)
@@ -1105,18 +1143,6 @@ def expand_sampler(document, fetch, source, sampler, path, where, label):
         values, ins, outs, block = cubic_keys(times, flat)
     except ValueError as error:
         raise ScriptError(f"{where}: {error}") from None
-    if path != "weights" and block != _PATH_WIDTHS[path]:
-        raise ScriptError(f"{where} does not hold {path} values")
-    keys = {
-        "times": times,
-        "values": values,
-        "ins": ins,
-        "outs": outs,
-        "rotation": path == "rotation",
-    }
-    problem = cubic_problem(path, keys)
-    if problem is not None:
-        raise RangeError(f"{label} {problem}")
     sampler["output"] = _append_accessor(
         document,
         kind,
@@ -1125,7 +1151,7 @@ def expand_sampler(document, fetch, source, sampler, path, where, label):
         False,
     )
     sampler["interpolation"] = "LINEAR"
-    return keys
+    return {"times": times, "values": values, "ins": ins, "outs": outs}, block
 
 
 def channel_label(names, animation, node, path):
@@ -1150,8 +1176,11 @@ def expand_cubics(document, fetch, source, names=((), ())):
     rotation, scale or weights as the LINEAR sampler of its keys' values,
     editing `document` in place. Returns {animation index: {(node, path):
     keys}} for `cubic_overrides`, `keys` being what `expand_sampler` gives
-    with the channel's name (`label`) added. `names` is the file's animation
-    names and node names, for errors."""
+    with the channel's name (`label`) and whether it is a rotation added.
+    Every channel is checked against its own path, even when it shares a
+    sampler: the number of components must suit it and the keys must be in the
+    supported range (`cubic_problem`). `names` is the file's animation names
+    and node names, for errors."""
     cubics = {}
     expanded = {}
     for a, animation in enumerate(document.get("animations") or []):
@@ -1166,20 +1195,21 @@ def expand_cubics(document, fetch, source, names=((), ())):
                 key not in expanded and sampler.get("interpolation") != "CUBICSPLINE"
             ):
                 continue
-            label = channel_label(names, a, *target)
+            where = f"{source}: animation {a}'s sampler {channel['sampler']}"
             if key not in expanded:
-                expanded[key] = expand_sampler(
-                    document,
-                    fetch,
-                    source,
-                    sampler,
-                    target[1],
-                    f"{source}: animation {a}'s sampler {channel['sampler']}",
-                    label,
-                )
-            cubics.setdefault(a, {}).setdefault(
-                target, {**expanded[key], "label": label}
-            )
+                expanded[key] = expand_sampler(document, fetch, source, sampler, where)
+            base, block = expanded[key]
+            path = target[1]
+            if path != "weights" and block != _PATH_WIDTHS[path]:
+                raise ScriptError(f"{where} does not hold {path} values")
+            if target in cubics.get(a, {}):
+                continue
+            label = channel_label(names, a, *target)
+            keys = {**base, "rotation": path == "rotation", "label": label}
+            problem = cubic_problem(path, keys)
+            if problem is not None:
+                raise RangeError(f"{label} {problem}")
+            cubics.setdefault(a, {})[target] = keys
     return cubics
 
 
@@ -1837,6 +1867,7 @@ def measure(job, document, statics):
                     "angle_deg"
                 ]
         check_weights(objects, document, clip, sorted(angles), fps)
+        check_rotations(clip, sorted(angles))
         for time_s in sorted(angles):
             points = vertices(objects, evaluate(scene, fps, time_s))
             heights = [y for _, y, _ in points]
@@ -3265,6 +3296,7 @@ def render_frames(job, document, statics):
             requested = ordinals.get(clip["name"], [])
             times = sorted({frame["address"]["time_s"] for _, frame in requested})
             check_weights(objects, document, clip, times, fps)
+            check_rotations(clip, times)
             for ordinal, frame in requested:
                 depsgraph = evaluate(scene, fps, frame["address"]["time_s"])
                 rotation = (frame["angle_deg"] % 360 + yaw % 360) % 360
