@@ -1037,9 +1037,9 @@ def extremum_fractions(keys, k):
 # 0.1°) of glTF's; a file outside it is an input error, exit 3.
 TRANSLATION_LIMIT = 256.0  # m: a translation's key values, its values anywhere
 # between keys, and the importer's image of a zero translation (the bind offset)
-SCALE_LIMIT = 256.0  # a scale's key values and its values anywhere between keys:
-# Blender holds a scale in 32 bits, which resolves 3e-5 of an object's extent
-# at 256 (half that of rounding), so 1e-4 m holds for objects up to 6 m across
+SCALE_LIMIT = 32.0  # a scale's key values and its values anywhere between keys:
+# Blender holds a scale in 32 bits, a step of 1.9e-6 at 32 whose half
+# multiplies the object's extent, so 1e-4 m holds for models up to 100 m across
 VALUE_LIMIT = 1e4  # rotation and weight key values
 TANGENT_LIMIT = 1e4  # every tangent component, of any path
 MIN_QUATERNION = 1e-3  # the length of a rotation key, and of a rotation sample

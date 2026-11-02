@@ -1383,7 +1383,7 @@ def above(value):
     ("path", "limit", "unit"),
     [
         ("translation", 256.0, " m"),
-        ("scale", 256.0, ""),
+        ("scale", 32.0, ""),
         ("weights", 1e4, ""),
         ("rotation", 1e4, ""),
     ],
@@ -1515,7 +1515,7 @@ def test_a_channel_without_names_is_named_by_index(script, tmp_path):
     with pytest.raises(script.RangeError) as raised:
         script.private_copy(document, rest, source, 0)
     assert str(raised.value) == (
-        "animation 0, node 0's scale has a key value of 20000, beyond ±256"
+        "animation 0, node 0's scale has a key value of 20000, beyond ±32"
     )
 
 
@@ -1652,25 +1652,22 @@ def test_a_rotation_is_close_to_glTFs_at_every_sample_of_a_supported_curve(scrip
         assert got == pytest.approx(tuple(w / length for w in want), abs=1e-9)
 
 
-@pytest.mark.parametrize("limit", [256.0])
-def test_a_scale_is_supported_between_its_keys_up_to_the_limit(script, limit):
-    # Both keys are 128, with out-tangent a and in-tangent −a over a second:
-    # the curve is 128 + a·s·(1 − s) and peaks at 128 + a/4 halfway.
+def test_a_scale_is_supported_between_its_keys_up_to_the_limit(script):
+    # Both keys are 16, with out-tangent a and in-tangent −a over a second:
+    # the curve is 16 + a·s·(1 − s) and peaks at 16 + a/4 halfway.
     def keys(a):
         return {
             "times": [0.0, 1.0],
-            "values": [(128.0, 1.0, 1.0)] * 2,
+            "values": [(16.0, 1.0, 1.0)] * 2,
             "ins": [(0.0,) * 3, (-a, 0.0, 0.0)],
             "outs": [(a, 0.0, 0.0), (0.0,) * 3],
         }
 
-    assert script.cubic_value(keys(512.0), 0.5)[0] == limit
-    assert script.cubic_problem("scale", keys(512.0)) is None
-    assert script.cubic_problem("scale", keys(513.0)) == (
-        "reaches 256.25 between its keys 0 and 1, beyond ±256"
+    assert script.cubic_value(keys(64.0), 0.5)[0] == 32.0
+    assert script.cubic_problem("scale", keys(64.0)) is None
+    assert script.cubic_problem("scale", keys(65.0)) == (
+        "reaches 32.25 between its keys 0 and 1, beyond ±32"
     )
-    # The same curve as a translation is beyond its limit in metres.
-    assert script.cubic_problem("translation", keys(513.0)).endswith("256 m")
 
 
 def shared_sampler_model(first, second, values):

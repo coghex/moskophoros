@@ -1083,8 +1083,8 @@ def shape_model(path, keys, name="walk", times=(0.0, 1.0)):
         ),
         (
             "scale",
-            [ZERO, (1.0, 1.0, 1.0), ZERO, ZERO, (257.0, 1.0, 1.0), ZERO],
-            "has a key value of 257, beyond ±256",
+            [ZERO, (1.0, 1.0, 1.0), ZERO, ZERO, (33.0, 1.0, 1.0), ZERO],
+            "has a key value of 33, beyond ±32",
         ),
         (
             "rotation",
@@ -1208,12 +1208,11 @@ def test_a_rotation_key_at_the_limit_of_a_thousandth_is_measured_exactly(
 def test_a_cubic_scale_up_to_the_limit_is_measured_to_an_absolute_tolerance(
     found, tmp_path
 ):
-    # A review finding. Keys of 255 and 256 on x with zero tangents: the
-    # triangle's right bound is the scale itself, 255 + 3t² − 2t³, at
-    # absolute tolerance 1e-4 m (Blender holds the scale in 32 bits, 1.5e-5
-    # at these values).
+    # Keys of 31 and 32 on x with zero tangents: the triangle's right bound is
+    # the scale itself, 31 + 3t² − 2t³, at absolute tolerance 1e-4 m (Blender
+    # holds the scale in 32 bits, 1.9e-6 at these values).
     one = (1.0, 1.0)
-    keys = [(ZERO, (255.0, *one), ZERO), (ZERO, (256.0, *one), ZERO)]
+    keys = [(ZERO, (31.0, *one), ZERO), (ZERO, (32.0, *one), ZERO)]
     model = shape_model("scale", flat(keys), "grow")
     result, _ = measure(
         found,
@@ -1223,10 +1222,41 @@ def test_a_cubic_scale_up_to_the_limit_is_measured_to_an_absolute_tolerance(
         once=["grow"],
     )
     rows = boxes(result)["grow"]
-    expected = [255.0 + 3 * t * t - 2 * t**3 for t in ONCE_TIMES]
-    assert expected[2] == 255.5
+    expected = [31.0 + 3 * t * t - 2 * t**3 for t in ONCE_TIMES]
+    assert expected[2] == 31.5
     assert [row[1] for row in rows] == pytest.approx(expected, abs=1e-4)
     assert [row[2] for row in rows] == pytest.approx([1.0] * 5, abs=1e-4)
+
+
+def test_a_cubic_scale_of_a_model_100_m_across_is_measured_to_an_absolute_tolerance(
+    found, tmp_path
+):
+    # A review finding, at the largest model the tolerance covers (owner
+    # decision 2026-11-02): the triangle's right vertex is 3.125 m out, so
+    # at the scale limit of 32 the model is 100 m across. The keys are one
+    # 32-bit step apart (2⁻¹⁹ at 32), so the middle sample is not a number
+    # Blender can hold: it rounds by half a step, 9.5e-7, of 3.125 m.
+    model = GlbWriter()
+    shape = model.node(
+        "shape", mesh=model.mesh([ZERO, (3.125, 0.0, 0.0), (0.0, 1.0, 0.0)])
+    )
+    model.scene([shape], default=True)
+    low = 32.0 - 2.0**-19
+    keys = [(ZERO, (low, 1.0, 1.0), ZERO), (ZERO, (32.0, 1.0, 1.0), ZERO)]
+    model.animation(
+        "grow", [(shape, "scale", [0.0, 1.0], flat(keys))], interpolation="CUBICSPLINE"
+    )
+    result, _ = measure(
+        found,
+        model.write(tmp_path, "big"),
+        tmp_path,
+        clip_names=["grow"],
+        once=["grow"],
+    )
+    rows = boxes(result)["grow"]
+    expected = [3.125 * (low + 2.0**-19 * (3 * t * t - 2 * t**3)) for t in ONCE_TIMES]
+    assert [row[1] for row in rows] == pytest.approx(expected, abs=1e-4)
+    assert rows[2][1] == pytest.approx(3.125 * (low + 2.0**-20), abs=1e-4)
 
 
 def test_a_cubic_scale_beyond_the_limit_is_an_input_error_whatever_its_precision(
@@ -1240,7 +1270,7 @@ def test_a_cubic_scale_beyond_the_limit_is_an_input_error_whatever_its_precision
         found,
         tmp_path,
         model,
-        r"has a key value of 8192, beyond ±256",
+        r"has a key value of 8192, beyond ±32",
     )
 
 

@@ -779,7 +779,7 @@ in- and out-tangents; a rotation is the normalized cubic quaternion.
   rotation, scale or weights with a value or tangent that is not finite; a
   tangent component beyond ±10 000; a translation's key value, or its value
   anywhere between keys, beyond ±256 m; a scale's key value, or its value
-  anywhere between keys, beyond ±256; a rotation or weight key value beyond ±10
+  anywhere between keys, beyond ±32; a rotation or weight key value beyond ±10
   000; a rotation key whose quaternion is shorter than 0.001; a translation
   whose bind offset, the importer's image of a zero translation, is beyond ±256
   m; or a rotation whose interpolated quaternion is shorter than 0.001 at a
@@ -2212,28 +2212,28 @@ section's settings on 5.2.2:
   256 m) is the rest of the 1e-4 m.
 
 - **The supported range of cubic spline channels (owner decisions 2026-11-01,
-  "Approve as proposed", "Scale up to 256" and "Refuse degenerate samples").**
-  The tool's values equal glTF's to 1e-4 m, and a rotation to 0.1°, inside this
-  range; a file outside it is an input error (exit 3, see [Input
+  "Approve as proposed", "Scale up to 32" and "Refuse degenerate
+  samples").** The tool's values equal glTF's to 1e-4 m, and a rotation to 0.1°,
+  inside this range; a file outside it is an input error (exit 3, see [Input
   contract](#input-contract)), because the importer works in 32 bits and the
   figures below are what keeps its rounding inside that tolerance. Translation
   values, key and between keys, and the bind offset (each component, in
-  Blender's axes): at most 256 m, where a 32-bit number resolves 3e-5 m (the bind offset is
-  read back through the importer's 32-bit arithmetic, so one such step, 2⁻¹⁵ m,
-  past 256 m is not told from it); real characters are under 10 m and scenes
-  under 100 m. Scale values, key and
-  between keys: at most 256, because Blender holds a scale in 32 bits and its
-  rounding grows with the object (1.5e-5 of its extent at 256, so 1e-4 m holds
-  for objects up to 6 m across); real scale animation is 0 to 10. Tangent
-  components of every path: at most 10 000, a hundred times what exporters write
-  (a tangent is a slope times the key interval). Rotation and weight key values:
-  at most 10 000, and a rotation key at least 0.001 long, as is each of its
-  interpolated samples in a selected clip; exporters write unit quaternions, and
-  a sample that nearly cancels has no direction to keep. Key spacing has no
-  limit. A translation's or scale's values between keys are checked at the roots
-  of its derivative, so a curve whose handles reach beyond 256 but which stays
-  within it is supported.
-
+  Blender's axes): at most 256 m, where a 32-bit number resolves 3e-5 m (the
+  bind offset is read back through the importer's 32-bit arithmetic, so one such
+  step, 2⁻¹⁵ m, past 256 m is not told from it); real characters are under 10 m
+  and scenes under 100 m. Scale values, key and between keys: at most 32,
+  because Blender holds a scale in 32 bits (a step of 1.9e-6 at 32, half of
+  which multiplies the object's extent); real scale animation is 0 to 10. The
+  1e-4 m holds for models up to 100 m across, scale included (owner decision
+  2026-11-02, with the 256 m limit on positions): the same 32-bit rounding
+  applies to the positions Blender draws. Tangent components of every path: at
+  most 10 000, a hundred times what exporters write (a tangent is a slope times
+  the key interval). Rotation and weight key values: at most 10 000, and a
+  rotation key at least 0.001 long, as is each of its interpolated samples in a
+  selected clip; exporters write unit quaternions, and a sample that nearly
+  cancels has no direction to keep. Key spacing has no limit. A translation's or
+  scale's values between keys are checked at the roots of its derivative, so a
+  curve whose handles reach beyond 256 but which stays within it is supported.
 - **Only one mesh-level weight animation is kept per mesh,** and it is attached
   to the original mesh, which the capture replaces with a copy for each node.
   The script gives each node of the selected scene its own `weights` channel in
