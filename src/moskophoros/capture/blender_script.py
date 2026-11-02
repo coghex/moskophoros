@@ -1077,37 +1077,101 @@ ANCHOR_SPACING = 256.0
 MAX_ANCHORS = 64
 
 
+def segment_point(keys, k, u):
+    """The cubic spline of `keys` a fraction `u` of the way from key `k` to
+    key `k + 1`, in floating point (for placing anchors, not for values)."""
+    times, values, ins, outs = (
+        keys[name] for name in ("times", "values", "ins", "outs")
+    )
+    step = times[k + 1] - times[k]
+    w = 1 - u
+    h00, h10, h01, h11 = (1 + 2 * u) * w * w, u * w * w, (1 + 2 * w) * u * u, -u * u * w
+    return tuple(
+        h00 * p0 + step * h10 * m0 + h01 * p1 + step * h11 * a1
+        for p0, m0, p1, a1 in zip(
+            values[k], outs[k], values[k + 1], ins[k + 1], strict=True
+        )
+    )
+
+
+def extremum_fractions(keys, k):
+    """The fractions in (0, 1) of segment `k` where any component of the
+    cubic spline stops rising or falling: the roots of the derivative, a
+    quadratic in the fraction."""
+    times, values, ins, outs = (
+        keys[name] for name in ("times", "values", "ins", "outs")
+    )
+    step = times[k + 1] - times[k]
+    found = set()
+    for p0, m0, p1, a1 in zip(
+        values[k], outs[k], values[k + 1], ins[k + 1], strict=True
+    ):
+        a = 6 * p0 + 3 * step * m0 - 6 * p1 + 3 * step * a1
+        b = -6 * p0 - 4 * step * m0 + 6 * p1 - 2 * step * a1
+        c = step * m0
+        if a == 0.0:
+            roots = [] if b == 0.0 else [-c / b]
+        else:
+            discriminant = b * b - 4 * a * c
+            if discriminant < 0.0:
+                roots = []
+            else:
+                root = math.sqrt(discriminant)
+                roots = [(-b - root) / (2 * a), (-b + root) / (2 * a)]
+        found.update(u for u in roots if 1e-9 < u < 1 - 1e-9)
+    return sorted(found)
+
+
 def translation_anchors(keysets):
     """The places along a node's translation channels that the importer's
-    conversion is measured at: the keys' values, in order, and points between
-    two successive values that are further apart than `ANCHOR_SPACING`, at
-    most `MAX_ANCHORS` of them (evenly thinned when there are more), all
-    rounded to 32 bits as the importer reads them."""
-    anchors = []
+    conversion is measured at, all rounded to 32 bits as the importer reads
+    them: the keys' values and the points where the spline turns between
+    them, in order, and points across any gap between successive ones wider
+    than `ANCHOR_SPACING`, spread by how wide the gaps are. At most
+    `MAX_ANCHORS` (the keys and turns evenly thinned if they are more), and
+    the work does not depend on how far apart the values are."""
+    core = []
     seen = set()
 
-    def add(value):
-        if value not in seen:
-            seen.add(value)
-            anchors.append(value)
+    def add(point):
+        try:
+            rounded = tuple(float32(component) for component in point)
+        except (OverflowError, ValueError):
+            return
+        if rounded not in seen and all(map(math.isfinite, rounded)):
+            seen.add(rounded)
+            core.append(rounded)
 
     for keys in keysets:
-        previous = None
-        for raw in keys["values"]:
-            value = tuple(float32(component) for component in raw)
-            if previous is not None:
-                count = math.ceil(math.dist(previous, value) / ANCHOR_SPACING)
-                for i in range(1, count):
-                    add(
-                        tuple(
-                            float32(p + (v - p) * i / count)
-                            for p, v in zip(previous, value, strict=True)
-                        )
-                    )
-            add(value)
-            previous = value
-    if len(anchors) > MAX_ANCHORS:
-        anchors = anchors[:: -(-len(anchors) // MAX_ANCHORS)]
+        count = len(keys["values"])
+        for k in range(count):
+            add(keys["values"][k])
+            if k + 1 < count:
+                for u in extremum_fractions(keys, k):
+                    add(segment_point(keys, k, u))
+    if len(core) > MAX_ANCHORS:
+        return core[:: -(-len(core) // MAX_ANCHORS)]
+    gaps = [math.dist(core[i], core[i + 1]) for i in range(len(core) - 1)]
+    extra = [0] * len(gaps)
+    for _ in range(MAX_ANCHORS - len(core)):
+        widest = max(
+            range(len(gaps)), key=lambda i: gaps[i] / (extra[i] + 1), default=None
+        )
+        if widest is None or gaps[widest] / (extra[widest] + 1) <= ANCHOR_SPACING:
+            break
+        extra[widest] += 1
+    anchors = []
+    for i, point in enumerate(core):
+        anchors.append(point)
+        if i < len(gaps):
+            parts = extra[i] + 1
+            anchors.extend(
+                tuple(
+                    float32(p + (q - p) * j / parts)
+                    for p, q in zip(point, core[i + 1], strict=True)
+                )
+                for j in range(1, parts)
+            )
     return anchors
 
 

@@ -2189,13 +2189,16 @@ section's settings on 5.2.2:
   in the hundreds or thousands wherever it is not near its rest pose, whose
   rounding (2e-4 at 3000) a single map fitted over the whole range would
   inherit. The script therefore measures a translation around anchors: the
-  channel's key values, in order, with points between two successive values more
-  than 256 m apart (at most 64 anchors, evenly thinned beyond that), each with a
-  group of probes 256 m around it, and converts a value with the map of the
-  nearest anchor, where the images are as small as they get. Evaluated values
-  equal glTF's cubic formula at every time to the importer's own 32-bit
-  resolution at the values involved (an ulp of its image, about 1e-4 m at images
-  of a thousand meters).
+  channel's key values and the points where its spline turns between them (the
+  roots of the derivative, so tangent excursions beyond the keys are covered),
+  in order, with points across any gap of more than 256 m between successive
+  ones, at most 64 anchors (evenly thinned beyond that, and the gap points
+  spread by gap width, decided before any is computed, so the work does not
+  depend on how far apart the values are). Each anchor has a group of probes 256
+  m around it, and a value is converted with the map of the nearest anchor,
+  where the images are as small as they get. Evaluated values equal glTF's cubic
+  formula at every time to the importer's own 32-bit resolution at the values
+  involved (an ulp of its image, about 1e-4 m at images of a thousand meters).
 - **Only one mesh-level weight animation is kept per mesh,** and it is attached
   to the original mesh, which the capture replaces with a copy for each node.
   The script gives each node of the selected scene its own `weights` channel in

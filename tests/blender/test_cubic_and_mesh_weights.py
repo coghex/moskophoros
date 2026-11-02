@@ -838,6 +838,49 @@ def test_a_clip_spanning_distant_translations_is_accurate_in_every_segment(
             assert box == pytest.approx((0.0, 1.0, 1.0, 0.0), abs=1e-4), time
 
 
+def test_a_translation_that_turns_outside_its_keys_is_accurate_there(found, tmp_path):
+    # A review finding. The joint of the previous tests rests at (1000, 2000,
+    # 3000). Both keys are twice that, with an out-tangent of −4 times it and
+    # an in-tangent of 4 times it over a second: the curve dips to the rest
+    # halfway, where the triangle is at its own coordinates, L, R, U, D = 0,
+    # 1, 1, 0. The importer's map has to be accurate there, away from both
+    # keys.
+    rest = (1000.0, 2000.0, 3000.0)
+    c, s = 0.28, 0.96
+    x, y, z = rest
+    bind = (-(c * x + s * y), -(-s * x + c * y), -z)
+    model = GlbWriter()
+    joint = model.node("joint", translation=rest, rotation=(0.0, 0.0, 0.6, 0.8))
+    skin = model.skin([joint], [(c, -s, 0, 0, s, c, 0, 0, 0, 0, 1, 0, *bind, 1)])
+    skinned = model.node(
+        "skinned",
+        mesh=model.mesh(
+            TRIANGLE, joints=[(0, 0, 0, 0)] * 3, skin_weights=[(1, 0, 0, 0)] * 3
+        ),
+        skin=skin,
+    )
+    model.scene([joint, skinned], default=True)
+    far = tuple(2 * v for v in rest)
+    keys = [
+        (ZERO, far, tuple(-4 * v for v in rest)),
+        (tuple(4 * v for v in rest), far, ZERO),
+    ]
+    model.animation(
+        "dip",
+        [(joint, "translation", [0.0, 1.0], flat(keys))],
+        interpolation="CUBICSPLINE",
+    )
+    result, _ = measure(
+        found,
+        model.write(tmp_path, "dip"),
+        tmp_path,
+        clip_names=["dip"],
+        once=["dip"],
+    )
+    rows = {time: box for _, time, box, _ in by_clip(result)["dip"]}
+    assert rows[0.5] == pytest.approx((0.0, 1.0, 1.0, 0.0), abs=1e-4)
+
+
 @pytest.mark.parametrize("where", ["in no scene", "in another scene"])
 def test_a_cubic_channel_on_a_node_outside_the_selected_scene(found, tmp_path, where):
     # The clip moves the subject with a cubic curve; the same clip also moves

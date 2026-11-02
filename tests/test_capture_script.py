@@ -700,9 +700,16 @@ def affine(matrix, offset, point):
     )
 
 
-def translation_keys(*values):
-    """The keys of a cubic translation channel with these values."""
-    return {"times": list(range(len(values))), "values": list(values)}
+def translation_keys(*values, ins=None, outs=None):
+    """The keys of a cubic translation channel with these values and, unless
+    given, zero tangents."""
+    zero = [(0.0, 0.0, 0.0)] * len(values)
+    return {
+        "times": list(range(len(values))),
+        "values": list(values),
+        "ins": ins or zero,
+        "outs": outs or zero,
+    }
 
 
 def points_for(script, path):
@@ -1368,6 +1375,72 @@ def test_translation_anchors_are_rounded_to_32_bits_and_thinned(script):
     assert len(anchors) <= script.MAX_ANCHORS
     assert anchors[0] == (0.0, 0.0, 0.0)
     assert anchors == sorted(anchors)
+
+
+def test_the_work_to_place_anchors_does_not_depend_on_how_far_apart_keys_are(
+    script, monkeypatch
+):
+    # A review finding: two keys 1e10 m apart once asked for 39 million
+    # intermediate points before the cap was applied.
+    calls = []
+    original = script.float32
+    monkeypatch.setattr(
+        script, "float32", lambda value: calls.append(value) or original(value)
+    )
+    keys = translation_keys((0.0, 0.0, 0.0), (1e10, 0.0, 0.0))
+    anchors = script.translation_anchors([keys])
+    assert len(anchors) == script.MAX_ANCHORS
+    assert anchors[0] == (0.0, 0.0, 0.0) and anchors[-1] == (original(1e10), 0.0, 0.0)
+    assert len(calls) < 1000
+    calls.clear()
+    script.translation_anchors([translation_keys((0.0,) * 3, (3e38, 0.0, 0.0))])
+    assert len(calls) < 1000
+
+
+def test_values_too_large_for_32_bits_are_not_anchors(script):
+    keys = translation_keys(
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        outs=[(3e38, 0.0, 0.0), (0.0, 0.0, 0.0)],
+        ins=[(0.0,) * 3, (-3e38, 0.0, 0.0)],
+    )
+    anchors = script.translation_anchors([keys])
+    assert all(abs(component) < 3.5e38 for anchor in anchors for component in anchor)
+    assert anchors[0] == (0.0, 0.0, 0.0)
+
+
+def test_anchors_include_where_the_spline_turns_outside_its_keys(script):
+    # A review finding. Both keys are (2000, 4000, 6000), with out-tangent
+    # (−4000, −8000, −12000) and in-tangent (4000, 8000, 12000) over a second:
+    # the curve dips to (1000, 2000, 3000) halfway.
+    key = (2000.0, 4000.0, 6000.0)
+    keys = translation_keys(
+        key,
+        key,
+        outs=[(-4000.0, -8000.0, -12000.0), (0.0, 0.0, 0.0)],
+        ins=[(0.0, 0.0, 0.0), (4000.0, 8000.0, 12000.0)],
+    )
+    assert script.extremum_fractions(keys, 0) == pytest.approx([0.5])
+    assert (1000.0, 2000.0, 3000.0) in script.translation_anchors([keys])
+    assert script.segment_point(keys, 0, 0.5) == pytest.approx((1000.0, 2000.0, 3000.0))
+
+
+def test_the_turns_of_a_cubic_segment_are_the_roots_of_its_derivative(script):
+    # Values 0 and 0 with out-tangent 6 and in-tangent −6 over a second rise
+    # and fall: the maximum is at one half. The straight line between 0 and 1
+    # has no turn.
+    up = translation_keys(
+        (0.0,) * 3,
+        (0.0,) * 3,
+        outs=[(6.0,) * 3, (0.0,) * 3],
+        ins=[(0.0,) * 3, (-6.0,) * 3],
+    )
+    assert script.extremum_fractions(up, 0) == pytest.approx([0.5])
+    line = translation_keys((0.0,) * 3, (1.0, 2.0, 3.0))
+    assert script.extremum_fractions(line, 0) == []
+    assert script.segment_point(up, 0, 0.5)[0] == pytest.approx(
+        script.cubic_value(up, 0.5)[0]
+    )
 
 
 def test_each_translation_anchor_gets_a_group_of_probes_around_it(script):
