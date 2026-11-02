@@ -713,9 +713,6 @@ def translation_keys(*values, ins=None, outs=None):
 
 
 def points_for(script, path):
-    if path == "translation":
-        keys = translation_keys((0.0, 0.0, 0.0), (2.0, 0.0, 0.0))
-        return script.calibration_groups("translation", [keys])[0]
     return script._CALIBRATION[path]
 
 
@@ -987,6 +984,7 @@ def test_the_private_copy_reduces_cubic_samplers_to_their_keys(script, tmp_path)
                 "ins": [(0.0, 0.0, 0.0), (-3.0, 0.0, 0.0)],
                 "outs": [(3.0, 0.0, 0.0), (0.0, 0.0, 0.0)],
                 "rotation": False,
+                "label": "animation 0 ('sway'), node 0 ('shape')'s translation",
             }
         }
     }
@@ -1007,62 +1005,75 @@ def test_the_private_copy_reduces_cubic_samplers_to_their_keys(script, tmp_path)
     # The last animation measures the importer's conversion of the node's
     # translation with the calibration keys.
     calibration = copy["animations"][-1]
-    assert calibration["name"] == script.CALIBRATION_NAME.format(0)
+    assert calibration["name"] == script.CALIBRATION_NAME
     assert [c["target"] for c in calibration["channels"]] == [
         {"node": shape, "path": "translation"}
     ]
     sampler = calibration["samplers"][calibration["channels"][0]["sampler"]]
     assert script.read_accessor(copy, fetch, sampler["output"], source) == [
-        tuple(map(float, point))
-        for group in script.calibration_groups(
-            "translation", [cubics[0][(shape, "translation")]]
-        )
-        for point in group
+        tuple(map(float, point)) for point in script._CALIBRATION["translation"]
     ]
     # The original document is untouched.
     assert document["animations"][0]["samplers"][0]["interpolation"] == "CUBICSPLINE"
 
 
-def test_each_clip_is_calibrated_around_its_own_keys(script, tmp_path):
-    # A review finding: another clip's keys, far away, must not move the
-    # points that the selected clip's map is measured at.
+def test_one_animation_measures_every_node_and_path_for_all_clips(script, tmp_path):
+    # The importer's conversion of a node's value does not depend on the clip,
+    # so the clips share one calibration animation, whose probes are the same
+    # whatever the clips hold.
     model = GlbWriter()
-    shape = model.node("shape", mesh=True)
-    model.scene([shape], default=True)
+    first = model.node("first", mesh=True)
+    second = model.node("second", mesh=True)
+    model.scene([first, second], default=True)
     flat = (0.0, 0.0, 0.0)
-    for name, here in (
-        ("near", (1000.0, 2000.0, 3000.0)),
-        ("far", (2000.0, 4000.0, 6000.0)),
-    ):
+    spin = [(0.0,) * 4, (0.0, 0.0, 0.0, 1.0), (0.0,) * 4] * 2
+    for name, here in (("near", (1.0, 2.0, 3.0)), ("far", (200.0, -40.0, 60.0))):
         model.animation(
             name,
-            [(shape, "translation", [0.0, 1.0], [flat, here, flat, flat, here, flat])],
+            [
+                (
+                    first,
+                    "translation",
+                    [0.0, 1.0],
+                    [flat, here, flat, flat, here, flat],
+                ),
+                (second, "rotation", [0.0, 1.0], spin),
+            ],
             interpolation="CUBICSPLINE",
         )
+    # The second clip also moves the second node.
+    model.animation(
+        "also",
+        [(second, "translation", [0.0, 1.0], [flat, (5.0, 5.0, 5.0), flat] * 2)],
+        interpolation="CUBICSPLINE",
+    )
     document, rest, source = load(script, model, tmp_path)
     glb, cubics = script.private_copy(document, rest, source, 0)
     copy, binary = script.split_glb(glb, source)
     fetch = script.buffer_reader(copy, script.binary_chunk(binary), source)
-    names = [animation["name"] for animation in copy["animations"]]
-    assert names[-2:] == [
-        script.CALIBRATION_NAME.format(0),
-        script.CALIBRATION_NAME.format(1),
+    calibrations = [
+        a for a in copy["animations"] if a["name"].startswith("moskophoros.calibration")
     ]
-    for animation, here in (
-        (0, (1000.0, 2000.0, 3000.0)),
-        (1, (2000.0, 4000.0, 6000.0)),
-    ):
-        calibration = copy["animations"][-2 + animation]
-        sampler = calibration["samplers"][calibration["channels"][0]["sampler"]]
+    assert [a["name"] for a in calibrations] == [script.CALIBRATION_NAME]
+    assert copy["animations"][-1] is calibrations[0]
+    (calibration,) = calibrations
+    assert sorted(
+        (c["target"]["node"], c["target"]["path"]) for c in calibration["channels"]
+    ) == [(first, "translation"), (second, "rotation"), (second, "translation")]
+    for channel in calibration["channels"]:
+        sampler = calibration["samplers"][channel["sampler"]]
         points = script.read_accessor(copy, fetch, sampler["output"], source)
-        assert points[0] == here
         assert points == [
-            tuple(map(float, point))
-            for group in script.calibration_groups(
-                "translation", [cubics[animation][(shape, "translation")]]
-            )
-            for point in group
+            tuple(float32_of(float(v)) for v in point)
+            for point in script._CALIBRATION[channel["target"]["path"]]
         ]
+    # The two translation channels share one sampler of probes.
+    translations = [
+        c["sampler"]
+        for c in calibration["channels"]
+        if c["target"]["path"] == "translation"
+    ]
+    assert translations[0] == translations[1]
 
 
 def test_files_without_cubic_translation_rotation_or_scale_get_no_calibration(
@@ -1108,7 +1119,9 @@ def test_every_channel_sharing_a_cubic_sampler_is_recorded(script, tmp_path):
     _, cubics = script.private_copy(document, rest, source, 0)
     # Nodes a and b both follow the pointer's one sampler.
     assert sorted(cubics[1]) == [(a, "weights"), (b, "weights")]
-    assert cubics[1][(a, "weights")] is cubics[1][(b, "weights")]
+    keys = [cubics[1][(n, "weights")] for n in (a, b)]
+    assert [{**k, "label": None} for k in keys][0] == {**keys[1], "label": None}
+    assert keys[0]["label"] != keys[1]["label"]
 
 
 def test_other_cubic_samplers_are_left_as_they_are(script, tmp_path):
@@ -1225,15 +1238,10 @@ ROTATION_KEYS = {
         # w cancels at the middle and x is 2.5e-22, whose square underflows
         # in 32 bits; the quaternion is (1, 0, 0, 0).
         (1e-21, (1.0, 0.0, 0.0, 0.0)),
-        # x is 2.5e19, whose square overflows in 32 bits; w is 1.
-        (1e20, (1.0, 0.0, 0.0, 4e-20)),
     ],
 )
 def test_a_cubic_rotation_is_normalized_in_double_precision(script, tangent, want):
     keys = dict(ROTATION_KEYS)
-    if tangent == 1e20:
-        keys["ins"] = [(0.0,) * 4, (-1e20, 0.0, 0.0, 0.0)]
-        keys["outs"] = [(1e20, 0.0, 0.0, 0.0), (0.0,) * 4]
     got = script.cubic_value(keys, 0.5)
     assert math.hypot(*got) == pytest.approx(1.0, abs=1e-15)
     assert got == pytest.approx(want, abs=1e-12)
@@ -1277,24 +1285,7 @@ def exact_cubic(keys, time_s):
     )
 
 
-def test_huge_tangent_terms_that_cancel_leave_the_values(script):
-    # Both keys are the identity; at the middle the tangent terms, ±1.25e19 in
-    # w, cancel exactly and the 0.5 of each key's value is all that is left
-    # (a review finding). x is 4·0.125.
-    keys = {
-        "times": [0.0, 1.0],
-        "values": [(0.0, 0.0, 0.0, 1.0)] * 2,
-        "ins": [(0.0,) * 4, (0.0, 0.0, 0.0, 1e20)],
-        "outs": [(4.0, 0.0, 0.0, 1e20), (0.0,) * 4],
-    }
-    assert script.cubic_value(keys, 0.5) == pytest.approx((0.5, 0.0, 0.0, 1.0))
-    normalized = script.cubic_value({**keys, "rotation": True}, 0.5)
-    assert normalized == pytest.approx(
-        (0.4472135954999579, 0.0, 0.0, 0.8944271909999159)
-    )
-
-
-@pytest.mark.parametrize("tangent", [1.0, 1e10, 1e20])
+@pytest.mark.parametrize("tangent", [1.0, 1e2, 1e4])
 @pytest.mark.parametrize("gap", [0.5, 1e-3, 1e-9, 1e-14])
 def test_a_cubic_spline_matches_exact_arithmetic_near_either_key(script, tangent, gap):
     keys = {
@@ -1307,122 +1298,27 @@ def test_a_cubic_spline_matches_exact_arithmetic_near_either_key(script, tangent
         got = script.cubic_value(keys, time_s)
         want = exact_cubic(keys, time_s)
         for g, w in zip(got, want, strict=True):
-            assert g == pytest.approx(w, rel=1e-9, abs=1e-9 * max(1.0, tangent) * gap)
+            assert g == pytest.approx(w, rel=1e-12, abs=1e-12 * tangent)
 
 
-def test_tangent_products_that_cancel_are_exact_before_any_rounding(script):
-    # A review finding: out-tangent (4, 0, 0, 2^55) and in-tangent
-    # (0, 0, 0, 5·2^55) over 3 s. At 0.5 s the tangent terms in w are
-    # ±75/216·2^55 and cancel; x is 25/18. A float sum of the products gives
-    # w = 3.
-    from fractions import Fraction
-
+def test_double_precision_is_enough_at_the_edge_of_the_supported_range(script):
+    # Tangents of 1e4 over the longest key interval a clip can have (the
+    # frame limit at 24 frames per second, 43690 s) put terms of 6e8 into a
+    # sum that comes to a value of a few hundred; the error stays below 1e-6,
+    # far below the 1e-4 the result is good to.
+    span = 43690.0
     keys = {
-        "times": [0.0, 3.0],
-        "values": [(0.0, 0.0, 0.0, 1.0)] * 2,
-        "ins": [(0.0,) * 4, (0.0, 0.0, 0.0, 5.0 * 2.0**55)],
-        "outs": [(4.0, 0.0, 0.0, 2.0**55), (0.0,) * 4],
+        "times": [0.0, span],
+        "values": [(200.0, -250.0, 0.5), (-200.0, 250.0, 0.5)],
+        "ins": [(0.0,) * 3, (1e4, -1e4, 1e4)],
+        "outs": [(-1e4, 1e4, -1e4), (0.0,) * 3],
     }
-    assert script.cubic_exact(keys, 0.5) == (Fraction(25, 18), 0, 0, 1)
-    assert script.cubic_value(keys, 0.5) == (25 / 18, 0.0, 0.0, 1.0)
-
-
-def test_a_cubic_rotation_keeps_its_components_exact_until_it_is_rounded(script):
-    keys = {
-        "times": [0.0, 3.0],
-        "values": [(0.0, 0.0, 0.0, 1.0)] * 2,
-        "ins": [(0.0,) * 4, (0.0, 0.0, 0.0, 5.0 * 2.0**55)],
-        "outs": [(4.0, 0.0, 0.0, 2.0**55), (0.0,) * 4],
-        "rotation": True,
-    }
-    x, y, z, w = script.cubic_value(keys, 0.5)
-    assert (y, z) == (0.0, 0.0)
-    assert x / w == pytest.approx(25 / 18, rel=1e-15)
-    assert math.hypot(x, w) == pytest.approx(1.0, abs=1e-15)
-
-
-def float32_of(value):
-    return struct.unpack("<f", struct.pack("<f", value))[0]
-
-
-def test_translation_anchors_follow_the_keys_and_fill_long_gaps(script):
-    # Values 1000 m apart get anchors every 250 m between them, in order; a
-    # repeated value is one anchor.
-    keys = translation_keys((0.0, 0.0, 0.0), (1000.0, 0.0, 0.0), (1000.0, 0.0, 0.0))
-    assert script.translation_anchors([keys]) == [
-        (0.0, 0.0, 0.0),
-        (250.0, 0.0, 0.0),
-        (500.0, 0.0, 0.0),
-        (750.0, 0.0, 0.0),
-        (1000.0, 0.0, 0.0),
-    ]
-    # Short gaps add none, and several channels' keys all count.
-    near = translation_keys((1.0, 2.0, 3.0), (4.0, 2.0, 3.0))
-    far = translation_keys((9.0, 9.0, 9.0))
-    assert script.translation_anchors([near, far]) == [
-        (1.0, 2.0, 3.0),
-        (4.0, 2.0, 3.0),
-        (9.0, 9.0, 9.0),
-    ]
-
-
-def test_translation_anchors_are_rounded_to_32_bits_and_thinned(script):
-    assert script.translation_anchors([translation_keys((0.1, 0.1, 0.1))]) == [
-        (float32_of(0.1),) * 3
-    ]
-    many = translation_keys(*[(float(i), 0.0, 0.0) for i in range(200)])
-    anchors = script.translation_anchors([many])
-    assert len(anchors) <= script.MAX_ANCHORS
-    assert anchors[0] == (0.0, 0.0, 0.0)
-    assert anchors == sorted(anchors)
-
-
-def test_the_work_to_place_anchors_does_not_depend_on_how_far_apart_keys_are(
-    script, monkeypatch
-):
-    # A review finding: two keys 1e10 m apart once asked for 39 million
-    # intermediate points before the cap was applied.
-    calls = []
-    original = script.float32
-    monkeypatch.setattr(
-        script, "float32", lambda value: calls.append(value) or original(value)
-    )
-    keys = translation_keys((0.0, 0.0, 0.0), (1e10, 0.0, 0.0))
-    anchors = script.translation_anchors([keys])
-    assert len(anchors) == script.MAX_ANCHORS
-    assert anchors[0] == (0.0, 0.0, 0.0) and anchors[-1] == (original(1e10), 0.0, 0.0)
-    assert len(calls) < 1000
-    calls.clear()
-    script.translation_anchors([translation_keys((0.0,) * 3, (3e38, 0.0, 0.0))])
-    assert len(calls) < 1000
-
-
-def test_values_too_large_for_32_bits_are_not_anchors(script):
-    keys = translation_keys(
-        (0.0, 0.0, 0.0),
-        (1.0, 0.0, 0.0),
-        outs=[(3e38, 0.0, 0.0), (0.0, 0.0, 0.0)],
-        ins=[(0.0,) * 3, (-3e38, 0.0, 0.0)],
-    )
-    anchors = script.translation_anchors([keys])
-    assert all(abs(component) < 3.5e38 for anchor in anchors for component in anchor)
-    assert anchors[0] == (0.0, 0.0, 0.0)
-
-
-def test_anchors_include_where_the_spline_turns_outside_its_keys(script):
-    # A review finding. Both keys are (2000, 4000, 6000), with out-tangent
-    # (−4000, −8000, −12000) and in-tangent (4000, 8000, 12000) over a second:
-    # the curve dips to (1000, 2000, 3000) halfway.
-    key = (2000.0, 4000.0, 6000.0)
-    keys = translation_keys(
-        key,
-        key,
-        outs=[(-4000.0, -8000.0, -12000.0), (0.0, 0.0, 0.0)],
-        ins=[(0.0, 0.0, 0.0), (4000.0, 8000.0, 12000.0)],
-    )
-    assert script.extremum_fractions(keys, 0) == pytest.approx([0.5])
-    assert (1000.0, 2000.0, 3000.0) in script.translation_anchors([keys])
-    assert script.segment_point(keys, 0, 0.5) == pytest.approx((1000.0, 2000.0, 3000.0))
+    for fraction in (1e-9, 0.01, 0.25, 0.5, 0.75, 0.99, 1 - 1e-9):
+        time_s = span * fraction
+        got = script.cubic_value(keys, time_s)
+        want = exact_cubic(keys, time_s)
+        for g, w in zip(got, want, strict=True):
+            assert abs(g - w) < 1e-6
 
 
 def test_the_turns_of_a_cubic_segment_are_the_roots_of_its_derivative(script):
@@ -1443,50 +1339,22 @@ def test_the_turns_of_a_cubic_segment_are_the_roots_of_its_derivative(script):
     )
 
 
-def test_each_translation_anchor_gets_a_group_of_probes_around_it(script):
-    keys = translation_keys((1000.0, 2000.0, 3000.0), (1004.0, 2000.0, 2990.0))
-    groups = script.calibration_groups("translation", [keys])
-    assert len(groups) == 2
-    step = script.ANCHOR_SPACING
-    for group, anchor in zip(
-        groups, [(1000.0, 2000.0, 3000.0), (1004.0, 2000.0, 2990.0)], strict=True
-    ):
-        assert group[0] == anchor
-        assert group[1] == (anchor[0] + step, anchor[1], anchor[2])
-        assert group[4] == (
-            anchor[0] + step,
-            anchor[1] + 2 * step,
-            anchor[2] + 3 * step,
-        )
-    # Other paths have the one group of their own.
-    assert script.calibration_groups("scale", []) == [script._CALIBRATION["scale"]]
+def float32_of(value):
+    return struct.unpack("<f", struct.pack("<f", value))[0]
 
 
-def test_a_value_is_converted_with_the_map_of_the_nearest_anchor(script):
-    left = ((0.0, 0.0, 0.0), [[1.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0]], [0.0, 0.0, 0.0])
-    right = ((1000.0, 0.0, 0.0), [[2.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0]], [1.0, 0, 0])
-    from fractions import Fraction as F
-
-    near_left = (F(10), F(0), F(0))
-    near_right = (F(900), F(0), F(0))
-    assert script.convert([left, right], 0, near_left) == 10.0
-    assert script.convert([left, right], 0, near_right) == 1801.0
-    assert script.convert([left], 0, near_right) == 900.0
-
-
-@pytest.mark.parametrize("bind", [(110.0, -20.0, 150.0), (2200.0, -400.0, 3000.0)])
-def test_a_joint_with_a_large_bind_offset_is_measured_accurately(script, bind):
-    # Review findings. The importer maps a joint's translation g to
-    # R⁻¹·(g − e), R⁻¹ turning about z by the rest rotation (0, 0, 0.6, 0.8)
-    # and e the rest pose, here a little off the first key; it works in 32
-    # bits. A second key twice as far puts the joint's other rest 1000s of
-    # meters away. Each anchor is measured where its images are small, so the
-    # map is accurate at the first key whatever else the clip holds.
+@pytest.mark.parametrize(
+    "bind",
+    [(110.0, -20.0, 150.0), (256.0, -256.0, 256.0), (-256.0, 256.0, -256.0)],
+)
+def test_a_joint_at_the_edge_of_the_range_is_measured_accurately(script, bind):
+    # The importer maps a joint's translation g to R⁻¹·(g − e), R⁻¹ turning
+    # about z by the rest rotation (0, 0, 0.6, 0.8) and e the rest pose, here
+    # the bind offset; it works in 32 bits. The map measured from the fixed
+    # probes has to give any value within the range, to well under 1e-4 m.
     c, s_ = 0.28, 0.96
     matrix = [[c, s_, 0.0], [-s_, c, 0.0], [0.0, 0.0, 1.0]]
-    first = tuple(v / 2.2 for v in bind)
-    rest = tuple(v + 0.05 for v in first)
-    offset = [-sum(matrix[i][j] * rest[j] for j in range(3)) for i in range(3)]
+    offset = [-sum(matrix[i][j] * bind[j] for j in range(3)) for i in range(3)]
 
     def imported(point):
         return tuple(
@@ -1494,15 +1362,228 @@ def test_a_joint_with_a_large_bind_offset_is_measured_accurately(script, bind):
             for i in range(3)
         )
 
-    keys = translation_keys(first, first, tuple(2 * v for v in first), first)
-    entries = []
-    for group in script.calibration_groups("translation", [keys]):
-        solved = script.solve_affine(group, [imported(point) for point in group])
-        assert solved is not None
-        entries.append((group[0], *solved))
-    from fractions import Fraction as F
+    points = script._CALIBRATION["translation"]
+    solved = script.solve_affine(points, [imported(p) for p in points])
+    assert solved is not None
+    for value in ((0.0,) * 3, bind, (256.0, 256.0, 256.0), (-256.0, -256.0, -256.0)):
+        for i in range(3):
+            want = sum(matrix[i][j] * value[j] for j in range(3)) + offset[i]
+            assert script.convert(solved, i, value) == pytest.approx(want, abs=5e-5)
 
-    exact = tuple(F(v) for v in first)
-    for i in range(3):
-        want = sum(matrix[i][j] * first[j] for j in range(3)) + offset[i]
-        assert script.convert(entries, i, exact) == pytest.approx(want, abs=3e-6)
+
+def test_a_conversion_is_applied_to_a_value_with_its_map(script):
+    entry = ([[2.0, 0, 0], [0, 1.0, 0], [0, 0, -1.0]], [1.0, 0.0, 0.5])
+    assert [script.convert(entry, i, (3.0, 4.0, 5.0)) for i in range(3)] == [
+        7.0,
+        4.0,
+        -4.5,
+    ]
+
+
+# The supported range
+
+
+def cubic_keys_of(path, value, tangent=0.0, count=2, step=1.0):
+    """Keys of a cubic `path` channel, `step` seconds apart: the same `value`
+    (a number, made a row of the path's width) and `tangent` at each of
+    `count` keys."""
+    width = {"translation": 3, "scale": 3, "rotation": 4, "weights": 1}[path]
+    row = (value,) * width
+    tan = (tangent,) * width
+    return {
+        "times": [i * step for i in range(count)],
+        "values": [row] * count,
+        "ins": [tan] * count,
+        "outs": [tan] * count,
+        "rotation": path == "rotation",
+    }
+
+
+def above(value):
+    return math.nextafter(value, math.inf)
+
+
+@pytest.mark.parametrize(
+    ("path", "limit", "unit"),
+    [
+        ("translation", 256.0, " m"),
+        ("scale", 1e4, ""),
+        ("weights", 1e4, ""),
+        ("rotation", 1e4, ""),
+    ],
+)
+@pytest.mark.parametrize("sign", [1.0, -1.0])
+def test_key_values_are_supported_up_to_the_limit(script, path, limit, unit, sign):
+    assert script.cubic_problem(path, cubic_keys_of(path, sign * limit)) is None
+    problem = script.cubic_problem(path, cubic_keys_of(path, sign * above(limit)))
+    assert problem == (
+        f"has a key value of {sign * above(limit):g}{unit}, beyond ±{limit:g}{unit}"
+    )
+
+
+@pytest.mark.parametrize("path", ["translation", "scale", "weights", "rotation"])
+@pytest.mark.parametrize("sign", [1.0, -1.0])
+@pytest.mark.parametrize("which", ["ins", "outs"])
+def test_tangents_are_supported_up_to_the_limit(script, path, sign, which):
+    # Over a millisecond, so that a translation stays within its own limit.
+    keys = cubic_keys_of(path, 0.5, step=1e-3)
+    width = len(keys["values"][0])
+    keys[which] = [(sign * 1e4,) + (0.0,) * (width - 1)] * 2
+    assert script.cubic_problem(path, keys) is None
+    keys[which] = [(sign * above(1e4),) + (0.0,) * (width - 1)] * 2
+    assert script.cubic_problem(path, keys) == (
+        f"has a tangent of {sign * above(1e4):g}, beyond ±10000"
+    )
+
+
+def test_a_rotation_key_is_supported_down_to_a_length_of_a_thousandth(script):
+    keys = cubic_keys_of("rotation", 0.0)
+    keys["values"] = [(0.0, 0.0, 0.0, 1e-3)] * 2
+    assert script.cubic_problem("rotation", keys) is None
+    keys["values"] = [(0.0, 0.0, 0.0, math.nextafter(1e-3, 0.0))] * 2
+    assert "key quaternion of length 0.001, below 0.001" in script.cubic_problem(
+        "rotation", keys
+    )
+    keys["values"] = [(0.0, 0.0, 0.0, 0.0)] * 2
+    assert "below 0.001" in script.cubic_problem("rotation", keys)
+    # Only a rotation's keys have a length; the zero vector is a fine scale.
+    assert script.cubic_problem("scale", cubic_keys_of("scale", 0.0)) is None
+
+
+@pytest.mark.parametrize("path", ["translation", "scale", "weights", "rotation"])
+@pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
+@pytest.mark.parametrize("where", ["values", "ins", "outs"])
+def test_numbers_that_are_not_finite_are_outside_the_range(script, path, bad, where):
+    keys = cubic_keys_of(path, 1.0)
+    keys[where] = [(bad,) + keys[where][0][1:], *keys[where][1:]]
+    assert script.cubic_problem(path, keys) == (
+        "holds a value or tangent that is not finite"
+    )
+
+
+@pytest.mark.parametrize("axis", [0, 1, 2])
+def test_a_translation_is_supported_between_its_keys_up_to_the_limit(script, axis):
+    # Both keys are 0, with out-tangent a and in-tangent −a over a second: the
+    # curve is a·s·(1 − s)·1 and peaks at a/4 halfway. 1024 peaks at exactly
+    # 256 m, 1025 at 256.25 m.
+    def keys(a):
+        tangent = [0.0, 0.0, 0.0]
+        tangent[axis] = a
+        negative = [-v for v in tangent]
+        return translation_keys(
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0),
+            outs=[tuple(tangent), (0.0, 0.0, 0.0)],
+            ins=[(0.0, 0.0, 0.0), tuple(negative)],
+        )
+
+    assert script.cubic_value(keys(1024.0), 0.5)[axis] == 256.0
+    assert script.cubic_problem("translation", keys(1024.0)) is None
+    assert script.cubic_problem("translation", keys(-1024.0)) is None
+    for a in (1025.0, -1025.0):
+        problem = script.cubic_problem("translation", keys(a))
+        assert problem == (
+            f"reaches {math.copysign(256.25, a):g} m between its keys 0 and 1, "
+            "beyond ±256 m"
+        )
+
+
+def test_a_translations_handles_may_go_beyond_the_limit_if_the_curve_does_not(script):
+    # Both keys are 0, with out-tangent 1000 and in-tangent −1000 over a
+    # second: the Bézier handles sit at ±333 m but the curve peaks at 250 m.
+    keys = translation_keys(
+        (0.0, 0.0, 0.0),
+        (0.0, 0.0, 0.0),
+        outs=[(1000.0, 0.0, 0.0), (0.0, 0.0, 0.0)],
+        ins=[(0.0, 0.0, 0.0), (-1000.0, 0.0, 0.0)],
+    )
+    assert script.cubic_value(keys, 0.5)[0] == 250.0
+    assert script.cubic_problem("translation", keys) is None
+
+
+def range_model(path, keys, interpolation="CUBICSPLINE", node_name="hip"):
+    """A model whose animation 'walk' animates one node's `path` with `keys`
+    (rows of three or four numbers each, flat for CUBICSPLINE)."""
+    model = GlbWriter()
+    node = model.node(node_name, mesh=True)
+    model.scene([node], default=True)
+    model.animation(
+        "walk",
+        [(node, path, [0.0, 1.0], keys)],
+        interpolation=interpolation,
+    )
+    return model
+
+
+def test_a_channel_outside_the_range_is_refused_naming_its_clip_node_and_path(
+    script, tmp_path
+):
+    zero = (0.0, 0.0, 0.0)
+    model = range_model("translation", [zero, (300.0, 0.0, 0.0), zero] * 2)
+    document, rest, source = load(script, model, tmp_path)
+    with pytest.raises(script.RangeError) as raised:
+        script.private_copy(document, rest, source, 0)
+    assert str(raised.value) == (
+        "animation 0 ('walk'), node 0 ('hip')'s translation has a key value "
+        "of 300 m, beyond ±256 m"
+    )
+    assert isinstance(raised.value, script.ScriptError)
+
+
+def test_a_channel_without_names_is_named_by_index(script, tmp_path):
+    zero = (0.0, 0.0, 0.0)
+    model = range_model("scale", [zero, (2e4, 1.0, 1.0), zero] * 2)
+    del model.document["animations"][0]["name"]
+    del model.document["nodes"][0]["name"]
+    document, rest, source = load(script, model, tmp_path)
+    with pytest.raises(script.RangeError) as raised:
+        script.private_copy(document, rest, source, 0)
+    assert str(raised.value) == (
+        "animation 0, node 0's scale has a key value of 20000, beyond ±10000"
+    )
+
+
+def test_a_second_clips_channel_is_named_by_its_own_clip(script, tmp_path):
+    zero = (0.0, 0.0, 0.0)
+    model = range_model("translation", [zero, zero, zero] * 2)
+    model.animation(
+        "run",
+        [(0, "translation", [0.0, 1.0], [zero, (0.0, 0.0, 999.0), zero] * 2)],
+        interpolation="CUBICSPLINE",
+    )
+    document, rest, source = load(script, model, tmp_path)
+    with pytest.raises(script.RangeError, match=r"animation 1 \('run'\), node 0"):
+        script.private_copy(document, rest, source, 0)
+
+
+def test_only_cubic_channels_are_held_to_the_range(script, tmp_path):
+    big = (1e6, -1e6, 1e6)
+    model = range_model("translation", [big, big], interpolation="LINEAR")
+    document, rest, source = load(script, model, tmp_path)
+    glb, cubics = script.private_copy(document, rest, source, 0)
+    assert cubics == {}
+    model = range_model("translation", [big, big], interpolation="STEP")
+    document, rest, source = load(script, model, tmp_path)
+    assert script.private_copy(document, rest, source, 0)[1] == {}
+
+
+def test_a_channel_in_a_clip_nothing_selects_is_still_held_to_the_range(
+    script, tmp_path
+):
+    zero = (0.0, 0.0, 0.0)
+    model = range_model("translation", [zero, zero, zero] * 2)
+    # A second node, in no scene, with an out-of-range cubic channel.
+    stray = model.node("stray", mesh=True)
+    model.animation(
+        "far",
+        [(stray, "translation", [0.0, 1.0], [zero, (0.0, 257.0, 0.0), zero] * 2)],
+        interpolation="CUBICSPLINE",
+    )
+    document, rest, source = load(script, model, tmp_path)
+    with pytest.raises(script.RangeError, match=r"node 1 \('stray'\)'s translation"):
+        script.private_copy(document, rest, source, 0)
+
+
+def test_the_script_and_the_launcher_agree_on_the_input_error(script):
+    assert script.INPUT_STATUS == blender.INPUT_STATUS == 3
+    assert script.INPUT_PREFIX == blender.INPUT_PREFIX

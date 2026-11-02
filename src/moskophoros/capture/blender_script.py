@@ -41,7 +41,9 @@ node, which moves nothing. Every object transform, pose bone transform and
 shape key value is recorded right after import and restored before each clip.
 
 A failure prints `moskophoros: error: <message>` to stderr and exits 1,
-writing no result.
+writing no result. A cubic spline channel outside the supported range
+(`cubic_problem`) is an input error instead: `moskophoros: input error:
+<message>` and exit status 3, which the launcher reports as the file's.
 """
 
 import base64
@@ -57,7 +59,6 @@ import sys
 import urllib.parse
 import zlib
 from array import array
-from fractions import Fraction
 
 import bpy
 
@@ -105,6 +106,15 @@ _BIN_CHUNK = 0x004E4942
 
 class ScriptError(Exception):
     pass
+
+
+class RangeError(ScriptError):
+    """A file outside the supported range of cubic spline channels (`cubic_problem`):
+    an input error, which the script reports with exit status `INPUT_STATUS`."""
+
+
+INPUT_STATUS = 3
+INPUT_PREFIX = "moskophoros: input error: "
 
 
 # The job
@@ -547,6 +557,10 @@ def private_copy(document, rest, source, scene):
     document = json.loads(json.dumps(document))
     emptied = distribute_mesh_weights(document, scene)
     nodes = document.setdefault("nodes", [])
+    names = (
+        [animation.get("name") for animation in document.get("animations") or []],
+        [node.get("name") for node in nodes],
+    )
     for index, node in enumerate(nodes):
         node["name"] = NODE_NAME.format(index)
     meshes = document.get("meshes", [])
@@ -578,7 +592,7 @@ def private_copy(document, rest, source, scene):
     for index, animation in enumerate(animations):
         animation["name"] = ANIMATION_NAME.format(index)
     cubics = expand_cubics(
-        document, buffer_reader(document, binary_chunk(rest), source), source
+        document, buffer_reader(document, binary_chunk(rest), source), source, names
     )
     add_calibration(document, cubics)
     if animations:
@@ -922,31 +936,35 @@ def cubic_keys(times, values):
     return part(1), part(0), part(2), block
 
 
-def cubic_exact(keys, time_s):
+def cubic_value(keys, time_s):
     """glTF's cubic spline of `keys` (what `expand_sampler` returns) at
-    `time_s`, as a tuple of exact `Fraction`s: the first key's value before it
-    and the last key's after it. Between keys `k` and `k + 1`, `step` seconds
-    apart, with `u` the fraction of the way and `w = 1 − u`, it is
+    `time_s`, as a tuple of floats: the first key's value before it and the
+    last key's after it. Between keys `k` and `k + 1`, `step` seconds apart,
+    with `u` the fraction of the way and `w` the fraction left, it is
     (1 + 2u)·w²·p0 + step·u·w²·m0 + (1 + 2w)·u²·p1 − step·u²·w·a1, with `p0`,
     `m0` the first key's value and out-tangent and `p1`, `a1` the second's
-    value and in-tangent (glTF's (2u³ − 3u² + 1) and the like). Every input is
-    a float, so the arithmetic is exact: no cancellation of huge tangent terms
-    or of the basis near a key can lose a value. A rotation is normalized, as
-    glTF says: Blender's 32-bit properties would underflow or overflow on a
-    very small or large one. The zero quaternion is left as it is."""
+    value and in-tangent (glTF's (2u³ − 3u² + 1) and the like). `u` and `w`
+    are each computed from the times, not one from the other, so neither loses
+    its digits near its own key. Inside the supported range (`cubic_problem`)
+    the terms are at most 1e4 times `step`, so double precision leaves an
+    error below 1e-6 (4.5e-8 in a sweep of random keys against exact
+    arithmetic), far below the 1e-4 the result is good to. A
+    rotation is normalized, as glTF says: Blender's 32-bit properties would
+    underflow or overflow on a very small or large one. The zero quaternion is
+    left as it is."""
     times, values, ins, outs = (
         keys[name] for name in ("times", "values", "ins", "outs")
     )
     if time_s <= times[0]:
-        value = tuple(Fraction(v) for v in values[0])
+        value = values[0]
     elif time_s >= times[-1]:
-        value = tuple(Fraction(v) for v in values[-1])
+        value = values[-1]
     else:
         k = bisect.bisect_right(times, time_s) - 1
-        start, end, now = Fraction(times[k]), Fraction(times[k + 1]), Fraction(time_s)
+        start, end = times[k], times[k + 1]
         step = end - start
-        u = (now - start) / step
-        w = (end - now) / step
+        u = (time_s - start) / step
+        w = (end - time_s) / step
         h00, h10, h01, h11 = (
             (1 + 2 * u) * w * w,
             u * w * w,
@@ -954,132 +972,21 @@ def cubic_exact(keys, time_s):
             -u * u * w,
         )
         value = tuple(
-            h00 * Fraction(p0)
-            + step * h10 * Fraction(m0)
-            + h01 * Fraction(p1)
-            + step * h11 * Fraction(a1)
+            h00 * p0 + step * h10 * m0 + h01 * p1 + step * h11 * a1
             for p0, m0, p1, a1 in zip(
                 values[k], outs[k], values[k + 1], ins[k + 1], strict=True
             )
         )
     if keys.get("rotation"):
-        length = math.hypot(*(float(component) for component in value))
+        length = math.hypot(*value)
         if length > 0.0:
-            value = tuple(component / Fraction(length) for component in value)
-    return value
-
-
-def cubic_value(keys, time_s):
-    """`cubic_exact` rounded to floats."""
-    return tuple(float(component) for component in cubic_exact(keys, time_s))
-
-
-def expand_sampler(document, fetch, source, sampler, path, where):
-    """Replace one CUBICSPLINE `sampler` of a node's `path` with the LINEAR
-    sampler of its keys' values, in place. Returns the keys' times, values,
-    in-tangents and out-tangents for `cubic_overrides`."""
-    try:
-        times = [
-            row[0] for row in read_accessor(document, fetch, sampler["input"], source)
-        ]
-        flat = [
-            value
-            for row in read_accessor(document, fetch, sampler["output"], source)
-            for value in row
-        ]
-        kind = document["accessors"][sampler["output"]]["type"]
-    except (KeyError, TypeError):
-        raise ScriptError(f"{where} has no readable input and output") from None
-    if not all(map(math.isfinite, [*times, *flat])):
-        raise ScriptError(f"{where} holds a number that is not finite")
-    try:
-        values, ins, outs, block = cubic_keys(times, flat)
-    except ValueError as error:
-        raise ScriptError(f"{where}: {error}") from None
-    if path != "weights" and block != _PATH_WIDTHS[path]:
-        raise ScriptError(f"{where} does not hold {path} values")
-    sampler["output"] = _append_accessor(
-        document,
-        kind,
-        [value for row in values for value in row],
-        _ACCESSOR_WIDTHS[kind],
-        False,
-    )
-    sampler["interpolation"] = "LINEAR"
-    return {
-        "times": times,
-        "values": values,
-        "ins": ins,
-        "outs": outs,
-        "rotation": path == "rotation",
-    }
-
-
-def expand_cubics(document, fetch, source):
-    """Rewrite each CUBICSPLINE sampler that animates a node's translation,
-    rotation, scale or weights as the LINEAR sampler of its keys' values,
-    editing `document` in place. Returns {animation index: {(node, path):
-    keys}} for `cubic_overrides`, `keys` being what `expand_sampler` gives."""
-    cubics = {}
-    expanded = {}
-    for a, animation in enumerate(document.get("animations") or []):
-        samplers = animation.get("samplers", [])
-        for channel in animation.get("channels", []):
-            target = channel_target(channel)
-            key = (a, channel["sampler"])
-            sampler = samplers[channel["sampler"]]
-            # A sampler already expanded is linear now, but every channel
-            # sharing it needs its values set from the keys.
-            if target is None or (
-                key not in expanded and sampler.get("interpolation") != "CUBICSPLINE"
-            ):
-                continue
-            if key not in expanded:
-                expanded[key] = expand_sampler(
-                    document,
-                    fetch,
-                    source,
-                    sampler,
-                    target[1],
-                    f"{source}: animation {a}'s sampler {channel['sampler']}",
-                )
-            cubics.setdefault(a, {}).setdefault(target, expanded[key])
-    return cubics
-
-
-# Points whose images under the importer's conversion are read back to
-# measure it: the first is the base and the rest, up to the last but the
-# check points, differ from it in independent directions. A quaternion's
-# consecutive points make acute angles, so the importer negates none. A
-# translation's points are placed around the channel's own key values
-# (`calibration_points`).
-_CALIBRATION = {
-    "scale": [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 2, 3)],
-    "rotation": [
-        (0, 0, 0, 1),
-        (0.5, 0, 0, 0.866),
-        (0, 0.5, 0, 0.866),
-        (0, 0, 0.5, 0.866),
-        (0, 0, 0, 2),
-        (0.3, 0.4, 0.5, 0.9),
-    ],
-}
-
-
-def float32(value):
-    """`value` rounded to 32 bits, as the importer reads a key."""
-    return struct.unpack("<f", struct.pack("<f", value))[0]
-
-
-# A translation is calibrated around anchors no further apart than this, and
-# its probes are this far from each anchor, and by at most this many anchors.
-ANCHOR_SPACING = 256.0
-MAX_ANCHORS = 64
+            value = tuple(component / length for component in value)
+    return tuple(float(component) for component in value)
 
 
 def segment_point(keys, k, u):
     """The cubic spline of `keys` a fraction `u` of the way from key `k` to
-    key `k + 1`, in floating point (for placing anchors, not for values)."""
+    key `k + 1` (for finding where a curve goes between its keys)."""
     times, values, ins, outs = (
         keys[name] for name in ("times", "values", "ins", "outs")
     )
@@ -1122,86 +1029,188 @@ def extremum_fractions(keys, k):
     return sorted(found)
 
 
-def translation_anchors(keysets):
-    """The places along a node's translation channels that the importer's
-    conversion is measured at, all rounded to 32 bits as the importer reads
-    them: the keys' values and the points where the spline turns between
-    them, in order, and points across any gap between successive ones wider
-    than `ANCHOR_SPACING`, spread by how wide the gaps are. At most
-    `MAX_ANCHORS` (the keys and turns evenly thinned if they are more), and
-    the work does not depend on how far apart the values are."""
-    core = []
-    seen = set()
+# The supported range of cubic spline channels (design §Supported Blender
+# version). Inside it the tool's values are within 1e-4 m (a rotation within
+# 0.1°) of glTF's; a file outside it is an input error, exit 3.
+TRANSLATION_LIMIT = 256.0  # m: a translation's key values, its values anywhere
+# between keys, and the importer's image of a zero translation (the bind offset)
+VALUE_LIMIT = 1e4  # rotation, scale and weight key values
+TANGENT_LIMIT = 1e4  # every tangent component, of any path
+MIN_QUATERNION = 1e-3  # the length of a rotation key
+# Slack on what is computed rather than read: a curve's extremum is a root in
+# double precision, and the bind offset is read back through the importer's
+# 32-bit conversion (an ulp of 3e-5 m at 256 m).
+EXTREMUM_SLACK = 1e-9
+BIND_SLACK = 1e-3
 
-    def add(point):
-        try:
-            rounded = tuple(float32(component) for component in point)
-        except (OverflowError, ValueError):
-            return
-        if rounded not in seen and all(map(math.isfinite, rounded)):
-            seen.add(rounded)
-            core.append(rounded)
 
-    for keys in keysets:
-        count = len(keys["values"])
-        for k in range(count):
-            add(keys["values"][k])
-            if k + 1 < count:
-                for u in extremum_fractions(keys, k):
-                    add(segment_point(keys, k, u))
-    if len(core) > MAX_ANCHORS:
-        return core[:: -(-len(core) // MAX_ANCHORS)]
-    gaps = [math.dist(core[i], core[i + 1]) for i in range(len(core) - 1)]
-    extra = [0] * len(gaps)
-    for _ in range(MAX_ANCHORS - len(core)):
-        widest = max(
-            range(len(gaps)), key=lambda i: gaps[i] / (extra[i] + 1), default=None
-        )
-        if widest is None or gaps[widest] / (extra[widest] + 1) <= ANCHOR_SPACING:
-            break
-        extra[widest] += 1
-    anchors = []
-    for i, point in enumerate(core):
-        anchors.append(point)
-        if i < len(gaps):
-            parts = extra[i] + 1
-            anchors.extend(
-                tuple(
-                    float32(p + (q - p) * j / parts)
-                    for p, q in zip(point, core[i + 1], strict=True)
+def cubic_problem(path, keys):
+    """What is outside the supported range in a cubic channel's `keys` (what
+    `expand_sampler` returns), as a phrase that follows the channel's name,
+    or None."""
+    for name in ("values", "ins", "outs"):
+        if not all(math.isfinite(x) for row in keys[name] for x in row):
+            return "holds a value or tangent that is not finite"
+    for row in (*keys["ins"], *keys["outs"]):
+        for x in row:
+            if abs(x) > TANGENT_LIMIT:
+                return f"has a tangent of {x:g}, beyond ±{TANGENT_LIMIT:g}"
+    limit = TRANSLATION_LIMIT if path == "translation" else VALUE_LIMIT
+    unit = " m" if path == "translation" else ""
+    for row in keys["values"]:
+        for x in row:
+            if abs(x) > limit:
+                return f"has a key value of {x:g}{unit}, beyond ±{limit:g}{unit}"
+    if path == "rotation":
+        for row in keys["values"]:
+            length = math.hypot(*row)
+            if length < MIN_QUATERNION:
+                return (
+                    f"has a key quaternion of length {length:g}, "
+                    f"below {MIN_QUATERNION:g}"
                 )
-                for j in range(1, parts)
-            )
-    return anchors
+    if path == "translation":
+        for k in range(len(keys["values"]) - 1):
+            for u in extremum_fractions(keys, k):
+                for x in segment_point(keys, k, u):
+                    if abs(x) > limit + EXTREMUM_SLACK:
+                        return (
+                            f"reaches {x:g} m between its keys {k} and {k + 1}, "
+                            f"beyond ±{limit:g} m"
+                        )
+    return None
 
 
-def calibration_groups(path, keysets):
-    """The groups of points to calibrate a node's `path` with, given the keys
-    (`expand_sampler`'s result) of each of its cubic channels in one clip;
-    each group gives one affine map.
-
-    The importer works in 32 bits. A joint with a large bind offset has
-    images in the hundreds or thousands wherever the joint is not near its
-    rest pose, and an ulp there (2e-4 at 3000) carried into a map fitted
-    away from where it is used would spoil it (review findings). A
-    translation is therefore calibrated around anchors along its own keys
-    (`translation_anchors`), a group of probes `ANCHOR_SPACING` apart around
-    each, and a value is converted with the map of the nearest anchor, where
-    the images are as small as they get. Rotation and scale have one group.
-    """
-    if path != "translation":
-        return [_CALIBRATION[path]]
-    offsets = [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 2, 3)]
-    return [
-        [
-            tuple(float32(anchor[i] + ANCHOR_SPACING * offset[i]) for i in range(3))
-            for offset in offsets
+def expand_sampler(document, fetch, source, sampler, path, where, label):
+    """Replace one CUBICSPLINE `sampler` of a node's `path` with the LINEAR
+    sampler of its keys' values, in place. Returns the keys' times, values,
+    in-tangents and out-tangents for `cubic_overrides`, after checking them
+    against the supported range (`cubic_problem`): a channel outside it is a
+    `RangeError` naming `label`."""
+    try:
+        times = [
+            row[0] for row in read_accessor(document, fetch, sampler["input"], source)
         ]
-        for anchor in translation_anchors(keysets)
-    ]
+        flat = [
+            value
+            for row in read_accessor(document, fetch, sampler["output"], source)
+            for value in row
+        ]
+        kind = document["accessors"][sampler["output"]]["type"]
+    except (KeyError, TypeError):
+        raise ScriptError(f"{where} has no readable input and output") from None
+    if not all(map(math.isfinite, times)):
+        raise ScriptError(f"{where} holds a time that is not finite")
+    try:
+        values, ins, outs, block = cubic_keys(times, flat)
+    except ValueError as error:
+        raise ScriptError(f"{where}: {error}") from None
+    if path != "weights" and block != _PATH_WIDTHS[path]:
+        raise ScriptError(f"{where} does not hold {path} values")
+    keys = {
+        "times": times,
+        "values": values,
+        "ins": ins,
+        "outs": outs,
+        "rotation": path == "rotation",
+    }
+    problem = cubic_problem(path, keys)
+    if problem is not None:
+        raise RangeError(f"{label} {problem}")
+    sampler["output"] = _append_accessor(
+        document,
+        kind,
+        [value for row in values for value in row],
+        _ACCESSOR_WIDTHS[kind],
+        False,
+    )
+    sampler["interpolation"] = "LINEAR"
+    return keys
 
 
-CALIBRATION_NAME = "moskophoros.calibration.{}"
+def channel_label(names, animation, node, path):
+    """How an error names a channel: its animation and node by index and, when
+    the file gives one, name; `names` is the file's animation names and node
+    names."""
+    parts = []
+    for kind, index, given in (
+        ("animation", animation, names[0]),
+        ("node", node, names[1]),
+    ):
+        name = given[index] if index < len(given) else None
+        text = f"{kind} {index}"
+        if isinstance(name, str) and name:
+            text += f" ({name!r})"
+        parts.append(text)
+    return f"{parts[0]}, {parts[1]}'s {path}"
+
+
+def expand_cubics(document, fetch, source, names=((), ())):
+    """Rewrite each CUBICSPLINE sampler that animates a node's translation,
+    rotation, scale or weights as the LINEAR sampler of its keys' values,
+    editing `document` in place. Returns {animation index: {(node, path):
+    keys}} for `cubic_overrides`, `keys` being what `expand_sampler` gives
+    with the channel's name (`label`) added. `names` is the file's animation
+    names and node names, for errors."""
+    cubics = {}
+    expanded = {}
+    for a, animation in enumerate(document.get("animations") or []):
+        samplers = animation.get("samplers", [])
+        for channel in animation.get("channels", []):
+            target = channel_target(channel)
+            key = (a, channel["sampler"])
+            sampler = samplers[channel["sampler"]]
+            # A sampler already expanded is linear now, but every channel
+            # sharing it needs its values set from the keys.
+            if target is None or (
+                key not in expanded and sampler.get("interpolation") != "CUBICSPLINE"
+            ):
+                continue
+            label = channel_label(names, a, *target)
+            if key not in expanded:
+                expanded[key] = expand_sampler(
+                    document,
+                    fetch,
+                    source,
+                    sampler,
+                    target[1],
+                    f"{source}: animation {a}'s sampler {channel['sampler']}",
+                    label,
+                )
+            cubics.setdefault(a, {}).setdefault(
+                target, {**expanded[key], "label": label}
+            )
+    return cubics
+
+
+# Points whose images under the importer's conversion are read back to
+# measure it: the first is the base and the next ones, up to the last but the
+# check point, differ from it in independent directions. A quaternion's
+# consecutive points make acute angles, so the importer negates none. A
+# translation's are far apart (4096 m) so that the 32-bit rounding of their
+# images, about 6e-8 of their size, is a small part of the map's slope
+# (simulated, the map is then within 4e-5 m of the exact conversion for a
+# translation and a bind offset within the supported range).
+_CALIBRATION = {
+    "scale": [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 2, 3)],
+    "translation": [
+        (0, 0, 0),
+        (4096, 0, 0),
+        (0, 4096, 0),
+        (0, 0, 4096),
+        (4096, 8192, 12288),
+    ],
+    "rotation": [
+        (0, 0, 0, 1),
+        (0.5, 0, 0, 0.866),
+        (0, 0.5, 0, 0.866),
+        (0, 0, 0.5, 0.866),
+        (0, 0, 0, 2),
+        (0.3, 0.4, 0.5, 0.9),
+    ],
+}
+
+CALIBRATION_NAME = "moskophoros.calibration"
 # How far a check point may be from the measured map's image of it: this much
 # and a few steps of 32-bit rounding of the largest image.
 CALIBRATION_ERROR = 1e-5
@@ -1209,52 +1218,46 @@ CALIBRATION_STEPS = 8 * 2.0**-24
 
 
 def add_calibration(document, cubics):
-    """Add an animation for each of `cubics`' animations, of the keys
-    `calibration_groups` gives, with a channel for every node and path that
-    animation has a cubic spline channel for but weights, one second apart.
-    Each is calibrated around its own animation's keys: another clip's keys,
-    far from this one's, would bring back the rounding that the points near
-    the keys avoid (a review finding)."""
-    for animation, targets in sorted(cubics.items()):
-        wanted = sorted(target for target in targets if target[1] != "weights")
-        samplers = []
-        channels = []
-        made = {}
-        for node, path in wanted:
-            # A translation has points of its own; the others share theirs.
-            which = (node, path) if path == "translation" else path
-            if which not in made:
-                points = [
-                    point
-                    for group in calibration_groups(path, [targets[(node, path)]])
-                    for point in group
-                ]
-                time_input = _append_accessor(
-                    document, "SCALAR", [float(i) for i in range(len(points))], 1, True
-                )
-                kind = "VEC4" if path == "rotation" else "VEC3"
-                output = _append_accessor(
-                    document,
-                    kind,
-                    [float(value) for point in points for value in point],
-                    _ACCESSOR_WIDTHS[kind],
-                    False,
-                )
-                samplers.append(
-                    {"input": time_input, "output": output, "interpolation": "LINEAR"}
-                )
-                made[which] = len(samplers) - 1
-            channels.append(
-                {"sampler": made[which], "target": {"node": node, "path": path}}
+    """Add one animation of the keys `_CALIBRATION` gives, with a channel for
+    every node and path that any of `cubics`' animations has a cubic spline
+    channel for but weights, one second apart. The importer's conversion of a
+    node's value does not depend on the clip, so one animation measures it for
+    all of them."""
+    wanted = sorted(
+        {
+            target
+            for targets in cubics.values()
+            for target in targets
+            if target[1] != "weights"
+        }
+    )
+    if not wanted:
+        return
+    samplers = []
+    channels = []
+    made = {}
+    for node, path in wanted:
+        if path not in made:
+            points = _CALIBRATION[path]
+            time_input = _append_accessor(
+                document, "SCALAR", [float(i) for i in range(len(points))], 1, True
             )
-        if channels:
-            document.setdefault("animations", []).append(
-                {
-                    "name": CALIBRATION_NAME.format(animation),
-                    "channels": channels,
-                    "samplers": samplers,
-                }
+            kind = "VEC4" if path == "rotation" else "VEC3"
+            output = _append_accessor(
+                document,
+                kind,
+                [float(value) for point in points for value in point],
+                _ACCESSOR_WIDTHS[kind],
+                False,
             )
+            samplers.append(
+                {"input": time_input, "output": output, "interpolation": "LINEAR"}
+            )
+            made[path] = len(samplers) - 1
+        channels.append({"sampler": made[path], "target": {"node": node, "path": path}})
+    document.setdefault("animations", []).append(
+        {"name": CALIBRATION_NAME, "channels": channels, "samplers": samplers}
+    )
 
 
 def solve_affine(points, images):
@@ -1322,83 +1325,73 @@ def fcurve_target(fcurve, slot):
 
 def calibrate(cubics):
     """The importer's affine maps for every node and path of `cubics` but
-    weights: {(animation, node, path): [(base, A, b)]}, a map for each group
-    of `calibration_groups` (the first point of the group is its base),
-    measured from the calibration animations that `add_calibration` put in the
-    private copy."""
-    maps = {}
-    for animation, targets in cubics.items():
-        action = bpy.data.actions.get(CALIBRATION_NAME.format(animation))
-        curves = {}
-        if action is not None:
-            for layer in action.layers:
-                for strip in layer.strips:
-                    for channelbag in strip.channelbags:
-                        for fcurve in channelbag.fcurves:
-                            target = fcurve_target(fcurve, channelbag.slot)
-                            if target is not None:
-                                curves.setdefault(target, {})[fcurve.array_index] = [
-                                    point.co[1] for point in fcurve.keyframe_points
-                                ]
-        for node, path in targets:
-            if path == "weights":
-                continue
-            groups = calibration_groups(path, [targets[(node, path)]])
-            width = len(groups[0][0])
-            count = sum(len(group) for group in groups)
-            found = curves.get((node, path), {})
-            if sorted(found) != list(range(width)) or any(
-                len(column) != count for column in found.values()
-            ):
-                raise ScriptError(
-                    f"cannot measure how Blender imports node {node}'s {path}: "
-                    "the calibration animation has no such curves"
+    weights: {(node, path): (A, b)}, measured from the calibration animation
+    that `add_calibration` put in the private copy. A translation whose bind
+    offset `b` (the importer's image of a zero translation) is beyond the
+    supported range is a `RangeError` naming the first channel that animates
+    it."""
+    labels = {}
+    for animation in sorted(cubics):
+        for target, keys in cubics[animation].items():
+            if target[1] != "weights":
+                labels.setdefault(
+                    target, keys.get("label", f"node {target[0]}'s {target[1]}")
                 )
-            entries = []
-            start = 0
-            for group in groups:
-                images = [
-                    tuple(found[i][start + k] for i in range(width))
-                    for k in range(len(group))
-                ]
-                start += len(group)
-                solved = solve_affine(group, images)
-                if solved is None:
-                    raise ScriptError(
-                        f"cannot measure how Blender imports node {node}'s {path}: "
-                        "its conversion is not affine"
+    action = bpy.data.actions.get(CALIBRATION_NAME)
+    curves = {}
+    if action is not None:
+        for layer in action.layers:
+            for strip in layer.strips:
+                for channelbag in strip.channelbags:
+                    for fcurve in channelbag.fcurves:
+                        target = fcurve_target(fcurve, channelbag.slot)
+                        if target is not None:
+                            curves.setdefault(target, {})[fcurve.array_index] = [
+                                point.co[1] for point in fcurve.keyframe_points
+                            ]
+    maps = {}
+    for (node, path), label in sorted(labels.items()):
+        points = _CALIBRATION[path]
+        width = len(points[0])
+        found = curves.get((node, path), {})
+        if sorted(found) != list(range(width)) or any(
+            len(column) != len(points) for column in found.values()
+        ):
+            raise ScriptError(
+                f"cannot measure how Blender imports node {node}'s {path}: "
+                "the calibration animation has no such curves"
+            )
+        images = [tuple(found[i][k] for i in range(width)) for k in range(len(points))]
+        solved = solve_affine(points, images)
+        if solved is None:
+            raise ScriptError(
+                f"cannot measure how Blender imports node {node}'s {path}: "
+                "its conversion is not affine"
+            )
+        if path == "translation":
+            for value in solved[1]:
+                if abs(value) > TRANSLATION_LIMIT + BIND_SLACK:
+                    raise RangeError(
+                        f"{label} has a bind offset of {value:g} m, "
+                        f"beyond ±{TRANSLATION_LIMIT:g} m"
                     )
-                entries.append((group[0], *solved))
-            maps[(animation, node, path)] = entries
+        maps[(node, path)] = solved
     return maps
 
 
 # The properties of cubic spline channels that `evaluate` sets: {animation
 # index: [(data, owner path, property, index, image, keys, target)]} for every
 # animation, and the list of the one active. `index` is None for a scalar
-# property, `image` takes `cubic_exact`'s value to the property's, and `target`
+# property, `image` takes `cubic_value`'s value to the property's, and `target`
 # is a weights channel's morph target, else None.
 _CUBIC = {"all": {}, "active": ()}
 
 
-def convert(entries, row, g):
-    """Component `row` of the importer's conversion of the exact glTF value
-    `g` (a tuple of `Fraction`s), with the map measured nearest to it."""
-    if len(entries) > 1:
-        point = [float(component) for component in g]
-        entry = min(
-            entries,
-            key=lambda e: sum((p - a) ** 2 for p, a in zip(point, e[0], strict=True)),
-        )
-    else:
-        entry = entries[0]
-    _, matrix, offset = entry
-    return float(
-        sum(
-            (Fraction(a) * b for a, b in zip(matrix[row], g, strict=True)),
-            Fraction(offset[row]),
-        )
-    )
+def convert(entry, row, g):
+    """Component `row` of the importer's conversion of the glTF value `g`,
+    with the map `entry` (A, b) that `calibrate` measured."""
+    matrix, offset = entry
+    return sum(a * b for a, b in zip(matrix[row], g, strict=True)) + offset[row]
 
 
 def cubic_overrides(cubics):
@@ -1436,12 +1429,12 @@ def cubic_overrides(cubics):
                         morph = None
                         if target[1] == "weights":
                             morph = int(_TARGET_PATH.fullmatch(fcurve.data_path)[1])
-                            image = lambda g, morph=morph: float(g[morph])  # noqa: E731
+                            image = lambda g, morph=morph: g[morph]  # noqa: E731
                             index = None
                         else:
-                            entries = maps[(animation, *target)]
-                            image = lambda g, entries=entries, row=fcurve.array_index: (  # noqa: E731
-                                convert(entries, row, g)
+                            entry = maps[target]
+                            image = lambda g, entry=entry, row=fcurve.array_index: (  # noqa: E731
+                                convert(entry, row, g)
                             )
                             index = fcurve.array_index
                         found.extend(
@@ -1456,7 +1449,7 @@ def apply_cubics(time_s):
     glTF's value at `time_s`."""
     for data, owner, prop, index, image, keys, _ in _CUBIC["active"]:
         target = data.path_resolve(owner) if owner else data
-        value = image(cubic_exact(keys, time_s))
+        value = image(cubic_value(keys, time_s))
         if index is None:
             setattr(target, prop, value)
         else:
@@ -1562,7 +1555,7 @@ def check_weights(objects, document, clip, times, fps):
                 for time_s in times:
                     if target in cubics:
                         image, keys = cubics[target]
-                        weight = image(cubic_exact(keys, time_s))
+                        weight = image(cubic_value(keys, time_s))
                     else:
                         weight = curves[target].evaluate(time_s * fps)
                     if abs(weight) > WEIGHT_LIMIT:
@@ -3596,6 +3589,9 @@ def main(argv):
 if __name__ == "__main__":
     try:
         main(sys.argv)
+    except RangeError as error:
+        print(f"{INPUT_PREFIX}{error}", file=sys.stderr)
+        sys.exit(INPUT_STATUS)
     except ScriptError as error:
         print(f"moskophoros: error: {error}", file=sys.stderr)
         sys.exit(1)

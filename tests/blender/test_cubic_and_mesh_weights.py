@@ -15,6 +15,7 @@ from test_measure import TIMES, assert_close, boxes, by_clip, measure
 from test_render import TOLERANCE_PX, centroid, cube, images, render
 
 from moskophoros.capture import backend, blender
+from moskophoros.gltf import InputError
 
 pytestmark = pytest.mark.blender
 
@@ -630,23 +631,16 @@ def test_a_cubic_rotation_is_exact_just_after_a_key_with_a_steep_tangent(
     assert abs(measured[2][0] - key_only[0]) > 1e-3
 
 
-@pytest.mark.parametrize(
-    "tangent",
-    [1e-21, 1e20],
-    ids=["a quaternion too small to square in 32 bits", "one too large to square"],
-)
-def test_a_cubic_rotation_is_normalized_in_double_precision(found, tmp_path, tangent):
+def test_a_cubic_rotation_is_normalized_in_double_precision(found, tmp_path):
     # Both keys are the identity. At 0.5 s the middle of the curve is a
-    # quaternion that is nearly pure x: 2.5e-22 with w cancelled to zero, or
-    # 2.5e19 with w = 1. Either is a half turn about x, so the triangle's top
-    # vertex lands at its bottom (a review finding).
+    # quaternion that is nearly pure x, 2.5e-22 with w cancelled to zero,
+    # whose square underflows in Blender's 32 bits: a half turn about x, so
+    # the triangle's top vertex lands at its bottom (a review finding).
     times = [0.0, 1.0]
     identity = (0.0, 0.0, 0.0, 1.0)
     zero = (0.0,) * 4
-    if tangent < 1:
-        out, into = (tangent, 0.0, 0.0, -4.0), (-tangent, 0.0, 0.0, 4.0)
-    else:
-        out, into = (tangent, 0.0, 0.0, 0.0), (-tangent, 0.0, 0.0, 0.0)
+    tangent = 1e-21
+    out, into = (tangent, 0.0, 0.0, -4.0), (-tangent, 0.0, 0.0, 4.0)
     keys = [(zero, identity, out), (into, identity, zero)]
     model = GlbWriter()
     shape = model.node("shape", mesh=True)
@@ -668,85 +662,20 @@ def test_a_cubic_rotation_is_normalized_in_double_precision(found, tmp_path, tan
     assert measured[2] == pytest.approx((0.0, 1.0, 0.0, 1.0), abs=1e-4)
 
 
-def test_huge_cubic_tangent_terms_that_cancel_leave_the_key_values(found, tmp_path):
-    # Both keys are the identity. At 0.5 s the tangents' contributions to w,
-    # ±1.25e19, cancel exactly and the quaternion is (0.5, 0, 0, 1): a turn of
-    # 2·atan(0.5) = 53.13° about x, which takes the triangle's top vertex to
-    # (0, 0.6, 0.8), so L, R, U, D = 0, 1, 0.6, 0 (a review finding).
-    times = [0.0, 1.0]
-    identity = (0.0, 0.0, 0.0, 1.0)
-    zero = (0.0,) * 4
-    keys = [
-        (zero, identity, (4.0, 0.0, 0.0, 1e20)),
-        ((0.0, 0.0, 0.0, 1e20), identity, zero),
-    ]
-    model = GlbWriter()
-    shape = model.node("shape", mesh=True)
-    model.scene([shape], default=True)
-    model.animation(
-        "tilt", [(shape, "rotation", times, flat(keys))], interpolation="CUBICSPLINE"
-    )
-    result, _ = measure(
-        found,
-        model.write(tmp_path, "tilt"),
-        tmp_path,
-        clip_names=["tilt"],
-        once=["tilt"],
-    )
-    measured = boxes(result)["tilt"]
-    assert measured[2] == pytest.approx((0.0, 1.0, 0.6, 0.0), abs=1e-4)
-    for index in (0, 4):
-        assert measured[index] == pytest.approx((0.0, 1.0, 1.0, 0.0), abs=1e-4)
-
-
-def test_cubic_tangent_products_that_cancel_are_exact_before_rounding(found, tmp_path):
-    # A review finding. Both keys are the identity, over 3 s, with an
-    # out-tangent (4, 0, 0, 2^55) and an in-tangent (0, 0, 0, 5·2^55). At 0.5 s
-    # the tangents' terms in w cancel exactly, leaving the quaternion
-    # (25/18, 0, 0, 1): a turn of 2·atan(25/18) = 108.5° about x, which takes
-    # the triangle's top vertex to (0, cos 108.5°, sin 108.5°), so L, R, U, D
-    # = 0, 1, 0, 0.317.
-    times = [0.0, 3.0]
-    identity = (0.0, 0.0, 0.0, 1.0)
-    zero = (0.0,) * 4
-    keys = [
-        (zero, identity, (4.0, 0.0, 0.0, 2.0**55)),
-        ((0.0, 0.0, 0.0, 5.0 * 2.0**55), identity, zero),
-    ]
-    model = GlbWriter()
-    shape = model.node("shape", mesh=True)
-    model.scene([shape], default=True)
-    model.animation(
-        "tilt", [(shape, "rotation", times, flat(keys))], interpolation="CUBICSPLINE"
-    )
-    result, _ = measure(
-        found,
-        model.write(tmp_path, "tilt"),
-        tmp_path,
-        clip_names=["tilt"],
-        once=["tilt"],
-    )
-    angle = 2 * math.atan2(25 / 18, 1)
-    expected = (0.0, 1.0, max(0.0, math.cos(angle)), max(0.0, -math.cos(angle)))
-    assert expected[3] == pytest.approx(0.31717597, abs=1e-8)
-    rows = {time: box for _, time, box, _ in by_clip(result)["tilt"]}
-    assert rows[0.5] == pytest.approx(expected, abs=1e-4)
-    assert rows[0.0] == pytest.approx((0.0, 1.0, 1.0, 0.0), abs=1e-4)
-
-
 @pytest.mark.parametrize("interpolation", ["LINEAR", "CUBICSPLINE"])
-@pytest.mark.parametrize("rest", [(50.0, 100.0, 150.0), (1000.0, 2000.0, 3000.0)])
+@pytest.mark.parametrize("rest", [(50.0, 100.0, 150.0), (256.0, 0.0, 256.0)])
 @pytest.mark.parametrize("other_clip", [False, True], ids=["alone", "with a far clip"])
 def test_a_joint_translated_far_from_its_bind_pose_is_measured_accurately(
     found, tmp_path, interpolation, rest, other_clip
 ):
-    # Review findings. The joint rests at `rest`, turned about z by
-    # (0, 0, 0.6, 0.8), which is 73.74° with cosine 0.28 and sine 0.96; its
-    # inverse bind matrix is the exact inverse of that world matrix, so the
-    # triangle weighted to it stays at its own coordinates, L, R, U, D = 0, 1,
-    # 1, 0. The importer works in 32 bits around values in the hundreds or
-    # thousands, and the cubic channel's map has to survive that, whatever an
-    # unselected clip holds the joint at: here twice as far (a review finding).
+    # The joint rests at `rest`, turned about z by (0, 0, 0.6, 0.8), which is
+    # 73.74° with cosine 0.28 and sine 0.96; its inverse bind matrix is the
+    # exact inverse of that world matrix, so the triangle weighted to it stays
+    # at its own coordinates, L, R, U, D = 0, 1, 1, 0. The importer works in 32
+    # bits around values in the hundreds, and the cubic channel's map has to
+    # survive that, whatever an unselected clip holds the joint at: here the
+    # opposite place. The second rest has key values and a bind offset at the
+    # supported limit of 256 m.
     c, s = 0.28, 0.96
     x, y, z = rest
     bind = (-(c * x + s * y), -(-s * x + c * y), -z)
@@ -777,7 +706,7 @@ def test_a_joint_translated_far_from_its_bind_pose_is_measured_accurately(
 
     hold("hold", rest)
     if other_clip:
-        hold("far", tuple(2 * v for v in rest))
+        hold("far", tuple(-v for v in rest))
     result, _ = measure(
         found,
         model.write(tmp_path, "hold"),
@@ -794,13 +723,11 @@ def test_a_joint_translated_far_from_its_bind_pose_is_measured_accurately(
 def test_a_clip_spanning_distant_translations_is_accurate_in_every_segment(
     found, tmp_path, interpolation
 ):
-    # A review finding. The joint of the previous test, at (1000, 2000, 3000),
-    # holds there for a second, goes to twice that and comes back. Calibrated
-    # around keys a thousand meters apart, the map is 3e-4 out where the joint
-    # rests; calibrated around the keys' own values it is not. Where the joint
-    # is at its rest pose (t <= 1 and t = 3) the triangle is at its own
-    # coordinates, L, R, U, D = 0, 1, 1, 0.
-    rest = (1000.0, 2000.0, 3000.0)
+    # The joint of the previous test, at (128, −100, 128), holds there for a
+    # second, goes to twice that, at the supported limit of 256 m, and comes
+    # back. Where the joint is at its rest pose (t <= 1 and t = 3) the
+    # triangle is at its own coordinates, L, R, U, D = 0, 1, 1, 0.
+    rest = (128.0, -100.0, 128.0)
     c, s = 0.28, 0.96
     x, y, z = rest
     bind = (-(c * x + s * y), -(-s * x + c * y), -z)
@@ -839,13 +766,12 @@ def test_a_clip_spanning_distant_translations_is_accurate_in_every_segment(
 
 
 def test_a_translation_that_turns_outside_its_keys_is_accurate_there(found, tmp_path):
-    # A review finding. The joint of the previous tests rests at (1000, 2000,
-    # 3000). Both keys are twice that, with an out-tangent of −4 times it and
-    # an in-tangent of 4 times it over a second: the curve dips to the rest
-    # halfway, where the triangle is at its own coordinates, L, R, U, D = 0,
-    # 1, 1, 0. The importer's map has to be accurate there, away from both
-    # keys.
-    rest = (1000.0, 2000.0, 3000.0)
+    # The joint of the previous tests rests at (100, 64, 120). Both keys are
+    # twice that, with an out-tangent of −4 times it and an in-tangent of 4
+    # times it over a second: the curve dips to the rest halfway, where the
+    # triangle is at its own coordinates, L, R, U, D = 0, 1, 1, 0. The map has
+    # to be accurate there, away from both keys.
+    rest = (100.0, 64.0, 120.0)
     c, s = 0.28, 0.96
     x, y, z = rest
     bind = (-(c * x + s * y), -(-s * x + c * y), -z)
@@ -1126,6 +1052,185 @@ def test_a_sampled_cubic_weight_beyond_the_limit_fails(found, tmp_path):
         measure(found, curve_model(tmp_path, 11.25), tmp_path)
 
 
+# The supported range (design §Supported Blender version): a cubic spline
+# channel inside it is measured to 1e-4 m, one just beyond it is an input error
+
+
+def rest_joint_model(rest):
+    """A joint at `rest`, turned about z by (0, 0, 0.6, 0.8), with a triangle
+    weighted to it and an inverse bind matrix that keeps the triangle at its own
+    coordinates."""
+    c, s = 0.28, 0.96
+    x, y, z = rest
+    bind = (-(c * x + s * y), -(-s * x + c * y), -z)
+    model = GlbWriter()
+    joint = model.node("joint", translation=rest, rotation=(0.0, 0.0, 0.6, 0.8))
+    skin = model.skin([joint], [(c, -s, 0, 0, s, c, 0, 0, 0, 0, 1, 0, *bind, 1)])
+    skinned = model.node(
+        "skinned",
+        mesh=model.mesh(
+            TRIANGLE, joints=[(0, 0, 0, 0)] * 3, skin_weights=[(1, 0, 0, 0)] * 3
+        ),
+        skin=skin,
+    )
+    model.scene([joint, skinned], default=True)
+    return model, joint
+
+
+def refused(found, tmp_path, model, message):
+    with pytest.raises(InputError, match=message) as raised:
+        measure(found, model.write(tmp_path, "range"), tmp_path)
+    assert raised.value.exit_code == 3
+    return raised.value
+
+
+def shape_model(path, keys, name="walk"):
+    model = GlbWriter()
+    shape = model.node("shape", mesh=True)
+    model.scene([shape], default=True)
+    model.animation(
+        name, [(shape, path, [0.0, 1.0], keys)], interpolation="CUBICSPLINE"
+    )
+    return model
+
+
+@pytest.mark.parametrize(
+    ("path", "keys", "problem"),
+    [
+        (
+            "translation",
+            [ZERO, ZERO, ZERO, ZERO, (257.0, 0.0, 0.0), ZERO],
+            "has a key value of 257 m, beyond ±256 m",
+        ),
+        (
+            "translation",
+            [ZERO, ZERO, (0.0, 1028.0, 0.0), (0.0, -1028.0, 0.0), ZERO, ZERO],
+            "reaches 257 m between its keys 0 and 1, beyond ±256 m",
+        ),
+        (
+            "translation",
+            [ZERO, ZERO, (10001.0, 0.0, 0.0), ZERO, ZERO, ZERO],
+            "has a tangent of 10001, beyond ±10000",
+        ),
+        (
+            "scale",
+            [ZERO, (1.0, 1.0, 1.0), ZERO, ZERO, (10001.0, 1.0, 1.0), ZERO],
+            "has a key value of 10001, beyond ±10000",
+        ),
+        (
+            "rotation",
+            [(0.0,) * 4, (0.0, 0.0, 0.0, 1.0), (0.0,) * 4]
+            + [(0.0,) * 4, (0.0, 0.0, 0.0006, 0.0007), (0.0,) * 4],
+            "has a key quaternion of length 0.000921954, below 0.001",
+        ),
+    ],
+    ids=[
+        "a translation key",
+        "a translation between its keys",
+        "a translation tangent",
+        "a scale key",
+        "a rotation key",
+    ],
+)
+def test_a_cubic_channel_just_beyond_the_range_is_an_input_error(
+    found, tmp_path, path, keys, problem
+):
+    error = refused(found, tmp_path, shape_model(path, keys), problem)
+    assert error.problem == (
+        f"animation 0 ('walk'), node 0 ('shape')'s {path} {problem}"
+    )
+
+
+def test_a_weight_tangent_just_beyond_the_range_is_an_input_error(found, tmp_path):
+    model = GlbWriter()
+    mesh = model.mesh(TRIANGLE, targets=[RISE], weights=[0.0])
+    face = model.node("face", mesh=mesh)
+    model.scene([face], default=True)
+    keys = [((0.0,), (0.0,), (10001.0,)), ((0.0,), (0.0,), (0.0,))]
+    model.animation(
+        "rise", [(face, "weights", [0, 1], flat(keys))], interpolation="CUBICSPLINE"
+    )
+    refused(found, tmp_path, model, "has a tangent of 10001, beyond ±10000")
+
+
+def test_a_bind_offset_just_beyond_the_range_is_an_input_error(found, tmp_path):
+    # The joint rests 300 m from the origin; its cubic keys are all within
+    # the range.
+    model, joint = rest_joint_model((300.0, 0.0, 0.0))
+    keys = [ZERO, ZERO, ZERO, ZERO, (1.0, 0.0, 0.0), ZERO]
+    model.animation(
+        "hold",
+        [(joint, "translation", [0.0, 1.0], keys)],
+        interpolation="CUBICSPLINE",
+    )
+    error = refused(
+        found,
+        tmp_path,
+        model,
+        r"animation 0 \('hold'\), node 0 \('joint'\)'s translation "
+        r"has a bind offset of -?\d+(\.\d+)? m, beyond ±256 m",
+    )
+    assert "beyond ±256 m" in error.problem
+
+
+def test_a_rotation_key_at_the_limit_of_a_thousandth_is_measured_exactly(
+    found, tmp_path
+):
+    # Both keys are the quarter turn's quaternion at a length of 0.001, which
+    # is normalized in double precision before it reaches Blender.
+    length = 0.001 * 1.000001
+    zero = (0.0,) * 4
+    key = (0.0, 0.0, 0.6 * length, 0.8 * length)
+    assert math.hypot(*key) >= 0.001
+    keys = [(zero, key, zero), (zero, key, zero)]
+    model = shape_model("rotation", flat(keys), "turn")
+    result, _ = measure(
+        found,
+        model.write(tmp_path, "turn"),
+        tmp_path,
+        clip_names=["turn"],
+        once=["turn"],
+    )
+    for got, t in zip(boxes(result)["turn"], ONCE_TIMES, strict=True):
+        assert got == pytest.approx(rotation_bounds([0.0, 1.0], keys, t), abs=1e-4)
+    assert boxes(result)["turn"][0] != pytest.approx((0.0, 1.0, 1.0, 0.0), abs=1e-2)
+
+
+def test_a_cubic_scale_at_the_limit_is_measured(found, tmp_path):
+    zero = (0.0, 0.0, 0.0)
+    wide = (10000.0, 1.0, 1.0)
+    model = shape_model("scale", [zero, wide, zero, zero, wide, zero], "grow")
+    result, _ = measure(
+        found,
+        model.write(tmp_path, "grow"),
+        tmp_path,
+        clip_names=["grow"],
+        once=["grow"],
+    )
+    for box in boxes(result)["grow"]:
+        assert box == pytest.approx((0.0, 10000.0, 1.0, 0.0), rel=1e-6)
+
+
+def test_a_cubic_translation_at_the_limit_travels_exactly(found, tmp_path):
+    # Both keys are 0, with an out-tangent of 1024 and an in-tangent of −1024
+    # over a second: x is 1024·(t − t²), peaking at exactly 256 m at 0.5 s,
+    # where the triangle's R is 257.
+    keys = [ZERO, ZERO, (1024.0, 0.0, 0.0), (-1024.0, 0.0, 0.0), ZERO, ZERO]
+    model = shape_model("translation", keys, "reach")
+    result, _ = measure(
+        found,
+        model.write(tmp_path, "reach"),
+        tmp_path,
+        clip_names=["reach"],
+        once=["reach"],
+    )
+    rows = boxes(result)["reach"]
+    expected = [(0.0, 1.0 + 1024 * t * (1 - t), 1.0, 0.0) for t in ONCE_TIMES]
+    assert expected[2][1] == 257.0
+    for got, want in zip(rows, expected, strict=True):
+        assert got == pytest.approx(want, abs=1e-4)
+
+
 # Rendering
 
 
@@ -1164,9 +1269,10 @@ def test_a_render_places_a_cubic_translation_at_its_tangent_correct_pose(
 
 
 def test_a_render_is_exact_just_after_a_key_with_a_steep_tangent(found, tmp_path):
-    # An out-tangent of 2e5 per second moves the cube 0.19 m (3.8 px) in the
-    # 9.5e-7 s between the key and the sample at 0.5 s; Blender's own reading
-    # of that time is the key's value, at the ground pixel.
+    # An out-tangent of 1e4 per second, the supported limit, moves the cube
+    # 0.0095 m in the 9.5e-7 s between the key and the sample at 0.5 s. At 100
+    # pixels per meter in the supersampled image that is 1.9 px; Blender's own
+    # reading of that time is the key's value, at the ground pixel.
     model = GlbWriter()
     mover = model.node(
         "mover", mesh=model.mesh(cube((0.0, 0.0, 0.0), 0.08), material=model.material())
@@ -1174,8 +1280,8 @@ def test_a_render_is_exact_just_after_a_key_with_a_steep_tangent(found, tmp_path
     model.scene([mover], default=True)
     keys = [
         ((0.0,) * 3, ZERO, ZERO),
-        ((0.0,) * 3, ZERO, (2e5, 0.0, 0.0)),
-        (ZERO, (0.5, 0.0, 0.0), ZERO),
+        ((0.0,) * 3, ZERO, (1e4, 0.0, 0.0)),
+        (ZERO, (0.3, 0.0, 0.0), ZERO),
         (ZERO, ZERO, ZERO),
     ]
     model.animation(
@@ -1183,12 +1289,19 @@ def test_a_render_is_exact_just_after_a_key_with_a_steep_tangent(found, tmp_path
         [(mover, "translation", STEEP_TIMES, flat(keys))],
         interpolation="CUBICSPLINE",
     )
-    result, _ = render(found, model.write(tmp_path, "steep"), tmp_path)
+    result, _ = render(
+        found,
+        model.write(tmp_path, "steep"),
+        tmp_path,
+        ppm=100.0,
+        cell=(80, 80),
+        ground_px=(40, 40),
+    )
     rendered = list(images(result).items())
     assert [address.time_s for address, _ in rendered] == TIMES
     for (_, image), t in zip(rendered, TIMES, strict=True):
-        x = 20 + cubic_at(STEEP_TIMES, keys, t)[0] * 20
+        x = 80 + cubic_at(STEEP_TIMES, keys, t)[0] * 200
         assert centroid(image, lambda r, g, b: True) == pytest.approx(
-            (x, 20), abs=TOLERANCE_PX
+            (x, 80), abs=TOLERANCE_PX
         )
-    assert cubic_at(STEEP_TIMES, keys, 0.5)[0] == pytest.approx(0.19, abs=0.01)
+    assert cubic_at(STEEP_TIMES, keys, 0.5)[0] == pytest.approx(0.0095, abs=5e-4)

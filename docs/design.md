@@ -774,6 +774,17 @@ in- and out-tangents; a rotation is the normalized cubic quaternion.
   weights whose accessors are unreadable, whose output does not hold an
   in-tangent, a value and an out-tangent for each key, or whose key times do not
   increase.
+- **Outside the supported range** (exit 3, naming the file, the animation, the
+  node and the channel): a `CUBICSPLINE` channel of a node's translation,
+  rotation, scale or weights with a value or tangent that is not finite; a
+  tangent component beyond ±10 000; a translation's key value, or its value
+  anywhere between keys, beyond ±256 m; a rotation, scale or weight key value
+  beyond ±10 000; a rotation key whose quaternion is shorter than 0.001; or a
+  translation whose bind offset, the importer's image of a zero translation, is
+  beyond ±256 m. Every such channel in the file counts, whether or not the clip
+  is selected. Other interpolations have no such limits, and neither has the
+  spacing of keys. The reasons are under [Supported Blender
+  version](#supported-blender-version).
 
 Material identities are read from the glTF JSON on every run, whether or not
 a material library is used (D-3, D-18, owner decisions 2026-10-07). Names
@@ -2166,39 +2177,49 @@ section's settings on 5.2.2:
   mutes it (a render re-evaluates the frame's animation, which would overwrite
   the value) and never lets it decide a value: after Blender evaluates a frame,
   the script sets every property of a cubic channel to glTF's value at the
-  sample time, computed in exact rational arithmetic from the file's keys,
-  values and tangents (every input is a float, so no cancellation of huge
-  tangent terms, or of the basis near a key, can lose a value), mapped to
-  Blender's convention exactly and rounded once, and checks the weights it uses
-  the same way. Keys may be as close together as the file's 32-bit times allow,
-  and a time before the first key or after the last holds that key's value. A
-  quaternion is evaluated component by component and the script normalizes it,
-  as glTF says, before the value reaches Blender's 32-bit properties, which
-  would underflow or overflow on a very small or large one (the zero quaternion
-  is left as it is). The importer negating a key that makes an obtuse angle with
-  the one before it does not matter. Channels that are not cubic, and files with
-  none, are evaluated by Blender as before.
+  sample time, computed in double precision from the file's keys, values and
+  tangents and mapped to Blender's convention, and checks the weights it uses
+  the same way. Inside the supported range the terms of the formula are at most
+  10 000 times a key interval, 6e8 at the longest interval a clip can have (43
+  690 s, the frame limit at 24 frames per second), and the sum then differs from
+  the exact one by less than 1e-6. Keys may be as close together as the file's
+  32-bit times allow, and a time before the first key or after the last holds
+  that key's value. A quaternion is evaluated component by component and the
+  script normalizes it, as glTF says, before the value reaches Blender's 32-bit
+  properties, which would underflow or overflow on a very small or large one
+  (the zero quaternion is left as it is). The importer negating a key that makes
+  an obtuse angle with the one before it does not matter. Channels that are not
+  cubic, and files with none, are evaluated by Blender as before.
+
 - **The importer converts a key's value with an affine map** (glTF's axes turned
   into Blender's, and a bone's rest pose for a joint). The script does not
-  repeat that arithmetic: for each clip with cubic channels the private copy
-  holds one more animation, of known keys for each node and path the clip
-  animates, and the maps are solved from how the importer converts them and
-  checked on further keys to 1e-5 plus a few steps of 32-bit rounding of the
-  largest image. Each clip is calibrated on its own, and a translation locally.
-  The importer works in 32 bits, and a joint with a large bind offset has images
-  in the hundreds or thousands wherever it is not near its rest pose, whose
-  rounding (2e-4 at 3000) a single map fitted over the whole range would
-  inherit. The script therefore measures a translation around anchors: the
-  channel's key values and the points where its spline turns between them (the
-  roots of the derivative, so tangent excursions beyond the keys are covered),
-  in order, with points across any gap of more than 256 m between successive
-  ones, at most 64 anchors (evenly thinned beyond that, and the gap points
-  spread by gap width, decided before any is computed, so the work does not
-  depend on how far apart the values are). Each anchor has a group of probes 256
-  m around it, and a value is converted with the map of the nearest anchor,
-  where the images are as small as they get. Evaluated values equal glTF's cubic
-  formula at every time to the importer's own 32-bit resolution at the values
-  involved (an ulp of its image, about 1e-4 m at images of a thousand meters).
+  repeat that arithmetic: the private copy holds one more animation, of known
+  keys for each node and path that any clip animates with a cubic channel (the
+  conversion does not depend on the clip), and the maps are solved from how the
+  importer converts them and checked on a further key to 1e-5 plus a few steps
+  of 32-bit rounding of the largest image. The importer works in 32 bits, so an
+  image carries a rounding of 6e-8 of its size. A translation's probes are
+  therefore 4096 m apart, so that this rounding is small against their spacing:
+  simulated over random rest rotations and bind offsets within the supported
+  range, the map is within 4e-5 m of the exact conversion for any translation
+  within it, and the importer's own rounding of the value it is given (3e-5 m at
+  256 m) is the rest of the 1e-4 m.
+
+- **The supported range of cubic spline channels (owner decision 2026-11-01,
+  "Approve as proposed").** The tool's values equal glTF's to 1e-4 m, and a
+  rotation to 0.1°, inside this range; a file outside it is an input error (exit
+  3, see [Input contract](#input-contract)), because the importer works in 32
+  bits and the figures below are what keeps its rounding inside that tolerance.
+  Translation values, key and between keys, and the bind offset (each component,
+  in Blender's axes): at most 256 m, where a 32-bit number resolves 3e-5 m; real
+  characters are under 10 m and scenes under 100 m. Tangent components of every
+  path: at most 10 000, a hundred times what exporters write (a tangent is a
+  slope times the key interval). Rotation, scale and weight key values: at most
+  10 000, and a rotation key at least 0.001 long, so that normalizing it loses
+  nothing; exporters write unit quaternions. Key spacing has no limit. A
+  translation's values between keys are checked at the roots of its derivative,
+  so a curve whose handles reach beyond 256 m but which stays within it is
+  supported.
 - **Only one mesh-level weight animation is kept per mesh,** and it is attached
   to the original mesh, which the capture replaces with a copy for each node.
   The script gives each node of the selected scene its own `weights` channel in

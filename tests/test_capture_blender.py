@@ -477,6 +477,44 @@ def test_a_launch_failure_is_a_backend_error(tmp_path):
     assert raised.value.exit_code == 5
 
 
+def test_the_scripts_input_error_is_an_input_error_of_the_file(tmp_path):
+    workspace, job = make_job(tmp_path)
+    fake = fake_blender(
+        tmp_path / "bin" / "blender",
+        "print('moskophoros: input error: animation 1, node 2\\'s translation "
+        "has a key value of 300 m', file=sys.stderr); sys.exit(3)\n",
+    )
+    with pytest.raises(InputError) as raised:
+        blender.run_phase(fake_found(fake), workspace, job)
+    assert raised.value.exit_code == 3
+    assert raised.value.problem == (
+        "animation 1, node 2's translation has a key value of 300 m"
+    )
+    assert str(raised.value) == (
+        f"{job['source']['path']}: animation 1, node 2's translation "
+        "has a key value of 300 m"
+    )
+
+
+@pytest.mark.parametrize(
+    "capture",
+    [
+        "print('moskophoros: error: no', file=sys.stderr); sys.exit(3)\n",
+        "print('moskophoros: input error: no', file=sys.stderr); sys.exit(1)\n",
+        "print('moskophoros: input error: no', file=sys.stderr); sys.exit(4)\n",
+    ],
+    ids=["status 3 without the prefix", "the prefix with status 1", "status 4"],
+)
+def test_only_the_scripts_input_status_with_its_prefix_is_an_input_error(
+    tmp_path, capture
+):
+    workspace, job = make_job(tmp_path)
+    fake = fake_blender(tmp_path / "bin" / "blender", capture)
+    with pytest.raises(BackendError, match="exited with status") as raised:
+        blender.run_phase(fake_found(fake), workspace, job)
+    assert raised.value.exit_code == 5
+
+
 def change_source(job):
     return f"pathlib.Path({job['source']['path']!r}).write_bytes(b'edited')\n"
 
