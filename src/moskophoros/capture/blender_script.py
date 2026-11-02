@@ -57,6 +57,7 @@ import sys
 import urllib.parse
 import zlib
 from array import array
+from fractions import Fraction
 
 import bpy
 
@@ -921,31 +922,31 @@ def cubic_keys(times, values):
     return part(1), part(0), part(2), block
 
 
-def cubic_value(keys, time_s):
+def cubic_exact(keys, time_s):
     """glTF's cubic spline of `keys` (what `expand_sampler` returns) at
-    `time_s`, as a tuple: the first key's value before it and the last key's
-    after it. Between keys `k` and `k + 1`, `step` seconds apart, with `u` the
-    fraction of the way and `w = 1 − u`, it is
+    `time_s`, as a tuple of exact `Fraction`s: the first key's value before it
+    and the last key's after it. Between keys `k` and `k + 1`, `step` seconds
+    apart, with `u` the fraction of the way and `w = 1 − u`, it is
     (1 + 2u)·w²·p0 + step·u·w²·m0 + (1 + 2w)·u²·p1 − step·u²·w·a1, with `p0`,
     `m0` the first key's value and out-tangent and `p1`, `a1` the second's
-    value and in-tangent (glTF's (2u³ − 3u² + 1) and the like, factored so that
-    nothing cancels near either key, and summed exactly with `math.fsum` so a
-    huge tangent term cannot swallow the values). A rotation is normalized, as
-    glTF says, here in double precision: Blender's 32-bit properties would
-    underflow or overflow on a very small or large one. The zero quaternion is
-    left as it is."""
+    value and in-tangent (glTF's (2u³ − 3u² + 1) and the like). Every input is
+    a float, so the arithmetic is exact: no cancellation of huge tangent terms
+    or of the basis near a key can lose a value. A rotation is normalized, as
+    glTF says: Blender's 32-bit properties would underflow or overflow on a
+    very small or large one. The zero quaternion is left as it is."""
     times, values, ins, outs = (
         keys[name] for name in ("times", "values", "ins", "outs")
     )
     if time_s <= times[0]:
-        value = tuple(values[0])
+        value = tuple(Fraction(v) for v in values[0])
     elif time_s >= times[-1]:
-        value = tuple(values[-1])
+        value = tuple(Fraction(v) for v in values[-1])
     else:
         k = bisect.bisect_right(times, time_s) - 1
-        step = times[k + 1] - times[k]
-        u = (time_s - times[k]) / step
-        w = (times[k + 1] - time_s) / step
+        start, end, now = Fraction(times[k]), Fraction(times[k + 1]), Fraction(time_s)
+        step = end - start
+        u = (now - start) / step
+        w = (end - now) / step
         h00, h10, h01, h11 = (
             (1 + 2 * u) * w * w,
             u * w * w,
@@ -953,16 +954,24 @@ def cubic_value(keys, time_s):
             -u * u * w,
         )
         value = tuple(
-            math.fsum((h00 * p0, step * h10 * m0, h01 * p1, step * h11 * a1))
+            h00 * Fraction(p0)
+            + step * h10 * Fraction(m0)
+            + h01 * Fraction(p1)
+            + step * h11 * Fraction(a1)
             for p0, m0, p1, a1 in zip(
                 values[k], outs[k], values[k + 1], ins[k + 1], strict=True
             )
         )
     if keys.get("rotation"):
-        length = math.hypot(*value)
+        length = math.hypot(*(float(component) for component in value))
         if length > 0.0:
-            value = tuple(component / length for component in value)
+            value = tuple(component / Fraction(length) for component in value)
     return value
+
+
+def cubic_value(keys, time_s):
+    """`cubic_exact` rounded to floats."""
+    return tuple(float(component) for component in cubic_exact(keys, time_s))
 
 
 def expand_sampler(document, fetch, source, sampler, path, where):
@@ -1214,7 +1223,7 @@ def calibrate(cubics):
 # The properties of cubic spline channels that `evaluate` sets: {animation
 # index: [(data, owner path, property, index, image, keys, target)]} for every
 # animation, and the list of the one active. `index` is None for a scalar
-# property, `image` takes a glTF value to the property's value, and `target`
+# property, `image` takes `cubic_exact`'s value to the property's, and `target`
 # is a weights channel's morph target, else None.
 _CUBIC = {"all": {}, "active": ()}
 
@@ -1254,18 +1263,19 @@ def cubic_overrides(cubics):
                         morph = None
                         if target[1] == "weights":
                             morph = int(_TARGET_PATH.fullmatch(fcurve.data_path)[1])
-                            image = lambda g, morph=morph: g[morph]  # noqa: E731
+                            image = lambda g, morph=morph: float(g[morph])  # noqa: E731
                             index = None
                         else:
                             matrix, offset = maps[target]
                             row = matrix[fcurve.array_index]
                             shift = offset[fcurve.array_index]
-                            image = lambda g, row=row, shift=shift: (  # noqa: E731
-                                math.fsum(
-                                    [
-                                        *(a * b for a, b in zip(row, g, strict=True)),
-                                        shift,
-                                    ]
+                            image = lambda g, row=row, shift=shift: float(  # noqa: E731
+                                sum(
+                                    (
+                                        Fraction(a) * b
+                                        for a, b in zip(row, g, strict=True)
+                                    ),
+                                    Fraction(shift),
                                 )
                             )
                             index = fcurve.array_index
@@ -1281,7 +1291,7 @@ def apply_cubics(time_s):
     glTF's value at `time_s`."""
     for data, owner, prop, index, image, keys, _ in _CUBIC["active"]:
         target = data.path_resolve(owner) if owner else data
-        value = image(cubic_value(keys, time_s))
+        value = image(cubic_exact(keys, time_s))
         if index is None:
             setattr(target, prop, value)
         else:
@@ -1387,7 +1397,7 @@ def check_weights(objects, document, clip, times, fps):
                 for time_s in times:
                     if target in cubics:
                         image, keys = cubics[target]
-                        weight = image(cubic_value(keys, time_s))
+                        weight = image(cubic_exact(keys, time_s))
                     else:
                         weight = curves[target].evaluate(time_s * fps)
                     if abs(weight) > WEIGHT_LIMIT:

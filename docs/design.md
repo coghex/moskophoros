@@ -2150,33 +2150,34 @@ section's settings on 5.2.2:
   time; clip ranges come from the file, so this needs no handling.
 - **Cubic spline channels are evaluated by the tool, not by Blender (observed
   2026-11-01, owner decisions 2026-10-02 and 2026-11-01).** For a `CUBICSPLINE`
-  sampler the importer keeps only each key's value and gives its curve
-  automatic Bézier handles, so the file's tangents are lost. glTF's segment
-  from `p0` with out-tangent `m0` to `p1` with in-tangent `a1` over `Δt` seconds
-  is the Bézier curve with control points `p0`, `p0 + Δt·m0/3`, `p1 − Δt·a1/3` and
-  `p1` at one third and two thirds of the interval, so rebuilding each curve
-  with free handles would be exact in principle. It is not in Blender's
-  evaluator (measured on 5.2.2): a time within about 1e-4 frame (4 µs at 24
-  frames per second) of a key reads that key's value, so a steep curve is read
-  wrongly just after a key (a sample 9.5e-7 s after a key with a tangent of 1024
-  per second read the key's value, off by 0.00098), and keys less than 0.01
-  frame apart are merged, in the importer and in `fcurve.update()`. The capture
-  script therefore imports a private copy in which each such sampler is linear
-  and holds the keys' values alone, which gives the importer a curve on the
-  right property, mutes it (a render re-evaluates the frame's animation, which
-  would overwrite the value) and never lets it decide a value: after Blender
-  evaluates a frame, the script sets every property of a cubic channel to glTF's
-  value at the sample time, computed in double precision from the file's keys,
-  values and tangents (in glTF's basis factored so nothing cancels near a key,
-  and summed exactly, so a huge tangent cannot swallow a key's value), and checks the weights it uses the same way. Keys may
-  be as close together as the file's 32-bit times allow, and a time before the
-  first key or after the last holds that key's value. A quaternion is evaluated
-  component by component and the script normalizes it, as glTF says, in double
-  precision before the value reaches Blender's 32-bit properties, which would
-  underflow or overflow on a very small or large one (the zero quaternion is
-  left as it is). The importer negating a key that makes an obtuse angle with
-  the one before it does not matter. Channels that are not cubic, and files with none, are
-  evaluated by Blender as before.
+  sampler the importer keeps only each key's value and gives its curve automatic
+  Bézier handles, so the file's tangents are lost. glTF's segment from `p0` with
+  out-tangent `m0` to `p1` with in-tangent `a1` over `Δt` seconds is the Bézier
+  curve with control points `p0`, `p0 + Δt·m0/3`, `p1 − Δt·a1/3` and `p1` at one
+  third and two thirds of the interval, so rebuilding each curve with free
+  handles would be exact in principle. It is not in Blender's evaluator
+  (measured on 5.2.2): a time within about 1e-4 frame (4 µs at 24 frames per
+  second) of a key reads that key's value, so a steep curve is read wrongly just
+  after a key (a sample 9.5e-7 s after a key with a tangent of 1024 per second
+  read the key's value, off by 0.00098), and keys less than 0.01 frame apart are
+  merged, in the importer and in `fcurve.update()`. The capture script therefore
+  imports a private copy in which each such sampler is linear and holds the
+  keys' values alone, which gives the importer a curve on the right property,
+  mutes it (a render re-evaluates the frame's animation, which would overwrite
+  the value) and never lets it decide a value: after Blender evaluates a frame,
+  the script sets every property of a cubic channel to glTF's value at the
+  sample time, computed in exact rational arithmetic from the file's keys,
+  values and tangents (every input is a float, so no cancellation of huge
+  tangent terms, or of the basis near a key, can lose a value), mapped to
+  Blender's convention exactly and rounded once, and checks the weights it uses
+  the same way. Keys may be as close together as the file's 32-bit times allow,
+  and a time before the first key or after the last holds that key's value. A
+  quaternion is evaluated component by component and the script normalizes it,
+  as glTF says, before the value reaches Blender's 32-bit properties, which
+  would underflow or overflow on a very small or large one (the zero quaternion
+  is left as it is). The importer negating a key that makes an obtuse angle with
+  the one before it does not matter. Channels that are not cubic, and files with
+  none, are evaluated by Blender as before.
 - **The importer converts a key's value with an affine map** (glTF's axes
   turned into Blender's, and a bone's rest pose for a joint). The script does not
   repeat that arithmetic: the private copy holds one more animation, of known

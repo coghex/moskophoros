@@ -1243,3 +1243,34 @@ def test_a_cubic_spline_matches_exact_arithmetic_near_either_key(script, tangent
         want = exact_cubic(keys, time_s)
         for g, w in zip(got, want, strict=True):
             assert g == pytest.approx(w, rel=1e-9, abs=1e-9 * max(1.0, tangent) * gap)
+
+
+def test_tangent_products_that_cancel_are_exact_before_any_rounding(script):
+    # A review finding: out-tangent (4, 0, 0, 2^55) and in-tangent
+    # (0, 0, 0, 5·2^55) over 3 s. At 0.5 s the tangent terms in w are
+    # ±75/216·2^55 and cancel; x is 25/18. A float sum of the products gives
+    # w = 3.
+    from fractions import Fraction
+
+    keys = {
+        "times": [0.0, 3.0],
+        "values": [(0.0, 0.0, 0.0, 1.0)] * 2,
+        "ins": [(0.0,) * 4, (0.0, 0.0, 0.0, 5.0 * 2.0**55)],
+        "outs": [(4.0, 0.0, 0.0, 2.0**55), (0.0,) * 4],
+    }
+    assert script.cubic_exact(keys, 0.5) == (Fraction(25, 18), 0, 0, 1)
+    assert script.cubic_value(keys, 0.5) == (25 / 18, 0.0, 0.0, 1.0)
+
+
+def test_a_cubic_rotation_keeps_its_components_exact_until_it_is_rounded(script):
+    keys = {
+        "times": [0.0, 3.0],
+        "values": [(0.0, 0.0, 0.0, 1.0)] * 2,
+        "ins": [(0.0,) * 4, (0.0, 0.0, 0.0, 5.0 * 2.0**55)],
+        "outs": [(4.0, 0.0, 0.0, 2.0**55), (0.0,) * 4],
+        "rotation": True,
+    }
+    x, y, z, w = script.cubic_value(keys, 0.5)
+    assert (y, z) == (0.0, 0.0)
+    assert x / w == pytest.approx(25 / 18, rel=1e-15)
+    assert math.hypot(x, w) == pytest.approx(1.0, abs=1e-15)

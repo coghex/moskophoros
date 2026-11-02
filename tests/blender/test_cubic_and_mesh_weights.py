@@ -699,6 +699,41 @@ def test_huge_cubic_tangent_terms_that_cancel_leave_the_key_values(found, tmp_pa
         assert measured[index] == pytest.approx((0.0, 1.0, 1.0, 0.0), abs=1e-4)
 
 
+def test_cubic_tangent_products_that_cancel_are_exact_before_rounding(found, tmp_path):
+    # A review finding. Both keys are the identity, over 3 s, with an
+    # out-tangent (4, 0, 0, 2^55) and an in-tangent (0, 0, 0, 5·2^55). At 0.5 s
+    # the tangents' terms in w cancel exactly, leaving the quaternion
+    # (25/18, 0, 0, 1): a turn of 2·atan(25/18) = 108.5° about x, which takes
+    # the triangle's top vertex to (0, cos 108.5°, sin 108.5°), so L, R, U, D
+    # = 0, 1, 0, 0.317.
+    times = [0.0, 3.0]
+    identity = (0.0, 0.0, 0.0, 1.0)
+    zero = (0.0,) * 4
+    keys = [
+        (zero, identity, (4.0, 0.0, 0.0, 2.0**55)),
+        ((0.0, 0.0, 0.0, 5.0 * 2.0**55), identity, zero),
+    ]
+    model = GlbWriter()
+    shape = model.node("shape", mesh=True)
+    model.scene([shape], default=True)
+    model.animation(
+        "tilt", [(shape, "rotation", times, flat(keys))], interpolation="CUBICSPLINE"
+    )
+    result, _ = measure(
+        found,
+        model.write(tmp_path, "tilt"),
+        tmp_path,
+        clip_names=["tilt"],
+        once=["tilt"],
+    )
+    angle = 2 * math.atan2(25 / 18, 1)
+    expected = (0.0, 1.0, max(0.0, math.cos(angle)), max(0.0, -math.cos(angle)))
+    assert expected[3] == pytest.approx(0.31717597, abs=1e-8)
+    rows = {time: box for _, time, box, _ in by_clip(result)["tilt"]}
+    assert rows[0.5] == pytest.approx(expected, abs=1e-4)
+    assert rows[0.0] == pytest.approx((0.0, 1.0, 1.0, 0.0), abs=1e-4)
+
+
 @pytest.mark.parametrize("where", ["in no scene", "in another scene"])
 def test_a_cubic_channel_on_a_node_outside_the_selected_scene(found, tmp_path, where):
     # The clip moves the subject with a cubic curve; the same clip also moves
