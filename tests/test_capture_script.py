@@ -861,6 +861,330 @@ def test_a_sparse_index_beyond_the_accessor_is_refused(script, tmp_path):
         script.read_accessor(document, fetch, 0, source)
 
 
+def with_bytes_after(model, rows=4):
+    """Add a VEC3 accessor of `rows` rows after the model's data, so that
+    bytes are physically present beyond any view the tests shrink."""
+    model._accessor("VEC3", [(float(i), 0.0, 0.0) for i in range(rows)], False)
+
+
+def refusal(script, document, rest, source, fetch=None):
+    fetch = fetch or script.buffer_reader(document, script.binary_chunk(rest), source)
+    with pytest.raises(script.ScriptError, match="accessor 0") as raised:
+        script.read_accessor(document, fetch, 0, source)
+    # A plain refusal is the capture's exit 5, never the exit-3 range one.
+    assert not isinstance(raised.value, script.RangeError)
+    return str(raised.value)
+
+
+def test_a_view_that_ends_exactly_at_its_last_row_is_read(script, tmp_path):
+    model = GlbWriter()
+    model._accessor("VEC3", [(1.0, 2.0, 3.0), (4.0, 5.0, 6.0)], False)
+    with_bytes_after(model)
+    document, rest, source = load(script, model, tmp_path)
+    fetch = script.buffer_reader(document, script.binary_chunk(rest), source)
+    document["bufferViews"][0]["byteLength"] = 24
+    assert script.read_accessor(document, fetch, 0, source) == [
+        (1.0, 2.0, 3.0),
+        (4.0, 5.0, 6.0),
+    ]
+    document["bufferViews"][0]["byteLength"] = 23
+    assert "buffer view 0" in refusal(script, document, rest, source, fetch)
+
+
+def test_a_row_past_the_view_is_refused_though_the_bytes_follow(script, tmp_path):
+    model = GlbWriter()
+    model._accessor("VEC3", [(1.0, 2.0, 3.0), (4.0, 5.0, 6.0)], False)
+    with_bytes_after(model)
+    document, rest, source = load(script, model, tmp_path)
+    document["bufferViews"][0]["byteLength"] = 12
+    assert "buffer view 0" in refusal(script, document, rest, source)
+
+
+@pytest.mark.parametrize(
+    ("stride", "offset", "length", "readable"),
+    [
+        # Rows of 12 bytes at offsets 4 and 28 end at byte 40.
+        (24, 4, 40, True),
+        (24, 4, 39, False),
+        # The stride is between rows, so a final row needs no trailing gap.
+        (16, 0, 28, True),
+        (16, 0, 27, False),
+        (16, 1, 29, True),
+        (16, 1, 28, False),
+        # No stride, or 0, packs the rows.
+        (None, 4, 28, True),
+        (None, 4, 27, False),
+        (0, 4, 28, True),
+        (0, 4, 27, False),
+    ],
+)
+def test_strided_and_offset_rows_must_end_inside_their_view(
+    script, tmp_path, stride, offset, length, readable
+):
+    model = GlbWriter()
+    model._accessor("VEC3", [(float(i), 0.0, 0.0) for i in range(8)], False)
+    with_bytes_after(model)
+    document, rest, source = load(script, model, tmp_path)
+    document["accessors"][0].update(count=2, byteOffset=offset)
+    document["bufferViews"][0]["byteLength"] = length
+    if stride is not None:
+        document["bufferViews"][0]["byteStride"] = stride
+    fetch = script.buffer_reader(document, script.binary_chunk(rest), source)
+    if readable:
+        assert len(script.read_accessor(document, fetch, 0, source)) == 2
+    else:
+        refusal(script, document, rest, source, fetch)
+
+
+def test_an_empty_accessor_reads_no_rows_whatever_its_view(script, tmp_path):
+    model = GlbWriter()
+    model._accessor("VEC3", [(1.0, 2.0, 3.0)], False)
+    document, rest, source = load(script, model, tmp_path)
+    document["accessors"][0]["count"] = 0
+    document["bufferViews"][0]["byteLength"] = 0
+    fetch = script.buffer_reader(document, script.binary_chunk(rest), source)
+    assert script.read_accessor(document, fetch, 0, source) == []
+
+
+def test_a_view_past_the_declared_buffer_is_refused(script, tmp_path):
+    model = GlbWriter()
+    model._accessor("VEC3", [(1.0, 2.0, 3.0), (4.0, 5.0, 6.0)], False)
+    with_bytes_after(model)
+    document, rest, source = load(script, model, tmp_path)
+    # The binary chunk is longer than the buffer says (padding, a next view).
+    document["buffers"][0]["byteLength"] = 20
+    assert "buffer 0" in refusal(script, document, rest, source)
+    document["buffers"][0]["byteLength"] = 24
+    fetch = script.buffer_reader(document, script.binary_chunk(rest), source)
+    assert len(script.read_accessor(document, fetch, 0, source)) == 2
+
+
+def test_a_view_past_the_bytes_the_buffer_has_is_refused(script, tmp_path):
+    model = GlbWriter()
+    model._accessor("VEC3", [(1.0, 2.0, 3.0), (4.0, 5.0, 6.0)], False)
+    document, rest, source = load(script, model, tmp_path)
+    data = script.binary_chunk(rest)
+    refusal(script, document, rest, source, lambda index: data[:20])
+    assert len(script.read_accessor(document, lambda index: data, 0, source)) == 2
+
+
+def test_a_truncated_binary_chunk_leaves_a_view_unreadable(script, tmp_path):
+    model = GlbWriter()
+    model._accessor("VEC3", [(1.0, 2.0, 3.0), (4.0, 5.0, 6.0)], False)
+    path = model.write(tmp_path)
+    cut = path.read_bytes()[:-8]
+    document, rest = script.split_glb(cut, str(path))
+    refusal(script, document, rest, str(path))
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda d: d["accessors"][0].update(bufferView=-1),
+        lambda d: d["accessors"][0].update(bufferView=True),
+        lambda d: d["accessors"][0].update(bufferView=0.0),
+        lambda d: d["accessors"][0].update(count=True),
+        lambda d: d["accessors"][0].update(count=-1),
+        lambda d: d["accessors"][0].update(count=1.0),
+        lambda d: d["accessors"][0].update(byteOffset=-4),
+        lambda d: d["accessors"][0].update(byteOffset=False),
+        lambda d: d["bufferViews"][1].update(buffer=-1),
+        lambda d: d["bufferViews"][1].update(buffer=False),
+        lambda d: d["bufferViews"][1].update(byteOffset=-4),
+        lambda d: d["bufferViews"][1].update(byteLength=-24),
+        lambda d: d["bufferViews"][1].update(byteLength=True),
+        lambda d: d["bufferViews"][1].update(byteStride=-12),
+        lambda d: d["bufferViews"][1].update(byteStride=True),
+        lambda d: d["buffers"][0].update(byteLength=-1),
+        lambda d: d["buffers"][0].update(byteLength=True),
+        lambda d: d["bufferViews"][1].pop("byteLength"),
+        lambda d: d["buffers"][0].pop("byteLength"),
+    ],
+    ids=[
+        "view -1",
+        "view true",
+        "view float",
+        "count true",
+        "count -1",
+        "count float",
+        "offset -4",
+        "offset false",
+        "buffer -1",
+        "buffer false",
+        "view offset -4",
+        "view length -24",
+        "view length true",
+        "stride -12",
+        "stride true",
+        "buffer length -1",
+        "buffer length true",
+        "view without length",
+        "buffer without length",
+    ],
+)
+def test_integer_fields_that_locate_a_span_must_be_whole_and_in_range(
+    script, tmp_path, mutate
+):
+    model = GlbWriter()
+    # View 0 is the last view's decoy: a negative index must not reach view 1.
+    model._accessor("VEC3", [(9.0, 9.0, 9.0)] * 2, False)
+    model._accessor("VEC3", [(1.0, 2.0, 3.0), (4.0, 5.0, 6.0)], False)
+    document, rest, source = load(script, model, tmp_path)
+    document["accessors"][0] = dict(document["accessors"][1], bufferView=1)
+    mutate(document)
+    refusal(script, document, rest, source)
+
+
+@pytest.mark.parametrize(
+    ("stream", "length", "offset", "readable"),
+    [
+        # Two 16-bit indices are 4 bytes; two VEC3 replacements are 24.
+        ("indices", 4, 0, True),
+        ("indices", 3, 0, False),
+        ("indices", 4, 2, False),
+        ("indices", 6, 2, True),
+        ("values", 24, 0, True),
+        ("values", 23, 0, False),
+        ("values", 24, 4, False),
+        ("values", 28, 4, True),
+    ],
+)
+def test_sparse_streams_must_end_inside_their_views(
+    script, tmp_path, stream, length, offset, readable
+):
+    model = sparse_model([1, 3])
+    with_bytes_after(model)
+    document, rest, source = load(script, model, tmp_path)
+    sparse = document["accessors"][0]["sparse"]
+    document["bufferViews"][sparse[stream]["bufferView"]]["byteLength"] = length
+    sparse[stream]["byteOffset"] = offset
+    fetch = script.buffer_reader(document, script.binary_chunk(rest), source)
+    if readable:
+        # The offset moves the data read; only the span is under test.
+        assert len(script.read_accessor(document, fetch, 0, source)) == 4
+    else:
+        refusal(script, document, rest, source, fetch)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda sparse: sparse.update(count=-1),
+        lambda sparse: sparse.update(count=True),
+        lambda sparse: sparse["indices"].update(bufferView=-1),
+        lambda sparse: sparse["indices"].update(bufferView=True),
+        lambda sparse: sparse["values"].update(bufferView=-1),
+        lambda sparse: sparse["values"].update(bufferView=9),
+        lambda sparse: sparse["indices"].update(byteOffset=-2),
+        lambda sparse: sparse["values"].update(byteOffset=-12),
+    ],
+)
+def test_sparse_references_must_be_whole_and_in_range(script, tmp_path, mutate):
+    model = sparse_model([1, 3])
+    with_bytes_after(model)
+    document, rest, source = load(script, model, tmp_path)
+    mutate(document["accessors"][0]["sparse"])
+    refusal(script, document, rest, source)
+
+
+def test_a_valid_sparse_accessor_with_offsets_is_read(script, tmp_path):
+    model = GlbWriter()
+    indices = model._view(struct.pack("<4H", 9, 1, 3, 9))
+    values = model._view(struct.pack("<9f", 9, 9, 9, 1, 2, 3, 4, 5, 6))
+    model.document["accessors"] = [
+        {
+            "componentType": 5126,
+            "count": 4,
+            "type": "VEC3",
+            "sparse": {
+                "count": 2,
+                "indices": {
+                    "bufferView": indices,
+                    "byteOffset": 2,
+                    "componentType": 5123,
+                },
+                "values": {"bufferView": values, "byteOffset": 12},
+            },
+        }
+    ]
+    document, rest, source = load(script, model, tmp_path)
+    document["bufferViews"][indices]["byteLength"] = 6
+    document["bufferViews"][values]["byteLength"] = 36
+    fetch = script.buffer_reader(document, script.binary_chunk(rest), source)
+    assert script.read_accessor(document, fetch, 0, source) == [
+        (0.0, 0.0, 0.0),
+        (1.0, 2.0, 3.0),
+        (0.0, 0.0, 0.0),
+        (4.0, 5.0, 6.0),
+    ]
+
+
+def cubic_model():
+    """A cubic translation from (0, 0, 0) to (1, 0, 0) over 0 to 1 s with zero
+    tangents: its output is six VEC3 rows, 72 bytes, with bytes after it."""
+    model = GlbWriter()
+    shape = model.node("shape", mesh=True)
+    model.scene([shape], default=True)
+    keys = [(ZERO3, ZERO3, ZERO3), (ZERO3, (1.0, 0.0, 0.0), ZERO3)]
+    model.animation(
+        "walk",
+        [(shape, "translation", [0.0, 1.0], [row for key in keys for row in key])],
+        interpolation="CUBICSPLINE",
+    )
+    return model
+
+
+ZERO3 = (0.0, 0.0, 0.0)
+
+
+def output_view(document):
+    sampler = document["animations"][0]["samplers"][0]
+    return document["bufferViews"][
+        document["accessors"][sampler["output"]]["bufferView"]
+    ]
+
+
+def test_a_cubic_output_in_a_shrunken_view_is_refused_by_animation(script, tmp_path):
+    model = cubic_model()
+    with_bytes_after(model, rows=8)
+    document, rest, source = load(script, model, tmp_path)
+    fetch = script.buffer_reader(document, script.binary_chunk(rest), source)
+    output_view(document)["byteLength"] = 12
+    with pytest.raises(script.ScriptError) as raised:
+        script.expand_cubics(document, fetch, source)
+    assert not isinstance(raised.value, script.RangeError)
+    message = str(raised.value)
+    assert source in message
+    assert "animation 0's sampler 0" in message
+    sampler = document["animations"][0]["samplers"][0]
+    assert f"accessor {sampler['output']}" in message
+    assert "buffer view" in message
+
+
+def test_a_cubic_output_in_an_exact_view_is_expanded(script, tmp_path):
+    model = cubic_model()
+    with_bytes_after(model, rows=8)
+    document, rest, source = load(script, model, tmp_path)
+    fetch = script.buffer_reader(document, script.binary_chunk(rest), source)
+    output_view(document)["byteLength"] = 72
+    cubics = script.expand_cubics(document, fetch, source)
+    assert cubics[0][(0, "translation")]["values"] == [ZERO3, (1.0, 0.0, 0.0)]
+
+
+def test_a_cubic_input_in_a_shrunken_view_is_refused_by_animation(script, tmp_path):
+    model = cubic_model()
+    with_bytes_after(model, rows=8)
+    document, rest, source = load(script, model, tmp_path)
+    fetch = script.buffer_reader(document, script.binary_chunk(rest), source)
+    sampler = document["animations"][0]["samplers"][0]
+    document["bufferViews"][document["accessors"][sampler["input"]]["bufferView"]][
+        "byteLength"
+    ] = 4
+    with pytest.raises(script.ScriptError, match="animation 0's sampler 0") as raised:
+        script.expand_cubics(document, fetch, source)
+    assert f"accessor {sampler['input']}" in str(raised.value)
+
+
 def test_a_buffer_in_a_file_beside_the_source_is_read(script, tmp_path):
     (tmp_path / "data.bin").write_bytes(b"abcd")
     document = {"buffers": [{"uri": "data.bin", "byteLength": 4}]}
