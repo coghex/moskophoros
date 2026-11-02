@@ -1051,18 +1051,9 @@ def expand_cubics(document, fetch, source):
 # measure it: the first is the base and the rest, up to the last but the
 # check points, differ from it in independent directions. A quaternion's
 # consecutive points make acute angles, so the importer negates none. A
-# translation's points are a thousand meters apart: the importer works in 32
-# bits, and a joint with a large bind offset has images in the hundreds, whose
-# differences over a unit step would carry 1e-5 of rounding into the map (a
-# review finding).
+# translation's points are placed around the channel's own key values
+# (`calibration_points`).
 _CALIBRATION = {
-    "translation": [
-        (0, 0, 0),
-        (1000, 0, 0),
-        (0, 1000, 0),
-        (0, 0, 1000),
-        (1000, 2000, 3000),
-    ],
     "scale": [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 2, 3)],
     "rotation": [
         (0, 0, 0, 1),
@@ -1073,11 +1064,50 @@ _CALIBRATION = {
         (0.3, 0.4, 0.5, 0.9),
     ],
 }
+
+
+def float32(value):
+    """`value` rounded to 32 bits, as the importer reads a key."""
+    return struct.unpack("<f", struct.pack("<f", value))[0]
+
+
+def calibration_points(path, keysets):
+    """The points to calibrate a node's `path` with, given the keys
+    (`expand_sampler`'s result) of each of its cubic channels.
+
+    The importer works in 32 bits. A joint with a large bind offset has
+    images in the hundreds or thousands wherever the joint is not near its
+    rest pose, whose rounding (an ulp of 2e-4 at 3000) would be carried into a
+    map fitted far from the keys (review findings). A translation is
+    therefore calibrated around its own keys: the base is the middle of their
+    values and the steps reach as far as the keys do (at least a meter), where
+    the images are small and the map is accurate across all the keys. The
+    points are rounded to 32 bits so that they are what the importer reads.
+    """
+    if path != "translation":
+        return _CALIBRATION[path]
+    values = [value for keys in keysets for value in keys["values"]]
+    low = [min(value[i] for value in values) for i in range(3)]
+    high = [max(value[i] for value in values) for i in range(3)]
+    base = [(low[i] + high[i]) / 2 for i in range(3)]
+    step = max([1.0, *((high[i] - low[i]) / 2 for i in range(3))])
+    offsets = [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 2, 3)]
+    return [
+        tuple(float32(base[i] + step * offset[i]) for i in range(3))
+        for offset in offsets
+    ]
+
+
 CALIBRATION_NAME = "moskophoros.calibration"
 # How far a check point may be from the measured map's image of it: this much
 # and a few steps of 32-bit rounding of the largest image.
 CALIBRATION_ERROR = 1e-5
 CALIBRATION_STEPS = 8 * 2.0**-24
+
+
+def target_keys(cubics, target):
+    """The keys of every cubic channel of `target`, a (node, path)."""
+    return [channels[target] for channels in cubics.values() if target in channels]
 
 
 def add_calibration(document, cubics):
@@ -1096,16 +1126,17 @@ def add_calibration(document, cubics):
         return
     samplers = []
     channels = []
-    inputs = {}
-    outputs = {}
+    made = {}
     for node, path in wanted:
-        points = _CALIBRATION[path]
-        if path not in inputs:
-            inputs[path] = _append_accessor(
+        # A translation has points of its own; the others share theirs.
+        which = (node, path) if path == "translation" else path
+        if which not in made:
+            points = calibration_points(path, target_keys(cubics, (node, path)))
+            time_input = _append_accessor(
                 document, "SCALAR", [float(i) for i in range(len(points))], 1, True
             )
             kind = "VEC4" if path == "rotation" else "VEC3"
-            outputs[path] = _append_accessor(
+            output = _append_accessor(
                 document,
                 kind,
                 [float(value) for point in points for value in point],
@@ -1113,15 +1144,11 @@ def add_calibration(document, cubics):
                 False,
             )
             samplers.append(
-                {
-                    "input": inputs[path],
-                    "output": outputs[path],
-                    "interpolation": "LINEAR",
-                }
+                {"input": time_input, "output": output, "interpolation": "LINEAR"}
             )
-            inputs[path] = len(samplers) - 1
+            made[which] = len(samplers) - 1
         channels.append(
-            {"sampler": inputs[path], "target": {"node": node, "path": path}}
+            {"sampler": made[which], "target": {"node": node, "path": path}}
         )
     document.setdefault("animations", []).append(
         {"name": CALIBRATION_NAME, "channels": channels, "samplers": samplers}
@@ -1212,7 +1239,7 @@ def calibrate(cubics):
         for node, path in channels:
             if path == "weights" or (node, path) in maps:
                 continue
-            points = _CALIBRATION[path]
+            points = calibration_points(path, target_keys(cubics, (node, path)))
             found = curves.get((node, path), {})
             if sorted(found) != list(range(len(points[0]))) or any(
                 len(column) != len(points) for column in found.values()

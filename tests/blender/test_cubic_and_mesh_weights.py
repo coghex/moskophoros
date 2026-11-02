@@ -735,23 +735,22 @@ def test_cubic_tangent_products_that_cancel_are_exact_before_rounding(found, tmp
 
 
 @pytest.mark.parametrize("interpolation", ["LINEAR", "CUBICSPLINE"])
+@pytest.mark.parametrize("rest", [(50.0, 100.0, 150.0), (1000.0, 2000.0, 3000.0)])
 def test_a_joint_translated_far_from_its_bind_pose_is_measured_accurately(
-    found, tmp_path, interpolation
+    found, tmp_path, interpolation, rest
 ):
-    # A review finding. The joint rests at (50, 100, 150), turned about z by
+    # Review findings. The joint rests at `rest`, turned about z by
     # (0, 0, 0.6, 0.8), which is 73.74° with cosine 0.28 and sine 0.96; its
     # inverse bind matrix is the exact inverse of that world matrix, so the
     # triangle weighted to it stays at its own coordinates, L, R, U, D = 0, 1,
-    # 1, 0. The importer works in 32 bits around values in the hundreds, and
-    # the cubic channel's map has to survive that.
+    # 1, 0. The importer works in 32 bits around values in the hundreds or
+    # thousands, and the cubic channel's map has to survive that.
+    c, s = 0.28, 0.96
+    x, y, z = rest
+    bind = (-(c * x + s * y), -(-s * x + c * y), -z)
     model = GlbWriter()
-    joint = model.node(
-        "joint", translation=(50.0, 100.0, 150.0), rotation=(0.0, 0.0, 0.6, 0.8)
-    )
-    skin = model.skin(
-        [joint],
-        [(0.28, -0.96, 0, 0, 0.96, 0.28, 0, 0, 0, 0, 1, 0, -110, 20, -150, 1)],
-    )
+    joint = model.node("joint", translation=rest, rotation=(0.0, 0.0, 0.6, 0.8))
+    skin = model.skin([joint], [(c, -s, 0, 0, s, c, 0, 0, 0, 0, 1, 0, *bind, 1)])
     skinned = model.node(
         "skinned",
         mesh=model.mesh(
@@ -762,11 +761,10 @@ def test_a_joint_translated_far_from_its_bind_pose_is_measured_accurately(
         skin=skin,
     )
     model.scene([joint, skinned], default=True)
-    here = (50.0, 100.0, 150.0)
     if interpolation == "LINEAR":
-        values = [here, here]
+        values = [rest, rest]
     else:
-        values = [ZERO, here, ZERO, ZERO, here, ZERO]
+        values = [ZERO, rest, ZERO, ZERO, rest, ZERO]
     model.animation(
         "hold",
         [(joint, "translation", [0.0, 1.0], values)],
@@ -779,7 +777,7 @@ def test_a_joint_translated_far_from_its_bind_pose_is_measured_accurately(
         clip_names=["hold"],
         once=["hold"],
     )
-    # 32-bit values near 150 are 1e-5 apart; the requirement is 1e-4 m.
+    # The requirement is 1e-4 m.
     for box in boxes(result)["hold"]:
         assert box == pytest.approx((0.0, 1.0, 1.0, 0.0), abs=1e-4)
 

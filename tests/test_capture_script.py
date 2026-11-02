@@ -700,9 +700,21 @@ def affine(matrix, offset, point):
     )
 
 
+def translation_keys(*values):
+    """The keys of a cubic translation channel with these values."""
+    return {"times": list(range(len(values))), "values": list(values)}
+
+
+def points_for(script, path):
+    if path == "translation":
+        keys = translation_keys((0.0, 0.0, 0.0), (2.0, 0.0, 0.0))
+        return script.calibration_points("translation", [keys])
+    return script._CALIBRATION[path]
+
+
 @pytest.mark.parametrize("path", ["translation", "scale", "rotation"])
 def test_an_affine_conversion_is_measured_from_the_calibration_keys(script, path):
-    points = script._CALIBRATION[path]
+    points = points_for(script, path)
     d = len(points[0])
     # A permutation with a sign, a scaling and an offset, as the importer applies.
     matrix = [[0.0] * d for _ in range(d)]
@@ -719,7 +731,7 @@ def test_an_affine_conversion_is_measured_from_the_calibration_keys(script, path
 
 
 def test_a_conversion_that_is_not_affine_is_not_measured(script):
-    points = script._CALIBRATION["translation"]
+    points = points_for(script, "translation")
     images = [tuple(x * x for x in point) for point in points]
     assert script.solve_affine(points, images) is None
 
@@ -994,7 +1006,10 @@ def test_the_private_copy_reduces_cubic_samplers_to_their_keys(script, tmp_path)
     ]
     sampler = calibration["samplers"][calibration["channels"][0]["sampler"]]
     assert script.read_accessor(copy, fetch, sampler["output"], source) == [
-        tuple(map(float, point)) for point in script._CALIBRATION["translation"]
+        tuple(map(float, point))
+        for point in script.calibration_points(
+            "translation", [cubics[0][(shape, "translation")]]
+        )
     ]
     # The original document is untouched.
     assert document["animations"][0]["samplers"][0]["interpolation"] == "CUBICSPLINE"
@@ -1280,29 +1295,53 @@ def float32_of(value):
     return struct.unpack("<f", struct.pack("<f", value))[0]
 
 
-def test_a_joint_with_a_large_bind_offset_is_measured_accurately(script):
-    # A review finding. The importer maps a joint's translation g to
+def test_translation_points_surround_the_keys_and_are_32_bit_values(script):
+    keys = translation_keys((1000.0, 2000.0, 3000.0), (1004.0, 2000.0, 2990.0))
+    points = script.calibration_points("translation", [keys])
+    # The middle is (1002, 2000, 2995) and the step is the largest half extent.
+    assert points[0] == (1002.0, 2000.0, 2995.0)
+    assert points[1] == (1007.0, 2000.0, 2995.0)
+    assert points[4] == (1002.0 + 5, 2000.0 + 10, 2995.0 + 15)
+    # With no extent the step is a meter, and rounding to 32 bits is the
+    # importer's reading of the file.
+    still = script.calibration_points(
+        "translation", [translation_keys((0.1, 0.1, 0.1))]
+    )
+    assert still[0] == (float32_of(0.1),) * 3
+    assert still[1][0] == float32_of(float32_of(0.1) + 1.0)
+    # Other paths have points of their own, and keys from several channels count.
+    assert script.calibration_points("scale", []) is script._CALIBRATION["scale"]
+    both = script.calibration_points(
+        "translation", [translation_keys((0.0,) * 3), translation_keys((8.0,) * 3)]
+    )
+    assert both[0] == (4.0,) * 3 and both[1] == (8.0, 4.0, 4.0)
+
+
+@pytest.mark.parametrize("bind", [(110.0, -20.0, 150.0), (2200.0, -400.0, 3000.0)])
+def test_a_joint_with_a_large_bind_offset_is_measured_accurately(script, bind):
+    # Review findings. The importer maps a joint's translation g to
     # R⁻¹·(g − e), R⁻¹ turning about z by the rest rotation (0, 0, 0.6, 0.8)
-    # and e the rest pose; it works in 32 bits. With e = (110, −20, 150), the
-    # map has to stay accurate at (50, 100, 150) to 3e-5.
+    # and e the rest pose, here a little off the keys; it works in 32 bits.
+    # Calibrated around the keys, where the images are small, the map is
+    # accurate there even when the bind offset is in the thousands.
     c, s_ = 0.28, 0.96
     matrix = [[c, s_, 0.0], [-s_, c, 0.0], [0.0, 0.0, 1.0]]
-    offset = [-(c * 110 - s_ * 20), -(-s_ * 110 - c * 20), -150.0]
+    rest = tuple(v / 2.2 + 0.05 for v in bind)  # the joint, near the keys
+    keys = (tuple(v / 2.2 for v in bind),) * 2
+    offset = [-sum(matrix[i][j] * rest[j] for j in range(3)) for i in range(3)]
 
     def imported(point):
         return tuple(
-            float32_of(
-                float32_of(sum(matrix[i][j] * point[j] for j in range(3)) + offset[i])
-            )
+            float32_of(sum(matrix[i][j] * point[j] for j in range(3)) + offset[i])
             for i in range(3)
         )
 
-    points = script._CALIBRATION["translation"]
+    points = script.calibration_points("translation", [translation_keys(*keys)])
     solved = script.solve_affine(points, [imported(point) for point in points])
     assert solved is not None
     got, shift = solved
-    target = (50.0, 100.0, 150.0)
+    target = keys[0]
     for i in range(3):
         mapped = sum(got[i][j] * target[j] for j in range(3)) + shift[i]
         want = sum(matrix[i][j] * target[j] for j in range(3)) + offset[i]
-        assert mapped == pytest.approx(want, abs=3e-5)
+        assert mapped == pytest.approx(want, abs=3e-6)
