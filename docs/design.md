@@ -816,6 +816,9 @@ Checks, each an input error (exit 3) naming the file and the problem:
   names an object that does not exist; the node hierarchy is not a forest
   (a node with two parents, or a cycle); or an animation sampler's input
   accessor lacks the one-element `min` and `max` that give the clip's range.
+  A `KHR_animation_pointer` channel whose pointer is `/nodes/N/translation`,
+  `/nodes/N/rotation`, `/nodes/N/scale` or `/nodes/N/weights` references node
+  N the same way, and N must exist whether or not the animation is selected.
   Other glTF rules are left to Blender's importer.
 - a material's present `name` is not a string, or a primitive's present
   `material` or a node's present `mesh` is not an integer index into the
@@ -1087,7 +1090,13 @@ Each sample is evaluated at its exact time, not rounded to a timeline frame.
 ### Root motion
 
 A **root** is a node that is targeted by a translation channel of the clip and
-has no ancestor targeted by any channel of the clip. A root's **travel** is the
+has no ancestor targeted by any channel of the clip. A channel targets a node
+either directly (a `translation`, `rotation`, `scale` or `weights` target that
+names the node) or through a `KHR_animation_pointer` pointer of the form
+`/nodes/N/translation`, `/nodes/N/rotation`, `/nodes/N/scale` or
+`/nodes/N/weights`; a direct target wins when a channel has both. Both forms
+select roots and animated ancestors alike. Pointers to meshes, cameras and
+lights target no node. A root's **travel** is the
 horizontal (XZ) distance between its world-space positions at `t0` and `t1`,
 evaluated at direction 0.
 

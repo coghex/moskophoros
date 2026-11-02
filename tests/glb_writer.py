@@ -230,13 +230,14 @@ class GlbWriter:
         return len(self.document["animations"]) - 1
 
     def pointer_channel(
-        self, animation, pointer, times, values, *, interpolation="LINEAR"
+        self, animation, pointer, times, values, *, interpolation="LINEAR", kind=None
     ):
         """Add a KHR_animation_pointer channel to `animation`: `pointer` is
         a JSON pointer such as `/meshes/0/weights`, and each value a tuple
-        of floats, flattened into a scalar output. For `CUBICSPLINE`,
-        `values` holds an in-tangent, a value and an out-tangent for each
-        time, as `animation` does."""
+        of floats, flattened into a scalar output, or kept as the rows of an
+        accessor of type `kind` (`VEC3` for `/nodes/N/translation`). For
+        `CUBICSPLINE`, `values` holds an in-tangent, a value and an
+        out-tangent for each time, as `animation` does."""
         per_time = 3 if interpolation == "CUBICSPLINE" else 1
         if len(values) != per_time * len(times):
             raise ValueError(f"a channel needs {per_time} value(s) per time")
@@ -245,7 +246,12 @@ class GlbWriter:
             {
                 "input": self._accessor("SCALAR", [(t,) for t in times], True),
                 "output": self._accessor(
-                    "SCALAR", [(value,) for row in values for value in row], False
+                    *(
+                        ("SCALAR", [(value,) for row in values for value in row])
+                        if kind is None
+                        else (kind, values)
+                    ),
+                    False,
                 ),
                 "interpolation": interpolation,
             }
