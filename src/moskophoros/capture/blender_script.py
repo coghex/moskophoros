@@ -815,28 +815,78 @@ def buffer_reader(document, binary, source):
 _INDEX_CODES = {5121: "B", 5123: "H", 5125: "I"}
 
 
-def _view_rows(document, fetch, view_index, offset, row, count, stride=None):
+class _Unreadable(ValueError):
+    """A span or reference an accessor declares that cannot be read."""
+
+
+def _whole(value, what, minimum=0):
+    """`value`, an integer of at least `minimum`. A JSON boolean is not one,
+    though Python counts it as 0 or 1."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise _Unreadable(f"{what} {value!r} is not a whole number")
+    return value
+
+
+def _item(document, key, index, what):
+    """Entry `index` of the document's list `key`. Python would count a
+    negative index from the end."""
+    items = document.get(key)
+    if not isinstance(items, list):
+        raise _Unreadable(f"the file has no {key}")
+    if _whole(index, what) >= len(items):
+        raise _Unreadable(f"{what} {index} is not in the file's {len(items)} {key}")
+    return items[index]
+
+
+def _view_rows(document, fetch, view_index, offset, row, count, stride=0):
     """`count` rows of struct `row` read from a buffer view, starting `offset`
-    bytes into it and `stride` bytes apart (the row's size by default)."""
-    view = document["bufferViews"][view_index]
-    data = fetch(view["buffer"])
-    start = view.get("byteOffset", 0) + offset
-    stride = stride or row.size
+    bytes into it and `stride` bytes apart (the row's size when 0). The
+    last row must end inside the view, and the view inside the buffer's
+    declared length and the bytes it has."""
+    view = _item(document, "bufferViews", view_index, "buffer view")
+    buffer_index = _whole(view["buffer"], "a buffer view's buffer")
+    declared = _whole(
+        _item(document, "buffers", buffer_index, "buffer")["byteLength"],
+        "a buffer's length",
+    )
+    view_start = _whole(view.get("byteOffset", 0), "a buffer view's offset")
+    view_length = _whole(view["byteLength"], "a buffer view's length")
+    offset = _whole(offset, "an offset")
+    count = _whole(count, "a count")
+    stride = _whole(stride, "a stride") or row.size
+    data = fetch(buffer_index)
+    available = min(declared, len(data))
+    if view_start + view_length > available:
+        raise _Unreadable(
+            f"buffer view {view_index} ends at byte {view_start + view_length} "
+            f"of buffer {buffer_index}, which has {available}"
+        )
+    if count == 0:
+        return []
+    end = offset + stride * (count - 1) + row.size
+    if end > view_length:
+        raise _Unreadable(
+            f"{count} rows of {row.size} bytes, {stride} apart from byte "
+            f"{offset}, end at byte {end} of buffer view {view_index}, "
+            f"which has {view_length}"
+        )
+    start = view_start + offset
     return [row.unpack_from(data, start + i * stride) for i in range(count)]
 
 
-def read_accessor(document, fetch, index, source):
+def read_accessor(document, fetch, index, source, label=None):
     """An animation accessor's rows, as tuples of floats, with a sparse
-    accessor's replacements applied."""
-    where = f"{source}: accessor {index}"
+    accessor's replacements applied. `label` is how an error names where the
+    accessor is used (the source file by default)."""
+    where = f"{label or source}: accessor {index}"
     try:
-        accessor = document["accessors"][index]
+        accessor = _item(document, "accessors", index, "accessor")
         width = _ACCESSOR_WIDTHS[accessor["type"]]
         code, scale = _ACCESSOR_FORMATS[accessor["componentType"]]
-        count = accessor["count"]
+        count = _whole(accessor["count"], "an accessor's count")
         row = struct.Struct(f"<{width}{code}")
         if "bufferView" in accessor:
-            view = document["bufferViews"][accessor["bufferView"]]
+            view = _item(document, "bufferViews", accessor["bufferView"], "buffer view")
             rows = _view_rows(
                 document,
                 fetch,
@@ -844,13 +894,13 @@ def read_accessor(document, fetch, index, source):
                 accessor.get("byteOffset", 0),
                 row,
                 count,
-                view.get("byteStride"),
+                view.get("byteStride", 0),
             )
         else:
             rows = [(0,) * width] * count
         sparse = accessor.get("sparse")
         if sparse is not None:
-            changed = sparse["count"]
+            changed = _whole(sparse["count"], "a sparse count")
             indices, values = sparse["indices"], sparse["values"]
             positions = [
                 position
@@ -876,6 +926,8 @@ def read_accessor(document, fetch, index, source):
             rows = list(rows)
             for position, replacement in zip(positions, replacements, strict=True):
                 rows[position] = replacement
+    except _Unreadable as problem:
+        raise ScriptError(f"{where} is unreadable: {problem}") from None
     except (KeyError, IndexError, TypeError, struct.error):
         raise ScriptError(f"{where} is malformed or unreadable") from None
     if scale is not None and accessor.get("normalized"):
@@ -1180,11 +1232,12 @@ def expand_sampler(document, fetch, source, sampler, where):
     each channel that reads it to check (`expand_cubics`)."""
     try:
         times = [
-            row[0] for row in read_accessor(document, fetch, sampler["input"], source)
+            row[0]
+            for row in read_accessor(document, fetch, sampler["input"], source, where)
         ]
         flat = [
             value
-            for row in read_accessor(document, fetch, sampler["output"], source)
+            for row in read_accessor(document, fetch, sampler["output"], source, where)
             for value in row
         ]
         kind = document["accessors"][sampler["output"]]["type"]
