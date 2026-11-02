@@ -1142,6 +1142,46 @@ def test_a_bind_offset_just_beyond_the_range_is_an_input_error(found, tmp_path):
     assert "beyond ±256 m" in error.problem
 
 
+@pytest.mark.parametrize("sign", [1.0, -1.0])
+@pytest.mark.parametrize(
+    ("offset", "allowed"),
+    [
+        (256.0, True),
+        # Four steps of 2⁻¹⁵ and the review's own 16 steps past 256 m.
+        (256.0001220703125, False),
+        (256.00048828125, False),
+        (257.0, False),
+    ],
+)
+def test_a_bind_offset_is_supported_exactly_up_to_256_m(
+    found, tmp_path, offset, allowed, sign
+):
+    # A review finding: the joint rests at (0, 0, ±offset), turned about z, so
+    # its bind offset along z is exact; its cubic keys are all zero.
+    model, joint = rest_joint_model((0.0, 0.0, sign * offset))
+    model.animation(
+        "hold",
+        [(joint, "translation", [0.0, 1.0], [ZERO, ZERO, ZERO] * 2)],
+        interpolation="CUBICSPLINE",
+    )
+    if allowed:
+        result, _ = measure(
+            found,
+            model.write(tmp_path, "bind"),
+            tmp_path,
+            clip_names=["hold"],
+            once=["hold"],
+        )
+        assert result.measurements
+    else:
+        refused(
+            found,
+            tmp_path,
+            model,
+            r"'s translation has a bind offset of -?25[67](\.\d+)? m, beyond ±256 m",
+        )
+
+
 def test_a_rotation_key_at_the_limit_of_a_thousandth_is_measured_exactly(
     found, tmp_path
 ):

@@ -1045,9 +1045,11 @@ TANGENT_LIMIT = 1e4  # every tangent component, of any path
 MIN_QUATERNION = 1e-3  # the length of a rotation key, and of a rotation sample
 # Slack on what is computed rather than read: a curve's extremum is a root in
 # double precision, and the bind offset is read back through the importer's
-# 32-bit conversion (an ulp of 3e-5 m at 256 m).
+# 32-bit conversion, whose result is rounded to a step of 2⁻¹⁵ m at 256 m: one
+# step past the limit is not told from the limit (a review finding: a slack of
+# a millimeter was too much).
 EXTREMUM_SLACK = 1e-9
-BIND_SLACK = 1e-3
+BIND_SLACK = 2.0**-15
 
 
 def cubic_problem(path, keys):

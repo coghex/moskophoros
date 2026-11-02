@@ -2218,8 +2218,10 @@ section's settings on 5.2.2:
   contract](#input-contract)), because the importer works in 32 bits and the
   figures below are what keeps its rounding inside that tolerance. Translation
   values, key and between keys, and the bind offset (each component, in
-  Blender's axes): at most 256 m, where a 32-bit number resolves 3e-5 m; real
-  characters are under 10 m and scenes under 100 m. Scale values, key and
+  Blender's axes): at most 256 m, where a 32-bit number resolves 3e-5 m (the bind offset is
+  read back through the importer's 32-bit arithmetic, so one such step, 2⁻¹⁵ m,
+  past 256 m is not told from it); real characters are under 10 m and scenes
+  under 100 m. Scale values, key and
   between keys: at most 256, because Blender holds a scale in 32 bits and its
   rounding grows with the object (1.5e-5 of its extent at 256, so 1e-4 m holds
   for objects up to 6 m across); real scale animation is 0 to 10. Tangent
