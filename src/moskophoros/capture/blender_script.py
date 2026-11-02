@@ -838,9 +838,9 @@ def _item(document, key, index, what):
     return items[index]
 
 
-def _view_rows(document, fetch, view_index, offset, row, count, stride=None):
+def _view_rows(document, fetch, view_index, offset, row, count, stride=0):
     """`count` rows of struct `row` read from a buffer view, starting `offset`
-    bytes into it and `stride` bytes apart (the row's size by default). The
+    bytes into it and `stride` bytes apart (the row's size when 0). The
     last row must end inside the view, and the view inside the buffer's
     declared length and the bytes it has."""
     view = _item(document, "bufferViews", view_index, "buffer view")
@@ -853,7 +853,7 @@ def _view_rows(document, fetch, view_index, offset, row, count, stride=None):
     view_length = _whole(view["byteLength"], "a buffer view's length")
     offset = _whole(offset, "an offset")
     count = _whole(count, "a count")
-    stride = _whole(stride or 0, "a stride") or row.size
+    stride = _whole(stride, "a stride") or row.size
     data = fetch(buffer_index)
     available = min(declared, len(data))
     if view_start + view_length > available:
@@ -894,7 +894,7 @@ def read_accessor(document, fetch, index, source, label=None):
                 accessor.get("byteOffset", 0),
                 row,
                 count,
-                view.get("byteStride"),
+                view.get("byteStride", 0),
             )
         else:
             rows = [(0,) * width] * count
