@@ -2170,9 +2170,11 @@ section's settings on 5.2.2:
   values and tangents, and checks the weights it uses the same way. Keys may
   be as close together as the file's 32-bit times allow, and a time before the
   first key or after the last holds that key's value. A quaternion is evaluated
-  component by component and Blender normalizes it, as glTF says, so the
-  importer negating a key that makes an obtuse angle with the one before it
-  does not matter. Channels that are not cubic, and files with none, are
+  component by component and the script normalizes it, as glTF says, in double
+  precision before the value reaches Blender's 32-bit properties, which would
+  underflow or overflow on a very small or large one (the zero quaternion is
+  left as it is). The importer negating a key that makes an obtuse angle with
+  the one before it does not matter. Channels that are not cubic, and files with none, are
   evaluated by Blender as before.
 - **The importer converts a key's value with an affine map** (glTF's axes
   turned into Blender's, and a bone's rest pose for a joint). The script does not

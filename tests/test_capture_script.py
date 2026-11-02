@@ -967,6 +967,7 @@ def test_the_private_copy_reduces_cubic_samplers_to_their_keys(script, tmp_path)
                 "values": [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0)],
                 "ins": [(0.0, 0.0, 0.0), (-3.0, 0.0, 0.0)],
                 "outs": [(3.0, 0.0, 0.0), (0.0, 0.0, 0.0)],
+                "rotation": False,
             }
         }
     }
@@ -1142,3 +1143,45 @@ def test_an_animation_the_pointer_emptied_animates_the_placeholder(script, tmp_p
             "target": {"node": placeholder, "path": "translation"},
         }
     ]
+
+
+ROTATION_KEYS = {
+    "times": [0.0, 1.0],
+    "values": [(0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0, 1.0)],
+    "ins": [(0.0,) * 4, (-1e-21, 0.0, 0.0, 4.0)],
+    "outs": [(1e-21, 0.0, 0.0, -4.0), (0.0,) * 4],
+    "rotation": True,
+}
+
+
+@pytest.mark.parametrize(
+    ("tangent", "want"),
+    [
+        # w cancels at the middle and x is 2.5e-22, whose square underflows
+        # in 32 bits; the quaternion is (1, 0, 0, 0).
+        (1e-21, (1.0, 0.0, 0.0, 0.0)),
+        # x is 2.5e19, whose square overflows in 32 bits; w is 1.
+        (1e20, (1.0, 0.0, 0.0, 4e-20)),
+    ],
+)
+def test_a_cubic_rotation_is_normalized_in_double_precision(script, tangent, want):
+    keys = dict(ROTATION_KEYS)
+    if tangent == 1e20:
+        keys["ins"] = [(0.0,) * 4, (-1e20, 0.0, 0.0, 0.0)]
+        keys["outs"] = [(1e20, 0.0, 0.0, 0.0), (0.0,) * 4]
+    got = script.cubic_value(keys, 0.5)
+    assert math.hypot(*got) == pytest.approx(1.0, abs=1e-15)
+    assert got == pytest.approx(want, abs=1e-12)
+
+
+def test_only_a_rotation_is_normalized_and_not_the_zero_quaternion(script):
+    unit = {
+        "times": [0.0],
+        "values": [(3.0, 0.0, 0.0, 4.0)],
+        "ins": [(0.0,) * 4],
+        "outs": [(0.0,) * 4],
+    }
+    assert script.cubic_value(unit, 0.0) == (3.0, 0.0, 0.0, 4.0)
+    assert script.cubic_value({**unit, "rotation": True}, 0.0) == (0.6, 0.0, 0.0, 0.8)
+    zero = {**unit, "values": [(0.0,) * 4], "rotation": True}
+    assert script.cubic_value(zero, 0.0) == (0.0,) * 4

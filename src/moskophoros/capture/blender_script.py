@@ -928,30 +928,39 @@ def cubic_value(keys, time_s):
     the fraction of the way, it is
     (2u³ − 3u² + 1)·p0 + step·(u³ − 2u² + u)·m0 + (−2u³ + 3u²)·p1 +
     step·(u³ − u²)·a1, with `p0`, `m0` the first key's value and out-tangent
-    and `p1`, `a1` the second's value and in-tangent."""
+    and `p1`, `a1` the second's value and in-tangent. A rotation is
+    normalized, as glTF says, here in double precision: Blender's 32-bit
+    properties would underflow or overflow on a very small or large one. The
+    zero quaternion is left as it is."""
     times, values, ins, outs = (
         keys[name] for name in ("times", "values", "ins", "outs")
     )
     if time_s <= times[0]:
-        return tuple(values[0])
-    if time_s >= times[-1]:
-        return tuple(values[-1])
-    k = bisect.bisect_right(times, time_s) - 1
-    step = times[k + 1] - times[k]
-    u = (time_s - times[k]) / step
-    u2, u3 = u * u, u * u * u
-    h00, h10, h01, h11 = (
-        2 * u3 - 3 * u2 + 1,
-        u3 - 2 * u2 + u,
-        -2 * u3 + 3 * u2,
-        u3 - u2,
-    )
-    return tuple(
-        h00 * p0 + step * h10 * m0 + h01 * p1 + step * h11 * a1
-        for p0, m0, p1, a1 in zip(
-            values[k], outs[k], values[k + 1], ins[k + 1], strict=True
+        value = tuple(values[0])
+    elif time_s >= times[-1]:
+        value = tuple(values[-1])
+    else:
+        k = bisect.bisect_right(times, time_s) - 1
+        step = times[k + 1] - times[k]
+        u = (time_s - times[k]) / step
+        u2, u3 = u * u, u * u * u
+        h00, h10, h01, h11 = (
+            2 * u3 - 3 * u2 + 1,
+            u3 - 2 * u2 + u,
+            -2 * u3 + 3 * u2,
+            u3 - u2,
         )
-    )
+        value = tuple(
+            h00 * p0 + step * h10 * m0 + h01 * p1 + step * h11 * a1
+            for p0, m0, p1, a1 in zip(
+                values[k], outs[k], values[k + 1], ins[k + 1], strict=True
+            )
+        )
+    if keys.get("rotation"):
+        length = math.hypot(*value)
+        if length > 0.0:
+            value = tuple(component / length for component in value)
+    return value
 
 
 def expand_sampler(document, fetch, source, sampler, path, where):
@@ -986,7 +995,13 @@ def expand_sampler(document, fetch, source, sampler, path, where):
         False,
     )
     sampler["interpolation"] = "LINEAR"
-    return {"times": times, "values": values, "ins": ins, "outs": outs}
+    return {
+        "times": times,
+        "values": values,
+        "ins": ins,
+        "outs": outs,
+        "rotation": path == "rotation",
+    }
 
 
 def expand_cubics(document, fetch, source):

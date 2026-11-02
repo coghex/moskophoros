@@ -390,7 +390,7 @@ def rotated(q, point):
 def rotation_bounds(times, keys, t):
     """The triangle's L, R, U, D with glTF's normalized cubic rotation at `t`."""
     q = cubic_at(times, keys, t)
-    length = math.sqrt(sum(c * c for c in q))
+    length = math.hypot(*q)
     points = [rotated([c / length for c in q], p) for p in TRIANGLE]
     xs = [p[0] for p in points]
     ys = [p[1] for p in points]
@@ -630,6 +630,44 @@ def test_a_cubic_rotation_is_exact_just_after_a_key_with_a_steep_tangent(
     assert abs(measured[2][0] - key_only[0]) > 1e-3
 
 
+@pytest.mark.parametrize(
+    "tangent",
+    [1e-21, 1e20],
+    ids=["a quaternion too small to square in 32 bits", "one too large to square"],
+)
+def test_a_cubic_rotation_is_normalized_in_double_precision(found, tmp_path, tangent):
+    # Both keys are the identity. At 0.5 s the middle of the curve is a
+    # quaternion that is nearly pure x: 2.5e-22 with w cancelled to zero, or
+    # 2.5e19 with w = 1. Either is a half turn about x, so the triangle's top
+    # vertex lands at its bottom (a review finding).
+    times = [0.0, 1.0]
+    identity = (0.0, 0.0, 0.0, 1.0)
+    zero = (0.0,) * 4
+    if tangent < 1:
+        out, into = (tangent, 0.0, 0.0, -4.0), (-tangent, 0.0, 0.0, 4.0)
+    else:
+        out, into = (tangent, 0.0, 0.0, 0.0), (-tangent, 0.0, 0.0, 0.0)
+    keys = [(zero, identity, out), (into, identity, zero)]
+    model = GlbWriter()
+    shape = model.node("shape", mesh=True)
+    model.scene([shape], default=True)
+    model.animation(
+        "flip", [(shape, "rotation", times, flat(keys))], interpolation="CUBICSPLINE"
+    )
+    result, _ = measure(
+        found,
+        model.write(tmp_path, "flip"),
+        tmp_path,
+        clip_names=["flip"],
+        once=["flip"],
+    )
+    measured = boxes(result)["flip"]
+    for got, t in zip(measured, ONCE_TIMES, strict=True):
+        assert got == pytest.approx(rotation_bounds(times, keys, t), abs=1e-4)
+    # The middle sample is the half turn: L, R, U, D = 0, 1, 0, 1.
+    assert measured[2] == pytest.approx((0.0, 1.0, 0.0, 1.0), abs=1e-4)
+
+
 @pytest.mark.parametrize("where", ["in no scene", "in another scene"])
 def test_a_cubic_channel_on_a_node_outside_the_selected_scene(found, tmp_path, where):
     # The clip moves the subject with a cubic curve; the same clip also moves
@@ -747,7 +785,7 @@ def test_a_cubic_rotation_of_a_joint(found, tmp_path):
     expected = []
     for t in TIMES:
         q = cubic_at([0.0, 1.0], keys, t)
-        length = math.sqrt(sum(c * c for c in q))
+        length = math.hypot(*q)
         x, y, _ = rotated([c / length for c in q], (0.5, 0.0, 0.0))
         xs, ys = [0.0, 0.25, x], [0.0, 0.0, 0.5 + y]
         expected.append((max(0, -min(xs)), max(0, *xs), max(0, *ys), max(0, -min(ys))))
