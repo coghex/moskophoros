@@ -1098,61 +1098,56 @@ def calibration_points(path, keysets):
     ]
 
 
-CALIBRATION_NAME = "moskophoros.calibration"
+CALIBRATION_NAME = "moskophoros.calibration.{}"
 # How far a check point may be from the measured map's image of it: this much
 # and a few steps of 32-bit rounding of the largest image.
 CALIBRATION_ERROR = 1e-5
 CALIBRATION_STEPS = 8 * 2.0**-24
 
 
-def target_keys(cubics, target):
-    """The keys of every cubic channel of `target`, a (node, path)."""
-    return [channels[target] for channels in cubics.values() if target in channels]
-
-
 def add_calibration(document, cubics):
-    """Add an animation of the keys `_CALIBRATION` gives, a channel for every
-    node and path that has a cubic spline channel but weights, one second
-    apart."""
-    wanted = sorted(
-        {
-            target
-            for channels in cubics.values()
-            for target in channels
-            if target[1] != "weights"
-        }
-    )
-    if not wanted:
-        return
-    samplers = []
-    channels = []
-    made = {}
-    for node, path in wanted:
-        # A translation has points of its own; the others share theirs.
-        which = (node, path) if path == "translation" else path
-        if which not in made:
-            points = calibration_points(path, target_keys(cubics, (node, path)))
-            time_input = _append_accessor(
-                document, "SCALAR", [float(i) for i in range(len(points))], 1, True
+    """Add an animation for each of `cubics`' animations, of the keys
+    `calibration_points` gives, with a channel for every node and path that
+    animation has a cubic spline channel for but weights, one second apart.
+    Each is calibrated around its own animation's keys: another clip's keys,
+    far from this one's, would bring back the rounding that the points near
+    the keys avoid (a review finding)."""
+    for animation, targets in sorted(cubics.items()):
+        wanted = sorted(target for target in targets if target[1] != "weights")
+        samplers = []
+        channels = []
+        made = {}
+        for node, path in wanted:
+            # A translation has points of its own; the others share theirs.
+            which = (node, path) if path == "translation" else path
+            if which not in made:
+                points = calibration_points(path, [targets[(node, path)]])
+                time_input = _append_accessor(
+                    document, "SCALAR", [float(i) for i in range(len(points))], 1, True
+                )
+                kind = "VEC4" if path == "rotation" else "VEC3"
+                output = _append_accessor(
+                    document,
+                    kind,
+                    [float(value) for point in points for value in point],
+                    _ACCESSOR_WIDTHS[kind],
+                    False,
+                )
+                samplers.append(
+                    {"input": time_input, "output": output, "interpolation": "LINEAR"}
+                )
+                made[which] = len(samplers) - 1
+            channels.append(
+                {"sampler": made[which], "target": {"node": node, "path": path}}
             )
-            kind = "VEC4" if path == "rotation" else "VEC3"
-            output = _append_accessor(
-                document,
-                kind,
-                [float(value) for point in points for value in point],
-                _ACCESSOR_WIDTHS[kind],
-                False,
+        if channels:
+            document.setdefault("animations", []).append(
+                {
+                    "name": CALIBRATION_NAME.format(animation),
+                    "channels": channels,
+                    "samplers": samplers,
+                }
             )
-            samplers.append(
-                {"input": time_input, "output": output, "interpolation": "LINEAR"}
-            )
-            made[which] = len(samplers) - 1
-        channels.append(
-            {"sampler": made[which], "target": {"node": node, "path": path}}
-        )
-    document.setdefault("animations", []).append(
-        {"name": CALIBRATION_NAME, "channels": channels, "samplers": samplers}
-    )
 
 
 def solve_affine(points, images):
@@ -1220,26 +1215,26 @@ def fcurve_target(fcurve, slot):
 
 def calibrate(cubics):
     """The importer's affine map for every node and path of `cubics` but
-    weights: {(node, path): (A, b)}, measured from the calibration animation
-    that `add_calibration` put in the private copy."""
-    action = bpy.data.actions.get(CALIBRATION_NAME)
-    curves = {}
-    if action is not None:
-        for layer in action.layers:
-            for strip in layer.strips:
-                for channelbag in strip.channelbags:
-                    for fcurve in channelbag.fcurves:
-                        target = fcurve_target(fcurve, channelbag.slot)
-                        if target is not None:
-                            curves.setdefault(target, {})[fcurve.array_index] = [
-                                point.co[1] for point in fcurve.keyframe_points
-                            ]
+    weights: {(animation, node, path): (A, b)}, measured from the calibration
+    animations that `add_calibration` put in the private copy."""
     maps = {}
-    for channels in cubics.values():
-        for node, path in channels:
-            if path == "weights" or (node, path) in maps:
+    for animation, targets in cubics.items():
+        action = bpy.data.actions.get(CALIBRATION_NAME.format(animation))
+        curves = {}
+        if action is not None:
+            for layer in action.layers:
+                for strip in layer.strips:
+                    for channelbag in strip.channelbags:
+                        for fcurve in channelbag.fcurves:
+                            target = fcurve_target(fcurve, channelbag.slot)
+                            if target is not None:
+                                curves.setdefault(target, {})[fcurve.array_index] = [
+                                    point.co[1] for point in fcurve.keyframe_points
+                                ]
+        for node, path in targets:
+            if path == "weights":
                 continue
-            points = calibration_points(path, target_keys(cubics, (node, path)))
+            points = calibration_points(path, [targets[(node, path)]])
             found = curves.get((node, path), {})
             if sorted(found) != list(range(len(points[0]))) or any(
                 len(column) != len(points) for column in found.values()
@@ -1258,7 +1253,7 @@ def calibrate(cubics):
                     f"cannot measure how Blender imports node {node}'s {path}: "
                     "its conversion is not affine"
                 )
-            maps[(node, path)] = solved
+            maps[(animation, node, path)] = solved
     return maps
 
 
@@ -1308,7 +1303,7 @@ def cubic_overrides(cubics):
                             image = lambda g, morph=morph: float(g[morph])  # noqa: E731
                             index = None
                         else:
-                            matrix, offset = maps[target]
+                            matrix, offset = maps[(animation, *target)]
                             row = matrix[fcurve.array_index]
                             shift = offset[fcurve.array_index]
                             image = lambda g, row=row, shift=shift: float(  # noqa: E731

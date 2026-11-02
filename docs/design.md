@@ -2178,17 +2178,19 @@ section's settings on 5.2.2:
   is left as it is). The importer negating a key that makes an obtuse angle with
   the one before it does not matter. Channels that are not cubic, and files with
   none, are evaluated by Blender as before.
-- **The importer converts a key's value with an affine map** (glTF's axes
-  turned into Blender's, and a bone's rest pose for a joint). The script does not
-  repeat that arithmetic: the private copy holds one more animation, of known
-  keys for each node and path that has a cubic channel, and the map is solved
-  from how the importer converts them and checked on further keys to 1e-5 plus a few
-  steps of 32-bit rounding of the largest image. A translation is
-  calibrated around its own keys (a base at the middle of their values, steps as
+- **The importer converts a key's value with an affine map** (glTF's axes turned
+  into Blender's, and a bone's rest pose for a joint). The script does not
+  repeat that arithmetic: for each clip with cubic channels the private copy
+  holds one more animation, of known keys for each node and path the clip
+  animates, and the map is solved from how the importer converts them and
+  checked on further keys to 1e-5 plus a few steps of 32-bit rounding of the
+  largest image. Each clip is calibrated on its own. A translation is calibrated
+  around that clip's own keys (a base at the middle of their values, steps as
   far as they reach and at least a meter, rounded to 32 bits), where the images
   of a joint with a large bind offset are small, so that the importer's 32-bit
-  rounding of values in the thousands cannot move the map.
-  Evaluated values equal glTF's cubic formula at every time, to float precision.
+  rounding of values in the thousands cannot move the map, and another clip's
+  keys, far away, cannot either. Evaluated values equal glTF's cubic formula at
+  every time, to float precision.
 - **Only one mesh-level weight animation is kept per mesh,** and it is attached
   to the original mesh, which the capture replaces with a copy for each node.
   The script gives each node of the selected scene its own `weights` channel in

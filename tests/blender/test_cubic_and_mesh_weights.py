@@ -736,15 +736,17 @@ def test_cubic_tangent_products_that_cancel_are_exact_before_rounding(found, tmp
 
 @pytest.mark.parametrize("interpolation", ["LINEAR", "CUBICSPLINE"])
 @pytest.mark.parametrize("rest", [(50.0, 100.0, 150.0), (1000.0, 2000.0, 3000.0)])
+@pytest.mark.parametrize("other_clip", [False, True], ids=["alone", "with a far clip"])
 def test_a_joint_translated_far_from_its_bind_pose_is_measured_accurately(
-    found, tmp_path, interpolation, rest
+    found, tmp_path, interpolation, rest, other_clip
 ):
     # Review findings. The joint rests at `rest`, turned about z by
     # (0, 0, 0.6, 0.8), which is 73.74° with cosine 0.28 and sine 0.96; its
     # inverse bind matrix is the exact inverse of that world matrix, so the
     # triangle weighted to it stays at its own coordinates, L, R, U, D = 0, 1,
     # 1, 0. The importer works in 32 bits around values in the hundreds or
-    # thousands, and the cubic channel's map has to survive that.
+    # thousands, and the cubic channel's map has to survive that, whatever an
+    # unselected clip holds the joint at: here twice as far (a review finding).
     c, s = 0.28, 0.96
     x, y, z = rest
     bind = (-(c * x + s * y), -(-s * x + c * y), -z)
@@ -761,15 +763,21 @@ def test_a_joint_translated_far_from_its_bind_pose_is_measured_accurately(
         skin=skin,
     )
     model.scene([joint, skinned], default=True)
-    if interpolation == "LINEAR":
-        values = [rest, rest]
-    else:
-        values = [ZERO, rest, ZERO, ZERO, rest, ZERO]
-    model.animation(
-        "hold",
-        [(joint, "translation", [0.0, 1.0], values)],
-        interpolation=interpolation,
-    )
+
+    def hold(name, here):
+        if interpolation == "LINEAR":
+            values = [here, here]
+        else:
+            values = [ZERO, here, ZERO, ZERO, here, ZERO]
+        model.animation(
+            name,
+            [(joint, "translation", [0.0, 1.0], values)],
+            interpolation=interpolation,
+        )
+
+    hold("hold", rest)
+    if other_clip:
+        hold("far", tuple(2 * v for v in rest))
     result, _ = measure(
         found,
         model.write(tmp_path, "hold"),

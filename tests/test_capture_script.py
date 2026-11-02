@@ -1000,7 +1000,7 @@ def test_the_private_copy_reduces_cubic_samplers_to_their_keys(script, tmp_path)
     # The last animation measures the importer's conversion of the node's
     # translation with the calibration keys.
     calibration = copy["animations"][-1]
-    assert calibration["name"] == script.CALIBRATION_NAME
+    assert calibration["name"] == script.CALIBRATION_NAME.format(0)
     assert [c["target"] for c in calibration["channels"]] == [
         {"node": shape, "path": "translation"}
     ]
@@ -1013,6 +1013,47 @@ def test_the_private_copy_reduces_cubic_samplers_to_their_keys(script, tmp_path)
     ]
     # The original document is untouched.
     assert document["animations"][0]["samplers"][0]["interpolation"] == "CUBICSPLINE"
+
+
+def test_each_clip_is_calibrated_around_its_own_keys(script, tmp_path):
+    # A review finding: another clip's keys, far away, must not move the
+    # points that the selected clip's map is measured at.
+    model = GlbWriter()
+    shape = model.node("shape", mesh=True)
+    model.scene([shape], default=True)
+    flat = (0.0, 0.0, 0.0)
+    for name, here in (
+        ("near", (1000.0, 2000.0, 3000.0)),
+        ("far", (2000.0, 4000.0, 6000.0)),
+    ):
+        model.animation(
+            name,
+            [(shape, "translation", [0.0, 1.0], [flat, here, flat, flat, here, flat])],
+            interpolation="CUBICSPLINE",
+        )
+    document, rest, source = load(script, model, tmp_path)
+    glb, cubics = script.private_copy(document, rest, source, 0)
+    copy, binary = script.split_glb(glb, source)
+    fetch = script.buffer_reader(copy, script.binary_chunk(binary), source)
+    names = [animation["name"] for animation in copy["animations"]]
+    assert names[-2:] == [
+        script.CALIBRATION_NAME.format(0),
+        script.CALIBRATION_NAME.format(1),
+    ]
+    for animation, here in (
+        (0, (1000.0, 2000.0, 3000.0)),
+        (1, (2000.0, 4000.0, 6000.0)),
+    ):
+        calibration = copy["animations"][-2 + animation]
+        sampler = calibration["samplers"][calibration["channels"][0]["sampler"]]
+        points = script.read_accessor(copy, fetch, sampler["output"], source)
+        assert points[0] == here
+        assert points == [
+            tuple(map(float, point))
+            for point in script.calibration_points(
+                "translation", [cubics[animation][(shape, "translation")]]
+            )
+        ]
 
 
 def test_files_without_cubic_translation_rotation_or_scale_get_no_calibration(
