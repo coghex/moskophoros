@@ -924,14 +924,16 @@ def cubic_keys(times, values):
 def cubic_value(keys, time_s):
     """glTF's cubic spline of `keys` (what `expand_sampler` returns) at
     `time_s`, as a tuple: the first key's value before it and the last key's
-    after it. Between keys `k` and `k + 1`, `step` seconds apart and with `u`
-    the fraction of the way, it is
-    (2u³ − 3u² + 1)·p0 + step·(u³ − 2u² + u)·m0 + (−2u³ + 3u²)·p1 +
-    step·(u³ − u²)·a1, with `p0`, `m0` the first key's value and out-tangent
-    and `p1`, `a1` the second's value and in-tangent. A rotation is
-    normalized, as glTF says, here in double precision: Blender's 32-bit
-    properties would underflow or overflow on a very small or large one. The
-    zero quaternion is left as it is."""
+    after it. Between keys `k` and `k + 1`, `step` seconds apart, with `u` the
+    fraction of the way and `w = 1 − u`, it is
+    (1 + 2u)·w²·p0 + step·u·w²·m0 + (1 + 2w)·u²·p1 − step·u²·w·a1, with `p0`,
+    `m0` the first key's value and out-tangent and `p1`, `a1` the second's
+    value and in-tangent (glTF's (2u³ − 3u² + 1) and the like, factored so that
+    nothing cancels near either key, and summed exactly with `math.fsum` so a
+    huge tangent term cannot swallow the values). A rotation is normalized, as
+    glTF says, here in double precision: Blender's 32-bit properties would
+    underflow or overflow on a very small or large one. The zero quaternion is
+    left as it is."""
     times, values, ins, outs = (
         keys[name] for name in ("times", "values", "ins", "outs")
     )
@@ -943,15 +945,15 @@ def cubic_value(keys, time_s):
         k = bisect.bisect_right(times, time_s) - 1
         step = times[k + 1] - times[k]
         u = (time_s - times[k]) / step
-        u2, u3 = u * u, u * u * u
+        w = (times[k + 1] - time_s) / step
         h00, h10, h01, h11 = (
-            2 * u3 - 3 * u2 + 1,
-            u3 - 2 * u2 + u,
-            -2 * u3 + 3 * u2,
-            u3 - u2,
+            (1 + 2 * u) * w * w,
+            u * w * w,
+            (1 + 2 * w) * u * u,
+            -u * u * w,
         )
         value = tuple(
-            h00 * p0 + step * h10 * m0 + h01 * p1 + step * h11 * a1
+            math.fsum((h00 * p0, step * h10 * m0, h01 * p1, step * h11 * a1))
             for p0, m0, p1, a1 in zip(
                 values[k], outs[k], values[k + 1], ins[k + 1], strict=True
             )
@@ -1259,7 +1261,12 @@ def cubic_overrides(cubics):
                             row = matrix[fcurve.array_index]
                             shift = offset[fcurve.array_index]
                             image = lambda g, row=row, shift=shift: (  # noqa: E731
-                                sum(a * b for a, b in zip(row, g, strict=True)) + shift
+                                math.fsum(
+                                    [
+                                        *(a * b for a, b in zip(row, g, strict=True)),
+                                        shift,
+                                    ]
+                                )
                             )
                             index = fcurve.array_index
                         found.extend(

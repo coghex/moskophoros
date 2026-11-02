@@ -1185,3 +1185,61 @@ def test_only_a_rotation_is_normalized_and_not_the_zero_quaternion(script):
     assert script.cubic_value({**unit, "rotation": True}, 0.0) == (0.6, 0.0, 0.0, 0.8)
     zero = {**unit, "values": [(0.0,) * 4], "rotation": True}
     assert script.cubic_value(zero, 0.0) == (0.0,) * 4
+
+
+def exact_cubic(keys, time_s):
+    """glTF's cubic spline in exact rational arithmetic, for one segment."""
+    from fractions import Fraction as F
+
+    times = keys["times"]
+    k = max(i for i, t in enumerate(times) if t <= time_s)
+    step = F(times[k + 1]) - F(times[k])
+    u = (F(time_s) - F(times[k])) / step
+    return tuple(
+        float(
+            (2 * u**3 - 3 * u**2 + 1) * F(p0)
+            + (u**3 - 2 * u**2 + u) * step * F(m0)
+            + (-2 * u**3 + 3 * u**2) * F(p1)
+            + (u**3 - u**2) * step * F(a1)
+        )
+        for p0, m0, p1, a1 in zip(
+            keys["values"][k],
+            keys["outs"][k],
+            keys["values"][k + 1],
+            keys["ins"][k + 1],
+            strict=True,
+        )
+    )
+
+
+def test_huge_tangent_terms_that_cancel_leave_the_values(script):
+    # Both keys are the identity; at the middle the tangent terms, ±1.25e19 in
+    # w, cancel exactly and the 0.5 of each key's value is all that is left
+    # (a review finding). x is 4·0.125.
+    keys = {
+        "times": [0.0, 1.0],
+        "values": [(0.0, 0.0, 0.0, 1.0)] * 2,
+        "ins": [(0.0,) * 4, (0.0, 0.0, 0.0, 1e20)],
+        "outs": [(4.0, 0.0, 0.0, 1e20), (0.0,) * 4],
+    }
+    assert script.cubic_value(keys, 0.5) == pytest.approx((0.5, 0.0, 0.0, 1.0))
+    normalized = script.cubic_value({**keys, "rotation": True}, 0.5)
+    assert normalized == pytest.approx(
+        (0.4472135954999579, 0.0, 0.0, 0.8944271909999159)
+    )
+
+
+@pytest.mark.parametrize("tangent", [1.0, 1e10, 1e20])
+@pytest.mark.parametrize("gap", [0.5, 1e-3, 1e-9, 1e-14])
+def test_a_cubic_spline_matches_exact_arithmetic_near_either_key(script, tangent, gap):
+    keys = {
+        "times": [0.0, 1.0, 3.0],
+        "values": [(1.0, -2.0), (0.25, 3.0), (-1.0, 0.5)],
+        "ins": [(0.0, 0.0), (tangent, -tangent), (0.5, 0.5)],
+        "outs": [(-tangent, tangent), (2 * tangent, 0.0), (0.0, 0.0)],
+    }
+    for time_s in (gap, 1.0 - gap, 1.0 + gap, 3.0 - gap):
+        got = script.cubic_value(keys, time_s)
+        want = exact_cubic(keys, time_s)
+        for g, w in zip(got, want, strict=True):
+            assert g == pytest.approx(w, rel=1e-9, abs=1e-9 * max(1.0, tangent) * gap)

@@ -2167,7 +2167,8 @@ section's settings on 5.2.2:
   would overwrite the value) and never lets it decide a value: after Blender
   evaluates a frame, the script sets every property of a cubic channel to glTF's
   value at the sample time, computed in double precision from the file's keys,
-  values and tangents, and checks the weights it uses the same way. Keys may
+  values and tangents (in glTF's basis factored so nothing cancels near a key,
+  and summed exactly, so a huge tangent cannot swallow a key's value), and checks the weights it uses the same way. Keys may
   be as close together as the file's 32-bit times allow, and a time before the
   first key or after the last holds that key's value. A quaternion is evaluated
   component by component and the script normalizes it, as glTF says, in double

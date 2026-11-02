@@ -668,6 +668,37 @@ def test_a_cubic_rotation_is_normalized_in_double_precision(found, tmp_path, tan
     assert measured[2] == pytest.approx((0.0, 1.0, 0.0, 1.0), abs=1e-4)
 
 
+def test_huge_cubic_tangent_terms_that_cancel_leave_the_key_values(found, tmp_path):
+    # Both keys are the identity. At 0.5 s the tangents' contributions to w,
+    # ±1.25e19, cancel exactly and the quaternion is (0.5, 0, 0, 1): a turn of
+    # 2·atan(0.5) = 53.13° about x, which takes the triangle's top vertex to
+    # (0, 0.6, 0.8), so L, R, U, D = 0, 1, 0.6, 0 (a review finding).
+    times = [0.0, 1.0]
+    identity = (0.0, 0.0, 0.0, 1.0)
+    zero = (0.0,) * 4
+    keys = [
+        (zero, identity, (4.0, 0.0, 0.0, 1e20)),
+        ((0.0, 0.0, 0.0, 1e20), identity, zero),
+    ]
+    model = GlbWriter()
+    shape = model.node("shape", mesh=True)
+    model.scene([shape], default=True)
+    model.animation(
+        "tilt", [(shape, "rotation", times, flat(keys))], interpolation="CUBICSPLINE"
+    )
+    result, _ = measure(
+        found,
+        model.write(tmp_path, "tilt"),
+        tmp_path,
+        clip_names=["tilt"],
+        once=["tilt"],
+    )
+    measured = boxes(result)["tilt"]
+    assert measured[2] == pytest.approx((0.0, 1.0, 0.6, 0.0), abs=1e-4)
+    for index in (0, 4):
+        assert measured[index] == pytest.approx((0.0, 1.0, 1.0, 0.0), abs=1e-4)
+
+
 @pytest.mark.parametrize("where", ["in no scene", "in another scene"])
 def test_a_cubic_channel_on_a_node_outside_the_selected_scene(found, tmp_path, where):
     # The clip moves the subject with a cubic curve; the same clip also moves
