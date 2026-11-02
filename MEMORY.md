@@ -4,7 +4,7 @@ Where the project stands, for an agent or the owner arriving cold. Read it
 after [AGENTS.md](AGENTS.md), then check `git log` and the tracker for
 anything newer than the date below.
 
-**Last reconciled: 2026-11-01.**
+**Last reconciled: 2026-11-02.**
 
 **Rules for this file:**
 - **Current state only.** When something changes, replace the old line; don't
@@ -126,16 +126,24 @@ anything newer than the date below.
 
 ## Next steps
 
-0. **Parking (owner, 2026-10-31), pending a final guide review** of
-   everything after its cursor; it parks once all findings are resolved. Then
-   it waits until Hetoimasia, the Synarchy
-   rewrite in `~/work/hetoimasia`, is ready for assets. The owner will then
-   build all of its assets from scratch with this tool; Synarchy keeps its
-   current acolyte. The pre-park work is done: guide review `d608af0` (no
-   runtime defects), V-4 reconciled, #171 and #172 merged, export docs
-   archived. The kanban drainer's single-PR mode still
-   reruns only failed jobs, which #172 now fails fast; that fix belongs to
-   the kanban repository.
+0. **Parked (owner, 2026-10-31; parked 2026-11-02)** until Hetoimasia, the
+   Synarchy rewrite in `~/work/hetoimasia`, is ready for assets. The owner
+   will then build all of its assets from scratch with this tool; Synarchy
+   keeps its current acolyte. Parking needed the guide to cover everything and
+   every issue to be resolved. The final guide review is
+   `docs/guide/2026-11-02T175628Z-d3b762e.md`, with no open findings. There
+   are no open issues or pull requests, and master CI is green at `d3b762e`.
+   - **Before parking:** #171 and #172; #43 (CUBICSPLINE tangents and
+     mesh-weight pointers, PR #175); and the guide's follow-ups #176
+     (pointer-driven root motion) and #177 (cubic accessor bounds).
+   - **CUBICSPLINE supported range** (owner, 2026-11-01/02; design §Input
+     contract): positions and bind offsets within 256 m, tangents and values
+     within ±10 000, and scale within ±32, so 0.1 mm holds for models up to
+     100 m across. Near-zero interpolated rotations are refused, and rotation
+     curves use exact arithmetic. Anything outside the range is exit 3.
+   - **Outside this repository:** the kanban drainer's single-PR mode still
+     reruns only failed jobs, which #172 now makes fail fast. That fix
+     belongs to the kanban repository.
 1. **Game-ready export: done.** Epic #153 closed on 2026-10-31.
    - **The command:** besides `moskophoros <in.glb> <out.png>`,
      `--output-dir OUT` writes per-frame folders and per-clip atlases, with
@@ -180,8 +188,6 @@ anything newer than the date below.
    yet.
 3. **Deferred, each waiting on a stated trigger:**
    - recolouring without a re-render (settings D-18);
-   - #43, mesh-weight animation and CUBICSPLINE tangents: approved, but held
-     until a model needs it.
 
 ## Owner preferences
 
