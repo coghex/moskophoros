@@ -1366,6 +1366,81 @@ def test_every_channel_sharing_a_sampler_is_held_to_its_own_range(
     )
 
 
+def exact_turn_about_z(keys_times, keys, t, extent):
+    """The bounds, L, R, U, D, of a triangle (0, 0), (extent, 0), (0, extent)
+    under glTF's cubic rotation about z at `t`, in exact rational arithmetic:
+    a quaternion (0, 0, z, w) turns a point by the angle whose cosine and sine
+    are (w² − z²)/n and 2zw/n, n = z² + w², so no root is needed."""
+    from fractions import Fraction as F
+
+    (t0, t1), (key0, key1) = keys_times, keys
+    step, now = F(t1) - F(t0), F(t) - F(t0)
+    s = now / step
+    (_, p0, m0), (a1, p1, _) = key0, key1
+    h = [
+        2 * s**3 - 3 * s**2 + 1,
+        s**3 - 2 * s**2 + s,
+        -2 * s**3 + 3 * s**2,
+        s**3 - s**2,
+    ]
+    z, w = (
+        h[0] * F(p0[i])
+        + h[1] * step * F(m0[i])
+        + h[2] * F(p1[i])
+        + h[3] * step * F(a1[i])
+        for i in (2, 3)
+    )
+    n = z * z + w * w
+    c, d = (w * w - z * z) / n, 2 * z * w / n
+    xs = [F(0), extent * c, -extent * d]
+    ys = [F(0), extent * d, extent * c]
+    return tuple(
+        float(v) for v in (max(0, -min(xs)), max(0, *xs), max(0, *ys), max(0, -min(ys)))
+    )
+
+
+def test_a_rotation_that_nearly_cancels_is_exact_at_every_sample(found, tmp_path):
+    # A review finding (round 17). Both keys are a unit quaternion 0.001 turned
+    # about z, over 27648 s, with out-tangent 2048 and in-tangent 4096 on w:
+    # the terms are 1e8 and sum to a quaternion 0.001 long, whose direction a
+    # double loses, 0.235 mm out at the 50 m vertex. Evaluated exactly the
+    # bounds are within 1e-4 m (owner decision 2026-11-02).
+    end = 27648.044921875
+    key = (0.0, 0.0, 0.0010000000474974513, 0.9999995231628418)
+    zero = (0.0,) * 4
+    keys = [
+        (zero, key, (0.0, 0.0, 0.0, 2048.000244140625)),
+        ((0.0, 0.0, 0.0, 4096.0009765625), key, zero),
+    ]
+    model = GlbWriter()
+    shape = model.node(
+        "shape",
+        mesh=model.mesh([ZERO, (50.0, 0.0, 0.0), (0.0, 50.0, 0.0)]),
+    )
+    model.scene([shape], default=True)
+    model.animation(
+        "turn",
+        [(shape, "rotation", [0.0, end], flat(keys))],
+        interpolation="CUBICSPLINE",
+    )
+    result, _ = measure(
+        found,
+        model.write(tmp_path, "turn"),
+        tmp_path,
+        clip_names=["turn"],
+        once=["turn"],
+        fps=3 / end,
+    )
+    rows = by_clip(result)["turn"]
+    assert len(rows) == 4
+    assert rows[1][1] == 9216.014973958334
+    for _, time_s, box, _ in rows:
+        want = exact_turn_about_z([0.0, end], keys, time_s, 50)
+        assert box == pytest.approx(want, abs=1e-4), (time_s, box, want)
+    # Where a double evaluation put the right bound 0.235 mm out.
+    assert rows[1][2][1] == pytest.approx(0.2102434072494493, abs=1e-4)
+
+
 # Rendering
 
 

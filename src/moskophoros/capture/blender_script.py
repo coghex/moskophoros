@@ -59,6 +59,7 @@ import sys
 import urllib.parse
 import zlib
 from array import array
+from fractions import Fraction
 
 import bpy
 
@@ -948,7 +949,8 @@ def cubic_raw(keys, time_s):
     its digits near its own key. Inside the supported range (`cubic_problem`)
     the terms are at most 1e4 times `step`, so double precision leaves an
     error below 1e-6 (4.5e-8 in a sweep of random keys against exact
-    arithmetic), far below the 1e-4 the result is good to."""
+    arithmetic), far below the 1e-4 the result is good to. A rotation is
+    evaluated exactly instead (`cubic_value`)."""
     times, values, ins, outs = (
         keys[name] for name in ("times", "values", "ins", "outs")
     )
@@ -970,21 +972,70 @@ def cubic_raw(keys, time_s):
     )
 
 
+def cubic_exact(keys, time_s):
+    """glTF's cubic spline of `keys` at `time_s` as a tuple of exact
+    `Fraction`s: every input is a float, so the arithmetic is exact. The
+    formula is `cubic_raw`'s."""
+    times, values, ins, outs = (
+        keys[name] for name in ("times", "values", "ins", "outs")
+    )
+    if time_s <= times[0]:
+        return tuple(Fraction(v) for v in values[0])
+    if time_s >= times[-1]:
+        return tuple(Fraction(v) for v in values[-1])
+    k = bisect.bisect_right(times, time_s) - 1
+    start, end, now = Fraction(times[k]), Fraction(times[k + 1]), Fraction(time_s)
+    step = end - start
+    u = (now - start) / step
+    w = (end - now) / step
+    h00, h10, h01, h11 = (1 + 2 * u) * w * w, u * w * w, (1 + 2 * w) * u * u, -u * u * w
+    return tuple(
+        h00 * Fraction(p0)
+        + step * h10 * Fraction(m0)
+        + h01 * Fraction(p1)
+        + step * h11 * Fraction(a1)
+        for p0, m0, p1, a1 in zip(
+            values[k], outs[k], values[k + 1], ins[k + 1], strict=True
+        )
+    )
+
+
+# Bits kept of a square root in `unit_quaternion`, far past a double's 53.
+_ROOT_BITS = 160
+
+
+def unit_quaternion(value):
+    """`value`, a tuple of `Fraction`s, as a unit quaternion of floats: each
+    component divided by the quaternion's length, in exact arithmetic but for
+    the root, which is taken to 160 bits, and rounded once. The components
+    are scaled by a power of two first, so that a quaternion as small as exact
+    arithmetic can leave neither underflows nor overflows. The zero
+    quaternion is left as it is."""
+    top = max(abs(component) for component in value)
+    if top == 0:
+        return tuple(0.0 for _ in value)
+    shift = top.numerator.bit_length() - top.denominator.bit_length()
+    scale = Fraction(2) ** shift
+    scaled = [component / scale for component in value]
+    squares = sum(component * component for component in scaled)
+    root = math.isqrt(squares.numerator * 4**_ROOT_BITS // squares.denominator)
+    length = Fraction(root, 2**_ROOT_BITS)
+    return tuple(float(component / length) for component in scaled)
+
+
 def cubic_value(keys, time_s):
-    """`cubic_raw`, normalized if `keys` are a rotation's, as glTF says:
-    Blender's 32-bit properties would underflow or overflow on a very small
-    or large quaternion. The zero quaternion is left as it is. A rotation is
-    only evaluated where its length is at least `MIN_QUATERNION`
-    (`check_rotations`), so dividing by it multiplies the rounding above by at
-    most a thousand: the angle is within 0.06° of glTF's in the worst case
-    (1e-6 over a length of 1e-3, at the longest key interval), 0.003° in a
-    sweep of random keys."""
-    value = cubic_raw(keys, time_s)
+    """The value of a cubic channel at `time_s`, as a tuple of floats.
+
+    A rotation is evaluated in exact rational arithmetic, normalized as glTF
+    says (Blender's 32-bit properties would underflow or overflow on a very
+    small or large quaternion) and rounded once (owner decision 2026-11-02;
+    a review finding: normalizing divides the rounding of a sum that nearly
+    cancels by its small length, 0.2 mm out at 50 m for terms of 1e8 and a
+    length of 0.001). Translation, scale and weights are `cubic_raw`'s
+    doubles."""
     if keys.get("rotation"):
-        length = math.hypot(*value)
-        if length > 0.0:
-            value = tuple(component / length for component in value)
-    return value
+        return unit_quaternion(cubic_exact(keys, time_s))
+    return cubic_raw(keys, time_s)
 
 
 def segment_point(keys, k, u):
@@ -1097,7 +1148,7 @@ def rotation_problem(keys, times):
     (time, length), or None. glTF normalizes it, which at such a length
     divides by little more than rounding."""
     for time_s in times:
-        length = math.hypot(*cubic_raw(keys, time_s))
+        length = math.hypot(*(float(c) for c in cubic_exact(keys, time_s)))
         if length < MIN_QUATERNION:
             return time_s, length
     return None

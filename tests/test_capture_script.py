@@ -1724,3 +1724,81 @@ def test_a_three_component_sampler_is_not_a_rotation(script, tmp_path):
     document, rest, source = load(script, model, tmp_path)
     with pytest.raises(script.ScriptError, match="does not hold rotation values"):
         script.private_copy(document, rest, source, 0)
+
+
+REVIEW_ROTATION = {
+    # A review finding: both keys are a hundredth of a degree short of a unit
+    # quaternion turned about z, over 27648 s, with out-tangent 2048 and
+    # in-tangent 4096 on w; the terms are 1e8 and cancel to a quaternion
+    # 0.001 long.
+    "times": [0.0, 27648.044921875],
+    "values": [(0.0, 0.0, 0.0010000000474974513, 0.9999995231628418)] * 2,
+    "ins": [(0.0,) * 4, (0.0, 0.0, 0.0, 4096.0009765625)],
+    "outs": [(0.0, 0.0, 0.0, 2048.000244140625), (0.0,) * 4],
+    "rotation": True,
+}
+
+
+def test_a_rotation_that_nearly_cancels_is_evaluated_exactly(script):
+    from fractions import Fraction as F
+
+    time_s = 27648.044921875 / 3
+    exact = script.cubic_exact(REVIEW_ROTATION, time_s)
+    # The independent reference of this file, and the length is above the
+    # refusal threshold.
+    reference = exact_cubic(REVIEW_ROTATION, time_s)
+    assert tuple(float(c) for c in exact) == pytest.approx(reference, abs=1e-18)
+    assert 1e-3 < math.hypot(*reference) < 1.1e-3
+    # The unit quaternion: the angle about z from exact z and w, to a double.
+    z, w = exact[2], exact[3]
+    want_z = float(z / F(math.sqrt(float(z * z + w * w))))
+    got = script.cubic_value(REVIEW_ROTATION, time_s)
+    assert got[:2] == (0.0, 0.0)
+    assert got[2] == pytest.approx(want_z, rel=1e-12)
+    assert math.hypot(*got) == pytest.approx(1.0, abs=1e-15)
+    # The same curve in double precision is the reviewer's 4.7e-6 rad out,
+    # 0.235 mm at the 50 m vertex.
+    doubles = script.cubic_raw(REVIEW_ROTATION, time_s)
+    length = math.hypot(*doubles)
+    turned = math.atan2(doubles[2], doubles[3]) - math.atan2(got[2], got[3])
+    assert abs(turned) > 1e-6
+    assert length > 1e-3
+
+
+@pytest.mark.parametrize("exponent", [-400, -320, -20, 0, 20, 300, 400])
+def test_a_unit_quaternion_is_found_at_any_magnitude(script, exponent):
+    from fractions import Fraction
+
+    scale = Fraction(10) ** exponent
+    got = script.unit_quaternion((3 * scale, Fraction(0), Fraction(0), 4 * scale))
+    # Rounded once: the doubles nearest 0.6 and 0.8.
+    assert got == (0.6, 0.0, 0.0, 0.8)
+    zero = (Fraction(0),) * 4
+    assert script.unit_quaternion(zero) == (0.0,) * 4
+
+
+def test_a_unit_quaternion_is_rounded_once_from_the_exact_value(script):
+    from fractions import Fraction
+
+    for numbers in ((1, 1, 1, 1), (1, 2, 3, 4), (5, 0, 12, 0), (7, 24, 0, 0)):
+        got = script.unit_quaternion(tuple(Fraction(n) for n in numbers))
+        length = math.sqrt(sum(n * n for n in numbers))
+        assert got == pytest.approx(tuple(n / length for n in numbers), abs=1e-16)
+    assert script.unit_quaternion(tuple(Fraction(n) for n in (5, 0, 12, 0))) == (
+        5 / 13,
+        0.0,
+        12 / 13,
+        0.0,
+    )
+
+
+def test_a_degenerate_sample_is_measured_by_the_exact_length(script):
+    keys = {
+        "times": [0.0, 3.0],
+        "values": [(0.0, 0.0, 0.0, 1.0)] * 2,
+        "ins": [(0.0,) * 4, (0.0, 0.0, 0.0, 4.5)],
+        "outs": [(1e-20, 0.0, 0.0, 0.0), (0.0,) * 4],
+        "rotation": True,
+    }
+    time_s, length = script.rotation_problem(keys, [0.0, 1.0])
+    assert time_s == 1.0 and 1e-21 < length < 1e-20

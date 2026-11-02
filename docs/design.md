@@ -2187,15 +2187,17 @@ section's settings on 5.2.2:
   690 s, the frame limit at 24 frames per second), and the sum then differs from
   the exact one by less than 1e-6. Keys may be as close together as the file's
   32-bit times allow, and a time before the first key or after the last holds
-  that key's value. A quaternion is evaluated component by component and the
-  script normalizes it, as glTF says, before the value reaches Blender's 32-bit
-  properties, which would underflow or overflow on a very small or large one
-  (the zero quaternion is left as it is). Normalizing divides the rounding by
-  the quaternion's length, so a sample shorter than 0.001 is an input error (see
-  the range below); above it the rotation is within 0.06° of glTF's in the worst
-  case and 0.003° in a sweep of random keys. The importer negating a key that
-  makes an obtuse angle with the one before it does not matter. Channels that
-  are not cubic, and files with none, are evaluated by Blender as before.
+  that key's value. A rotation is evaluated differently (owner decision
+  2026-11-02): glTF normalizes it, which divides the rounding of the sum by the
+  sum's length, so a sum that nearly cancels (terms of 1e8 and a length of
+  0.001, as a clip of 27 648 s with large tangents can give) loses its direction
+  in double precision, 0.2 mm at 50 m. The script evaluates the basis, the sum
+  and the normalization in exact rational arithmetic, every input being a float,
+  takes the length's root to 160 bits and rounds once; the zero quaternion is
+  left as it is. A sample shorter than 0.001 is an input error (see the range
+  below). The importer negating a key that makes an obtuse angle with the one
+  before it does not matter. Channels that are not cubic, and files with none,
+  are evaluated by Blender as before.
 
 - **The importer converts a key's value with an affine map** (glTF's axes turned
   into Blender's, and a bone's rest pose for a joint). The script does not
