@@ -182,6 +182,238 @@ def test_a_channel_without_a_target_node_is_ignored(tmp_path):
     assert _roots(tmp_path, model) == [(Root(child, "child"),)]
 
 
+def _pointer(model, clip, node, path, *, interpolation="LINEAR"):
+    """A `/nodes/<node>/<path>` pointer channel; the reader checks its target,
+    never its values."""
+    count = 3 if interpolation == "CUBICSPLINE" else 1
+    model.pointer_channel(
+        clip,
+        f"/nodes/{node}/{path}",
+        [0, 1],
+        [(0.0,)] * (2 * count),
+        interpolation=interpolation,
+    )
+
+
+@pytest.mark.parametrize("interpolation", ["STEP", "LINEAR", "CUBICSPLINE"])
+def test_a_translation_pointer_makes_a_root_like_a_translation_channel(
+    tmp_path, interpolation
+):
+    count = 3 if interpolation == "CUBICSPLINE" else 1
+    ordinary = GlbWriter()
+    node = ordinary.node("walker", mesh=True)
+    ordinary.scene([node])
+    ordinary.animation(
+        "walk",
+        [(node, "translation", [0, 1], [(0.0, 0.0, 0.0)] * (2 * count))],
+        interpolation=interpolation,
+    )
+    pointed = GlbWriter()
+    assert pointed.node("walker", mesh=True) == node
+    pointed.scene([node])
+    clip = pointed.animation("walk", [])
+    _pointer(pointed, clip, node, "translation", interpolation=interpolation)
+    expected = [(Root(node, "walker"),)]
+    assert _roots(tmp_path, ordinary) == expected
+    assert _roots(tmp_path, pointed) == expected
+
+
+@pytest.mark.parametrize("path", ["rotation", "scale", "weights"])
+def test_only_translation_pointers_make_roots(tmp_path, path):
+    model = GlbWriter()
+    node = model.node("spin", mesh=True)
+    model.scene([node])
+    _pointer(model, model.animation("spin", []), node, path)
+    assert _roots(tmp_path, model) == [()]
+
+
+def test_a_pointer_translation_leaves_a_distinct_root_per_node(tmp_path):
+    model = GlbWriter()
+    low = model.node("low", mesh=True)
+    high = model.node("high", mesh=True)
+    model.scene([low, high])
+    clip = model.animation("move", [])
+    _pointer(model, clip, high, "translation")
+    _pointer(model, clip, low, "translation")
+    _pointer(model, clip, high, "translation")
+    assert _roots(tmp_path, model) == [(Root(low, "low"), Root(high, "high"))]
+
+
+@pytest.mark.parametrize("path", ["rotation", "weights"])
+def test_a_pointer_ancestor_hides_a_translated_descendant(tmp_path, path):
+    # Deliberate: a file this refuses as moving its root is now accepted.
+    model = GlbWriter()
+    child = model.node("child", mesh=True)
+    parent = model.node("parent", children=[child])
+    model.scene([parent])
+    clip = model.animation("move", [_translation(child, [0, 1])])
+    _pointer(model, clip, parent, path)
+    assert _roots(tmp_path, model) == [()]
+
+
+def test_a_pointer_translated_child_of_an_animated_parent_is_no_root(tmp_path):
+    model = GlbWriter()
+    child = model.node("child", mesh=True)
+    parent = model.node("parent", children=[child])
+    model.scene([parent])
+    clip = model.animation("move", [_scale(parent, [0, 1])])
+    _pointer(model, clip, child, "translation")
+    assert _roots(tmp_path, model) == [()]
+
+
+def test_a_pointer_translated_child_of_an_untargeted_parent_is_a_root(tmp_path):
+    model = GlbWriter()
+    child = model.node("child", mesh=True)
+    parent = model.node("parent", children=[child])
+    model.scene([parent])
+    _pointer(model, model.animation("move", []), child, "translation")
+    assert _roots(tmp_path, model) == [(Root(child, "child"),)]
+
+
+def test_a_pointer_translated_parent_hides_a_pointer_translated_child(tmp_path):
+    model = GlbWriter()
+    child = model.node("child", mesh=True)
+    parent = model.node("parent", children=[child])
+    model.scene([parent])
+    clip = model.animation("move", [])
+    _pointer(model, clip, child, "translation")
+    _pointer(model, clip, parent, "translation")
+    assert _roots(tmp_path, model) == [(Root(parent, "parent"),)]
+
+
+def test_a_pointer_target_in_another_animation_hides_nothing(tmp_path):
+    model = GlbWriter()
+    child = model.node("child", mesh=True)
+    parent = model.node("parent", children=[child])
+    model.scene([parent])
+    model.animation("other", [_translation(parent, [0, 1])])
+    _pointer(model, model.animation("move", []), child, "translation")
+    assert _roots(tmp_path, model) == [
+        (Root(parent, "parent"),),
+        (Root(child, "child"),),
+    ]
+
+
+@pytest.mark.parametrize(
+    "pointer",
+    [
+        "/meshes/0/weights",
+        "/nodes/0/translation/0",
+        "/nodes/-1/translation",
+        "/nodes/0/extras",
+        "/cameras/0/perspective/yfov",
+        "/nodes/99/extras",
+        "/nodes/99/translation/0",
+    ],
+)
+def test_other_pointers_target_no_node(tmp_path, pointer):
+    # Neither a root nor a node reference to check, even one that names no node.
+    model = GlbWriter()
+    node = model.node("box", mesh=True)
+    model.scene([node])
+    clip = model.animation("pan", [])
+    model.pointer_channel(clip, pointer, [0, 1], [(0.0,), (0.5,)])
+    assert _roots(tmp_path, model) == [()]
+
+
+def test_a_pointer_that_is_not_a_string_targets_no_node(tmp_path):
+    model = GlbWriter()
+    node = model.node("box", mesh=True)
+    model.scene([node])
+    clip = model.animation("pan", [])
+    model.pointer_channel(clip, "/nodes/0/translation", [0, 1], [(0.0,), (0.5,)])
+    channel = model.document["animations"][clip]["channels"][0]
+    channel["target"]["extensions"]["KHR_animation_pointer"]["pointer"] = 7
+    assert _roots(tmp_path, model) == [()]
+
+
+def test_a_direct_target_wins_over_a_pointer_on_the_same_channel(tmp_path):
+    # A rotation of `first` that also carries a translation pointer to `second`
+    # is a rotation of `first` and nothing else.
+    model = GlbWriter()
+    first = model.node("first", mesh=True)
+    second = model.node("second", mesh=True)
+    model.scene([first, second])
+    clip = model.animation("move", [_rotation(first, [0, 1])])
+    channel = model.document["animations"][clip]["channels"][0]
+    channel["target"]["extensions"] = {
+        "KHR_animation_pointer": {"pointer": f"/nodes/{second}/translation"}
+    }
+    assert _roots(tmp_path, model) == [()]
+
+
+def test_a_node_beside_a_pointer_path_leaves_the_pointer_to_decide(tmp_path):
+    # `path: "pointer"` is no direct target, so the pointer is the target. The
+    # node the channel also names stays targeted, so the child it translates
+    # has an animated ancestor.
+    model = GlbWriter()
+    child = model.node("child", mesh=True)
+    parent = model.node("parent", children=[child])
+    model.scene([parent])
+    clip = model.animation("move", [])
+    _pointer(model, clip, child, "translation")
+    model.document["animations"][clip]["channels"][0]["target"]["node"] = parent
+    assert _roots(tmp_path, model) == [()]
+
+
+def _pointer_error(tmp_path, pointer):
+    model = GlbWriter()
+    node = model.node("box", mesh=True)
+    model.scene([node])
+    model.animation("fine", [_translation(node, [0, 1])])
+    clip = model.animation("bad", [])
+    model.pointer_channel(clip, pointer, [0, 1], [(0.0,), (0.5,)])
+    return _input_error(model.write(tmp_path))
+
+
+@pytest.mark.parametrize("path", ["translation", "rotation", "scale", "weights"])
+def test_a_pointer_to_a_missing_node_is_an_input_error(tmp_path, path):
+    error = _pointer_error(tmp_path, f"/nodes/7/{path}")
+    assert error.exit_code == 3
+    assert error.problem == (
+        "animation 1's channel 0 names target node 7, which does not exist"
+    )
+    assert str(error).startswith(f"{tmp_path / 'subject.glb'}: ")
+
+
+def test_an_unselected_animation_s_missing_pointer_node_is_still_refused(tmp_path):
+    # The check is part of reading the file, whichever clips are selected.
+    error = _pointer_error(tmp_path, "/nodes/1/translation")
+    assert "animation 1's channel 0 names target node 1" in error.problem
+
+
+@pytest.mark.parametrize(
+    ("extensions", "problem"),
+    [
+        ("text", "animation 0's channel 0's target extensions is not an object"),
+        (
+            {"KHR_animation_pointer": [1]},
+            "animation 0's channel 0's target KHR_animation_pointer is not an object",
+        ),
+    ],
+)
+def test_a_malformed_pointer_extension_is_an_input_error(tmp_path, extensions, problem):
+    model = GlbWriter()
+    node = model.node("box", mesh=True)
+    model.scene([node])
+    clip = model.animation("bad", [])
+    model.pointer_channel(clip, "/nodes/0/translation", [0, 1], [(0.0,), (0.5,)])
+    channel = model.document["animations"][clip]["channels"][0]
+    channel["target"]["extensions"] = extensions
+    error = _input_error(model.write(tmp_path))
+    assert error.exit_code == 3
+    assert error.problem == problem
+
+
+def test_a_malformed_extension_beside_a_direct_target_is_never_read(tmp_path):
+    model = GlbWriter()
+    node = model.node("box", mesh=True)
+    model.scene([node])
+    model.animation("move", [_translation(node, [0, 1])])
+    model.document["animations"][0]["channels"][0]["target"]["extensions"] = "text"
+    assert _roots(tmp_path, model) == [(Root(node, "box"),)]
+
+
 def test_roots_are_distinct_by_index_and_in_ascending_order(tmp_path):
     model = GlbWriter()
     nodes = [model.node("twin", mesh=True) for _ in range(3)]

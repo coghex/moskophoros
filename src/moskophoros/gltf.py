@@ -7,6 +7,7 @@ Blender's importer.
 
 import json
 import math
+import re
 import struct
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,10 @@ _MAGIC = b"glTF"
 _HEADER = struct.Struct("<4sII")
 _CHUNK_HEADER = struct.Struct("<II")
 _JSON_CHUNK = 0x4E4F534A
+_NODE_PATHS = ("translation", "rotation", "scale", "weights")
+# Kept equal to the capture script's own pattern, which this module may not
+# import; tests/test_gltf.py pins the two together.
+_NODE_POINTER = re.compile(r"/nodes/(\d+)/(translation|rotation|scale|weights)")
 
 
 class InputError(Exception):
@@ -418,13 +423,48 @@ class _Reader:
             path = target.get("path")
             if not isinstance(path, str):
                 self.fail(f"{what}'s target path is not a string")
-            if "node" not in target:
+            if "node" in target:
+                node = self.index(target["node"], node_count, what, "target node")
+                targeted.add(node)
+                if path == "translation":
+                    translated.add(node)
+            try:
+                effective = effective_target(channel)
+            except ValueError as problem:
+                self.fail(f"{what}'s target {problem}")
+            if effective is None:
                 continue
-            node = self.index(target["node"], node_count, what, "target node")
+            node = self.index(effective[0], node_count, what, "target node")
             targeted.add(node)
-            if path == "translation":
+            if effective[1] == "translation":
                 translated.add(node)
         return targeted, translated
+
+
+def effective_target(channel):
+    """The (node, path) an animation channel animates, as the capture reads it.
+
+    A channel whose target path is translation, rotation, scale or weights
+    and that names a node targets that node directly. Otherwise a
+    `KHR_animation_pointer` pointer of the form `/nodes/<n>/<path>`, with the
+    same four paths, targets node `n`. Every other channel targets no node.
+    The node is returned as the file gives it, unchecked. A target whose
+    `extensions` or `KHR_animation_pointer` is present but not an object
+    raises ValueError, naming the member; a pointer that is not a string
+    targets nothing.
+    """
+    target = channel["target"]
+    if target.get("path") in _NODE_PATHS and "node" in target:
+        return target["node"], target["path"]
+    extensions = target.get("extensions", {})
+    if not isinstance(extensions, dict):
+        raise ValueError("extensions is not an object")
+    extension = extensions.get("KHR_animation_pointer", {})
+    if not isinstance(extension, dict):
+        raise ValueError("KHR_animation_pointer is not an object")
+    pointer = extension.get("pointer")
+    match = _NODE_POINTER.fullmatch(pointer) if isinstance(pointer, str) else None
+    return None if match is None else (int(match[1]), match[2])
 
 
 def _finite(value):
