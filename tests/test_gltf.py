@@ -609,10 +609,13 @@ def test_unknown_clip_names_are_input_errors(tmp_path, clips, once, missing):
     assert str(raised.value) == f"{path}: no clip is named {missing!r}"
 
 
-# Animation Blender's importer cannot reproduce (owner decision 2026-10-02)
+# Cubic spline animation and mesh weight pointers are read, not rejected
 
 
-def _cubic(model, node):
+def test_a_cubic_spline_sampler_is_accepted(tmp_path):
+    model = GlbWriter()
+    node = model.node("box", mesh=True)
+    model.scene([node])
     flat = (0.0, 0.0, 0.0)
     model.animation(
         "sway",
@@ -620,42 +623,41 @@ def _cubic(model, node):
             (
                 node,
                 "translation",
-                [0, 1],
+                [0.5, 2.0],
                 [flat, flat, flat, flat, (1.0, 0.0, 0.0), flat],
             )
         ],
         interpolation="CUBICSPLINE",
     )
+    (clip,) = read_glb(model.write(tmp_path)).clips
+    assert (clip.name, clip.t0, clip.t1) == ("sway", 0.5, 2.0)
 
 
-def _mesh_pointer(model, node):
-    clip = model.animation("swell", [(node, "translation", [0, 1], [(0, 0, 0)] * 2)])
-    model.pointer_channel(clip, "/meshes/0/weights", [0, 1], [(0.0,), (0.5,)])
-
-
-@pytest.mark.parametrize(
-    ("add", "message"),
-    [
-        (_cubic, "animation 0 ('sway') uses CUBICSPLINE interpolation in sampler 0"),
-        (
-            _mesh_pointer,
-            "animation 0 ('swell') animates a mesh's morph weights through "
-            "KHR_animation_pointer (/meshes/0/weights) in channel 1",
-        ),
-    ],
-    ids=["cubic spline", "mesh weight pointer"],
-)
-def test_unsupported_animation_is_an_input_error(tmp_path, add, message):
+def test_a_mesh_weight_pointer_is_accepted_and_sets_the_clip_range(tmp_path):
+    # The pointer's sampler runs to 2 s, beyond the translation's 1 s.
     model = GlbWriter()
     node = model.node("box", mesh=True)
     model.scene([node])
-    add(model, node)
-    path = model.write(tmp_path)
-    with pytest.raises(InputError) as raised:
-        read_glb(path)
-    assert raised.value.exit_code == 3
-    assert raised.value.path == path
-    assert message in raised.value.problem
+    clip = model.animation("swell", [(node, "translation", [0, 1], [(0, 0, 0)] * 2)])
+    model.pointer_channel(clip, "/meshes/0/weights", [0, 2], [(0.0,), (0.5,)])
+    (clip,) = read_glb(model.write(tmp_path)).clips
+    assert (clip.name, clip.t0, clip.t1) == ("swell", 0.0, 2.0)
+
+
+def test_a_cubic_mesh_weight_pointer_is_accepted(tmp_path):
+    model = GlbWriter()
+    node = model.node("box", mesh=True)
+    model.scene([node])
+    clip = model.animation("swell", [])
+    model.pointer_channel(
+        clip,
+        "/meshes/0/weights",
+        [0, 1],
+        [(0.0,), (0.0,), (1.0,), (-1.0,), (0.0,), (0.0,)],
+        interpolation="CUBICSPLINE",
+    )
+    (clip,) = read_glb(model.write(tmp_path)).clips
+    assert (clip.name, clip.t0, clip.t1) == ("swell", 0.0, 1.0)
 
 
 def test_pointers_to_other_targets_are_accepted(tmp_path):

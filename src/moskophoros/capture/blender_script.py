@@ -26,6 +26,14 @@ subject is found by mesh data, which names its node, because Blender moves
 some meshes, such as a skinned mesh with animated morph weights, into an
 object of their own.
 
+Animation: the private copy also rewrites what Blender's importer would
+mishandle (design §Supported Blender version). A `/meshes/N/weights` pointer
+becomes ordinary `weights` channels on the nodes that use the mesh, and each
+CUBICSPLINE sampler becomes a linear one of its keys' values, so the importer
+makes curves to carry. Those curves never evaluate a cubic spline: `evaluate`
+sets each such property itself, from the file's values and tangents
+(`cubic_value`), after Blender has evaluated the frame.
+
 Static state: the importer makes the first animation active, and Blender
 evaluates it, so its channels would no longer hold the file's static values.
 The copy therefore starts with a synthetic animation of one synthetic empty
@@ -33,9 +41,13 @@ node, which moves nothing. Every object transform, pose bone transform and
 shape key value is recorded right after import and restored before each clip.
 
 A failure prints `moskophoros: error: <message>` to stderr and exits 1,
-writing no result.
+writing no result. A cubic spline channel outside the supported range
+(`cubic_problem`) is an input error instead: `moskophoros: input error:
+<message>` and exit status 3, which the launcher reports as the file's.
 """
 
+import base64
+import bisect
 import hashlib
 import json
 import math
@@ -47,6 +59,7 @@ import sys
 import urllib.parse
 import zlib
 from array import array
+from fractions import Fraction
 
 import bpy
 
@@ -62,10 +75,18 @@ TARGET_NAME = "moskophoros.target.{}"
 MATERIAL_NAME = "moskophoros.material.{}.data"
 PLACEHOLDER = "moskophoros.placeholder"
 _MESH_DATA = re.compile(r"moskophoros\.mesh\.\d+\.node\.(\d+)\.data(?:\.\d+)?")
-_MESH_WEIGHTS = re.compile(r"/meshes/\d+/weights")
+_MESH_WEIGHTS = re.compile(r"/meshes/(\d+)/weights")
+_NODE_POINTER = re.compile(r"/nodes/(\d+)/(translation|rotation|scale|weights)")
+_NODE_OBJECT = re.compile(r"moskophoros\.node\.(\d+)")
+_BONE_CURVE = re.compile(r'pose\.bones\["(.+)"\]\.(location|rotation_quaternion|scale)')
 # The importer copies a material, adding Blender's ".001" suffix, when one
 # glTF material serves primitives with and without vertex colours.
 _MATERIAL = re.compile(r"moskophoros\.material\.(\d+)\.data(?:\.\d+)?")
+_OBJECT_CURVES = {
+    "location": "translation",
+    "rotation_quaternion": "rotation",
+    "scale": "scale",
+}
 _TARGET_PATH = re.compile(r'key_blocks\["moskophoros\.target\.(\d+)"\]\.value')
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -81,10 +102,20 @@ CALIBRATION_TOLERANCE = 1e-6
 _GLB_HEADER = struct.Struct("<4sII")
 _CHUNK_HEADER = struct.Struct("<II")
 _JSON_CHUNK = 0x4E4F534A
+_BIN_CHUNK = 0x004E4942
 
 
 class ScriptError(Exception):
     pass
+
+
+class RangeError(ScriptError):
+    """A file outside the supported range of cubic spline channels (`cubic_problem`):
+    an input error, which the script reports with exit status `INPUT_STATUS`."""
+
+
+INPUT_STATUS = 3
+INPUT_PREFIX = "moskophoros: input error: "
 
 
 # The job
@@ -517,11 +548,20 @@ def split_glb(data, path):
 
 
 def private_copy(document, rest, source, scene):
-    """The GLB bytes Blender imports: nodes, meshes and animations renamed by
-    index, a placeholder animation first, the job's scene made the default,
-    and external files given absolute paths."""
+    """The GLB bytes Blender imports, and the cubic spline channels to evaluate
+    after the import (`cubic_overrides`): nodes, meshes and animations
+    renamed by index, mesh morph-weight pointers handed to the nodes that use
+    the mesh, cubic spline samplers reduced to their keys' values, an
+    animation that measures the importer's conversions, a placeholder
+    animation first, the job's scene made the default, and external files
+    given absolute paths."""
     document = json.loads(json.dumps(document))
+    emptied = distribute_mesh_weights(document, scene)
     nodes = document.setdefault("nodes", [])
+    names = (
+        [animation.get("name") for animation in document.get("animations") or []],
+        [node.get("name") for node in nodes],
+    )
     for index, node in enumerate(nodes):
         node["name"] = NODE_NAME.format(index)
     meshes = document.get("meshes", [])
@@ -552,6 +592,10 @@ def private_copy(document, rest, source, scene):
     animations = document.get("animations") or []
     for index, animation in enumerate(animations):
         animation["name"] = ANIMATION_NAME.format(index)
+    cubics = expand_cubics(
+        document, buffer_reader(document, binary_chunk(rest), source), source, names
+    )
+    add_calibration(document, cubics)
     if animations:
         # One key at time 0 holding (0, 0, 0). Accessors without a buffer
         # view are zeros.
@@ -568,6 +612,21 @@ def private_copy(document, rest, source, scene):
         accessors.append({"componentType": 5126, "count": 1, "type": "VEC3"})
         nodes.append({"name": PLACEHOLDER})
         document["scenes"][scene].setdefault("nodes", []).append(len(nodes) - 1)
+        placeholder = {
+            "input": len(accessors) - 2,
+            "output": len(accessors) - 1,
+            "interpolation": "LINEAR",
+        }
+        # An animation left with no channel would import as no action at all;
+        # it animates the placeholder instead, which moves nothing.
+        for animation in emptied:
+            animation["samplers"].append(dict(placeholder))
+            animation["channels"] = [
+                {
+                    "sampler": len(animation["samplers"]) - 1,
+                    "target": {"node": len(nodes) - 1, "path": "translation"},
+                }
+            ]
         animations.insert(
             0,
             {
@@ -578,13 +637,7 @@ def private_copy(document, rest, source, scene):
                         "target": {"node": len(nodes) - 1, "path": "translation"},
                     }
                 ],
-                "samplers": [
-                    {
-                        "input": len(accessors) - 2,
-                        "output": len(accessors) - 1,
-                        "interpolation": "LINEAR",
-                    }
-                ],
+                "samplers": [placeholder],
             },
         )
     document["scene"] = scene
@@ -598,7 +651,8 @@ def private_copy(document, rest, source, scene):
     text = json.dumps(document, separators=(",", ":")).encode("utf-8")
     text += b" " * (-len(text) % 4)
     body = _CHUNK_HEADER.pack(len(text), _JSON_CHUNK) + text + rest
-    return _GLB_HEADER.pack(b"glTF", 2, _GLB_HEADER.size + len(body)) + body
+    glb = _GLB_HEADER.pack(b"glTF", 2, _GLB_HEADER.size + len(body)) + body
+    return glb, cubics
 
 
 def _pointer(channel):
@@ -612,25 +666,877 @@ def _pointer(channel):
     return pointer if isinstance(pointer, str) else None
 
 
-def refuse_unsupported(document, source):
-    """Refuse what the input contract rejects and Blender's importer cannot
-    reproduce: CUBICSPLINE samplers and mesh morph-weight pointers. The
-    caller rejects these as input errors first; this keeps a job that skips
-    that check from being measured wrongly."""
-    for index, animation in enumerate(document.get("animations") or []):
-        for sampler in animation.get("samplers", []):
-            if sampler.get("interpolation") == "CUBICSPLINE":
-                raise ScriptError(
-                    f"{source}: animation {index} uses CUBICSPLINE interpolation, "
-                    "which is not supported"
-                )
-        for channel in animation.get("channels", []):
+def channel_target(channel):
+    """The (node, path) a channel animates, directly or through a
+    `/nodes/<n>/<path>` pointer, with `path` translation, rotation, scale or
+    weights; None for any other channel."""
+    target = channel.get("target", {})
+    path = target.get("path")
+    if path in ("translation", "rotation", "scale", "weights") and "node" in target:
+        return target["node"], path
+    pointer = _pointer(channel)
+    match = None if pointer is None else _NODE_POINTER.fullmatch(pointer)
+    return None if match is None else (int(match[1]), match[2])
+
+
+def scene_nodes(document, scene_index):
+    """The nodes of the selected scene: its roots and all their descendants."""
+    nodes = document.get("nodes", [])
+    reached = set()
+    pending = list(document["scenes"][scene_index].get("nodes", []))
+    while pending:
+        index = pending.pop()
+        if index not in reached:
+            reached.add(index)
+            pending.extend(nodes[index].get("children", []))
+    return reached
+
+
+def distribute_mesh_weights(document, scene_index):
+    """Replace every `/meshes/<m>/weights` pointer channel with ordinary
+    `weights` channels on the same sampler, one for each node of the selected
+    scene that uses mesh `m`. This is Moskophoros's own reading of the
+    pointer (design §Input contract), which the extension does not define.
+    Blender's importer would keep one such animation per mesh and attach it
+    to the original mesh, which this script replaces with a copy for each
+    node.
+
+    A node's own weights come first, as glTF's instantiation rules say, so
+    the node is left out when it defines `weights` or when the same animation
+    animates its weights directly. Returns the animations left without a
+    channel."""
+    nodes = document.get("nodes", [])
+    reached = sorted(scene_nodes(document, scene_index))
+    emptied = []
+    for animation in document.get("animations") or []:
+        channels = animation.get("channels", [])
+        direct = set()
+        for channel in channels:
+            target = channel_target(channel)
+            if target is not None and target[1] == "weights":
+                direct.add(target[0])
+        rewritten = []
+        for channel in channels:
             pointer = _pointer(channel)
-            if pointer is not None and _MESH_WEIGHTS.fullmatch(pointer):
-                raise ScriptError(
-                    f"{source}: animation {index} animates {pointer}, which is not "
-                    "supported"
+            match = None if pointer is None else _MESH_WEIGHTS.fullmatch(pointer)
+            if match is None:
+                rewritten.append(channel)
+                continue
+            for node in reached:
+                if (
+                    nodes[node].get("mesh") == int(match[1])
+                    and "weights" not in nodes[node]
+                    and node not in direct
+                ):
+                    rewritten.append(
+                        {
+                            "sampler": channel["sampler"],
+                            "target": {"node": node, "path": "weights"},
+                        }
+                    )
+        if channels and not rewritten:
+            emptied.append(animation)
+        animation["channels"] = rewritten
+    return emptied
+
+
+# Cubic spline animation
+#
+# Blender's importer keeps only the value of each CUBICSPLINE key and gives
+# its curve automatic Bézier handles, so the file's tangents are lost, and its
+# evaluator is not exact for a rebuilt curve: it returns a key's value for a
+# time within about 1e-4 frame of it, and merges keys under 0.01 frame apart,
+# so a steep curve is read wrongly near a key (design §Supported Blender
+# version). The private copy therefore gives the importer a LINEAR sampler of
+# the keys' values alone, which makes a curve on the right property, and the
+# script never lets that curve decide a value: after Blender evaluates a
+# frame, `evaluate` sets every property of a cubic channel to glTF's value at
+# that time (`cubic_value`), computed from the file's keys and tangents. The
+# importer converts values from glTF's axes and from a bone's rest pose with
+# an affine map, which the script measures (`calibrate`) from an animation of
+# its own, imported beside the file's, whose keys have known values.
+
+_ACCESSOR_FORMATS = {
+    5120: ("b", 127.0),
+    5121: ("B", 255.0),
+    5122: ("h", 32767.0),
+    5123: ("H", 65535.0),
+    5125: ("I", None),
+    5126: ("f", None),
+}
+_ACCESSOR_WIDTHS = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4}
+_PATH_WIDTHS = {"translation": 3, "rotation": 4, "scale": 3}
+
+
+def binary_chunk(rest):
+    """The GLB's binary chunk, or None when the file has none."""
+    if len(rest) < _CHUNK_HEADER.size:
+        return None
+    length, kind = _CHUNK_HEADER.unpack_from(rest)
+    if kind != _BIN_CHUNK:
+        return None
+    return rest[_CHUNK_HEADER.size : _CHUNK_HEADER.size + length]
+
+
+def buffer_reader(document, binary, source):
+    """A function giving the bytes of buffer `index`: the GLB's binary chunk,
+    a data URI or a file beside the source."""
+    cache = {}
+
+    def fetch(index):
+        if index in cache:
+            return cache[index]
+        try:
+            uri = document["buffers"][index].get("uri")
+            if uri is None:
+                if index != 0 or binary is None:
+                    raise ScriptError(f"{source}: buffer {index} has no data")
+                data = binary
+            elif uri.startswith("data:"):
+                header, _, payload = uri.partition(",")
+                if header.endswith(";base64"):
+                    data = base64.b64decode(payload)
+                else:
+                    data = urllib.parse.unquote_to_bytes(payload)
+            else:
+                path = os.path.join(os.path.dirname(source), urllib.parse.unquote(uri))
+                with open(path, "rb") as handle:
+                    data = handle.read()
+        except (OSError, ValueError, KeyError, IndexError, AttributeError) as error:
+            raise ScriptError(
+                f"{source}: cannot read buffer {index}: {error}"
+            ) from None
+        cache[index] = data
+        return data
+
+    return fetch
+
+
+_INDEX_CODES = {5121: "B", 5123: "H", 5125: "I"}
+
+
+def _view_rows(document, fetch, view_index, offset, row, count, stride=None):
+    """`count` rows of struct `row` read from a buffer view, starting `offset`
+    bytes into it and `stride` bytes apart (the row's size by default)."""
+    view = document["bufferViews"][view_index]
+    data = fetch(view["buffer"])
+    start = view.get("byteOffset", 0) + offset
+    stride = stride or row.size
+    return [row.unpack_from(data, start + i * stride) for i in range(count)]
+
+
+def read_accessor(document, fetch, index, source):
+    """An animation accessor's rows, as tuples of floats, with a sparse
+    accessor's replacements applied."""
+    where = f"{source}: accessor {index}"
+    try:
+        accessor = document["accessors"][index]
+        width = _ACCESSOR_WIDTHS[accessor["type"]]
+        code, scale = _ACCESSOR_FORMATS[accessor["componentType"]]
+        count = accessor["count"]
+        row = struct.Struct(f"<{width}{code}")
+        if "bufferView" in accessor:
+            view = document["bufferViews"][accessor["bufferView"]]
+            rows = _view_rows(
+                document,
+                fetch,
+                accessor["bufferView"],
+                accessor.get("byteOffset", 0),
+                row,
+                count,
+                view.get("byteStride"),
+            )
+        else:
+            rows = [(0,) * width] * count
+        sparse = accessor.get("sparse")
+        if sparse is not None:
+            changed = sparse["count"]
+            indices, values = sparse["indices"], sparse["values"]
+            positions = [
+                position
+                for (position,) in _view_rows(
+                    document,
+                    fetch,
+                    indices["bufferView"],
+                    indices.get("byteOffset", 0),
+                    struct.Struct(f"<{_INDEX_CODES[indices['componentType']]}"),
+                    changed,
                 )
+            ]
+            replacements = _view_rows(
+                document,
+                fetch,
+                values["bufferView"],
+                values.get("byteOffset", 0),
+                row,
+                changed,
+            )
+            if any(not 0 <= position < count for position in positions):
+                raise IndexError("sparse index out of range")
+            rows = list(rows)
+            for position, replacement in zip(positions, replacements, strict=True):
+                rows[position] = replacement
+    except (KeyError, IndexError, TypeError, struct.error):
+        raise ScriptError(f"{where} is malformed or unreadable") from None
+    if scale is not None and accessor.get("normalized"):
+        rows = [tuple(max(value / scale, -1.0) for value in values) for values in rows]
+    return [tuple(float(value) for value in values) for values in rows]
+
+
+def _append_accessor(document, kind, values, width, bounds):
+    """Add `values`, floats in rows of `width`, as a new accessor and return
+    its index. The data lives in a new buffer, a data URI."""
+    data = struct.pack(f"<{len(values)}f", *values)
+    document.setdefault("buffers", []).append(
+        {
+            "byteLength": len(data),
+            "uri": "data:application/octet-stream;base64,"
+            + base64.b64encode(data).decode("ascii"),
+        }
+    )
+    document.setdefault("bufferViews", []).append(
+        {"buffer": len(document["buffers"]) - 1, "byteLength": len(data)}
+    )
+    accessor = {
+        "bufferView": len(document["bufferViews"]) - 1,
+        "componentType": 5126,
+        "count": len(values) // width,
+        "type": kind,
+    }
+    if bounds:
+        accessor["min"] = [min(values)]
+        accessor["max"] = [max(values)]
+    document.setdefault("accessors", []).append(accessor)
+    return len(document["accessors"]) - 1
+
+
+def cubic_keys(times, values):
+    """Split the flattened output of a CUBICSPLINE sampler into its keys.
+
+    `times` are the keys' times and `values` the output: for each key, an
+    in-tangent, a value and an out-tangent of the same length. Returns the
+    keys' values, in-tangents and out-tangents, each a list of tuples, and
+    that length."""
+    keys = len(times)
+    block, remainder = divmod(len(values), 3 * keys) if keys else (0, 0)
+    if block == 0 or remainder:
+        raise ValueError(
+            "the output does not hold an in-tangent, a value and an out-tangent per key"
+        )
+    if any(
+        not later > earlier for earlier, later in zip(times, times[1:], strict=False)
+    ):
+        raise ValueError("the key times do not increase")
+
+    def part(which):
+        return [
+            tuple(values[(3 * key + which) * block : (3 * key + which + 1) * block])
+            for key in range(keys)
+        ]
+
+    return part(1), part(0), part(2), block
+
+
+def cubic_raw(keys, time_s):
+    """glTF's cubic spline of `keys` (what `expand_cubics` returns) at
+    `time_s`, as a tuple of floats: the first key's value before it and the
+    last key's after it. Between keys `k` and `k + 1`, `step` seconds apart,
+    with `u` the fraction of the way and `w` the fraction left, it is
+    (1 + 2u)·w²·p0 + step·u·w²·m0 + (1 + 2w)·u²·p1 − step·u²·w·a1, with `p0`,
+    `m0` the first key's value and out-tangent and `p1`, `a1` the second's
+    value and in-tangent (glTF's (2u³ − 3u² + 1) and the like). `u` and `w`
+    are each computed from the times, not one from the other, so neither loses
+    its digits near its own key. Inside the supported range (`cubic_problem`)
+    the terms are at most 1e4 times `step`, so double precision leaves an
+    error below 1e-6 (4.5e-8 in a sweep of random keys against exact
+    arithmetic), far below the 1e-4 the result is good to. A rotation is
+    evaluated exactly instead (`cubic_value`)."""
+    times, values, ins, outs = (
+        keys[name] for name in ("times", "values", "ins", "outs")
+    )
+    if time_s <= times[0]:
+        return tuple(float(v) for v in values[0])
+    if time_s >= times[-1]:
+        return tuple(float(v) for v in values[-1])
+    k = bisect.bisect_right(times, time_s) - 1
+    start, end = times[k], times[k + 1]
+    step = end - start
+    u = (time_s - start) / step
+    w = (end - time_s) / step
+    h00, h10, h01, h11 = (1 + 2 * u) * w * w, u * w * w, (1 + 2 * w) * u * u, -u * u * w
+    return tuple(
+        h00 * p0 + step * h10 * m0 + h01 * p1 + step * h11 * a1
+        for p0, m0, p1, a1 in zip(
+            values[k], outs[k], values[k + 1], ins[k + 1], strict=True
+        )
+    )
+
+
+def cubic_exact(keys, time_s):
+    """glTF's cubic spline of `keys` at `time_s` as a tuple of exact
+    `Fraction`s: every input is a float, so the arithmetic is exact. The
+    formula is `cubic_raw`'s."""
+    times, values, ins, outs = (
+        keys[name] for name in ("times", "values", "ins", "outs")
+    )
+    if time_s <= times[0]:
+        return tuple(Fraction(v) for v in values[0])
+    if time_s >= times[-1]:
+        return tuple(Fraction(v) for v in values[-1])
+    k = bisect.bisect_right(times, time_s) - 1
+    start, end, now = Fraction(times[k]), Fraction(times[k + 1]), Fraction(time_s)
+    step = end - start
+    u = (now - start) / step
+    w = (end - now) / step
+    h00, h10, h01, h11 = (1 + 2 * u) * w * w, u * w * w, (1 + 2 * w) * u * u, -u * u * w
+    return tuple(
+        h00 * Fraction(p0)
+        + step * h10 * Fraction(m0)
+        + h01 * Fraction(p1)
+        + step * h11 * Fraction(a1)
+        for p0, m0, p1, a1 in zip(
+            values[k], outs[k], values[k + 1], ins[k + 1], strict=True
+        )
+    )
+
+
+# Bits kept of a square root in `unit_quaternion`, far past a double's 53.
+_ROOT_BITS = 160
+
+
+def unit_quaternion(value):
+    """`value`, a tuple of `Fraction`s, as a unit quaternion of floats: each
+    component divided by the quaternion's length, in exact arithmetic but for
+    the root, which is taken to 160 bits, and rounded once. The components
+    are scaled by a power of two first, so that a quaternion as small as exact
+    arithmetic can leave neither underflows nor overflows. The zero
+    quaternion is left as it is."""
+    top = max(abs(component) for component in value)
+    if top == 0:
+        return tuple(0.0 for _ in value)
+    shift = top.numerator.bit_length() - top.denominator.bit_length()
+    scale = Fraction(2) ** shift
+    scaled = [component / scale for component in value]
+    squares = sum(component * component for component in scaled)
+    root = math.isqrt(squares.numerator * 4**_ROOT_BITS // squares.denominator)
+    length = Fraction(root, 2**_ROOT_BITS)
+    return tuple(float(component / length) for component in scaled)
+
+
+def cubic_value(keys, time_s):
+    """The value of a cubic channel at `time_s`, as a tuple of floats.
+
+    A rotation is evaluated in exact rational arithmetic, normalized as glTF
+    says (Blender's 32-bit properties would underflow or overflow on a very
+    small or large quaternion) and rounded once (owner decision 2026-11-02;
+    a review finding: normalizing divides the rounding of a sum that nearly
+    cancels by its small length, 0.2 mm out at 50 m for terms of 1e8 and a
+    length of 0.001). Translation, scale and weights are `cubic_raw`'s
+    doubles."""
+    if keys.get("rotation"):
+        return unit_quaternion(cubic_exact(keys, time_s))
+    return cubic_raw(keys, time_s)
+
+
+def segment_point(keys, k, u):
+    """The cubic spline of `keys` a fraction `u` of the way from key `k` to
+    key `k + 1` (for finding where a curve goes between its keys)."""
+    times, values, ins, outs = (
+        keys[name] for name in ("times", "values", "ins", "outs")
+    )
+    step = times[k + 1] - times[k]
+    w = 1 - u
+    h00, h10, h01, h11 = (1 + 2 * u) * w * w, u * w * w, (1 + 2 * w) * u * u, -u * u * w
+    return tuple(
+        h00 * p0 + step * h10 * m0 + h01 * p1 + step * h11 * a1
+        for p0, m0, p1, a1 in zip(
+            values[k], outs[k], values[k + 1], ins[k + 1], strict=True
+        )
+    )
+
+
+def extremum_fractions(keys, k):
+    """The fractions in (0, 1) of segment `k` where any component of the
+    cubic spline stops rising or falling: the roots of the derivative, a
+    quadratic in the fraction."""
+    times, values, ins, outs = (
+        keys[name] for name in ("times", "values", "ins", "outs")
+    )
+    step = times[k + 1] - times[k]
+    found = set()
+    for p0, m0, p1, a1 in zip(
+        values[k], outs[k], values[k + 1], ins[k + 1], strict=True
+    ):
+        a = 6 * p0 + 3 * step * m0 - 6 * p1 + 3 * step * a1
+        b = -6 * p0 - 4 * step * m0 + 6 * p1 - 2 * step * a1
+        c = step * m0
+        if a == 0.0:
+            roots = [] if b == 0.0 else [-c / b]
+        else:
+            discriminant = b * b - 4 * a * c
+            if discriminant < 0.0:
+                roots = []
+            else:
+                root = math.sqrt(discriminant)
+                roots = [(-b - root) / (2 * a), (-b + root) / (2 * a)]
+        found.update(u for u in roots if 1e-9 < u < 1 - 1e-9)
+    return sorted(found)
+
+
+# The supported range of cubic spline channels (design §Supported Blender
+# version). Inside it the tool's values are within 1e-4 m (a rotation within
+# 0.1°) of glTF's; a file outside it is an input error, exit 3.
+TRANSLATION_LIMIT = 256.0  # m: a translation's key values, its values anywhere
+# between keys, and the importer's image of a zero translation (the bind offset)
+SCALE_LIMIT = 32.0  # a scale's key values and its values anywhere between keys:
+# Blender holds a scale in 32 bits, a step of 1.9e-6 at 32 whose half
+# multiplies the object's extent, so 1e-4 m holds for models up to 100 m across
+VALUE_LIMIT = 1e4  # rotation and weight key values
+TANGENT_LIMIT = 1e4  # every tangent component, of any path
+MIN_QUATERNION = 1e-3  # the length of a rotation key, and of a rotation sample
+# Slack on what is computed rather than read: a curve's extremum is a root in
+# double precision, and the bind offset is read back through the importer's
+# 32-bit conversion, whose result is rounded to a step of 2⁻¹⁵ m at 256 m: one
+# step past the limit is not told from the limit (a review finding: a slack of
+# a millimeter was too much).
+EXTREMUM_SLACK = 1e-9
+BIND_SLACK = 2.0**-15
+
+
+def cubic_problem(path, keys):
+    """What is outside the supported range in a cubic channel's `keys` (what
+    `expand_sampler` returns), as a phrase that follows the channel's name,
+    or None."""
+    for name in ("values", "ins", "outs"):
+        if not all(math.isfinite(x) for row in keys[name] for x in row):
+            return "holds a value or tangent that is not finite"
+    for row in (*keys["ins"], *keys["outs"]):
+        for x in row:
+            if abs(x) > TANGENT_LIMIT:
+                return f"has a tangent of {x:g}, beyond ±{TANGENT_LIMIT:g}"
+    limit = {"translation": TRANSLATION_LIMIT, "scale": SCALE_LIMIT}.get(
+        path, VALUE_LIMIT
+    )
+    unit = " m" if path == "translation" else ""
+    for row in keys["values"]:
+        for x in row:
+            if abs(x) > limit:
+                return f"has a key value of {x:g}{unit}, beyond ±{limit:g}{unit}"
+    if path == "rotation":
+        for row in keys["values"]:
+            length = math.hypot(*row)
+            if length < MIN_QUATERNION:
+                return (
+                    f"has a key quaternion of length {length:g}, "
+                    f"below {MIN_QUATERNION:g}"
+                )
+    if path in ("translation", "scale"):
+        for k in range(len(keys["values"]) - 1):
+            for u in extremum_fractions(keys, k):
+                for x in segment_point(keys, k, u):
+                    if abs(x) > limit + EXTREMUM_SLACK:
+                        return (
+                            f"reaches {x:g}{unit} between its keys {k} and {k + 1}, "
+                            f"beyond ±{limit:g}{unit}"
+                        )
+    return None
+
+
+def rotation_problem(keys, times):
+    """The first of `times` (seconds, in order) at which the cubic rotation
+    `keys` has an interpolated quaternion shorter than `MIN_QUATERNION`, as
+    (time, length), or None. glTF normalizes it, which at such a length
+    divides by little more than rounding."""
+    for time_s in times:
+        length = math.hypot(*(float(c) for c in cubic_exact(keys, time_s)))
+        if length < MIN_QUATERNION:
+            return time_s, length
+    return None
+
+
+def check_rotations(clip, times):
+    """Fail, as an input error, if a cubic rotation the clip animates is
+    shorter than `MIN_QUATERNION` at one of its sample `times`."""
+    seen = set()
+    for _, _, _, _, _, keys, _ in _CUBIC["active"]:
+        if not keys.get("rotation") or id(keys) in seen:
+            continue
+        seen.add(id(keys))
+        found = rotation_problem(keys, times)
+        if found is not None:
+            time_s, length = found
+            raise RangeError(
+                f"clip {clip['name']!r}: {keys['label']} has an interpolated "
+                f"quaternion of length {length:g} at {time_s!r} s, "
+                f"below {MIN_QUATERNION:g}"
+            )
+
+
+def expand_sampler(document, fetch, source, sampler, where):
+    """Replace one CUBICSPLINE `sampler` with the LINEAR sampler of its keys'
+    values, in place. Returns the keys' times, values, in-tangents and
+    out-tangents for `cubic_overrides` (a dict), and the number of components
+    of a key. Whether the sampler suits a channel's path and range is for
+    each channel that reads it to check (`expand_cubics`)."""
+    try:
+        times = [
+            row[0] for row in read_accessor(document, fetch, sampler["input"], source)
+        ]
+        flat = [
+            value
+            for row in read_accessor(document, fetch, sampler["output"], source)
+            for value in row
+        ]
+        kind = document["accessors"][sampler["output"]]["type"]
+    except (KeyError, TypeError):
+        raise ScriptError(f"{where} has no readable input and output") from None
+    if not all(map(math.isfinite, times)):
+        raise ScriptError(f"{where} holds a time that is not finite")
+    try:
+        values, ins, outs, block = cubic_keys(times, flat)
+    except ValueError as error:
+        raise ScriptError(f"{where}: {error}") from None
+    sampler["output"] = _append_accessor(
+        document,
+        kind,
+        [value for row in values for value in row],
+        _ACCESSOR_WIDTHS[kind],
+        False,
+    )
+    sampler["interpolation"] = "LINEAR"
+    return {"times": times, "values": values, "ins": ins, "outs": outs}, block
+
+
+def channel_label(names, animation, node, path):
+    """How an error names a channel: its animation and node by index and, when
+    the file gives one, name; `names` is the file's animation names and node
+    names."""
+    parts = []
+    for kind, index, given in (
+        ("animation", animation, names[0]),
+        ("node", node, names[1]),
+    ):
+        name = given[index] if index < len(given) else None
+        text = f"{kind} {index}"
+        if isinstance(name, str) and name:
+            text += f" ({name!r})"
+        parts.append(text)
+    return f"{parts[0]}, {parts[1]}'s {path}"
+
+
+def expand_cubics(document, fetch, source, names=((), ())):
+    """Rewrite each CUBICSPLINE sampler that animates a node's translation,
+    rotation, scale or weights as the LINEAR sampler of its keys' values,
+    editing `document` in place. Returns {animation index: {(node, path):
+    keys}} for `cubic_overrides`, `keys` being what `expand_sampler` gives
+    with the channel's name (`label`) and whether it is a rotation added.
+    Every channel is checked against its own path, even when it shares a
+    sampler: the number of components must suit it and the keys must be in the
+    supported range (`cubic_problem`). `names` is the file's animation names
+    and node names, for errors."""
+    cubics = {}
+    expanded = {}
+    for a, animation in enumerate(document.get("animations") or []):
+        samplers = animation.get("samplers", [])
+        for channel in animation.get("channels", []):
+            target = channel_target(channel)
+            key = (a, channel["sampler"])
+            sampler = samplers[channel["sampler"]]
+            # A sampler already expanded is linear now, but every channel
+            # sharing it needs its values set from the keys.
+            if target is None or (
+                key not in expanded and sampler.get("interpolation") != "CUBICSPLINE"
+            ):
+                continue
+            where = f"{source}: animation {a}'s sampler {channel['sampler']}"
+            if key not in expanded:
+                expanded[key] = expand_sampler(document, fetch, source, sampler, where)
+            base, block = expanded[key]
+            path = target[1]
+            if path != "weights" and block != _PATH_WIDTHS[path]:
+                raise ScriptError(f"{where} does not hold {path} values")
+            if target in cubics.get(a, {}):
+                continue
+            label = channel_label(names, a, *target)
+            keys = {**base, "rotation": path == "rotation", "label": label}
+            problem = cubic_problem(path, keys)
+            if problem is not None:
+                raise RangeError(f"{label} {problem}")
+            cubics.setdefault(a, {})[target] = keys
+    return cubics
+
+
+# Points whose images under the importer's conversion are read back to
+# measure it: the first is the base and the next ones, up to the last but the
+# check point, differ from it in independent directions. A quaternion's
+# consecutive points make acute angles, so the importer negates none. A
+# translation's are far apart (4096 m) so that the 32-bit rounding of their
+# images, about 6e-8 of their size, is a small part of the map's slope
+# (simulated, the map is then within 4e-5 m of the exact conversion for a
+# translation and a bind offset within the supported range).
+_CALIBRATION = {
+    "scale": [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 2, 3)],
+    "translation": [
+        (0, 0, 0),
+        (4096, 0, 0),
+        (0, 4096, 0),
+        (0, 0, 4096),
+        (4096, 8192, 12288),
+    ],
+    "rotation": [
+        (0, 0, 0, 1),
+        (0.5, 0, 0, 0.866),
+        (0, 0.5, 0, 0.866),
+        (0, 0, 0.5, 0.866),
+        (0, 0, 0, 2),
+        (0.3, 0.4, 0.5, 0.9),
+    ],
+}
+
+CALIBRATION_NAME = "moskophoros.calibration"
+# How far a check point may be from the measured map's image of it: this much
+# and a few steps of 32-bit rounding of the largest image.
+CALIBRATION_ERROR = 1e-5
+CALIBRATION_STEPS = 8 * 2.0**-24
+
+
+def add_calibration(document, cubics):
+    """Add one animation of the keys `_CALIBRATION` gives, with a channel for
+    every node and path that any of `cubics`' animations has a cubic spline
+    channel for but weights, one second apart. The importer's conversion of a
+    node's value does not depend on the clip, so one animation measures it for
+    all of them."""
+    wanted = sorted(
+        {
+            target
+            for targets in cubics.values()
+            for target in targets
+            if target[1] != "weights"
+        }
+    )
+    if not wanted:
+        return
+    samplers = []
+    channels = []
+    made = {}
+    for node, path in wanted:
+        if path not in made:
+            points = _CALIBRATION[path]
+            time_input = _append_accessor(
+                document, "SCALAR", [float(i) for i in range(len(points))], 1, True
+            )
+            kind = "VEC4" if path == "rotation" else "VEC3"
+            output = _append_accessor(
+                document,
+                kind,
+                [float(value) for point in points for value in point],
+                _ACCESSOR_WIDTHS[kind],
+                False,
+            )
+            samplers.append(
+                {"input": time_input, "output": output, "interpolation": "LINEAR"}
+            )
+            made[path] = len(samplers) - 1
+        channels.append({"sampler": made[path], "target": {"node": node, "path": path}})
+    document.setdefault("animations", []).append(
+        {"name": CALIBRATION_NAME, "channels": channels, "samplers": samplers}
+    )
+
+
+def solve_affine(points, images):
+    """The affine map `v = A·g + b` taking each of `points` (g) to its image
+    (v), found from the first `d + 1` points and checked on the rest. Returns
+    A as rows and b; None when a check point is off by more than
+    `CALIBRATION_ERROR` and `CALIBRATION_STEPS` of the largest image."""
+    d = len(points[0])
+    base, image = points[0], images[0]
+    # Columns of the differences: solve A·G = V by Gauss-Jordan on Gᵀ.
+    g = [[points[i + 1][j] - base[j] for j in range(d)] for i in range(d)]
+    v = [[images[i + 1][j] - image[j] for j in range(d)] for i in range(d)]
+    # Row i of `g` is gᵢ; A·gᵢ = vᵢ means Aᵀ solves G·Aᵀ = V with G's rows gᵢ.
+    rows = [g[i] + v[i] for i in range(d)]
+    for column in range(d):
+        pivot = max(range(column, d), key=lambda r: abs(rows[r][column]))
+        rows[column], rows[pivot] = rows[pivot], rows[column]
+        scale = rows[column][column]
+        rows[column] = [value / scale for value in rows[column]]
+        for r in range(d):
+            if r != column:
+                factor = rows[r][column]
+                rows[r] = [
+                    a - factor * b for a, b in zip(rows[r], rows[column], strict=True)
+                ]
+    transposed = [row[d:] for row in rows]
+    matrix = [[transposed[j][i] for j in range(d)] for i in range(d)]
+    offset = [
+        image[i] - sum(matrix[i][j] * base[j] for j in range(d)) for i in range(d)
+    ]
+    allowed = CALIBRATION_ERROR + CALIBRATION_STEPS * max(
+        abs(value) for row in images for value in row
+    )
+    for point, expected in zip(points, images, strict=True):
+        for i in range(d):
+            got = sum(matrix[i][j] * point[j] for j in range(d)) + offset[i]
+            if abs(got - expected[i]) > allowed:
+                return None
+    return matrix, offset
+
+
+def fcurve_target(fcurve, slot):
+    """The (node, path) a curve imported from a glTF channel animates, or
+    None for a curve of anything else. A weights curve belongs to the node of
+    the mesh that owns its shape keys."""
+    path = fcurve.data_path
+    bone = _BONE_CURVE.fullmatch(path)
+    if bone is not None:
+        name, prop = bpy.utils.unescape_identifier(bone[1]), bone[2]
+    elif slot.target_id_type == "OBJECT" and path in _OBJECT_CURVES:
+        name, prop = slot.identifier[2:], path
+    elif slot.target_id_type == "KEY" and _TARGET_PATH.fullmatch(path):
+        # The importer names a weights slot after the object that holds the
+        # mesh, whose data names its node.
+        obj = bpy.data.objects.get(slot.identifier[2:])
+        owner = None
+        if obj is not None and obj.type == "MESH":
+            owner = _MESH_DATA.fullmatch(obj.data.name)
+        return None if owner is None else (int(owner[1]), "weights")
+    else:
+        return None
+    node = _NODE_OBJECT.fullmatch(name)
+    return None if node is None else (int(node[1]), _OBJECT_CURVES[prop])
+
+
+def calibrate(cubics):
+    """The importer's affine maps for every node and path of `cubics` but
+    weights: {(node, path): (A, b)}, measured from the calibration animation
+    that `add_calibration` put in the private copy. A translation whose bind
+    offset `b` (the importer's image of a zero translation) is beyond the
+    supported range is a `RangeError` naming the first channel that animates
+    it."""
+    labels = {}
+    for animation in sorted(cubics):
+        for target, keys in cubics[animation].items():
+            if target[1] != "weights":
+                labels.setdefault(
+                    target, keys.get("label", f"node {target[0]}'s {target[1]}")
+                )
+    action = bpy.data.actions.get(CALIBRATION_NAME)
+    curves = {}
+    if action is not None:
+        for layer in action.layers:
+            for strip in layer.strips:
+                for channelbag in strip.channelbags:
+                    for fcurve in channelbag.fcurves:
+                        target = fcurve_target(fcurve, channelbag.slot)
+                        if target is not None:
+                            curves.setdefault(target, {})[fcurve.array_index] = [
+                                point.co[1] for point in fcurve.keyframe_points
+                            ]
+    maps = {}
+    for (node, path), label in sorted(labels.items()):
+        points = _CALIBRATION[path]
+        width = len(points[0])
+        found = curves.get((node, path), {})
+        if sorted(found) != list(range(width)) or any(
+            len(column) != len(points) for column in found.values()
+        ):
+            raise ScriptError(
+                f"cannot measure how Blender imports node {node}'s {path}: "
+                "the calibration animation has no such curves"
+            )
+        images = [tuple(found[i][k] for i in range(width)) for k in range(len(points))]
+        solved = solve_affine(points, images)
+        if solved is None:
+            raise ScriptError(
+                f"cannot measure how Blender imports node {node}'s {path}: "
+                "its conversion is not affine"
+            )
+        if path == "translation":
+            for value in solved[1]:
+                if abs(value) > TRANSLATION_LIMIT + BIND_SLACK:
+                    raise RangeError(
+                        f"{label} has a bind offset of {value:g} m, "
+                        f"beyond ±{TRANSLATION_LIMIT:g} m"
+                    )
+        maps[(node, path)] = solved
+    return maps
+
+
+# The properties of cubic spline channels that `evaluate` sets: {animation
+# index: [(data, owner path, property, index, image, keys, target)]} for every
+# animation, and the list of the one active. `index` is None for a scalar
+# property, `image` takes `cubic_value`'s value to the property's, and `target`
+# is a weights channel's morph target, else None.
+_CUBIC = {"all": {}, "active": ()}
+
+
+def convert(entry, row, g):
+    """Component `row` of the importer's conversion of the glTF value `g`,
+    with the map `entry` (A, b) that `calibrate` measured."""
+    matrix, offset = entry
+    return sum(a * b for a, b in zip(matrix[row], g, strict=True)) + offset[row]
+
+
+def cubic_overrides(cubics):
+    """Find the property of every curve imported from a cubic spline channel
+    (`expand_cubics`), with what `cubic_value` needs to evaluate it."""
+    maps = calibrate(cubics)
+    overrides = {}
+    for animation, channels in cubics.items():
+        action = bpy.data.actions.get(ANIMATION_NAME.format(animation))
+        if action is None:
+            raise ScriptError(f"animation {animation} has no imported action")
+        holders = {}
+        for data in (*bpy.data.objects, *bpy.data.shape_keys):
+            if data.animation_data is None:
+                continue
+            for track in data.animation_data.nla_tracks:
+                for strip in track.strips:
+                    if strip.action == action:
+                        holders.setdefault(strip.action_slot.identifier, []).append(
+                            data
+                        )
+        found = overrides.setdefault(animation, [])
+        for layer in action.layers:
+            for strip in layer.strips:
+                for channelbag in strip.channelbags:
+                    for fcurve in channelbag.fcurves:
+                        target = fcurve_target(fcurve, channelbag.slot)
+                        if target not in channels:
+                            continue
+                        # Muted, the curve leaves its property alone, as a
+                        # render re-evaluates the frame's animation and would
+                        # overwrite the value `apply_cubics` sets.
+                        fcurve.mute = True
+                        owner, _, prop = fcurve.data_path.rpartition(".")
+                        morph = None
+                        if target[1] == "weights":
+                            morph = int(_TARGET_PATH.fullmatch(fcurve.data_path)[1])
+                            image = lambda g, morph=morph: g[morph]  # noqa: E731
+                            index = None
+                        else:
+                            entry = maps[target]
+                            image = lambda g, entry=entry, row=fcurve.array_index: (  # noqa: E731
+                                convert(entry, row, g)
+                            )
+                            index = fcurve.array_index
+                        found.extend(
+                            (data, owner, prop, index, image, channels[target], morph)
+                            for data in holders.get(channelbag.slot.identifier, ())
+                        )
+    _CUBIC["all"] = overrides
+
+
+def apply_cubics(time_s):
+    """Set every property of the active animation's cubic spline channels to
+    glTF's value at `time_s`."""
+    for data, owner, prop, index, image, keys, _ in _CUBIC["active"]:
+        target = data.path_resolve(owner) if owner else data
+        value = image(cubic_value(keys, time_s))
+        if index is None:
+            setattr(target, prop, value)
+        else:
+            getattr(target, prop)[index] = value
 
 
 # The directory, inside the phase directory, that the private copy is imported
@@ -709,6 +1615,11 @@ def check_weights(objects, document, clip, times, fps):
         node = nodes[int(_MESH_DATA.fullmatch(obj.data.name)[1])]
         mesh = document["meshes"][node["mesh"]]
         defaults = node.get("weights") or mesh.get("weights") or []
+        cubics = {
+            morph: (image, keys)
+            for data, _, _, _, image, keys, morph in _CUBIC["active"]
+            if data == key and morph is not None
+        }
         curves = {}
         animation = key.animation_data
         if animation is not None and animation.action is not None:
@@ -723,9 +1634,13 @@ def check_weights(objects, document, clip, times, fps):
                                 curves[int(match[1])] = curve
         for block in key.key_blocks[1:]:
             target = int(block.name.rsplit(".", 1)[1])
-            if target in curves:
+            if target in curves or target in cubics:
                 for time_s in times:
-                    weight = curves[target].evaluate(time_s * fps)
+                    if target in cubics:
+                        image, keys = cubics[target]
+                        weight = image(cubic_value(keys, time_s))
+                    else:
+                        weight = curves[target].evaluate(time_s * fps)
                     if abs(weight) > WEIGHT_LIMIT:
                         raise ScriptError(
                             f"clip {clip['name']!r} drives morph target {target} to "
@@ -758,6 +1673,7 @@ def record_statics():
 
 def reset(statics):
     """Stop every animation and return everything to its static state."""
+    _CUBIC["active"] = ()
     for data in (*bpy.data.objects, *bpy.data.shape_keys):
         if data.animation_data is not None:
             data.animation_data.action = None
@@ -806,6 +1722,7 @@ def activate(animation_index):
             f"animation {animation_index}'s targets {sorted(unassigned)} have no "
             "imported counterpart"
         )
+    _CUBIC["active"] = _CUBIC["all"].get(animation_index, ())
 
 
 # Evaluation
@@ -824,6 +1741,8 @@ def evaluate(scene, fps, time_s):
         )
     whole = math.floor(frame)
     scene.frame_set(int(whole), subframe=frame - whole)
+    if _CUBIC["active"]:
+        apply_cubics(time_s)
     return bpy.context.evaluated_depsgraph_get()
 
 
@@ -1001,6 +1920,7 @@ def measure(job, document, statics):
                     "angle_deg"
                 ]
         check_weights(objects, document, clip, sorted(angles), fps)
+        check_rotations(clip, sorted(angles))
         for time_s in sorted(angles):
             points = vertices(objects, evaluate(scene, fps, time_s))
             heights = [y for _, y, _ in points]
@@ -2429,6 +3349,7 @@ def render_frames(job, document, statics):
             requested = ordinals.get(clip["name"], [])
             times = sorted({frame["address"]["time_s"] for _, frame in requested})
             check_weights(objects, document, clip, times, fps)
+            check_rotations(clip, times)
             for ordinal, frame in requested:
                 depsgraph = evaluate(scene, fps, frame["address"]["time_s"])
                 rotation = (frame["angle_deg"] % 360 + yaw % 360) % 360
@@ -2711,7 +3632,6 @@ def main(argv):
     if hashlib.sha256(data).hexdigest() != job["source"]["sha256"]:
         raise ScriptError(f"{source} does not match the job's sha256")
     document, rest = split_glb(data, source)
-    refuse_unsupported(document, source)
     scene_index = job["source"]["scene"]
     if scene_index >= len(document.get("scenes", [])):
         raise ScriptError(f"{source} has no scene {scene_index}")
@@ -2719,7 +3639,9 @@ def main(argv):
     directory = os.path.join(job["output_dir"], IMPORT)
     os.mkdir(directory)
     try:
-        import_glb(private_copy(document, rest, source, scene_index), directory)
+        copy, cubics = private_copy(document, rest, source, scene_index)
+        import_glb(copy, directory)
+        cubic_overrides(cubics)
         widen_weight_ranges()
         if job["mode"] == "measure":
             frames, roots = measure(job, document, record_statics())
@@ -2752,6 +3674,9 @@ def main(argv):
 if __name__ == "__main__":
     try:
         main(sys.argv)
+    except RangeError as error:
+        print(f"{INPUT_PREFIX}{error}", file=sys.stderr)
+        sys.exit(INPUT_STATUS)
     except ScriptError as error:
         print(f"moskophoros: error: {error}", file=sys.stderr)
         sys.exit(1)

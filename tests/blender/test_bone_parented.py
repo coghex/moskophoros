@@ -64,7 +64,16 @@ def box_triangles(half):
     return [corners[i] for a, b, c, d in faces for i in (a, b, c, a, c, d)]
 
 
-def rig(tmp_path, scale):
+# The tangents of the cubic spline variant, in world units for translations:
+# the same at both keys of every channel, as in- and out-tangents.
+TANGENTS = {
+    0: (0.3, -0.2, 0.1),
+    1: (0.1, -0.2, 0.3, 0.1),
+    2: (0.4, -0.3, 0.2),
+}
+
+
+def rig(tmp_path, scale, cubic=False):
     s = scale
     model = GlbWriter()
 
@@ -108,10 +117,16 @@ def rig(tmp_path, scale):
     model.scene([armature], default=True)
 
     def keys(trs, index):
-        return [
+        values = [
             tuple(v / s for v in trs[t][0]) if index == 0 else trs[t][index]
             for t in (0.0, 1.0)
         ]
+        if not cubic:
+            return values
+        tangent = TANGENTS[index]
+        if index == 0:
+            tangent = tuple(v / s for v in tangent)
+        return [tangent, values[0], tangent, tangent, values[1], tangent]
 
     model.animation(
         "kick",
@@ -121,8 +136,9 @@ def rig(tmp_path, scale):
             (box, "rotation", [0.0, 1.0], keys(BOX_NODE, 1)),
             (box, "scale", [0.0, 1.0], keys(BOX_NODE, 2)),
         ],
+        interpolation="CUBICSPLINE" if cubic else "LINEAR",
     )
-    return model.write(tmp_path, f"rig{scale}")
+    return model.write(tmp_path, f"rig{scale}{'-cubic' if cubic else ''}")
 
 
 def rotate(q, v):
@@ -166,7 +182,7 @@ def expected_bounds(t):
     return (max(0, -min(xs)), max(0, *xs), max(0, *ys), max(0, -min(ys)))
 
 
-def run(found, path, tmp_path, mode, **fitted):
+def run(found, path, tmp_path, mode, fps=1.0, **fitted):
     subject = gltf.read_glb(path)
     clips = gltf.select_clips(subject, ["kick"], ["kick"])
     settings = backend.Settings(
@@ -175,7 +191,7 @@ def run(found, path, tmp_path, mode, **fitted):
         1,
         0.0,
         0.0,
-        1.0,
+        fps,
         2 if mode == "render" else 1,
         fitted.get("ppm"),
         fitted.get("cell"),
@@ -258,3 +274,58 @@ def test_rendered_box_lands_where_gltf_puts_it(found, tmp_path, scale):
             (GROUND_PX[1] - cy * PPM) * SUPERSAMPLE,
         )
         assert red_centroid(path) == pytest.approx(expected, abs=TOLERANCE_PX), t
+
+
+def hermite(values, tangent, t):
+    """glTF's cubic spline between two keys one second apart, with `tangent`
+    as every in- and out-tangent."""
+    return tuple(
+        (2 * t**3 - 3 * t**2 + 1) * a
+        + (t**3 - 2 * t**2 + t) * m
+        + (-2 * t**3 + 3 * t**2) * b
+        + (t**3 - t**2) * m
+        for a, b, m in zip(values[0.0], values[1.0], tangent, strict=True)
+    )
+
+
+def cubic_trs(keys, t):
+    """A node's translation, rotation and scale at `t` along the cubic variant."""
+    translation, rotation, size = (
+        hermite({k: keys[k][i] for k in (0.0, 1.0)}, TANGENTS[i], t) for i in range(3)
+    )
+    length = math.sqrt(sum(c * c for c in rotation))
+    return translation, tuple(c / length for c in rotation), size
+
+
+def cubic_bounds(t):
+    hx, hy, hz = BOX
+    box = cubic_trs(BOX_NODE, t)
+    # Only the thigh's rotation is animated.
+    thigh = (THIGH[0.0][0], cubic_trs(THIGH, t)[1], THIGH[0.0][2])
+    corners = [
+        apply(HIPS, apply(thigh, apply(box, (x, y, z))))
+        for x in (-hx, hx)
+        for y in (-hy, hy)
+        for z in (-hz, hz)
+    ]
+    # The skinned triangle sits at the hips, which do not move.
+    points = corners + TRIANGLE
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    return (max(0, -min(xs)), max(0, *xs), max(0, *ys), max(0, -min(ys)))
+
+
+@pytest.mark.parametrize("scale", SCALES)
+def test_cubic_channels_of_a_bone_and_a_bone_parented_box(found, tmp_path, scale):
+    # The thigh bone turns, and the box on it moves, turns and scales, all
+    # with cubic splines, sampled at 0, 0.5 and 1 s. The thigh's translation
+    # is constant, so only its rotation is cubic in effect.
+    result = run(found, rig(tmp_path, scale, cubic=True), tmp_path, "measure", fps=2.0)
+    measured = {
+        address.time_s: measurement.bounds
+        for address, measurement in result.measurements.items()
+    }
+    assert sorted(measured) == [0.0, 0.5, 1.0]
+    for t, bounds in measured.items():
+        got = (bounds.left, bounds.right, bounds.up, bounds.down)
+        assert got == pytest.approx(cubic_bounds(t), abs=TOLERANCE_M), t

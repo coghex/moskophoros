@@ -751,6 +751,44 @@ The subject is the scene named by the file's `scene` property, or scene 0 when
 it is absent. Every mesh in it is rendered. Cameras and lights in the file are
 ignored.
 
+**Animation.** The animated properties are a node's translation, rotation,
+scale and morph weights, each with `STEP`, `LINEAR` or `CUBICSPLINE`
+interpolation (owner decisions 2026-10-02 and 2026-11-01). A `CUBICSPLINE`
+channel is evaluated with glTF's cubic spline formula and the file's own
+in- and out-tangents; a rotation is the normalized cubic quaternion.
+
+- **Mesh-weight pointers.** A `KHR_animation_pointer` channel on
+  `/meshes/N/weights` is Moskophoros's own reading, not the extension's, whose
+  mutable properties address weights per node only. It animates the morph
+  weights of every node of the selected scene that uses mesh `N`. A node's own
+  weights win over the mesh's, as glTF's instantiation rules have it, so the
+  channel leaves a node out when the node defines `weights`, or when the same
+  animation animates the node's weights directly, with a `weights` channel or a
+  `/nodes/M/weights` pointer, whatever order the channels are in. Several
+  animations may target one mesh: each clip measures its own.
+- **Cameras and lights.** A pointer channel animating a camera or a light has
+  no effect and never fails a clip. It still counts toward the clip's range and
+  the sample times derived from it, like every other sampler.
+- **Refused by the capture** (exit 5, naming the file, the animation and the
+  problem): a `CUBICSPLINE` sampler of a node's translation, rotation, scale or
+  weights whose accessors are unreadable, whose output does not hold an
+  in-tangent, a value and an out-tangent for each key, or whose key times do not
+  increase.
+- **Outside the supported range** (exit 3, naming the file, the animation, the
+  node and the channel): a `CUBICSPLINE` channel of a node's translation,
+  rotation, scale or weights with a value or tangent that is not finite; a
+  tangent component beyond ±10 000; a translation's key value, or its value
+  anywhere between keys, beyond ±256 m; a scale's key value, or its value
+  anywhere between keys, beyond ±32; a rotation or weight key value beyond ±10
+  000; a rotation key whose quaternion is shorter than 0.001; a translation
+  whose bind offset, the importer's image of a zero translation, is beyond ±256
+  m; or a rotation whose interpolated quaternion is shorter than 0.001 at a
+  sample of a selected clip (the error names that clip and the time). Every
+  other limit applies to every such channel in the file, whether or not the clip
+  is selected. Other interpolations have no such limits, and neither has the
+  spacing of keys. The reasons are under [Supported Blender
+  version](#supported-blender-version).
+
 Material identities are read from the glTF JSON on every run, whether or not
 a material library is used (D-3, D-18, owner decisions 2026-10-07). Names
 compare exactly, including case; equal names are one identity. An absent or
@@ -790,12 +828,6 @@ Checks, each an input error (exit 3) naming the file and the problem:
   defines the digest checks (owner decision 2026-09-30)
 - an animation has no name or an empty name (owner decision 2026-10-01), or
   two animations share a name (the message gives the animation's index)
-- an animation uses `CUBICSPLINE` interpolation, whose tangents Blender's
-  importer replaces with its own, or a `KHR_animation_pointer` channel that
-  animates a mesh's morph weights (`/meshes/N/weights`), of which the
-  importer keeps only one animation per mesh. Neither could be measured
-  faithfully; the message names the file, the clip and the problem (owner
-  decision 2026-10-02)
 - a `--clip` or `--once` names a clip that does not exist
 - a clip travels across the ground (see [Root motion](#root-motion))
 
@@ -964,8 +996,8 @@ glTF stores keyframes but defines no playback, so the tool defines it.
 
 **Isolation.** When a clip is sampled, only that animation's channels apply.
 Every other node takes its static transform from the file, and every morph
-target weight not animated by the clip takes its default (the mesh's
-`weights`, else 0).
+target weight not animated by the clip takes its default: the node's `weights`
+when it has them, else its mesh's `weights`, else 0.
 
 **Range.** A clip runs from `t0` to `t1`: the minimum and maximum of its
 samplers' input accessor `min`/`max` values, which glTF requires. Its duration
@@ -2130,6 +2162,84 @@ section's settings on 5.2.2:
   (`frame_set` with a `subframe`) samples exact times. Clips exported from
   Blender start at *t* = 1/fps, because Blender's frame 1 is exported at that
   time; clip ranges come from the file, so this needs no handling.
+- **Cubic spline channels are evaluated by the tool, not by Blender (observed
+  2026-11-01, owner decisions 2026-10-02 and 2026-11-01).** For a `CUBICSPLINE`
+  sampler the importer keeps only each key's value and gives its curve automatic
+  Bézier handles, so the file's tangents are lost. glTF's segment from `p0` with
+  out-tangent `m0` to `p1` with in-tangent `a1` over `Δt` seconds is the Bézier
+  curve with control points `p0`, `p0 + Δt·m0/3`, `p1 − Δt·a1/3` and `p1` at one
+  third and two thirds of the interval, so rebuilding each curve with free
+  handles would be exact in principle. It is not in Blender's evaluator
+  (measured on 5.2.2): a time within about 1e-4 frame (4 µs at 24 frames per
+  second) of a key reads that key's value, so a steep curve is read wrongly just
+  after a key (a sample 9.5e-7 s after a key with a tangent of 1024 per second
+  read the key's value, off by 0.00098), and keys less than 0.01 frame apart are
+  merged, in the importer and in `fcurve.update()`. The capture script therefore
+  imports a private copy in which each such sampler is linear and holds the
+  keys' values alone, which gives the importer a curve on the right property,
+  mutes it (a render re-evaluates the frame's animation, which would overwrite
+  the value) and never lets it decide a value: after Blender evaluates a frame,
+  the script sets every property of a cubic channel to glTF's value at the
+  sample time, computed in double precision from the file's keys, values and
+  tangents and mapped to Blender's convention, and checks the weights it uses
+  the same way. Inside the supported range the terms of the formula are at most
+  10 000 times a key interval, 6e8 at the longest interval a clip can have (43
+  690 s, the frame limit at 24 frames per second), and the sum then differs from
+  the exact one by less than 1e-6. Keys may be as close together as the file's
+  32-bit times allow, and a time before the first key or after the last holds
+  that key's value. A rotation is evaluated differently (owner decision
+  2026-11-02): glTF normalizes it, which divides the rounding of the sum by the
+  sum's length, so a sum that nearly cancels (terms of 1e8 and a length of
+  0.001, as a clip of 27 648 s with large tangents can give) loses its direction
+  in double precision, 0.2 mm at 50 m. The script evaluates the basis, the sum
+  and the normalization in exact rational arithmetic, every input being a float,
+  takes the length's root to 160 bits and rounds once; the zero quaternion is
+  left as it is. A sample shorter than 0.001 is an input error (see the range
+  below). The importer negating a key that makes an obtuse angle with the one
+  before it does not matter. Channels that are not cubic, and files with none,
+  are evaluated by Blender as before.
+
+- **The importer converts a key's value with an affine map** (glTF's axes turned
+  into Blender's, and a bone's rest pose for a joint). The script does not
+  repeat that arithmetic: the private copy holds one more animation, of known
+  keys for each node and path that any clip animates with a cubic channel (the
+  conversion does not depend on the clip), and the maps are solved from how the
+  importer converts them and checked on a further key to 1e-5 plus a few steps
+  of 32-bit rounding of the largest image. The importer works in 32 bits, so an
+  image carries a rounding of 6e-8 of its size. A translation's probes are
+  therefore 4096 m apart, so that this rounding is small against their spacing:
+  simulated over random rest rotations and bind offsets within the supported
+  range, the map is within 4e-5 m of the exact conversion for any translation
+  within it, and the importer's own rounding of the value it is given (3e-5 m at
+  256 m) is the rest of the 1e-4 m.
+
+- **The supported range of cubic spline channels (owner decisions 2026-11-01,
+  "Approve as proposed", "Scale up to 32" and "Refuse degenerate
+  samples").** The tool's values equal glTF's to 1e-4 m, and a rotation to 0.1°,
+  inside this range; a file outside it is an input error (exit 3, see [Input
+  contract](#input-contract)), because the importer works in 32 bits and the
+  figures below are what keeps its rounding inside that tolerance. Translation
+  values, key and between keys, and the bind offset (each component, in
+  Blender's axes): at most 256 m, where a 32-bit number resolves 3e-5 m (the
+  bind offset is read back through the importer's 32-bit arithmetic, so one such
+  step, 2⁻¹⁵ m, past 256 m is not told from it); real characters are under 10 m
+  and scenes under 100 m. Scale values, key and between keys: at most 32,
+  because Blender holds a scale in 32 bits (a step of 1.9e-6 at 32, half of
+  which multiplies the object's extent); real scale animation is 0 to 10. The
+  1e-4 m holds for models up to 100 m across, scale included (owner decision
+  2026-11-02, with the 256 m limit on positions): the same 32-bit rounding
+  applies to the positions Blender draws. Tangent components of every path: at
+  most 10 000, a hundred times what exporters write (a tangent is a slope times
+  the key interval). Rotation and weight key values: at most 10 000, and a
+  rotation key at least 0.001 long, as is each of its interpolated samples in a
+  selected clip; exporters write unit quaternions, and a sample that nearly
+  cancels has no direction to keep. Key spacing has no limit. A translation's or
+  scale's values between keys are checked at the roots of its derivative, so a
+  curve whose handles reach beyond 256 but which stays within it is supported.
+- **Only one mesh-level weight animation is kept per mesh,** and it is attached
+  to the original mesh, which the capture replaces with a copy for each node.
+  The script gives each node of the selected scene its own `weights` channel in
+  place of a `/meshes/N/weights` pointer (see [Input contract](#input-contract)).
 - **Rotation between keyframes differs slightly from glTF's.** Blender
   interpolates quaternion channels separately rather than by glTF's spherical
   interpolation: a 30° linear keyframe span read 5.967° where glTF gives 6°.
@@ -3753,7 +3863,6 @@ Decided later, each when its trigger arrives:
 | Other image or metadata formats, such as a consumer's own index or a packed binary atlas (frame images and atlases are delivered; export design D-1) | A consumer needs them. |
 | Pruning files an earlier export left, crash recovery of a half-published directory, and isolation from a second writer to one root (export design D-9) | The owner asks for a managed export. |
 | Vertex-color rendering | A model needs it. |
-| `CUBICSPLINE` animation and mesh morph-weight animation pointers, rejected for now (owner decision 2026-10-02) | A model needs them. |
 
 Style passes and their configuration started with style pass 1: `--reduce` and
 `--palette` (see [Stylize](#stylize)), accepted by the owner on 2026-10-05. The

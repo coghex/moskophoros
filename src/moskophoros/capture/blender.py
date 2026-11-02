@@ -7,7 +7,10 @@ to finish or fail, or for the caller to be interrupted.
 
 A script that cannot map an original animation or node index to imported
 state reports it by failing, with its message on stderr; like any nonzero
-exit, that is a `BackendError` carrying the captured output.
+exit, that is a `BackendError` carrying the captured output. The one
+exception is a file the script finds outside the supported range of its
+cubic spline channels (design §Supported Blender version): it exits with
+`INPUT_STATUS` and an `INPUT_PREFIX` line, and that is an `InputError`.
 """
 
 import hashlib
@@ -28,6 +31,10 @@ from moskophoros.gltf import InputError
 SUPPORTED_SERIES = (5, 2)
 MACOS_APP = Path("/Applications/Blender.app/Contents/MacOS/Blender")
 SCRIPT = Path(__file__).with_name("blender_script.py")
+# How the script reports an input error; a test checks that these agree with
+# the script's own.
+INPUT_STATUS = 3
+INPUT_PREFIX = "moskophoros: input error: "
 ENVIRONMENT_VARIABLE = "MOSKOPHOROS_BLENDER"
 
 # The first line of `blender --version`, such as "Blender 5.2.2 LTS".
@@ -181,6 +188,10 @@ def run_phase(blender, workspace, job):
 
     if status is None:
         raise BackendError(f"could not start Blender at {blender.path}: {stderr}")
+    if status == INPUT_STATUS:
+        for line in stderr.splitlines():
+            if line.startswith(INPUT_PREFIX):
+                raise InputError(source, line[len(INPUT_PREFIX) :])
     if status != 0:
         raise BackendError(
             f"Blender's {mode} phase exited with status {status}", stdout, stderr
