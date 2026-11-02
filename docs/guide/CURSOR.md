@@ -5,17 +5,19 @@ Covered beyond the boundary: none
 
 ## Next
 
-GUIDE-1 is filed as #176; the manager owns its review, repair and merge. Draft GUIDE-2 for signoff under the owner relay of 2026-11-02. Review coverage remains at 69ac3ea; filing is not resolution.
+GUIDE-1 is filed as #176; the manager owns its review, repair and merge. GUIDE-2's exact bug-issue draft awaits signoff in this pane. Review coverage remains at 69ac3ea; filing is not resolution.
 
 ## Open findings
 
-- 2026-11-02T140048Z-69ac3ea/GUIDE-2 — Cubic decoder reads past a declared buffer view — unprocessed.
+- 2026-11-02T140048Z-69ac3ea/GUIDE-2 — Cubic decoder reads past a declared buffer view — proposal pending (exact issue draft in the report).
 
 ## Pending handoff
 
 - All code after a462962 through #175 / 69ac3ea reviewed. The preceding guide landing a3c791c is documentation-only and excluded.
 - #43 is closed by #175; the owner instruction to solve it superseded the prior deferral. Its approved 2026-11-01/02 range and exact rotation arithmetic were checked against the implementation. No open tracker issues or PRs at the snapshot; the two guide findings are not filed yet.
 - GUIDE-1 filed as [#176](https://github.com/coghex/moskophoros/issues/176) from the manager-signed exact draft, label bug. Owner relay: “File, solve both, park”. The manager owns reviews, solves and merges; GUIDE-2 draft still needs signoff.
+- GUIDE-2 draft SHA-256 9db93867f7605a5e220aa2c733394625699f0c91fa258713d64ff032dff4595e; payload issue-v1:sha256:4534b9aabe6cae500bc3b3ce62e31cb1a15e60b1e15c97099e33f2ea21c42daf, label bug.
+- #176 reported as mosk-guide in #moskophoros with --re moskophoros-20261031-1. After GUIDE-2 signoff and creation, report its number there with the same request ID; the manager owns readiness review, solve and merge.
 - 6621 non-Blender and 358 Blender tests passed, no skips; static checks passed. Independent observational Blender probes reproduced both findings despite those suites passing.
 - The merge tree equals reviewed PR head ec87635. Its separately reported default-byte comparison was not independently repeated. No new owner visual, performance, Linux/Windows or exhaustive range verdict.
 - End recheck found no head, issue, PR or published-vision movement. The vision draft warning was a newline comparison artifact; published and primary bytes match.
